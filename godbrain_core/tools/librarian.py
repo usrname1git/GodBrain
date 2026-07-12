@@ -56,13 +56,27 @@ class GodBrainLibrarian:
         golden_record = self.distill_session(raw_transcript)
         golden_record["session_id"] = session_id
 
-        # 3. Permanent Save
-        # self.db.golden_records.insert_one(golden_record)
-        print(f"[LIBRARIAN] Golden memory committed permanently to MongoDB.")
-        
+        # 3. Permanent Save via Go Engine
+        import subprocess
+        import json
+        try:
+            go_engine = os.path.join(os.path.dirname(__file__), '..', 'memory_engine', 'memory_engine.exe')
+            if os.path.exists(go_engine):
+                print('[LIBRARIAN] Sending payload to Go Memory Engine...')
+                payload_json = json.dumps(golden_record)
+                result = subprocess.run([go_engine], input=payload_json.encode('utf-8'), capture_output=True, text=True)
+                if result.returncode == 0:
+                    print('[LIBRARIAN] ' + result.stdout.strip())
+                else:
+                    print('[LIBRARIAN ERROR] Go Engine Failed: ' + result.stderr.strip())
+            else:
+                print(f'[LIBRARIAN WARN] Go engine not found at {go_engine}. Skipping Aura upload.')
+        except Exception as e:
+            print('[LIBRARIAN ERROR] Failed to invoke Go engine:', e)
         return golden_record
 
 if __name__ == "__main__":
     # Test execution
     librarian = GodBrainLibrarian()
     librarian.commit_to_brain("session_12345", "User: Vi behöver en librarian. AI: Exakt!")
+
