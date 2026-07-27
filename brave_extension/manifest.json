@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "GodBrain Sovereign Uplink",
+  "version": "1.0",
+  "description": "Direct RAG pipeline to the local GodBrain Colibri engine.",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8081/*"
+  ]
+}
