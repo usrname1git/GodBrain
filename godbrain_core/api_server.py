@@ -12,7 +12,7 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 client = MongoClient('mongodb://localhost:27017/')
 db = client['godbrain']
 
-COLI_PATH = r"C:\Users\autismo\Documents\GitHub\GodBrain\LLM\colibri_LLM\c\coli"
+COLI_PATH = r"C:\Users\autismo\Documents\GitHub\GodBrain\LLM\colibri_LLM\c\colibri.exe"
 MODEL_PATH = r"C:\nvme\glm52"
 
 @app.route('/')
@@ -85,7 +85,7 @@ def chat_with_godbrain():
     full_prompt = f"{system_prompt}\n\n{context_text}\n\nUser Question: {user_message}\nAnswer:"
     
     cmd = [
-        sys.executable, COLI_PATH, "run", full_prompt,
+        COLI_PATH, "run", full_prompt,
         "--model", MODEL_PATH,
         "--gpu", "0",
         "--vram", "8",
@@ -205,3 +205,5 @@ def get_graph():
 if __name__ == '__main__':
     print("Starting GodBrain API on http://127.0.0.1:8081")
     app.run(host='127.0.0.1', port=8081, debug=False)
+
+
