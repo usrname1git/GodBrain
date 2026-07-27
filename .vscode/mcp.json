@@ -1,7 +1,7 @@
 {
   "servers": {
     "constellation": {
-      "command": "npx",
+      "command": "npx.cmd",
       "args": [
         "-y",
         "@constellationdev/mcp@latest"
@@ -12,6 +12,34 @@
       "env": {
         "CONSTELLATION_ACCESS_KEY": "CONSTELLATION_ACCESS_KEY"
       }
+    },
+    "mongodb": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "mongodb-mcp-server"
+      ],
+      "env": {
+        "MONGODB_URI": "mongodb://localhost:27017"
+      }
+    },
+    "brave-search": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": "YOUR_BRAVE_API_KEY_HERE"
+      }
+    },
+    "filesystem": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\autismo"
+      ]
     }
   }
 }

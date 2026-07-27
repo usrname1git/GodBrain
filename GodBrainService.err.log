@@ -1,0 +1,7 @@
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:8081
+Press CTRL+C to quit
+127.0.0.1 - - [27/Jul/2026 07:18:33] "GET /api/node?id=test HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jul/2026 07:19:43] "GET /galaxy HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jul/2026 07:19:44] "GET /api/graph HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jul/2026 07:20:10] "GET /api/node?id=doc_15e49937 HTTP/1.1" 200 -
