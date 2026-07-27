@@ -81,7 +81,7 @@ def chat_with_godbrain():
     env = os.environ.copy()
     env["SNAP"] = MODEL_PATH
     env["COLI_PROMPT"] = full_prompt
-    env["NGEN"] = "256"
+    env["NGEN"] = "64"
     env["COLI_RAM_OVERCOMMIT"] = "1"
     env["COLI_CUDA"] = "1"
     env["CUDA_EXPERT_GB"] = "12"
@@ -93,6 +93,8 @@ def chat_with_godbrain():
         pass
 
     try:
+        # Colibri expects exactly 64 8 8 as arguments to define the cap and quant bits
+        cmd = [COLI_PATH, "64", "8", "8"]
         process = subprocess.run(cmd, env=env, input="", capture_output=True, text=True, encoding='utf-8', timeout=180)
         output = process.stdout + process.stderr
         
