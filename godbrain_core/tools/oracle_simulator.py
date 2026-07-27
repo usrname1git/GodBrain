@@ -3,6 +3,7 @@ import logging
 import random
 from datetime import datetime
 from pymongo import MongoClient
+from oracle_data_pipelines import DataPipelines
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [ORACLE_SIMULATOR] - %(message)s")
 logger = logging.getLogger("OracleSim")
@@ -13,23 +14,27 @@ paper_trades = db['oracle_paper_trades']
 
 class OracleSimulator:
     def __init__(self):
-        logger.info("Initializing The Oracle in PAPER TRADING (Simulation) Mode.")
-        self.win_threshold = 0.95 # Only trade if 95% certain
+        logger.info("Initializing The Oracle in PAPER TRADING Mode.")
+        self.win_threshold = 0.95 
+        self.pipelines = DataPipelines()
 
     async def scan_market(self):
-        """Simulates scanning a prediction market vs real-world data."""
-        logger.info("Scanning for asymmetric data arbitrage...")
+        logger.info("Scanning Polymarket vs Real-World Pipelines...")
         
-        # Simulated scenario: Will it rain in Miami by 12:00 PM?
-        # Market still thinks 50/50. Real-world radar shows rain is currently falling at 11:58 AM.
-        market_odds = random.uniform(0.4, 0.6)
-        real_world_certainty = random.uniform(0.96, 0.99) # We see the rain
+        # Test 1: YouTube Arbitrage
+        yt_certainty = await self.pipelines.fetch_youtube_metrics("vid_123", 50000000, 24)
+        if yt_certainty > self.win_threshold:
+            self.execute_paper_trade("Polymarket: MrBeast > 50M Views", 1000, 0.70, yt_certainty)
 
-        if real_world_certainty > self.win_threshold and market_odds < 0.90:
-            logger.warning(f"[!] ARBITRAGE DETECTED! Market Odds: {market_odds*100:.1f}% | Real Certainty: {real_world_certainty*100:.1f}%")
-            self.execute_paper_trade("Polymarket: Rain in Miami < 12PM", 1000, market_odds, real_world_certainty)
-        else:
-            logger.info("No >95% certainty events found. Waiting.")
+        # Test 2: SpaceX Launch Arbitrage
+        tfr_certainty = await self.pipelines.check_faa_tfr("Boca Chica, TX", 2)
+        if tfr_certainty > self.win_threshold:
+            self.execute_paper_trade("Polymarket: Starship Launches this Week (NO)", 1000, 0.60, tfr_certainty)
+            
+        # Test 3: Weather Arbitrage
+        weather_certainty = await self.pipelines.fetch_noaa_radar("Miami, FL")
+        if weather_certainty > self.win_threshold:
+            self.execute_paper_trade("Polymarket: Rain in Miami by 12PM (YES)", 1000, 0.40, weather_certainty)
 
     def execute_paper_trade(self, contract, amount, odds, certainty):
         trade_record = {
@@ -41,7 +46,7 @@ class OracleSimulator:
             "status": "PAPER_TRADE_LOGGED"
         }
         paper_trades.insert_one(trade_record)
-        logger.info(f"[$$$] Paper Trade Executed: ${amount} on '{contract}'. Logged to MongoDB for Architect review.")
+        logger.info(f"[$$$] Paper Trade Executed: ${amount} on '{contract}'. Logged to MongoDB.")
 
 async def run_simulation():
     oracle = OracleSimulator()
