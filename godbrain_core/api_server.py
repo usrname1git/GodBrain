@@ -93,25 +93,24 @@ def chat_with_godbrain():
         pass
 
     try:
-        # Pass stdin explicitly to prevent colibri from trying to read interactive keyboard input
-        process = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
-        stdout, stderr = process.communicate(timeout=180)
-        output = stdout + stderr
+        process = subprocess.run(cmd, env=env, input="", capture_output=True, text=True, encoding='utf-8', timeout=180)
+        output = process.stdout + process.stderr
         
-        answer_split = output.split("Answer:")
-        if len(answer_split) > 1:
-            final_answer = answer_split[-1].split("PROFILE")[0].strip() if "PROFILE" in answer_split[-1] else answer_split[-1].strip()
+        if "ATTENTION:" in output:
+            final_answer = output.split("ATTENTION:")[-1].split("\n", 1)[-1].strip()
+        elif "Answer:" in output:
+            final_answer = output.split("Answer:")[-1].strip()
         else:
             lines = output.splitlines()
             final_answer = "\n".join(lines[-10:])
             
-        print("[RAG] Answer generated.")
+        print(f"[RAG] Answer generated: {final_answer[:50]}...")
+        
         return jsonify({"response": final_answer})
         
-    except subprocess.TimeoutExpired:
-        process.kill()
+    except subprocess.TimeoutExpired as e:
         print("[-] Colibri timed out after 180 seconds.")
-        return jsonify({"response": "System fault. Colibri C-Engine timed out while loading the 17GB model."})
+        return jsonify({"response": "System fault. Colibri C-Engine timed out."})
     except Exception as e:
         print(f"[-] Colibri crashed: {e}")
         return jsonify({"response": f"System fault. The LLM engine crashed: {str(e)}"})
