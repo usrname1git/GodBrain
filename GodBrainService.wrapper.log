@@ -47,3 +47,10 @@
 2026-07-27 07:18:28,932 INFO  - Started process 12784
 2026-07-27 07:18:28,938 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
 2026-07-27 07:18:29,104 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' restarted successfully.
+2026-07-27 07:53:22,420 DEBUG - Starting WinSW in console mode
+2026-07-27 07:53:22,443 INFO  - Starting service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:53:22,662 DEBUG - Starting WinSW in service mode
+2026-07-27 07:53:22,681 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' started successfully.
+2026-07-27 07:53:22,746 INFO  - Starting C:\Users\autismo\scoop\apps\python\current\python.exe godbrain_core\api_server.py
+2026-07-27 07:53:22,761 INFO  - Started process 10740
+2026-07-27 07:53:22,767 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
