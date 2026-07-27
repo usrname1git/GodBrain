@@ -45,7 +45,6 @@ def chat_with_godbrain():
         
     print(f"[RAG] User asked: {user_message}")
     
-    # 1. RETRIEVAL: Find relevant nodes based on the user's message
     words = [w.lower() for w in re.findall(r'\b\w+\b', user_message) if len(w) > 3]
     stop_words = {'what', 'when', 'where', 'will', 'this', 'that', 'delete', 'disable', 'change', 'remove'}
     keywords = [w for w in words if w not in stop_words]
@@ -59,23 +58,16 @@ def chat_with_godbrain():
             "$or": [
                 {"title": {"$regex": regex_pattern, "$options": "i"}},
                 {"content": {"$regex": regex_pattern, "$options": "i"}},
-                {"_id": {"$regex": regex_pattern, "$options": "i"}}
+                {"tags": {"$regex": regex_pattern, "$options": "i"}}
             ]
-        }).limit(5))
+        }).limit(3))
         
         if relevant_nodes:
-            node_ids = [n['_id'] for n in relevant_nodes]
-            relevant_edges = list(db.edges.find({
-                "$or": [{"source": {"$in": node_ids}}, {"target": {"$in": node_ids}}]
-            }))
-            
-            for n in relevant_nodes:
-                context_text += f"- Node [{n['type']}]: {n.get('title', n['_id'])} - {n.get('content', '')}\n"
-            
-            for e in relevant_edges:
-                context_text += f"- Edge: {e['source']} --[{e['relationship']}]--> {e['target']}\n"
+            for idx, node in enumerate(relevant_nodes):
+                context_text += f"\n--- Source {idx+1}: {node.get('title')} ---\n"
+                context_text += f"{node.get('content', '')[:500]}...\n"
         else:
-            context_text += "No relevant nodes found in the graph.\n"
+            context_text += "No exact matches found in local graph.\n"
     else:
         context_text += "No specific keywords extracted.\n"
         
@@ -84,17 +76,15 @@ def chat_with_godbrain():
     system_prompt = "You are GodBrain, the Sovereign SRE Agent. You help the user optimize Windows 11 safely. Use the Knowledge Graph Context provided below to answer the user's question. If a tweak FATALLY_BREAKS something, WARN THE USER aggressively."
     full_prompt = f"{system_prompt}\n\n{context_text}\n\nUser Question: {user_message}\nAnswer:"
     
-    cmd = [
-        COLI_PATH, "run", full_prompt,
-        "--model", MODEL_PATH,
-        "--gpu", "0",
-        "--vram", "8",
-        "--ngen", "256", 
-        "--temp", "0.3"
-    ]
+    cmd = [COLI_PATH]
+    
+    env = os.environ.copy()
+    env["SNAP"] = MODEL_PATH
+    env["COLI_PROMPT"] = full_prompt
+    env["NGEN"] = "256"
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding='utf-8')
         output = result.stdout + result.stderr
         
         answer_split = output.split("Answer:")
@@ -110,6 +100,7 @@ def chat_with_godbrain():
     except Exception as e:
         print(f"[-] Colibri crashed: {e}")
         return jsonify({"response": f"System fault. The LLM engine crashed: {str(e)}"})
+
 
 @app.route('/api/node')
 def get_node_details():
@@ -205,5 +196,6 @@ def get_graph():
 if __name__ == '__main__':
     print("Starting GodBrain API on http://127.0.0.1:8081")
     app.run(host='127.0.0.1', port=8081, debug=False)
+
 
 
