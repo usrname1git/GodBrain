@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GodBrain Sovereign Node</title>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three-spritetext@1.6.5/dist/three-spritetext.min.js"></script>
+    <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; color: #0f0; }
+        #3d-graph { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            background: rgba(0, 20, 0, 0.8);
+            border: 1px solid #0f0;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px #0f0;
+            max-width: 300px;
+        }
+        
+        #rag-chat {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 10;
+            background: rgba(0, 20, 0, 0.8);
+            border: 1px solid #0f0;
+            padding: 15px;
+            border-radius: 5px;
+            width: 350px;
+            height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 10px #0f0;
+        }
+        
+        h1, h2, h3 { margin-top: 0; text-transform: uppercase; text-shadow: 0 0 5px #0f0; }
+        select, input, button {
+            background: #000;
+            color: #0f0;
+            border: 1px solid #0f0;
+            padding: 5px;
+            margin: 5px 0;
+            width: 100%;
+            font-family: inherit;
+        }
+        button { cursor: pointer; text-transform: uppercase; font-weight: bold; }
+        button:hover { background: #0f0; color: #000; }
+        
+        #chat-history {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            padding: 5px;
+            border: 1px solid #030;
+            font-size: 0.9em;
+        }
+        .user-msg { color: #fff; margin-bottom: 5px; }
+        .sys-msg { color: #0f0; margin-bottom: 10px; text-shadow: 0 0 2px #0f0; }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #001100; }
+        ::-webkit-scrollbar-thumb { background: #0f0; }
+    </style>
+</head>
+<body>
+    <div id="3d-graph"></div>
+    
+    <div id="overlay">
+        <h2>Sovereign Node</h2>
+        <div id="stats">Initializing Galaxy...</div>
+        
+        <h3 style="margin-top: 15px;">Sector Filtering</h3>
+        <select id="sector-filter">
+            <option value="Windows SRE / Optimization" selected>Windows SRE / Optimization</option>
+            <option value="Rust">Rust Documentation</option>
+            <option value="Node.js Ecosystem">Node.js Ecosystem</option>
+            <option value="React Architecture">React Architecture</option>
+            <option value="BaaS Usurpers (Enemy)">BaaS Usurpers (Enemy)</option>
+            <option value="Chromium Bloat (Priority Enemy)">Chromium Bloat (Priority Enemy)</option>
+            <option value="Linux">Linux Documentation</option>
+            <option value="Apple">Apple Documentation</option>
+            <option value="GitHub Docs">GitHub Docs</option>
+            <option value="all">ALL SECTORS (Warning: GPU Heavy)</option>
+        </select>
+        
+        <h3 style="margin-top: 15px;">Target Node</h3>
+        <input type="text" id="node-search" placeholder="Search node ID..." list="node-list">
+        <datalist id="node-list"></datalist>
+        <button id="focus-btn">Focus Scanner</button>
+    </div>
+    
+    <div id="rag-chat">
+        <h2>Colibri RAG Uplink</h2>
+        <div id="chat-history">
+            <div class="sys-msg">[SYS] Colibri C-Engine initialized. Awaiting input.</div>
+        </div>
+        <div style="display: flex; gap: 5px;">
+            <input type="text" id="chat-input" placeholder="Query GodBrain...">
+            <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
+        </div>
+    </div>
+
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            fetch('/api/log', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    message: msg,
+                    line: lineNo,
+                    col: columnNo,
+                    stack: error ? error.stack : ''
+                })
+            });
+            return false;
+        };
+        let fullData = { nodes: [], links: [] };
+        let graph = null;
+        
+        // Initialize basic empty graph
+        // Create a reusable glowing star texture for extreme GPU efficiency
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gradient.addColorStop(0, 'rgba(255,255,255,1)');
+        gradient.addColorStop(0.2, 'rgba(100,255,100,0.8)');
+        gradient.addColorStop(0.5, 'rgba(0,150,0,0.4)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 64, 64);
+        const starTexture = new THREE.CanvasTexture(canvas);
+
+        // Inject test error just to make sure logging works
+        setTimeout(() => {
+            console.error("Test error injection");
+        }, 1000);
+
+        const elem = document.getElementById('3d-graph');
+        try {
+            graph = ForceGraph3D()(elem)
+                .graphData(fullData)
+                .nodeLabel('title')
+                .nodeAutoColorBy('group')
+                .nodeThreeObject(node => {
+                    const material = new THREE.SpriteMaterial({ 
+                        map: starTexture, 
+                        color: Math.round(Math.random() * Math.pow(2, 24)),
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false,
+                        transparent: true
+                    });
+                    const sprite = new THREE.Sprite(material);
+                    const size = Math.log(node.val || 2) * 3 + 2;
+                    sprite.scale.set(size, size, 1);
+                    return sprite;
+                })
+                .linkWidth(0.2)
+                .linkOpacity(0.1)
+                .backgroundColor('#000300');
+        } catch (e) {
+            console.error("Graph init error:", e);
+        }
+
+        // Optimize physics for huge 45k node galaxy
+        try {
+            if (graph.d3Force && graph.d3Force('charge')) {
+                graph.d3Force('charge').strength(-5); // Spread them out
+            }
+        } catch(e) { console.log(e); }
+
+        // Fetch actual data
+        fetch('/api/graph')
+            .then(res => res.json())
+            .then(data => {
+                fullData = data;
+                applyFilter();
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('stats').innerText = "ERROR LOADING GALAXY";
+            });
+            
+        function applyFilter() {
+            const filterVal = document.getElementById('sector-filter').value;
+            let filteredNodes = fullData.nodes;
+            
+            if (filterVal !== 'all') {
+                filteredNodes = fullData.nodes.filter(n => n.group === filterVal);
+            }
+            
+            const nodeIds = new Set(filteredNodes.map(n => n.id));
+            const filteredLinks = fullData.links.filter(l => 
+                nodeIds.has(l.source.id || l.source) && nodeIds.has(l.target.id || l.target)
+            );
+            
+            const renderData = { nodes: filteredNodes, links: filteredLinks };
+            
+            document.getElementById('stats').innerText = 'Nodes: ' + filteredNodes.length + ' | Edges: ' + filteredLinks.length;
+            
+            const dataList = document.getElementById('node-list');
+            dataList.innerHTML = '';
+            filteredNodes.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n.id;
+                dataList.appendChild(opt);
+            });
+            
+            if (graph) {
+                graph.graphData(renderData);
+            } else {
+                console.error("Graph is null, cannot apply filter");
+                document.getElementById('stats').innerText = "ERROR: WebGL Engine failed to initialize.";
+            }
+        }
+        
+        document.getElementById('sector-filter').addEventListener('change', applyFilter);
+        
+        try {
+            document.getElementById('focus-btn').addEventListener('click', () => {
+                const query = document.getElementById('node-search').value;
+                if (!graph) return;
+                const target = graph.graphData().nodes.find(n => n.id === query);
+                
+                if (target) {
+                    const distance = 40;
+                    const distRatio = 1 + distance/Math.hypot(target.x, target.y, target.z);
+                    
+                    graph.cameraPosition(
+                        { x: target.x * distRatio, y: target.y * distRatio, z: target.z * distRatio },
+                        target,
+                        3000
+                    );
+                }
+            });
+        } catch(e) {}
+        
+        // Chat UI
+        const chatInput = document.getElementById('chat-input');
+        const chatHistory = document.getElementById('chat-history');
+        const sendBtn = document.getElementById('send-btn');
+        
+        function sendMsg() {
+            console.log("Chat button clicked!");
+            const text = chatInput.value.trim();
+            if(!text) return;
+            
+            chatHistory.innerHTML += '<div class="user-msg">[USER] ' + text + '</div>';
+            chatInput.value = '';
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: text})
+            })
+            .then(res => res.json())
+            .then(data => {
+                chatHistory.innerHTML += '<div class="sys-msg">[SYS] ' + (data.response || data.error) + '</div>';
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            })
+            .catch(err => {
+                chatHistory.innerHTML += '<div class="sys-msg" style="color:red;">[ERR] Connection lost</div>';
+            });
+        }
+        
+        sendBtn.addEventListener('click', sendMsg);
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMsg();
+        });
+    </script>
+</body>
+</html>
