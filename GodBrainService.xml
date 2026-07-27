@@ -6,6 +6,7 @@
   <!-- Environment variables to ensure Colibri uses the GPU -->
   <env name="COLI_CUDA" value="1"/>
   <env name="CUDA_EXPERT_GB" value="4"/>
+  <env name="COLI_RAM_OVERCOMMIT" value="1"/>
   
   <!-- Executable and target script -->
   <executable>C:\Users\autismo\scoop\apps\python\current\python.exe</executable>
