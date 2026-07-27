@@ -95,23 +95,56 @@ def chat_with_godbrain():
     try:
         # Colibri expects exactly 64 8 8 as arguments to define the cap and quant bits
         cmd = [COLI_PATH, "64", "8", "8"]
-        process = subprocess.run(cmd, env=env, input="", capture_output=True, text=True, encoding='utf-8', timeout=180)
-        output = process.stdout + process.stderr
+        # Run in completely detached window without trying to capture pipes directly.
+        # This completely unblocks the Python thread from whatever C-level pipe deadlock is happening.
+        import tempfile
+        import uuid
         
-        if "ATTENTION:" in output:
+        uid = str(uuid.uuid4())
+        out_file = os.path.join(tempfile.gettempdir(), f"colibri_{uid}.out")
+        
+        # We write a tiny bat file to execute it and redirect output to a temp file
+        bat_file = os.path.join(tempfile.gettempdir(), f"colibri_{uid}.bat")
+        
+        with open(bat_file, "w") as b:
+            b.write("@echo off\n")
+            for k, v in env.items():
+                # Avoid breaking batch syntax with newlines in the prompt
+                v_clean = str(v).replace('\n', ' ').replace('\r', ' ').replace('"', '\"')
+                b.write(f'set "{k}={v_clean}"\n')
+            b.write(f'"{COLI_PATH}" 64 8 8 < NUL > "{out_file}" 2>&1\n')
+            
+        print(f"[RAG] Executing via batch wrapper: {bat_file}")
+        
+        subprocess.run(bat_file, shell=True, timeout=120)
+        
+        if os.path.exists(out_file):
+            with open(out_file, "r", encoding="utf-8", errors="ignore") as o:
+                output = o.read()
+        else:
+            output = ""
+            
+        try:
+            os.remove(bat_file)
+            os.remove(out_file)
+        except:
+            pass
+
+        answer_split = output.split("Answer:")
+        if len(answer_split) > 1:
+            final_answer = answer_split[-1].split("PROFILE")[0].strip() if "PROFILE" in answer_split[-1] else answer_split[-1].strip()
+        elif "ATTENTION:" in output:
             final_answer = output.split("ATTENTION:")[-1].split("\n", 1)[-1].strip()
-        elif "Answer:" in output:
-            final_answer = output.split("Answer:")[-1].strip()
         else:
             lines = output.splitlines()
-            final_answer = "\n".join(lines[-10:])
+            final_answer = "\n".join(lines[-10:]) if lines else "No output from Colibri."
             
         print(f"[RAG] Answer generated: {final_answer[:50]}...")
-        
         return jsonify({"response": final_answer})
         
     except subprocess.TimeoutExpired as e:
-        print("[-] Colibri timed out after 180 seconds.")
+        subprocess.run(["taskkill", "/F", "/IM", "colibri.exe"], capture_output=True)
+        print("[-] Colibri timed out after 120 seconds.")
         return jsonify({"response": "System fault. Colibri C-Engine timed out."})
     except Exception as e:
         print(f"[-] Colibri crashed: {e}")
