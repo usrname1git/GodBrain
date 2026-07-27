@@ -93,8 +93,8 @@ def chat_with_godbrain():
         pass
 
     try:
-        # Run with 180s timeout. If it times out, the Exception block will catch it.
-        process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+        # Pass stdin explicitly to prevent colibri from trying to read interactive keyboard input
+        process = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         stdout, stderr = process.communicate(timeout=180)
         output = stdout + stderr
         
@@ -211,6 +211,7 @@ def get_graph():
 if __name__ == '__main__':
     print("Starting GodBrain API on http://127.0.0.1:8081")
     app.run(host='127.0.0.1', port=8081, debug=False)
+
 
 
 
