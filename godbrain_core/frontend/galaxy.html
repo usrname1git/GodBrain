@@ -68,6 +68,49 @@
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #001100; }
         ::-webkit-scrollbar-thumb { background: #0f0; }
+        
+        #node-manual {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60vw;
+            height: 70vh;
+            background: rgba(0, 20, 0, 0.95);
+            border: 2px solid #0f0;
+            border-radius: 5px;
+            box-shadow: 0 0 20px #0f0;
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+        }
+        
+        #node-manual-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #000;
+            color: #0f0;
+            border: 1px solid #0f0;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 5px 10px;
+        }
+        
+        #node-manual-close:hover {
+            background: #0f0;
+            color: #000;
+        }
+        
+        #node-manual-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #030;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -106,6 +149,13 @@
             <input type="text" id="chat-input" placeholder="Query GodBrain...">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
         </div>
+    </div>
+    
+    <div id="node-manual">
+        <button id="node-manual-close">X</button>
+        <h2 id="node-manual-title">Node Title</h2>
+        <div style="font-size: 0.8em; color: #0a0;" id="node-manual-meta">Type: note | Tags: []</div>
+        <div id="node-manual-content">Loading...</div>
     </div>
 
     <script>
@@ -166,10 +216,45 @@
                 })
                 .linkWidth(0.2)
                 .linkOpacity(0.1)
-                .backgroundColor('#000300');
+                .backgroundColor('#000300')
+                .onNodeClick(node => {
+                    // Fetch full node details and show manual
+                    document.getElementById('node-manual').style.display = 'flex';
+                    document.getElementById('node-manual-title').innerText = node.title || node.id;
+                    document.getElementById('node-manual-content').innerText = 'Loading...';
+                    
+                    fetch('/api/node?id=' + encodeURIComponent(node.id))
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.error) {
+                                document.getElementById('node-manual-content').innerText = data.error;
+                                return;
+                            }
+                            document.getElementById('node-manual-title').innerText = data.title;
+                            document.getElementById('node-manual-meta').innerText = 'Type: ' + data.type + ' | Tags: ' + (data.tags ? data.tags.join(', ') : 'none');
+                            document.getElementById('node-manual-content').innerText = data.content;
+                        })
+                        .catch(err => {
+                            document.getElementById('node-manual-content').innerText = 'Error loading content: ' + err;
+                        });
+                        
+                    // Also focus camera
+                    const distance = 40;
+                    const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
+                    graph.cameraPosition(
+                        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+                        node,
+                        1000
+                    );
+                });
         } catch (e) {
             console.error("Graph init error:", e);
         }
+
+        // Close manual
+        document.getElementById('node-manual-close').addEventListener('click', () => {
+            document.getElementById('node-manual').style.display = 'none';
+        });
 
         // Optimize physics for huge 45k node galaxy
         try {

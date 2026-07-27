@@ -111,6 +111,35 @@ def chat_with_godbrain():
         print(f"[-] Colibri crashed: {e}")
         return jsonify({"response": f"System fault. The LLM engine crashed: {str(e)}"})
 
+@app.route('/api/node')
+def get_node_details():
+    node_id = request.args.get('id')
+    if not node_id:
+        return jsonify({"error": "No ID provided"}), 400
+        
+    node = db.nodes.find_one({"_id": node_id})
+    if not node:
+        # Try finding by title just in case it's a mismatch
+        node = db.nodes.find_one({"title": node_id})
+        
+    if not node:
+        try:
+            from bson.objectid import ObjectId
+            node = db.nodes.find_one({"_id": ObjectId(node_id)})
+        except:
+            pass
+            
+    if not node:
+        return jsonify({"error": "Node not found"}), 404
+        
+    return jsonify({
+        "id": str(node.get("_id", "")),
+        "title": node.get("title", "Unknown"),
+        "content": node.get("content", "No content available."),
+        "type": node.get("type", "note"),
+        "tags": node.get("tags", [])
+    })
+
 @app.route('/api/graph')
 def get_graph():
     nodes_cursor = db.nodes.find({}, {"_id": 1, "title": 1, "type": 1, "tags": 1})
