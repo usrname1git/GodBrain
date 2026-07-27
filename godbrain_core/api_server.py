@@ -82,17 +82,20 @@ def chat_with_godbrain():
     env["SNAP"] = MODEL_PATH
     env["COLI_PROMPT"] = full_prompt
     env["NGEN"] = "256"
+    env["COLI_RAM_OVERCOMMIT"] = "1"
+    env["COLI_CUDA"] = "1"
+    env["CUDA_EXPERT_GB"] = "12"
     
     try:
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding='utf-8')
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding='utf-8', timeout=120)
         output = result.stdout + result.stderr
         
         answer_split = output.split("Answer:")
         if len(answer_split) > 1:
-            final_answer = answer_split[-1].strip()
+            final_answer = answer_split[-1].split("PROFILE")[0].strip() if "PROFILE" in answer_split[-1] else answer_split[-1].strip()
         else:
             lines = output.splitlines()
-            final_answer = "\n".join(lines[-10:])
+            final_answer = output.split("ATTENTION:")[-1].split("\n", 1)[-1].strip() if "ATTENTION:" in output else "\n".join(lines[-10:])
             
         print("[RAG] Answer generated.")
         return jsonify({"response": final_answer})
@@ -196,6 +199,12 @@ def get_graph():
 if __name__ == '__main__':
     print("Starting GodBrain API on http://127.0.0.1:8081")
     app.run(host='127.0.0.1', port=8081, debug=False)
+
+
+
+
+
+
 
 
 
