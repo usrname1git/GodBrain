@@ -13,7 +13,7 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 
 ## The Compute Cheat Code (Local + Cloud Synergy)
 
-Because the "brain" (MongoDB + Constellation) is completely decoupled from the compute, GodBrain unlocks a massive hardware cheat code:
+Because the "brain" (MongoDB) is completely decoupled from the compute, GodBrain unlocks a massive hardware cheat code:
 
 - **Massive Local Context — it scales infinitely with your hardware:** As if running *any* model wasn't enough, the shared mind just gets better the more you throw at it.
 
@@ -48,7 +48,6 @@ These are injected as preserved tokens so any model can use them:
 | Tool | Purpose |
 |------|---------|
 | `save_godbrain_thought` | Permanent memory — write reasoning the next model can learn from |
-| `query_constellation` | Code-graph self-analysis |
 | `query_recent_thoughts` | Recall prior models' thinking |
 | `read_local_file` / `write_local_file` | Native, privileged local filesystem access (no browser sandbox theater) |
 | `list_local_dir` / `ensure_local_dir` | Local directory ops |
@@ -83,7 +82,6 @@ The destination is an AI that owns the full loop — brainstorm a problem, under
 
 - **Self-command** — the agent issues and chains its own commands.
 - **Sequential thinking** — multi-step reasoning instead of one-shot guesses.
-- **Constellation** — code-graph self-analysis of its own system.
 - **MongoDB query / index / update** — full read-write access to the shared brain.
 - **Full local filesystem read/write** — real files, real changes, no sandbox theater.
 - **Privileged execution** — `wsudo` scripts and Visual Studio access to actually build and repair.
@@ -99,7 +97,6 @@ Cloud models can do the heavy context lifting; your local sovereign models pull 
 ### Roadmap
 
 - [x] Self-command + sequential thinking
-- [x] Constellation code-graph self-analysis
 - [x] MongoDB query / index / update
 - [x] Full local filesystem read/write
 - [x] Privileged execution (`wsudo`, Visual Studio)
