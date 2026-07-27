@@ -41,3 +41,8 @@ Here is the proposed roster of specialized sovereign agents we need to build for
 1. Create a `FactoryCore` Python daemon.
 2. Define the JSON schemas for how The Architect passes state to the sub-agents.
 3. Hook the sub-agents into the Colibri engine using the API we just built.
+
+## 7. The Oracle (Market Arbitrageur & Predictor)
+* **Purpose:** The real-time opportunity sniper.
+* **Function:** Ingests live data streams (e.g., Polymarket odds, weather APIs, real-time news) to find mathematical certainties and arbitrage opportunities. For example, exploiting delayed odds adjustments in prediction markets where the outcome is already physically guaranteed (like waiting until 1 minute left on a localized weather event).
+* **Tools:** Live API polling, Web3/Crypto execution, statistical risk analysis, low-latency execution engines.

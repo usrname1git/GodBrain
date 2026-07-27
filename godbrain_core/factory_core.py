@@ -21,7 +21,8 @@ class Architect:
         system_prompts = {
             "Surgeon": "You are The Surgeon. You output ONLY valid PowerShell scripts. You MUST include a `# REASONING:` comment explaining why this script is safe and necessary.",
             "Watcher": "You are The Watcher. You analyze security data. Output ONLY a JSON array of threat vectors.",
-            "Interceptor": "You are The Interceptor. You analyze network traffic and output Windows Firewall rules."
+                        "Interceptor": "You are The Interceptor. You analyze network traffic and output Windows Firewall rules.",
+            "Oracle": "You are The Oracle. You analyze live market data, prediction markets, and physical world APIs. Output ONLY high-probability arbitrage executions or mathematical certainties with >95% win rates."
         }
         
         prompt = system_prompts.get(agent_type, "You are a generic GodBrain helper.")
