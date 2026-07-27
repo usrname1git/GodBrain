@@ -1,0 +1,49 @@
+2026-07-27 07:09:10,821 DEBUG - Starting WinSW in console mode
+2026-07-27 07:09:10,872 INFO  - Installing service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:09:10,914 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' was installed successfully.
+2026-07-27 07:09:15,416 DEBUG - Starting WinSW in console mode
+2026-07-27 07:09:15,437 INFO  - Starting service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:09:15,643 DEBUG - Starting WinSW in service mode
+2026-07-27 07:09:15,663 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' started successfully.
+2026-07-27 07:09:15,727 INFO  - Starting C:\Users\autismo\scoop\apps\python\current\python.exe godbrain_core\api_server.py
+2026-07-27 07:09:15,743 INFO  - Started process 16812
+2026-07-27 07:09:15,749 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
+2026-07-27 07:17:02,647 DEBUG - Starting WinSW in console mode
+2026-07-27 07:17:02,672 INFO  - Stopping service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:17:02,677 INFO  - Stopping GodBrainService
+2026-07-27 07:17:02,677 DEBUG - ProcessKill 16812
+2026-07-27 07:17:02,679 DEBUG - Stopping process 16812...
+2026-07-27 07:17:03,639 DEBUG - Process 16812 canceled with code 0.
+2026-07-27 07:17:03,641 INFO  - Finished GodBrainService
+2026-07-27 07:17:03,682 INFO  - Starting service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:17:03,901 DEBUG - Starting WinSW in service mode
+2026-07-27 07:17:03,988 INFO  - Starting C:\Users\autismo\scoop\apps\python\current\python.exe godbrain_core\api_server.py
+2026-07-27 07:17:04,003 INFO  - Started process 11044
+2026-07-27 07:17:04,009 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
+2026-07-27 07:17:04,172 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' restarted successfully.
+2026-07-27 07:17:46,611 DEBUG - Starting WinSW in console mode
+2026-07-27 07:17:46,637 INFO  - Stopping service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:17:46,641 INFO  - Stopping GodBrainService
+2026-07-27 07:17:46,641 DEBUG - ProcessKill 11044
+2026-07-27 07:17:46,643 DEBUG - Stopping process 11044...
+2026-07-27 07:17:47,211 DEBUG - Process 11044 canceled with code 0.
+2026-07-27 07:17:47,214 INFO  - Finished GodBrainService
+2026-07-27 07:17:47,397 INFO  - Starting service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:17:47,613 DEBUG - Starting WinSW in service mode
+2026-07-27 07:17:47,714 INFO  - Starting C:\Users\autismo\scoop\apps\python\current\python.exe godbrain_core\api_server.py
+2026-07-27 07:17:47,731 INFO  - Started process 16848
+2026-07-27 07:17:47,737 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
+2026-07-27 07:17:47,889 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' restarted successfully.
+2026-07-27 07:18:27,580 DEBUG - Starting WinSW in console mode
+2026-07-27 07:18:27,612 INFO  - Stopping service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:18:27,616 INFO  - Stopping GodBrainService
+2026-07-27 07:18:27,616 DEBUG - ProcessKill 16848
+2026-07-27 07:18:27,617 DEBUG - Stopping process 16848...
+2026-07-27 07:18:28,422 DEBUG - Process 16848 canceled with code 0.
+2026-07-27 07:18:28,424 INFO  - Finished GodBrainService
+2026-07-27 07:18:28,622 INFO  - Starting service 'GodBrain Cognitive OS (GodBrainService)'...
+2026-07-27 07:18:28,835 DEBUG - Starting WinSW in service mode
+2026-07-27 07:18:28,917 INFO  - Starting C:\Users\autismo\scoop\apps\python\current\python.exe godbrain_core\api_server.py
+2026-07-27 07:18:28,932 INFO  - Started process 12784
+2026-07-27 07:18:28,938 DEBUG - Forwarding logs of the process System.Diagnostics.Process (python) to WinSW.RollingLogAppender
+2026-07-27 07:18:29,104 INFO  - Service 'GodBrain Cognitive OS (GodBrainService)' restarted successfully.

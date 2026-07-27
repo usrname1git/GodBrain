@@ -26,6 +26,13 @@ Trying to match a 128GB Mac on a PC means stacking $10k+ of pro GPUs and a power
 
 Cloud models do the heavy context lifting; your local sovereign models pull from the shared memory to execute with God-level permissions.
 
+## See it running
+
+<p align="center">
+  <img src="docs/media/galaxy-manual.png" width="900" alt="GodBrain Sovereign Node Galaxy UI">
+</p>
+<p align="center"><em>The Web Dashboard: A fully interactable 3D force-directed galaxy representing the knowledge graph. Click on any node to open the Sovereign Manual and read the raw documentation, while the RAG uplink stands by on the right.</em></p>
+
 ## How it works
 
 `Build-LlamaCpp.ps1` overlays files from `llama-overrides/` onto the llama.cpp source at build time. The key piece is:
