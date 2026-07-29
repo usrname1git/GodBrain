@@ -53,6 +53,12 @@
         button { cursor: pointer; text-transform: uppercase; font-weight: bold; }
         button:hover { background: #0f0; color: #000; }
         
+        input[type="checkbox"] {
+            width: auto;
+            margin-right: 10px;
+            accent-color: #0f0;
+        }
+        
         #chat-history {
             flex-grow: 1;
             overflow-y: auto;
@@ -121,18 +127,17 @@
         <div id="stats">Initializing Galaxy...</div>
         
         <h3 style="margin-top: 15px;">Sector Filtering</h3>
-        <select id="sector-filter">
-            <option value="Windows SRE / Optimization" selected>Windows SRE / Optimization</option>
-            <option value="Rust">Rust Documentation</option>
-            <option value="Node.js Ecosystem">Node.js Ecosystem</option>
-            <option value="React Architecture">React Architecture</option>
-            <option value="BaaS Usurpers (Enemy)">BaaS Usurpers (Enemy)</option>
-            <option value="Chromium Bloat (Priority Enemy)">Chromium Bloat (Priority Enemy)</option>
-            <option value="Linux">Linux Documentation</option>
-            <option value="Apple">Apple Documentation</option>
-            <option value="GitHub Docs">GitHub Docs</option>
-            <option value="all">ALL SECTORS (Warning: GPU Heavy)</option>
-        </select>
+        <div id="sector-filters" style="display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; max-height: 200px; overflow-y: auto;">
+            <label><input type="checkbox" value="Windows SRE / Optimization" checked> Windows SRE / Optimization</label>
+            <label><input type="checkbox" value="Rust" checked> Rust Documentation</label>
+            <label><input type="checkbox" value="Node.js Ecosystem"> Node.js Ecosystem</label>
+            <label><input type="checkbox" value="React Architecture"> React Architecture</label>
+            <label><input type="checkbox" value="BaaS Usurpers (Enemy)"> BaaS Usurpers (Enemy)</label>
+            <label><input type="checkbox" value="Chromium Bloat (Priority Enemy)"> Chromium Bloat (Priority Enemy)</label>
+            <label><input type="checkbox" value="Linux"> Linux Documentation</label>
+            <label><input type="checkbox" value="Apple"> Apple Documentation</label>
+            <label><input type="checkbox" value="GitHub Docs"> GitHub Docs</label>
+        </div>
         
         <h3 style="margin-top: 15px;">Target Node</h3>
         <input type="text" id="node-search" placeholder="Search node ID..." list="node-list">
@@ -259,7 +264,13 @@
         // Optimize physics for huge 45k node galaxy
         try {
             if (graph.d3Force && graph.d3Force('charge')) {
-                graph.d3Force('charge').strength(-5); // Spread them out
+                // Extreme repulsion to break apart the massive 6000+ node Apple/Windows singularity
+                graph.d3Force('charge').strength(-200); 
+                
+                // Force the central nodes to push their children much further away
+                if (graph.d3Force('link')) {
+                    graph.d3Force('link').distance(150);
+                }
             }
         } catch(e) { console.log(e); }
 
@@ -276,12 +287,10 @@
             });
             
         function applyFilter() {
-            const filterVal = document.getElementById('sector-filter').value;
-            let filteredNodes = fullData.nodes;
+            const checkboxes = document.querySelectorAll('#sector-filters input[type="checkbox"]');
+            const selectedSectors = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
             
-            if (filterVal !== 'all') {
-                filteredNodes = fullData.nodes.filter(n => n.group === filterVal);
-            }
+            let filteredNodes = fullData.nodes.filter(n => selectedSectors.includes(n.group));
             
             const nodeIds = new Set(filteredNodes.map(n => n.id));
             const filteredLinks = fullData.links.filter(l => 
@@ -308,7 +317,9 @@
             }
         }
         
-        document.getElementById('sector-filter').addEventListener('change', applyFilter);
+        document.querySelectorAll('#sector-filters input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', applyFilter);
+        });
         
         try {
             document.getElementById('focus-btn').addEventListener('click', () => {

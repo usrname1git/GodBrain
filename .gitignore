@@ -1,1 +1,4 @@
 *.exe
+godbrain_core/rust_router/target/
+**/*.pdb
+**/*.rlib
