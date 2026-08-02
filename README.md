@@ -19,7 +19,7 @@ Because the "brain" (MongoDB) is completely decoupled from the compute, GodBrain
 
 - On a PC with a 3090, 4090, or 5090? Great — bigger card, better local LLMs, more headroom. But here's where it gets silly: Apple Silicon's unified memory breaks the matrix. A Mac with 128GB+ UMA (think M5 Max and up) runs **100B+ parameter models locally** without paying the insane dedicated-VRAM tax. At that point you're not running a chatbot — you're basically a droid from Star Wars walking around with a sovereign brain in your bag.
 
-- **Hybrid Intelligence:** You aren't limited to local models. Hook up APIs for Grok, Gemini, Codex, or anything else. Let them crunch the massive datasets and commit their insights directly into Constellation.
+- **Hybrid Intelligence:** You aren't limited to local models. Hook up APIs for Grok, Gemini, Codex, or anything else. Let them crunch the massive datasets and commit their insights directly into the GodBrain Memory Engine.
 - **Unrestricted Execution:** Your local, uncensored models read those teachings from the shared MongoDB and execute the highly-privileged, unrestricted OS-level operations (like running `wsudo` scripts) that heavily-censored corporate APIs refuse to do.
 
 Trying to match a 128GB Mac on a PC means stacking $10k+ of pro GPUs and a power bill that needs its own reactor. The Mac does it on a laptop, fanless-quiet, for a fraction of the watts — which is exactly the point: It scales infinitely with whatever you've got, so the only ceiling is your hardware budget, not the software.
