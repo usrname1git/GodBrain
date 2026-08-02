@@ -2,12 +2,10 @@
 #include <iostream>
 #include "surgery.h"
 #include "telemetry.h"
-#include "constellation.h"
 #include "memory.h"
 
 GodBrainKernel::GodBrainKernel() {
-    // Initialize constellation map or other state
-    constellation_map = constellation::load_map();
+    // Initialize system state
 }
 
 bool GodBrainKernel::validate_sovereignty(const std::string& command_type, const json& payload) {
@@ -35,8 +33,6 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = memory::save_thought(payload);
         } else if (command_type == "query_recent_thoughts") {
             result = memory::get_recent(payload.value("limit", 5));
-        } else if (command_type == "query_constellation") {
-            result = constellation::query(payload);
         } else if (command_type == "get_system_telemetry") {
             result = telemetry::get_current_state();
         } else if (command_type == "propose_sovereign_architect_change") {

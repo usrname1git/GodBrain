@@ -1,18 +1,5 @@
 {
   "servers": {
-    "constellation": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "@constellationdev/mcp@latest"
-      ],
-      "tools": [
-        "code_intel"
-      ],
-      "env": {
-        "CONSTELLATION_ACCESS_KEY": "CONSTELLATION_ACCESS_KEY"
-      }
-    },
     "mongodb": {
       "command": "npx.cmd",
       "args": [

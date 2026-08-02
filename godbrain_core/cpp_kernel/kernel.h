@@ -10,7 +10,6 @@ using json = nlohmann::json;
 class GodBrainKernel {
 private:
     std::map<std::string, std::string> system_state;
-    json constellation_map;
 
     bool validate_sovereignty(const std::string& command_type, const json& payload);
 
