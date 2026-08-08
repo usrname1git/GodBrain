@@ -5,3 +5,5 @@ godbrain_core/rust_router/target/
 *.log
 
 *.log.old
+
+GodBrainService.xml
