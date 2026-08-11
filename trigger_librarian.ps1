@@ -59,7 +59,10 @@ $librarianExe = Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
 # Execute the native pipeline
 Write-Host "Executing: & $librarianExe $sessionId $tempTranscriptPath"
 & $librarianExe $sessionId $tempTranscriptPath
-py $librarianScript
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[LIBRARIAN HOOK] Native pipeline failed with exit code $LASTEXITCODE" -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 Write-Host "[LIBRARIAN HOOK] Distillation complete. Golden record secured."
 Write-Host "Goodbye, Architect. See you next session."

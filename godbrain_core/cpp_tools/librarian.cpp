@@ -313,6 +313,17 @@ private:
         req << "\x02PROMPT " << input_json.length() << " 4096 " << config.llm_temperature << " 0.9 0\n" << input_json << "\n";
         std::string framed_payload = req.str();
 
+        // Read stdout and stderr in a separate thread BEFORE writing to prevent pipe deadlock
+        std::string output = "";
+        std::thread reader([&]() {
+            DWORD read; 
+            CHAR buf[4096]; 
+            while(ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
+                buf[read] = '\0';
+                output.append(buf, read);
+            }
+        });
+
         // Write full prompt to stdin
         DWORD totalWritten = 0;
         DWORD toWrite = framed_payload.length();
@@ -325,17 +336,6 @@ private:
             totalWritten += written;
         }
         CloseHandle(hInWr);
-
-        // Read stdout and stderr
-        std::string output = "";
-        std::thread reader([&]() {
-            DWORD read; 
-            CHAR buf[4096]; 
-            while(ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
-                buf[read] = '\0';
-                output.append(buf, read);
-            }
-        });
 
         // 4. Timeout constraint (Max 120s for LLM processing)
         DWORD waitRes = WaitForSingleObject(pi.hProcess, 120000);
@@ -353,9 +353,9 @@ private:
         if (hJob) CloseHandle(hJob); // Clean up job object
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-        CloseHandle(hOutRd);
         
-        if (reader.joinable()) reader.join();
+        if (reader.joinable()) reader.join(); // Join before closing hOutRd
+        CloseHandle(hOutRd);
 
         if (exitCode != 0) {
             throw std::runtime_error("LLM failed with exit code " + std::to_string(exitCode) + ". Output: " + output);
@@ -612,13 +612,11 @@ bool commit_to_brain(const std::string& session_id, const std::string& raw_trans
         // Ensure trust_tier is always candidate from the provider
         result.payload.trust_tier = "candidate";
         
-        // Ensure Provenance is correct
-        result.payload.provenance = Provenance{
-            envelope.source_id,
-            envelope.source_type,
-            envelope.source_hash,
-            envelope.language
-        };
+        // Ensure Provenance is correct but don't overwrite audit fields if set by provider
+        result.payload.provenance.source_id = envelope.source_id;
+        result.payload.provenance.source_type = envelope.source_type;
+        result.payload.provenance.source_hash = envelope.source_hash;
+        result.payload.provenance.language = envelope.language;
 
         // 3. Schema Validation
         validator->validate(result);
@@ -685,10 +683,12 @@ int main(int argc, char* argv[]) {
     const char* env_prompt = std::getenv("PROMPT_TEMPLATE_PATH");
     const char* env_mongo = std::getenv("MONGO_STORE_PATH");
     
+    std::string exe_dir = get_exe_dir();
+    
     LibrarianConfig config{
-        env_llm ? std::string(env_llm) : "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\godbrain_core\\colibri\\colibri.exe",
-        env_prompt ? std::string(env_prompt) : "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\godbrain_core\\cpp_tools\\prompts\\hermes_v1.json",
-        env_mongo ? std::string(env_mongo) : "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\godbrain_core\\memory_store\\memory-store.exe",
+        env_llm ? std::string(env_llm) : exe_dir + "\\..\\..\\LLM\\colibri_LLM\\colibri.exe",
+        env_prompt ? std::string(env_prompt) : exe_dir + "\\prompts\\hermes_v1.json",
+        env_mongo ? std::string(env_mongo) : exe_dir + "\\..\\memory_store\\memory-store.exe",
         "Colibri-Llama-3-8B",
         "N/A",
         0.1,

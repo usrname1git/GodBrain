@@ -103,6 +103,8 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	}
 
 	// 2. Stage Nodes (Claims/Concepts/Opsec)
+	// IMPORTANT: We only update nodes that are in "candidate" status.
+	// If a node was previously promoted to "verified", a new staging run should NOT revert it to "candidate".
 	var writeModels []mongo.WriteModel
 	nodesColl := s.db.Collection("knowledge_nodes")
 	now := time.Now().UTC()
@@ -123,13 +125,11 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 					"sector":           claim.Type,
 					"content":          claim.Content,
 					"schema_version":   payload.SchemaVersion,
-					"created_at":       now,
-				},
-				"$set": bson.M{
-					"status":           payload.Payload.TrustTier, // normally "candidate"
+					"status":           payload.Payload.TrustTier, // typically "candidate"
 					"confidence":       claim.Confidence,
 					"evidence_spans":   claim.EvidenceSpans,
 					"ingestion_run_id": runID,
+					"created_at":       now,
 				},
 			}).
 			SetUpsert(true)
@@ -152,12 +152,10 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 					"sector":           "general",
 					"content":          concept,
 					"schema_version":   payload.SchemaVersion,
-					"created_at":       now,
-				},
-				"$set": bson.M{
 					"status":           payload.Payload.TrustTier,
 					"confidence":       1.0,
 					"ingestion_run_id": runID,
+					"created_at":       now,
 				},
 			}).
 			SetUpsert(true)
@@ -180,12 +178,10 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 					"sector":           "security",
 					"content":          opsec,
 					"schema_version":   payload.SchemaVersion,
-					"created_at":       now,
-				},
-				"$set": bson.M{
 					"status":           payload.Payload.TrustTier,
 					"confidence":       1.0,
 					"ingestion_run_id": runID,
+					"created_at":       now,
 				},
 			}).
 			SetUpsert(true)
@@ -202,7 +198,52 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	return nil
 }
 
-// PromoteSkill promotes a verified node into a capability Skill.
+// RetrieveCommittedNodes returns all knowledge nodes that belong to a committed ingestion run.
+func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]KnowledgeNode, error) {
+	nodesColl := s.db.Collection("knowledge_nodes")
+	runsColl := s.db.Collection("ingestion_runs")
+
+	// 1. Get all committed run IDs
+	cursor, err := runsColl.Find(ctx, bson.M{"status": StatusCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var committedRuns []IngestionRun
+	if err = cursor.All(ctx, &committedRuns); err != nil {
+		return nil, err
+	}
+
+	var committedRunIDs []string
+	for _, r := range committedRuns {
+		committedRunIDs = append(committedRunIDs, r.RunID)
+	}
+
+	if len(committedRunIDs) == 0 {
+		return []KnowledgeNode{}, nil
+	}
+
+	// 2. Add run ID filter
+	if filter == nil {
+		filter = bson.M{}
+	}
+	filter["ingestion_run_id"] = bson.M{"$in": committedRunIDs}
+
+	// 3. Find nodes
+	nodeCursor, err := nodesColl.Find(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer nodeCursor.Close(ctx)
+
+	var nodes []KnowledgeNode
+	if err = nodeCursor.All(ctx, &nodes); err != nil {
+		return nil, err
+	}
+
+	return nodes, nil
+}
 // Ensures that the origin node exists, is verified, and the hash matches exactly.
 func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer string) (*Skill, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")

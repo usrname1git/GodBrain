@@ -104,12 +104,18 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	nodeID := "node_123"
 
 	_, _ = nodesColl.InsertOne(ctx, memorystore.KnowledgeNode{
-		ID:        nodeID,
-		StableID:  "stable_123",
-		Version:   "v1",
-		Status:    "verified",
-		Content:   "Actual Content",
-		CreatedAt: time.Now(),
+		ID:             nodeID,
+		StableID:       "stable_123",
+		Version:        "v1",
+		Status:         "verified",
+		Content:        "Actual Content",
+		IngestionRunID: "dummy_run",
+		CreatedAt:      time.Now(),
+	})
+
+	_, _ = db.Collection("ingestion_runs").InsertOne(ctx, memorystore.IngestionRun{
+		RunID:  "dummy_run",
+		Status: memorystore.StatusCommitted,
 	})
 
 	// Attempt promotion with WRONG hash
