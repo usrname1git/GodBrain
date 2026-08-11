@@ -10,8 +10,14 @@ GodBrainKernel::GodBrainKernel() {
 
 bool GodBrainKernel::validate_sovereignty(const std::string& command_type, const json& payload) {
     if (command_type == "execute_godbrain_script" || command_type == "propose_sovereign_architect_change") {
-        if (!payload.contains("reasoning")) {
+        if (!payload.contains("reasoning") || !payload["reasoning"].is_string()) {
             std::cout << "[KERNEL SECURITY] High risk command rejected: No reasoning provided." << std::endl;
+            return false;
+        }
+        const std::string& reasoning = payload["reasoning"].get_ref<const std::string&>();
+        bool is_blank = reasoning.find_first_not_of(" \t\r\n") == std::string::npos;
+        if (is_blank) {
+            std::cout << "[KERNEL SECURITY] High risk command rejected: reasoning is empty/whitespace." << std::endl;
             return false;
         }
     }

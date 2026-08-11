@@ -1,0 +1,13 @@
+# Keep the Docker build context (this directory) small and reproducible.
+# `docker/Dockerfile` only COPYs `c/`, but Docker still uploads everything
+# that isn't excluded here to the daemon before applying COPY filters.
+.git
+node_modules
+web/node_modules
+web/dist
+desktop/src-tauri/target
+temp/
+*.zip
+site/
+docs/
+*.md

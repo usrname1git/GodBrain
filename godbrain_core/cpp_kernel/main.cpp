@@ -4,16 +4,127 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <sstream>
 #include <thread>
 #include <algorithm>
+#include <cstdlib>
 #include "httplib.h"
 #include "json.hpp"
+
+// 3 minute ceiling on a single Colibri invocation. Defined once so the wait
+// timeout and the message we return on expiry can never drift apart.
+static const DWORD COLIBRI_TIMEOUT_MS = 180000;
 
 #include "kernel.h"
 
 using json = nlohmann::json;
 
 GodBrainKernel kernel_hub; // Global kernel instance
+
+// Bearer token required for any request that carries a "command_type" (i.e. a
+// privileged kernel dispatch). Loaded once from the environment at startup so
+// the arbitrary-command capability stays available to trusted callers while
+// being gated behind an explicit secret instead of open to any local process.
+static std::string g_api_token;
+
+// Directory that holds the static Galaxy UI. Resolved once at startup from
+// GODBRAIN_FRONTEND_DIR or a portable default (see resolve_frontend_dir()).
+static std::string g_frontend_dir;
+
+static std::string get_exe_dir() {
+    char path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return "";
+    std::string full(path, len);
+    size_t pos = full.find_last_of("\\/");
+    return pos == std::string::npos ? "" : full.substr(0, pos);
+}
+
+static bool path_exists(const std::string& p) {
+    if (p.empty()) return false;
+    DWORD attrs = GetFileAttributesA(p.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+// Resolves the Colibri C-Engine executable path. Order of preference:
+//   1. GODBRAIN_COLIBRI_PATH environment override (explicit, always wins).
+//   2. A handful of repo-relative candidates, tried both from the running
+//      executable's own directory and from the current working directory, so
+//      this works whether cpp_kernel.exe lives at godbrain_core/cpp_kernel/
+//      or a build subdirectory beneath it, without baking in any one user's
+//      absolute path.
+static std::string resolve_colibri_path() {
+    const char* env = std::getenv("GODBRAIN_COLIBRI_PATH");
+    if (env && *env) return std::string(env);
+
+    static const char* candidates[] = {
+        "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
+        "\\..\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
+        "\\LLM\\colibri_LLM\\c\\colibri.exe",
+    };
+    std::string exe_dir = get_exe_dir();
+    for (const char* rel : candidates) {
+        if (!exe_dir.empty()) {
+            std::string cand = exe_dir + rel;
+            if (path_exists(cand)) return cand;
+        }
+    }
+    // Fall back to a cwd-relative guess (matches the "../frontend" convention
+    // used elsewhere in this file when launched from godbrain_core/cpp_kernel).
+    std::string fallback = "..\\..\\LLM\\colibri_LLM\\c\\colibri.exe";
+    if (path_exists(fallback)) return fallback;
+    std::cerr << "[SYS] WARNING: could not locate colibri.exe via GODBRAIN_COLIBRI_PATH or repo-relative defaults; "
+                 "using best-effort path '" << fallback << "'." << std::endl;
+    return fallback;
+}
+
+// Resolves the frontend static directory the same way (env override first,
+// then a repo-relative default). Returns a path suitable for both
+// std::ifstream and httplib::Server::set_mount_point.
+static std::string resolve_frontend_dir() {
+    const char* env = std::getenv("GODBRAIN_FRONTEND_DIR");
+    if (env && *env) return std::string(env);
+    return "../frontend";
+}
+
+// Origins allowed to talk to this loopback-only API: localhost/127.0.0.1 on
+// any port (dev servers, the packaged UI, etc.) plus the Tauri webview
+// origins. No wildcard is ever accepted.
+static bool is_trusted_origin(const std::string& origin) {
+    if (origin.empty()) return false;
+    if (origin == "tauri://localhost") return true;
+    size_t scheme_end = origin.find("://");
+    if (scheme_end == std::string::npos) return false;
+    std::string rest = origin.substr(scheme_end + 3);
+    size_t slash = rest.find('/');
+    if (slash != std::string::npos) rest = rest.substr(0, slash);
+    size_t colon = rest.find(':');
+    std::string host = (colon != std::string::npos) ? rest.substr(0, colon) : rest;
+    return host == "localhost" || host == "127.0.0.1" || host == "tauri.localhost";
+}
+
+// Constant-time-ish comparison so an invalid bearer token doesn't leak length
+// information via early-exit timing any more than necessary.
+static bool token_matches(const std::string& provided) {
+    if (g_api_token.empty() || provided.empty()) return false;
+    if (provided.size() != g_api_token.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < provided.size(); i++) {
+        diff |= (unsigned char)(provided[i] ^ g_api_token[i]);
+    }
+    return diff == 0;
+}
+
+static std::string extract_bearer_token(const httplib::Request& req) {
+    auto it = req.headers.find("Authorization");
+    if (it == req.headers.end()) return "";
+    const std::string& val = it->second;
+    const std::string prefix = "Bearer ";
+    if (val.size() > prefix.size() && val.compare(0, prefix.size(), prefix) == 0) {
+        return val.substr(prefix.size());
+    }
+    return "";
+}
 
 std::string exec_cmd(const std::string& cmd) {
     char buffer[256];
@@ -53,56 +164,118 @@ std::string run_colibri(const std::string& prompt) {
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
 
-    std::string cmd = "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\LLM\\colibri_LLM\\c\\colibri.exe 64 8 8";
-    
-    SetEnvironmentVariableA("SNAP", "C:\\nvme\\glm52");
+    // Quote the resolved path: it may contain spaces (e.g. under
+    // "Program Files" or a user directory with a space in it), and an
+    // unquoted path lets CreateProcess misinterpret the first space as the
+    // end of the executable name and the rest as arguments.
+    std::string cmd = "\"" + resolve_colibri_path() + "\" 64 8 8";
+
+    const char* snap_env = std::getenv("GODBRAIN_SNAPSHOT_PATH");
+    SetEnvironmentVariableA("SNAP", (snap_env && *snap_env) ? snap_env : "C:\\nvme\\glm52");
     SetEnvironmentVariableA("NGEN", "64");
     SetEnvironmentVariableA("COLI_RAM_OVERCOMMIT", "1");
     SetEnvironmentVariableA("COLI_CUDA", "1");
     SetEnvironmentVariableA("CUDA_EXPERT_GB", "12");
     SetEnvironmentVariableA("COLI_PROMPT", prompt.c_str());
 
-    BOOL success = CreateProcessA(NULL, (LPSTR)cmd.c_str(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    // CreateProcessA may write into lpCommandLine (it can rewrite the
+    // separating space into a NUL while parsing argv[0]), so it must never be
+    // handed a pointer into a std::string's internal buffer (via a
+    // cast-away-const c_str()) — that's UB. Use a private, mutable buffer.
+    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+    cmd_buf.push_back('\0');
+
+    BOOL success = CreateProcessA(NULL, cmd_buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
 
     CloseHandle(hOutWr);
     CloseHandle(hInRd);
 
-    if (!success) return "Error: Failed to spawn Colibri C-Engine natively.";
+    if (!success) {
+        CloseHandle(hInWr);
+        CloseHandle(hOutRd);
+        return "Error: Failed to spawn Colibri C-Engine natively.";
+    }
 
     // No need to write to stdin if we are passing prompt via env var
     CloseHandle(hInWr); // Sends EOF!
 
-    std::string output = "";
-    DWORD read; 
-    CHAR buf[4096]; 
-    while(ReadFile(hOutRd, buf, sizeof(buf), &read, NULL) && read > 0) {
-        output.append(buf, read);
+    // Read stdout on a background thread instead of blocking on ReadFile
+    // before WaitForSingleObject: a hung child that keeps writing (or just
+    // keeps the pipe open) would otherwise stall this synchronous read
+    // forever, and WaitForSingleObject's timeout below would never even be
+    // reached.
+    std::string output;
+    std::thread reader([&]() {
+        DWORD read;
+        CHAR buf[4096];
+        while (ReadFile(hOutRd, buf, sizeof(buf), &read, NULL) && read > 0) {
+            output.append(buf, read);
+        }
+    });
+
+    DWORD wait_result = WaitForSingleObject(pi.hProcess, COLIBRI_TIMEOUT_MS);
+    bool timed_out = (wait_result == WAIT_TIMEOUT);
+    if (timed_out) {
+        // Terminate only the exact child process we spawned (by handle) —
+        // never by image name, which would kill every colibri.exe on the
+        // machine, including unrelated instances a user is running directly.
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000); // reap the terminated process
     }
 
-    WaitForSingleObject(pi.hProcess, 180000); // 3 min timeout
+    // The reader thread's ReadFile loop only returns once every write handle
+    // to the pipe is closed, which happens once the child (the pipe's sole
+    // writer) exits or is terminated above — so this join can no longer
+    // block indefinitely.
+    reader.join();
+
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(hOutRd);
+
+    if (timed_out) {
+        return "Error: Colibri C-Engine timed out after 180s and was terminated.";
+    }
 
     return output;
 }
 
 int main() {
     std::cout << "[SYS] Booting GodBrain C++ Core Router..." << std::endl;
+
+    const char* token_env = std::getenv("GODBRAIN_API_TOKEN");
+    if (token_env && *token_env) {
+        g_api_token = token_env;
+        std::cout << "[SYS] GODBRAIN_API_TOKEN loaded. Privileged commands require 'Authorization: Bearer <token>'." << std::endl;
+    } else {
+        std::cout << "[SYS] WARNING: GODBRAIN_API_TOKEN is not set. Requests carrying 'command_type' will be rejected (403) "
+                     "until a token is configured in the environment." << std::endl;
+    }
+
+    g_frontend_dir = resolve_frontend_dir();
+
     httplib::Server svr;
 
-    svr.Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
+    svr.Options(R"(.*)", [](const httplib::Request& req, httplib::Response& res) {
+        auto it = req.headers.find("Origin");
+        if (it != req.headers.end() && is_trusted_origin(it->second)) {
+            res.set_header("Access-Control-Allow-Origin", it->second);
+            res.set_header("Vary", "Origin");
+        }
         res.set_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     });
 
-    auto set_cors = [](httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
+    auto set_cors = [](const httplib::Request& req, httplib::Response& res) {
+        auto it = req.headers.find("Origin");
+        if (it != req.headers.end() && is_trusted_origin(it->second)) {
+            res.set_header("Access-Control-Allow-Origin", it->second);
+            res.set_header("Vary", "Origin");
+        }
     };
 
-    svr.Get("/api/test", [&](const httplib::Request&, httplib::Response& res) {
-        set_cors(res);
+    svr.Get("/api/test", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
         res.set_content("C++ Core Operational!", "text/plain");
     });
 
@@ -111,7 +284,7 @@ int main() {
     });
 
     svr.Get("/galaxy", [&](const httplib::Request&, httplib::Response& res) {
-        std::ifstream file("../frontend/galaxy.html");
+        std::ifstream file(g_frontend_dir + "/galaxy.html");
         if (file) {
             std::stringstream buffer;
             buffer << file.rdbuf();
@@ -122,10 +295,10 @@ int main() {
         }
     });
 
-    svr.set_mount_point("/frontend", "../frontend");
+    svr.set_mount_point("/frontend", g_frontend_dir);
 
-    svr.Get("/api/graph", [&](const httplib::Request&, httplib::Response& res) {
-        set_cors(res);
+    svr.Get("/api/graph", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
         std::string js = "JSON.stringify(db.nodes.find({}, {title:1, type:1, tags:1}).toArray())";
         std::string cmd = "mongosh godbrain --quiet --eval \"" + js + "\"";
         std::string out = exec_cmd(cmd);
@@ -156,13 +329,34 @@ int main() {
     });
 
     svr.Post("/api/chat", [&](const httplib::Request& req, httplib::Response& res) {
-        set_cors(res);
+        set_cors(req, res);
         try {
             json payload = json::parse(req.body);
             std::string user_msg = payload.value("message", "");
             
-            // Check if it's a kernel command directly
+            // Check if it's a kernel command directly. This is the deliberately
+            // powerful arbitrary-command / self-modification surface, so it is
+            // gated behind an explicit, non-guessable bearer token instead of
+            // being removed.
             if (payload.contains("command_type")) {
+                if (g_api_token.empty()) {
+                    std::cerr << "[KERNEL SECURITY] Rejected privileged command: GODBRAIN_API_TOKEN is not configured." << std::endl;
+                    res.status = 403;
+                    res.set_content("{\"status\":\"error\",\"message\":\"Privileged commands are disabled: server has no API token configured\"}", "application/json");
+                    return;
+                }
+                std::string provided = extract_bearer_token(req);
+                if (provided.empty()) {
+                    res.status = 401;
+                    res.set_content("{\"status\":\"error\",\"message\":\"Missing bearer token for privileged command\"}", "application/json");
+                    return;
+                }
+                if (!token_matches(provided)) {
+                    std::cerr << "[KERNEL SECURITY] Rejected privileged command: invalid bearer token." << std::endl;
+                    res.status = 403;
+                    res.set_content("{\"status\":\"error\",\"message\":\"Invalid bearer token\"}", "application/json");
+                    return;
+                }
                 std::string cmd_type = payload["command_type"];
                 json k_res = kernel_hub.dispatch(cmd_type, payload);
                 res.set_content(k_res.dump(), "application/json");
@@ -240,7 +434,7 @@ int main() {
         }
     });
 
-    std::cout << "[SYS] Listening on http://0.0.0.0:8083" << std::endl;
-    svr.listen("0.0.0.0", 8083);
+    std::cout << "[SYS] Listening on http://127.0.0.1:8083 (loopback only)" << std::endl;
+    svr.listen("127.0.0.1", 8083);
     return 0;
 }

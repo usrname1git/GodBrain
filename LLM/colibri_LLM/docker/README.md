@@ -15,7 +15,7 @@ A simple guide to running **Colibrì**, a local inference engine based on GLM 5.
     * [Software](https://github.com/JustVugg/colibri/blob/main/docker/README.md#software)
 * [How to get started](https://github.com/JustVugg/colibri/blob/main/docker/README.md#how-to-get-started)
     * [Step 1: Download the model](https://github.com/JustVugg/colibri/blob/main/docker/README.md#step-2-download-the-colibr%C3%AC-dockerfile)
-    * [Step 2: Download the Colibrì Dockerfile](https://github.com/JustVugg/colibri/blob/main/docker/README.md#step-2-download-the-colibr%C3%AC-dockerfile)
+    * [Step 2: Get the Colibrì source](https://github.com/JustVugg/colibri/blob/main/docker/README.md#step-2-get-the-colibr%C3%AC-source)
     * [Step 3: Build the Docker image](https://github.com/JustVugg/colibri/blob/main/docker/README.md#step-3-build-the-docker-image)
     * [Step 4: Start Colibrì](https://github.com/JustVugg/colibri/blob/main/docker/README.md#step-4-start-colibr%C3%AC)
     * [What does that command mean?](https://github.com/JustVugg/colibri/blob/main/docker/README.md#what-does-that-command-mean)
@@ -95,33 +95,38 @@ If you are on Windows and cannot get it to work with Python:
 
 ---
 
-### Step 2: Download the Colibrì Dockerfile
+### Step 2: Get the Colibrì source
 
-1. Go to: [https://github.com/JustVugg/colibri/blob/main/docker/Dockerfile](https://www.google.com/search?q=https://github.com/JustVugg/colibri/blob/main/docker/Dockerfile)
-2. Click the **Download** button (⬇️ icon) in the top right
-3. Save the file in a folder (e.g., `C:\LLM\Colibrì`)
+1. Clone or download the repository (e.g., [https://github.com/JustVugg/colibri](https://github.com/JustVugg/colibri))
+2. Save it in a folder (e.g., `C:\LLM\Colibrì`)
+
+The Dockerfile lives at `docker/Dockerfile` inside that checkout and builds
+straight from the `LLM/colibri_LLM` sources — there is no separate download
+step for it.
 
 ---
 
 ### Step 3: Build the Docker image
 
-Open the terminal (PowerShell on Windows, Terminal on Mac/Linux) **in the folder where you saved the Dockerfile** and type:
+Open the terminal (PowerShell on Windows, Terminal on Mac/Linux) **with `LLM/colibri_LLM` as your working directory** (the folder containing `docker/`, `c/`, etc.) and type:
 
 **Windows:**
 
 ```bash
-docker build -t colibri-i .
+docker build -f docker/Dockerfile -t colibri-i .
 ```
 
 **Linux/Mac:**
 
 ```bash
-sudo docker build -t colibri-i .
+sudo docker build -f docker/Dockerfile -t colibri-i .
 ```
+
+The build context must be `LLM/colibri_LLM` itself (not the `docker/` folder), since that is what the Dockerfile's `COPY` instructions are relative to.
 
 Wait for it to finish (a few minutes). If everything goes well, you will see: `Successfully tagged colibri-i:latest`
 
-> **If you want to receive repository updates**: First delete the old image with `docker rmi colibri-i` and rebuild.
+> **If you want to receive repository updates**: Pull the latest sources, then delete the old image with `docker rmi colibri-i` and rebuild.
 
 ---
 
@@ -332,19 +337,19 @@ docker run ... (without sudo)
 
 ### ❌ "Image not found" or error during build
 
-**Cause**: The Dockerfile is corrupted or not in the right folder.
+**Cause**: The build was run with the wrong context/working directory, or the checkout is incomplete.
 
 **Solution**:
 
-1. Verify that the Dockerfile is in the folder where you open the terminal:
+1. Verify you are in `LLM/colibri_LLM` (the folder containing `docker/`, `c/`, etc.) and that the Dockerfile exists at the expected path:
 ```bash
-ls Dockerfile  # Mac/Linux
-dir Dockerfile # Windows
+ls docker/Dockerfile  # Mac/Linux
+dir docker\Dockerfile # Windows
 ```
 
-2. Redownload the Dockerfile from the GitHub repository
+2. Re-pull/re-clone the repository if files are missing
 3. Delete the old image: `docker rmi colibri-i`
-4. Retry the build
+4. Retry the build with `docker build -f docker/Dockerfile -t colibri-i .`
 
 ---
 

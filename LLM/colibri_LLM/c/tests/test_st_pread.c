@@ -77,13 +77,21 @@ int main(void) {
     printf("test_st_pread: truncation subtest skipped on Windows\n");
 #endif
 
+    st_close(&S);   /* release the shard fd(s) before removing the directory: on
+                     * Windows an open handle without FILE_SHARE_DELETE blocks
+                     * the rmdir below. */
+
     char cmd[600];
 #ifdef _WIN32
     snprintf(cmd, sizeof(cmd), "rmdir /s /q %s", dir);
 #else
     snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
 #endif
-    if (system(cmd)) {}
+    int cleanup_rc = system(cmd);
+    if (cleanup_rc != 0) {
+        fprintf(stderr, "test_st_pread: cleanup command '%s' failed (status %d)\n", cmd, cleanup_rc);
+        return 1;
+    }
     printf("test_st_pread: chunk loop + honest truncation error: ok\n");
     return 0;
 }

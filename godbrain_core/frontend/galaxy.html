@@ -302,7 +302,7 @@
             document.getElementById('stats').innerText = 'Nodes: ' + filteredNodes.length + ' | Edges: ' + filteredLinks.length;
             
             const dataList = document.getElementById('node-list');
-            dataList.innerHTML = '';
+            while (dataList.firstChild) dataList.removeChild(dataList.firstChild);
             filteredNodes.forEach(n => {
                 const opt = document.createElement('option');
                 opt.value = n.id;
@@ -344,28 +344,64 @@
         const chatInput = document.getElementById('chat-input');
         const chatHistory = document.getElementById('chat-history');
         const sendBtn = document.getElementById('send-btn');
-        
+
+        // Builds a chat message element without ever parsing untrusted text
+        // as HTML. Preserves deliberate line breaks by inserting <br>
+        // elements between text nodes rather than injecting markup.
+        function appendChatMessage(className, prefix, text, color) {
+            const el = document.createElement('div');
+            el.className = className;
+            if (color) el.style.color = color;
+
+            if (prefix) {
+                el.appendChild(document.createTextNode(prefix + ' '));
+            }
+
+            const lines = String(text).split('\n');
+            lines.forEach((line, index) => {
+                if (index > 0) el.appendChild(document.createElement('br'));
+                el.appendChild(document.createTextNode(line));
+            });
+
+            chatHistory.appendChild(el);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            return el;
+        }
+
         function sendMsg() {
             console.log("Chat button clicked!");
             const text = chatInput.value.trim();
             if(!text) return;
-            
-            chatHistory.innerHTML += '<div class="user-msg">[USER] ' + text + '</div>';
+
+            appendChatMessage('user-msg', '[USER]', text);
             chatInput.value = '';
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-            
+
             fetch('/api/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({message: text})
             })
-            .then(res => res.json())
+            .then(res => {
+                return res.json().catch(() => {
+                    throw new Error('Server returned invalid JSON (HTTP ' + res.status + ')');
+                }).then(data => {
+                    if (!res.ok) {
+                        throw new Error((data && data.error) || ('API returned ' + res.status));
+                    }
+                    return data;
+                });
+            })
             .then(data => {
-                chatHistory.innerHTML += '<div class="sys-msg">[SYS] ' + (data.response || data.error) + '</div>';
-                chatHistory.scrollTop = chatHistory.scrollHeight;
+                if (data && typeof data.response === 'string') {
+                    appendChatMessage('sys-msg', '[SYS]', data.response);
+                } else if (data && typeof data.error === 'string') {
+                    appendChatMessage('sys-msg', '[ERR]', data.error, 'red');
+                } else {
+                    appendChatMessage('sys-msg', '[ERR]', 'Malformed server response.', 'red');
+                }
             })
             .catch(err => {
-                chatHistory.innerHTML += '<div class="sys-msg" style="color:red;">[ERR] Connection lost</div>';
+                appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'Connection lost', 'red');
             });
         }
         

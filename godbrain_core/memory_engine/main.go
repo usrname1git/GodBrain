@@ -63,17 +63,21 @@ func main() {
 			MERGE (s:Session {id: $session_id})
 			SET s.summary = $summary, s.timestamp = datetime()
 			WITH s
-			
-			// Link core concepts
-			UNWIND $concepts AS concept
-			MERGE (c:Concept {name: concept})
-			MERGE (s)-[:LEARNED]->(c)
-			
+
+			// Link core concepts. FOREACH (not UNWIND) so an empty $concepts
+			// list is a no-op instead of dropping the row and silently
+			// discarding the Session write that already happened above.
+			FOREACH (concept IN $concepts |
+				MERGE (c:Concept {name: concept})
+				MERGE (s)-[:LEARNED]->(c)
+			)
+
 			WITH s
-			// Link OpSec rules
-			UNWIND $opsec AS rule
-			MERGE (o:OpSecRule {rule: rule})
-			MERGE (s)-[:ESTABLISHED]->(o)
+			// Link OpSec rules, same empty-list-safe pattern.
+			FOREACH (rule IN $opsec |
+				MERGE (o:OpSecRule {rule: rule})
+				MERGE (s)-[:ESTABLISHED]->(o)
+			)
 		`
 		params := map[string]any{
 			"session_id": payload.SessionID,
@@ -81,7 +85,18 @@ func main() {
 			"concepts":   payload.Concepts,
 			"opsec":      payload.OpSec,
 		}
-		return tx.Run(ctx, query, params)
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		// tx.Run only queues the query; the driver doesn't actually execute it
+		// (and surface any Cypher/runtime error) until the result is consumed.
+		// Without this, a bad query would silently report success.
+		summary, err := result.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return summary, nil
 	})
 
 	if err != nil {

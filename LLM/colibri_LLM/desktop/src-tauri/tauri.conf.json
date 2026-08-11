@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "org.colibri.desktop",
   "build": {
-    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeDevCommand": "npm --prefix ../../web run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm --prefix ../web run build",
+    "beforeBuildCommand": "npm --prefix ../../web run build",
     "frontendDist": "../../web/dist"
   },
   "app": {
@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http: https:"
     }
   },
   "bundle": {

@@ -43,6 +43,11 @@ typedef struct {
     int        mfds[512];  /* MIRROR: fds of the second model copy (dual-SSD), -1 = absent */
     int        mdfds[512]; /* O_DIRECT twins of the second copy, -1 = absent */
     int        nmirror;    /* files accepted into the mirror (0 = mirror inactive) */
+    int        mirror_init_done; /* 1 once st_mirror_init has run at least once:
+                                   * mfds/mdfds are only guaranteed to hold -1 or a
+                                   * real fd after that; beforehand they are
+                                   * zero-initialized (fd 0 = stdin!) and must never
+                                   * be closed. */
     int       *hidx;      /* hash map nome->indice (open addressing): con ~120k tensori
                            * (GLM: 256 expert x 78 layer x 3 x 2) la scansione lineare
                            * costava decine di secondi/token (misurato sul primo run reale) */
@@ -132,12 +137,13 @@ static int st_direct_fd_rep(shards *S, int fd, int rep) {
  * expert shards). Returns the number of accepted files. The mirror is NEVER
  * written to: .coli_usage/.coli_kv keep deriving from the primary alone. */
 static int st_mirror_init(shards *S, const char *dir) {
-    if (S->nmirror) for (int i = 0; i < S->nfd; i++) {   /* re-init: drop the old replica */
+    if (S->mirror_init_done) for (int i = 0; i < S->nfd; i++) {   /* re-init: drop the old replica */
         if (S->mfds[i] >= 0) close(S->mfds[i]);
         if (S->mdfds[i] >= 0) close(S->mdfds[i]);
     }
     for (int i = 0; i < ST_MAX_SHARDS; i++) { S->mfds[i] = -1; S->mdfds[i] = -1; }
     S->nmirror = 0;
+    S->mirror_init_done = 1;
     for (int i = 0; i < S->nfd; i++) {
         const char *base = strrchr(S->paths[i], '/');
 #ifdef _WIN32
@@ -361,6 +367,34 @@ static void st_init_multi(shards *S, const char *snap_dir, const char *extra_dir
 
 /* backward-compatible single-directory entry point */
 static void st_init(shards *S, const char *snap_dir) { st_init_multi(S, snap_dir, NULL); }
+
+/* Releases every resource st_init/st_init_multi/st_mirror_init handed to S:
+ * closes every primary, O_DIRECT-twin, and mirror fd it opened; frees the
+ * strdup'd shard paths and tensor names, the tensor array, and the hash
+ * index; then zeroes S so a repeated st_close (or a fresh st_init reusing the
+ * same struct) is safe. Idempotent: safe to call twice in a row, and safe to
+ * call on a struct that was only zero-initialized (e.g. via memset) and never
+ * passed to st_init. Only frees/closes what S itself owns — nothing here is
+ * shared with or owned by the caller. */
+static void st_close(shards *S) {
+    if (!S) return;
+    for (int i = 0; i < S->nfd; i++) {
+        if (S->fds[i] >= 0) close(S->fds[i]);
+        if (S->dfds[i] >= 0) close(S->dfds[i]);
+        /* mfds/mdfds only hold meaningful values once st_mirror_init has run
+         * at least once; before that they are zero-initialized memory (0 is
+         * a valid-looking but NOT owned fd — stdin) and must not be closed. */
+        if (S->mirror_init_done) {
+            if (S->mfds[i] >= 0) close(S->mfds[i]);
+            if (S->mdfds[i] >= 0) close(S->mdfds[i]);
+        }
+        free(S->paths[i]);
+    }
+    for (int i = 0; i < S->n; i++) free(S->t[i].name);
+    free(S->t);
+    free(S->hidx);
+    memset(S, 0, sizeof(*S));
+}
 
 static st_tensor *st_find(shards *S, const char *name) {
     if (S->hidx) {
