@@ -22,8 +22,8 @@ Here is the proposed roster of specialized sovereign agents we need to build for
 
 ## 4. The Librarian (Graph DB Archivist)
 * **Purpose:** The memory manager.
-* **Function:** Constantly runs in the background reading the MongoDB/Neo4j graphs. Deduplicates overlapping nodes, generates embeddings, and creates summary nodes (e.g., combining 10 articles on Windows Telemetry into one "Master Telemetry" node).
-* **Tools:** MongoDB/Neo4j full read/write, Semantic clustering.
+* **Function:** Constantly runs in the background reading the MongoDB graphs. Deduplicates overlapping nodes, generates embeddings, and creates summary nodes (e.g., combining 10 articles on Windows Telemetry into one "Master Telemetry" node).
+* **Tools:** MongoDB full read/write, Semantic clustering.
 
 ## 5. The Forge (C/CUDA Optimizer)
 * **Purpose:** The engine mechanic.
