@@ -19,6 +19,15 @@
 
 using json = nlohmann::json;
 
+static std::string get_exe_dir() {
+    char path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return "";
+    std::string full(path, len);
+    size_t pos = full.find_last_of("\\/");
+    return pos == std::string::npos ? "" : full.substr(0, pos);
+}
+
 std::string get_iso_timestamp() {
     auto now = std::chrono::system_clock::now();
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
@@ -324,18 +333,20 @@ private:
             }
         });
 
-        // Write full prompt to stdin
-        DWORD totalWritten = 0;
-        DWORD toWrite = framed_payload.length();
-        const char* ptr = framed_payload.c_str();
-        while (totalWritten < toWrite) {
-            DWORD written = 0;
-            if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
-                break;
+        // Write full prompt to stdin in a separate thread to prevent deadlocking if process hangs on boot
+        std::thread writer([&]() {
+            DWORD totalWritten = 0;
+            DWORD toWrite = framed_payload.length();
+            const char* ptr = framed_payload.c_str();
+            while (totalWritten < toWrite) {
+                DWORD written = 0;
+                if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
+                    break;
+                }
+                totalWritten += written;
             }
-            totalWritten += written;
-        }
-        CloseHandle(hInWr);
+            CloseHandle(hInWr);
+        });
 
         // 4. Timeout constraint (Max 120s for LLM processing)
         DWORD waitRes = WaitForSingleObject(pi.hProcess, 120000);
@@ -343,8 +354,16 @@ private:
             if (hJob) CloseHandle(hJob); // Kills the entire process tree automatically
             else TerminateProcess(pi.hProcess, 1);
             
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(hOutRd);
-            if (reader.joinable()) reader.join();
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+            
+            if (reader.joinable()) reader.join(); // Join before closing hOutRd
+            CloseHandle(hOutRd);
+            
+            if (writer.joinable()) {
+                CancelSynchronousIo(writer.native_handle()); // Abort WriteFile if stuck
+                writer.join();
+            }
+            
             throw std::runtime_error("LLM timed out after 120s.");
         }
 
@@ -356,6 +375,8 @@ private:
         
         if (reader.joinable()) reader.join(); // Join before closing hOutRd
         CloseHandle(hOutRd);
+        
+        if (writer.joinable()) writer.join();
 
         if (exitCode != 0) {
             throw std::runtime_error("LLM failed with exit code " + std::to_string(exitCode) + ". Output: " + output);

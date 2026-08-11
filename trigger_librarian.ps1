@@ -39,7 +39,7 @@ if (Test-Path $checkpointsDir) {
     }
 } else {
     Write-Host "[WARN] No checkpoints found. Librarian will need to parse the raw session DB."
-    $transcript = "RAW_SESSION_DUMP_PLACEHOLDER"
+    $transcript = "No checkpoints available. Raw session DB requires extraction."
 }
 
 if ([string]::IsNullOrWhiteSpace($transcript)) {
@@ -59,9 +59,16 @@ $librarianExe = Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
 # Execute the native pipeline
 Write-Host "Executing: & $librarianExe $sessionId $tempTranscriptPath"
 & $librarianExe $sessionId $tempTranscriptPath
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[LIBRARIAN HOOK] Native pipeline failed with exit code $LASTEXITCODE" -ForegroundColor Red
-    exit $LASTEXITCODE
+$librarianExitCode = $LASTEXITCODE
+
+# Clean up temp file
+if (Test-Path $tempTranscriptPath) {
+    Remove-Item -Force $tempTranscriptPath
+}
+
+if ($librarianExitCode -ne 0) {
+    Write-Host "[LIBRARIAN HOOK] Native pipeline failed with exit code $librarianExitCode" -ForegroundColor Red
+    exit $librarianExitCode
 }
 
 Write-Host "[LIBRARIAN HOOK] Distillation complete. Golden record secured."

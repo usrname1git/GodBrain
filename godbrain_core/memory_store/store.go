@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -75,6 +76,15 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 
 	// If the runID matches the one we just generated, it was created new.
 	createdNew := run.RunID == newRunID
+	
+	if createdNew && retryOf != nil {
+		// Migrate candidate nodes from the failed run to this new run
+		s.db.Collection("knowledge_nodes").UpdateMany(ctx,
+			bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
+			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
+		)
+	}
+	
 	return &run, createdNew, nil
 }
 
@@ -108,6 +118,19 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	var writeModels []mongo.WriteModel
 	nodesColl := s.db.Collection("knowledge_nodes")
 	now := time.Now().UTC()
+	
+	// Update IngestionRun with provenance details
+	_, _ = s.db.Collection("ingestion_runs").UpdateOne(ctx,
+		bson.M{"run_id": runID},
+		bson.M{
+			"$set": bson.M{
+				"prompt_hash":     payload.Payload.Provenance.PromptHash,
+				"model_id":        payload.Payload.Provenance.ModelID,
+				"model_hash":      payload.Payload.Provenance.ModelHash,
+				"llm_temperature": payload.Payload.Provenance.LLMTemperature,
+			},
+		},
+	)
 
 	// Claims
 	for _, claim := range payload.Payload.Claims {
@@ -250,7 +273,14 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 
 	// 1. Fetch the origin node
 	var node KnowledgeNode
-	err := nodesColl.FindOne(ctx, bson.M{"_id": originNodeID}).Decode(&node)
+	
+	// Handle ObjectID vs string lookup gracefully
+	filter := bson.M{"_id": originNodeID}
+	if objID, parseErr := primitive.ObjectIDFromHex(originNodeID); parseErr == nil {
+		filter = bson.M{"_id": objID}
+	}
+	
+	err := nodesColl.FindOne(ctx, filter).Decode(&node)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, ErrRunNotFound

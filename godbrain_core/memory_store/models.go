@@ -5,18 +5,22 @@ import "time"
 // IngestionRun models the state machine: staging -> validated -> committed / failed
 // Only committed runs allow their nodes/edges to be queried.
 type IngestionRun struct {
-	ID            string    `bson:"_id,omitempty" json:"id"`
-	RunID         string    `bson:"run_id" json:"run_id"` // Stable UUID
-	Status        string    `bson:"status" json:"status"` // "staging", "validated", "committed", "failed"
-	ExtractorID   string    `bson:"extractor_id" json:"extractor_id"`
-	ExtractorVer  string    `bson:"extractor_version" json:"extractor_version"`
-	SchemaVersion string    `bson:"schema_version" json:"schema_version"`
-	SourceHash    string    `bson:"source_hash" json:"source_hash"`
-	Active        bool      `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
-	RetryOf       *string   `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
-	ErrorMsg      *string   `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
-	CreatedAt     time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt     time.Time `bson:"updated_at" json:"updated_at"`
+	ID             string    `bson:"_id,omitempty" json:"id"`
+	RunID          string    `bson:"run_id" json:"run_id"` // Stable UUID
+	Status         string    `bson:"status" json:"status"` // "staging", "validated", "committed", "failed"
+	ExtractorID    string    `bson:"extractor_id" json:"extractor_id"`
+	ExtractorVer   string    `bson:"extractor_version" json:"extractor_version"`
+	SchemaVersion  string    `bson:"schema_version" json:"schema_version"`
+	SourceHash     string    `bson:"source_hash" json:"source_hash"`
+	PromptHash     string    `bson:"prompt_hash,omitempty" json:"prompt_hash,omitempty"`
+	ModelID        string    `bson:"model_id,omitempty" json:"model_id,omitempty"`
+	ModelHash      string    `bson:"model_hash,omitempty" json:"model_hash,omitempty"`
+	LLMTemperature float64   `bson:"llm_temperature,omitempty" json:"llm_temperature,omitempty"`
+	Active         bool      `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
+	RetryOf        *string   `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
+	ErrorMsg       *string   `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
+	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt      time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 // Source represents the immutable raw transcript or document.
