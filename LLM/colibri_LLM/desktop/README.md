@@ -23,6 +23,14 @@ Bundling the inference engine or managing its process is intentionally deferred:
 the model is hundreds of gigabytes and must remain an external, user-selected
 resource rather than an opaque application sidecar.
 
+Because the endpoint is user-configurable, it may be loopback (`127.0.0.1`),
+another machine on the LAN, or a remote HTTPS server. The window's CSP
+`connect-src` therefore allows any `http:`/`https:` destination in addition to
+Tauri's own `ipc:`/`asset:` origins, while `default-src`, `style-src`, and
+`img-src` remain restricted to the bundled UI. This does not affect what the
+*page* may load (still `'self'`-only), only which network endpoints `fetch`/
+`XHR` calls from the UI may reach.
+
 This first desktop increment only packages the existing UI in a native window.
 It does not change the web application, start the inference engine, download
 models, or add native filesystem and process permissions.

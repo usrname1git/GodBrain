@@ -1,18 +1,81 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Json},
     routing::{get, post},
     Router,
 };
 use mongodb::{bson::{doc, Document, oid::ObjectId}, Client, Collection, options::ClientOptions};
 use serde::{Deserialize, Serialize};
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 use tokio::time::timeout;
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use futures::stream::StreamExt;
+
+/// Origins allowed to talk to this loopback-only API: localhost/127.0.0.1 on
+/// any port (dev servers, the packaged UI, etc.) plus the Tauri webview
+/// origins, matching the C++ kernel router's allow-list. No wildcard is ever
+/// accepted.
+fn is_trusted_origin(origin: &str) -> bool {
+    if origin.is_empty() {
+        return false;
+    }
+    if origin == "tauri://localhost" {
+        return true;
+    }
+    let rest = match origin.split_once("://") {
+        Some((_, rest)) => rest,
+        None => return false,
+    };
+    let rest = rest.split('/').next().unwrap_or("");
+    let host = rest.split(':').next().unwrap_or("");
+    host == "localhost" || host == "127.0.0.1" || host == "tauri.localhost"
+}
+
+/// Resolves the Colibri C-Engine executable. `GODBRAIN_COLIBRI_PATH` always
+/// wins; otherwise a handful of repo-relative candidates are tried (from both
+/// the running executable's own directory and the current working
+/// directory), so no single user's absolute path is ever baked in.
+fn resolve_colibri_path() -> PathBuf {
+    if let Ok(v) = std::env::var("GODBRAIN_COLIBRI_PATH") {
+        if !v.is_empty() {
+            return PathBuf::from(v);
+        }
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("../../LLM/colibri_LLM/c/colibri.exe"));
+            candidates.push(exe_dir.join("../../../LLM/colibri_LLM/c/colibri.exe"));
+            candidates.push(exe_dir.join("LLM/colibri_LLM/c/colibri.exe"));
+        }
+    }
+    candidates.push(PathBuf::from("../LLM/colibri_LLM/c/colibri.exe"));
+    candidates.push(PathBuf::from("LLM/colibri_LLM/c/colibri.exe"));
+
+    for candidate in &candidates {
+        if Path::new(candidate).exists() {
+            return candidate.clone();
+        }
+    }
+
+    let fallback = PathBuf::from("../../LLM/colibri_LLM/c/colibri.exe");
+    eprintln!(
+        "[SYS] WARNING: could not locate colibri.exe via GODBRAIN_COLIBRI_PATH or repo-relative defaults; using best-effort path '{}'.",
+        fallback.display()
+    );
+    fallback
+}
+
+fn resolve_snapshot_path() -> String {
+    std::env::var("GODBRAIN_SNAPSHOT_PATH").unwrap_or_else(|_| r#"C:\nvme\glm52"#.to_string())
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -43,7 +106,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = client.database("godbrain");
     let state = AppState { db };
 
-    let cors = CorsLayer::permissive();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _| {
+            origin
+                .to_str()
+                .map(is_trusted_origin)
+                .unwrap_or(false)
+        }))
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION]);
 
     let app = Router::new()
         .route("/", get(|| async { Redirect::temporary("/galaxy") }))
@@ -56,8 +127,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8082").await?;
-    println!("Listening on http://localhost:8082");
+    // Loopback only: this API is not meant to be reachable from other hosts
+    // on the network.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8082").await?;
+    println!("Listening on http://127.0.0.1:8082 (loopback only)");
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -177,45 +250,78 @@ async fn chat_handler(State(state): State<AppState>, Json(payload): Json<ChatReq
 
     println!("[RAG] Context built. Executing Colibri via Rust...");
 
-    let coli_path = r#"C:\Users\autismo\Documents\GitHub\GodBrain\LLM\colibri_LLM\c\colibri.exe"#;
+    let coli_path = resolve_colibri_path();
 
-    let output_future = tokio::task::spawn_blocking(move || {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        
-        // Critical: Set COLI_API=1 or pass the prompt cleanly via standard input to completely bypass
-        // the interactive terminal tokenizer loops in Colibri.
-        let mut child = Command::new(coli_path)
-            .args(&["64", "8", "8"])
-            .env("SNAP", r#"C:\nvme\glm52"#)
-            // By NOT passing COLI_PROMPT we force it to expect prompt from stdin, which doesn't hang the tokenizer
-            .env("COLI_API", "1") // Try to tell it this is an API call
-            .env("NGEN", "64")
-            .env("COLI_RAM_OVERCOMMIT", "1")
-            .env("COLI_CUDA", "1")
-            .env("CUDA_EXPERT_GB", "12")
-            .stdin(Stdio::piped()) // Pipe stdin so we can write the prompt
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW) // Detach from console properly
-            .spawn()
-            .expect("Failed to spawn Colibri natively");
-
-        // Write the prompt to stdin and immediately drop it (which sends EOF)
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let _ = stdin.write_all(full_prompt.as_bytes());
-            let _ = stdin.write_all(b"\n");
+    // Fully async: tokio::process::Command instead of spawn_blocking + the
+    // std::process API. This lets us keep the live `Child` handle across the
+    // timeout, so on timeout we can terminate exactly the process we spawned
+    // (by handle/PID) instead of a `taskkill /IM colibri.exe`, which would
+    // kill every colibri.exe on the machine including unrelated instances a
+    // user might be running directly. `kill_on_drop` is a safety net in case
+    // this function returns early for any other reason.
+    let mut child = match Command::new(&coli_path)
+        .args(&["64", "8", "8"])
+        .env("SNAP", resolve_snapshot_path())
+        // By NOT passing COLI_PROMPT we force it to expect prompt from stdin, which doesn't hang the tokenizer
+        .env("COLI_API", "1") // Try to tell it this is an API call
+        .env("NGEN", "64")
+        .env("COLI_RAM_OVERCOMMIT", "1")
+        .env("COLI_CUDA", "1")
+        .env("CUDA_EXPERT_GB", "12")
+        .stdin(Stdio::piped()) // Pipe stdin so we can write the prompt
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW: detach from console properly
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ChatResponse { response: format!("Failed to spawn colibri: {}", err) }),
+            );
         }
+    };
 
-        let output = child.wait_with_output().expect("Failed to read Colibri output");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        format!("{}{}", stdout, stderr)
-    });
+    // Write the prompt to stdin and immediately drop it (which sends EOF)
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(full_prompt.as_bytes()).await;
+        let _ = stdin.write_all(b"\n").await;
+        // stdin is dropped here, closing our end of the pipe.
+    }
 
-    match timeout(Duration::from_secs(180), output_future).await {
-        Ok(Ok(combined)) => {
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stderr = child.stderr.take().expect("stderr was piped");
+
+    // Read stdout/stderr concurrently with waiting on the child: reading
+    // only after the process exits would deadlock if Colibri fills the pipe
+    // buffer before exiting, and reading synchronously before starting the
+    // wait (as the previous implementation effectively did inside
+    // `wait_with_output`) is exactly the pattern that lets a hung child block
+    // forever, since the timeout could never actually apply until the read
+    // finished.
+    let collect = async {
+        let mut out_buf = Vec::new();
+        let mut err_buf = Vec::new();
+        let (_, _, status) = tokio::join!(
+            stdout.read_to_end(&mut out_buf),
+            stderr.read_to_end(&mut err_buf),
+            child.wait(),
+        );
+        (out_buf, err_buf, status)
+    };
+
+    match timeout(Duration::from_secs(180), collect).await {
+        Ok((out_buf, err_buf, status)) => {
+            if let Err(err) = status {
+                eprintln!("[RAG] failed to wait on colibri process: {}", err);
+            }
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out_buf),
+                String::from_utf8_lossy(&err_buf)
+            );
             let mut final_answer = combined.clone();
             if let Some(idx) = combined.rfind("ATTENTION:") {
                 let parts: Vec<&str> = combined[idx..].splitn(2, '\n').collect();
@@ -237,11 +343,16 @@ async fn chat_handler(State(state): State<AppState>, Json(payload): Json<ChatReq
             }
             (StatusCode::OK, Json(ChatResponse { response: final_answer }))
         },
-        Ok(Err(_)) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ChatResponse { response: "Failed to execute task".to_string() }))
-        },
         Err(_) => {
-            let _ = Command::new("taskkill").args(&["/F", "/IM", "colibri.exe"]).output();
+            // Terminate only the exact child process we spawned (by
+            // handle/PID via tokio), never a `taskkill /IM colibri.exe`,
+            // which would kill every colibri.exe on the machine including
+            // unrelated instances a user might be running directly. Await
+            // the kill so the process is fully reaped before we respond.
+            if let Err(err) = child.kill().await {
+                eprintln!("[RAG] failed to kill timed-out colibri process (pid {:?}): {}", child.id(), err);
+            }
+            let _ = child.wait().await;
             (StatusCode::GATEWAY_TIMEOUT, Json(ChatResponse { response: "System fault. Colibri C-Engine timed out.".to_string() }))
         }
     }

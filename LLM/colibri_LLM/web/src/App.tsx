@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { getHealth, listModels, streamChat, type ChatMessage, type HealthResponse, type StreamChatResult } from "@/lib/api"
-import { activeRequests, supportsCacheSlots } from "@/lib/runtime"
+import { activeRequests, DEFAULT_ENGINE_BASE_URL, probeEngineOrigin, supportsCacheSlots } from "@/lib/runtime"
 import { Brain } from "./Brain"
 import { Profiling } from "./Profiling"
 import { persistPublicSettings, stored } from "@/lib/storage"
@@ -46,13 +46,7 @@ const message = (role: ChatMessage["role"], content: string): ChatMessage => {
 export default function App() {
   const { t, locale, setLocale, locales } = useLocale()
 
-  const servedByEngine = typeof window !== "undefined" && window.location.port !== "5173" && window.location.protocol.startsWith("http")
-  const defaultBase = servedByEngine ? `${window.location.origin}/v1` : "http://127.0.0.1:8000/v1"
-  const [baseUrl, setBaseUrl] = useState(() => {
-    const saved = stored(localStorage, "colibri.baseUrl", defaultBase)
-    if (servedByEngine && saved === "http://127.0.0.1:8000/v1" && defaultBase !== saved) return defaultBase
-    return saved
-  })
+  const [baseUrl, setBaseUrl] = useState(() => stored(localStorage, "colibri.baseUrl", DEFAULT_ENGINE_BASE_URL))
   const [apiKey, setApiKey] = useState("")
   const [models, setModels] = useState<string[]>([])
   const [model, setModel] = useState(() => stored(localStorage, "colibri.model", "glm-5.2-colibri"))
@@ -78,6 +72,8 @@ export default function App() {
   const autoConnected = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const probeRef = useRef<AbortController | null>(null)
+  const baseUrlTouchedRef = useRef(false)
+  const connectRef = useRef<() => Promise<void>>(async () => undefined)
   const bottomRef = useRef<HTMLDivElement>(null)
   const messages = conversations[cacheSlot] || []
   const kvSlots = Math.max(1, health?.kv_slots || 1)
@@ -166,10 +162,34 @@ export default function App() {
     }
   }
 
-  if (servedByEngine && !autoConnected.current && !connected) {
-    autoConnected.current = true
-    setTimeout(() => connect(), 0)
-  }
+  // Always call the latest `connect` closure (it reads `baseUrl`/`apiKey`
+  // from state), so the deferred auto-connect below never fires against a
+  // stale endpoint captured before EFFECT #8 updated `baseUrl`.
+  useEffect(() => { connectRef.current = connect })
+
+  // EFFECT #8: same-origin engine detection. `vite dev` (port 5173) and
+  // `vite preview` (4173, or any other port a user picks) serve
+  // byte-identical static files with no real engine behind them and can't be
+  // told apart from the served bundle alone, so instead of guessing from the
+  // port this asynchronously probes the current origin's health endpoint and
+  // only switches + auto-connects once that probe actually succeeds. It
+  // backs off entirely once the user has manually edited the endpoint (or a
+  // custom one was already loaded from storage), so it can never race or
+  // override a manual endpoint selection.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (baseUrl !== DEFAULT_ENGINE_BASE_URL) return
+    const controller = new AbortController()
+    void probeEngineOrigin(window.location.origin, fetch, controller.signal).then((isEngine) => {
+      if (!isEngine || controller.signal.aborted || baseUrlTouchedRef.current) return
+      setBaseUrl(`${window.location.origin}/v1`)
+      if (!autoConnected.current) {
+        autoConnected.current = true
+        setTimeout(() => { void connectRef.current() }, 0)
+      }
+    })
+    return () => controller.abort()
+  }, [baseUrl])
 
   const canSend = useMemo(() => draft.trim() && model && !loading, [draft, loading, model])
 
@@ -245,7 +265,7 @@ export default function App() {
 
         <section className="side-section">
           <div className="section-title"><Link2 className="size-3.5" /> {t("sidebar.connection")}</div>
-          <label>{t("sidebar.endpoint")}<Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+          <label>{t("sidebar.endpoint")}<Input value={baseUrl} onChange={(event) => { baseUrlTouchedRef.current = true; setBaseUrl(event.target.value) }} /></label>
           <label>{t("sidebar.apiKey")}<div className="relative"><KeyRound className="field-icon" /><Input className="pl-9" type="password" value={apiKey} placeholder={t("sidebar.apiKeyPlaceholder")} onChange={(event) => setApiKey(event.target.value)} /></div><span className="field-help">{t("sidebar.apiKeyHelp")}</span></label>
           <Button type="button" variant="secondary" onClick={connect} disabled={connecting}>
             {connecting ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}

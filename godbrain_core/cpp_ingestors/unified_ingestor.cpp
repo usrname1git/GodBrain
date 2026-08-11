@@ -5,10 +5,28 @@
 #include <vector>
 #include <fstream>
 #include <filesystem>
+#include <cstdlib>
 #include "../cpp_kernel/json.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+// Scratch file for the mongosh script: GODBRAIN_TEMP_DIR wins outright,
+// otherwise fall back to the current user's own Windows temp directory
+// instead of a hardcoded per-user repo path.
+static std::string resolve_temp_mongo_js_path() {
+    const char* env = std::getenv("GODBRAIN_TEMP_DIR");
+    std::string dir;
+    if (env && *env) {
+        dir = env;
+    } else {
+        char buf[MAX_PATH];
+        DWORD len = GetTempPathA(MAX_PATH, buf);
+        dir = (len > 0 && len < MAX_PATH) ? std::string(buf) : ".\\";
+    }
+    if (!dir.empty() && dir.back() != '\\' && dir.back() != '/') dir += '\\';
+    return dir + "godbrain_temp_mongo.js";
+}
 
 void run_mongo_insert(const std::string& title, const std::string& content, const std::string& type, const std::vector<std::string>& tags) {
     // Generate JS string to execute in mongosh
@@ -22,12 +40,12 @@ void run_mongo_insert(const std::string& title, const std::string& content, cons
     // Create a temporary file with the JS to avoid command line limits
     std::string js_script = "db.nodes.updateOne({title: " + json(title).dump() + "}, {$set: " + doc.dump() + "}, {upsert: true});";
     
-    std::string temp_file = "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\godbrain_core\\cpp_ingestors\\temp_mongo.js";
+    std::string temp_file = resolve_temp_mongo_js_path();
     std::ofstream out(temp_file);
     out << js_script;
     out.close();
 
-    std::string cmd = "mongosh godbrain --quiet " + temp_file;
+    std::string cmd = "mongosh godbrain --quiet \"" + temp_file + "\"";
     
     SECURITY_ATTRIBUTES saAttr; 
     saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 

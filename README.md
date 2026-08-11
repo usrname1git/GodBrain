@@ -35,38 +35,28 @@ Cloud models do the heavy context lifting; your local sovereign models pull from
 
 ## How it works
 
-`Build-LlamaCpp.ps1` overlays files from `llama-overrides/` onto the llama.cpp source at build time. The key piece is:
+GodBrain routes every model's tool calls through a native C++ kernel instead of patching a specific inference server's chat template:
 
-**[`llama-overrides/common/godbrain_chat_extensions.cpp`](llama-overrides/common/godbrain_chat_extensions.cpp)**
-
-It teaches the chat layer to treat GodBrain's MCP tools as **first-class tokens** — preserving them so the model can reliably emit and act on them *without fighting the chat template* (instead of having them mangled or stripped).
+- **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only) that any model — Colibri, Gemma, or a commercial API — calls with MCP-style JSON tool calls.
+- **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
+- **[`godbrain_core/memory_engine`](godbrain_core/memory_engine)** (Go) writes distilled "Golden Records" into the Neo4j Aura Graph so teachings persist across models and sessions.
+- **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
 
 ### GodBrain-native MCP tools
 
-These are injected as preserved tokens so any model can use them:
+These are the first-class commands the C++ Kernel currently validates and dispatches:
 
 | Tool | Purpose |
 |------|---------|
 | `save_godbrain_thought` | Permanent memory — write reasoning the next model can learn from |
 | `query_recent_thoughts` | Recall prior models' thinking |
-| `read_local_file` / `write_local_file` | Native, privileged local filesystem access (no browser sandbox theater) |
-| `list_local_dir` / `ensure_local_dir` | Local directory ops |
-| `execute_godbrain_script` | Direct script execution / control |
+| `execute_godbrain_script` | Direct script execution / control (requires `reasoning` + `GODBRAIN_API_TOKEN`) |
 | `get_system_telemetry` | Hardware/system awareness |
-| `ocr_image` | Image → text |
-| `ask_local_llm` | Route a step to another local model |
-| `get_cognitive_protocol` | Fetch a reusable "recipe" / workflow |
-| `propose_sovereign_architect_change` | Evolve the system's own rules |
+| `propose_sovereign_architect_change` | Evolve the system's own rules (requires `reasoning` + `GODBRAIN_API_TOKEN`) |
 
-### Why preserved tokens matter
+### Why the sovereignty check matters
 
-Default `llama-server` will happily break tool calls because the chat template doesn't know about them. By registering these tools (and architect-mode tokens) into `data.preserved_tokens`, GodBrain makes them durable and reliable across the fleet.
-
-```cpp
-godbrain::apply_godbrain_chat_extensions(data, "gemma-4-26B-...");
-```
-
-This is additive — call it from a model-specific init (e.g. `common_chat_params_init_gemma4`) and the whole fleet becomes GodBrain-aware.
+Any model can emit these tool calls, but `execute_godbrain_script` and `propose_sovereign_architect_change` are high-risk: the kernel rejects them outright unless the payload carries a non-blank `reasoning` string *and* the request's `Authorization` header matches `GODBRAIN_API_TOKEN`. Ordinary read/chat routes (no `command_type`) stay unauthenticated for the local UI.
 
 ## The bigger picture
 

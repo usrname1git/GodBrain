@@ -10,9 +10,9 @@ The GodBrain is a decentralized, sovereign cognitive OS. It decouples the intell
 * **Details:** Runs the 744B GLM-5.2 Mixture-of-Experts model. Uses a unified VRAM/RAM/NVMe streaming hierarchy. Optimized with AVX-VNNI (CPU) and CUDA (GPU).
 
 ### 2. The Nervous System Hub (GodBrain Kernel / C++ Router)
-* **Path:** `godbrain_core/cpp_kernel/kernel.cpp` & `godbrain_core/cpp_kernel/api_server.cpp`
+* **Path:** `godbrain_core/cpp_kernel/kernel.cpp` & `godbrain_core/cpp_kernel/main.cpp`
 * **Role:** The router and context builder.
-* **Details:** Hosts the HTTP endpoints (`:8081`). When a prompt comes in, it performs RAG (Retrieval-Augmented Generation) against the MongoDB knowledge graph, injecting highly relevant OSINT/SRE data into the LLM's context window *before* Colibri generates a response. Rewritten in pure C++ for zero overhead.
+* **Details:** Hosts the HTTP endpoints (`:8083`, bound to `127.0.0.1` only). When a prompt comes in, it performs RAG (Retrieval-Augmented Generation) against the MongoDB knowledge graph, injecting highly relevant OSINT/SRE data into the LLM's context window *before* Colibri generates a response. Rewritten in pure C++ for zero overhead. Ordinary read/chat routes are unauthenticated for the local UI; any request that carries `command_type` (a privileged kernel dispatch) requires an `Authorization: Bearer <GODBRAIN_API_TOKEN>` header and is rejected with 401/403 otherwise. CORS only echoes back trusted loopback origins (`localhost`/`127.0.0.1`/Tauri), never a wildcard.
 
 ### 3. The Memory Engine
 * **Path:** `MongoDB` (Local) & `godbrain_core/rust_router/src/main.rs`
@@ -34,4 +34,4 @@ The GodBrain is a decentralized, sovereign cognitive OS. It decouples the intell
 2. **Retrieval:** The Rust Memory Engine queries MongoDB for related concepts.
 3. **Augmentation:** The context + query is formatted into a strict system prompt.
 4. **Inference:** Colibri streams the response from disk/VRAM via CUDA.
-5. **Action:** If the response contains an MCP tool call (e.g., `execute_godbrain_script`), the C++ Kernel validates the *Reasoning* parameter and executes the raw payload on the local OS.
+5. **Action:** If the response contains an MCP tool call (e.g., `execute_godbrain_script`), the C++ Kernel validates that a non-empty *Reasoning* parameter and a valid `GODBRAIN_API_TOKEN` bearer token are both present, then executes the raw payload on the local OS.

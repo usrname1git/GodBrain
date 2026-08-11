@@ -3,6 +3,54 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <thread>
+#include <mutex>
+
+// Ceiling on a single Colibri invocation, matching the C++ kernel router's
+// timeout so both native launch sites behave the same way.
+static const DWORD COLIBRI_TIMEOUT_MS = 180000;
+
+static std::string get_exe_dir() {
+    char path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return "";
+    std::string full(path, len);
+    size_t pos = full.find_last_of("\\/");
+    return pos == std::string::npos ? "" : full.substr(0, pos);
+}
+
+static bool path_exists(const std::string& p) {
+    if (p.empty()) return false;
+    return GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// Resolves colibri.exe the same portable way as the C++ kernel router:
+// GODBRAIN_COLIBRI_PATH wins outright; otherwise try repo-relative locations
+// from both the running executable's directory and the current working
+// directory, so no single user's absolute path is ever baked in.
+static std::string resolve_colibri_path() {
+    const char* env = std::getenv("GODBRAIN_COLIBRI_PATH");
+    if (env && *env) return std::string(env);
+
+    static const char* candidates[] = {
+        "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
+        "\\..\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
+        "\\LLM\\colibri_LLM\\c\\colibri.exe",
+    };
+    std::string exe_dir = get_exe_dir();
+    for (const char* rel : candidates) {
+        if (!exe_dir.empty()) {
+            std::string cand = exe_dir + rel;
+            if (path_exists(cand)) return cand;
+        }
+    }
+    std::string fallback = "..\\..\\LLM\\colibri_LLM\\c\\colibri.exe";
+    if (path_exists(fallback)) return fallback;
+    std::cerr << "[SRE] WARNING: could not locate colibri.exe via GODBRAIN_COLIBRI_PATH or repo-relative defaults; "
+                 "using best-effort path '" << fallback << "'." << std::endl;
+    return fallback;
+}
 
 // Fast, low-level command execution to grab system telemetry
 std::string exec_cmd(const std::string& cmd) {
@@ -42,9 +90,13 @@ std::string run_colibri_sre(const std::string& prompt) {
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
 
-    std::string cmd = "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\LLM\\colibri_LLM\\c\\colibri.exe 64 8 8";
+    // Quote the resolved path: it may contain spaces, and an unquoted path
+    // lets CreateProcess misinterpret the first space as the end of the
+    // executable name and the rest as arguments.
+    std::string cmd = "\"" + resolve_colibri_path() + "\" 64 8 8";
     
-    SetEnvironmentVariableA("SNAP", "C:\\nvme\\glm52");
+    const char* snap_env = std::getenv("GODBRAIN_SNAPSHOT_PATH");
+    SetEnvironmentVariableA("SNAP", (snap_env && *snap_env) ? snap_env : "C:\\nvme\\glm52");
     SetEnvironmentVariableA("NGEN", "2048");
     SetEnvironmentVariableA("COLI_RAM_OVERCOMMIT", "1");
     SetEnvironmentVariableA("COLI_CUDA", "1");
@@ -52,48 +104,87 @@ std::string run_colibri_sre(const std::string& prompt) {
     SetEnvironmentVariableA("COLI_API", "1");
     SetEnvironmentVariableA("COLI_PROMPT", prompt.c_str());
 
-    BOOL success = CreateProcessA(NULL, (LPSTR)cmd.c_str(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    // CreateProcessA can rewrite characters inside lpCommandLine while
+    // parsing argv[0], so it must never be handed a pointer into a
+    // std::string's internal buffer via a cast-away-const c_str() (that's
+    // UB). Use a private, mutable buffer instead.
+    std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+    cmd_buf.push_back('\0');
+
+    BOOL success = CreateProcessA(NULL, cmd_buf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
 
     CloseHandle(hOutWr);
     CloseHandle(hInWr); // Send EOF to Colibri's stdin immediately
     CloseHandle(hInRd);
 
-    if (!success) return "Error: Failed to spawn Colibri C-Engine natively.";
-
-    std::string output = "";
-    DWORD read; 
-    CHAR buf[4096]; 
-    DWORD totalBytesAvail = 0;
-    
-    // Read loop with timeout
-    int timeouts = 0;
-    while(timeouts < 600) { // 60 seconds
-        PeekNamedPipe(hOutRd, NULL, 0, NULL, &totalBytesAvail, NULL);
-        if (totalBytesAvail > 0) {
-            if (ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
-                buf[read] = '\0';
-                output.append(buf, read);
-                std::cout << buf; // echo output for debugging
-                if (output.find("PROFILO") != std::string::npos || output.find("PROFILE:") != std::string::npos) {
-                    break;
-                }
-            }
-        } else {
-            Sleep(100);
-            timeouts++;
-        }
-        
-        DWORD exitCode;
-        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
-            break; // Process died
-        }
+    if (!success) {
+        CloseHandle(hOutRd);
+        return "Error: Failed to spawn Colibri C-Engine natively.";
     }
 
-    TerminateProcess(pi.hProcess, 0); // COLI_API=1 might loop, so we kill it
-    WaitForSingleObject(pi.hProcess, 1000); 
+    // Read stdout on a background thread instead of interleaving ReadFile
+    // with the marker/timeout poll below on the main thread: a hung child
+    // that keeps the pipe open can no longer stall the polling loop, which
+    // now only ever inspects the shared buffer (behind a mutex) or sleeps.
+    std::string output;
+    std::mutex output_mutex;
+    std::thread reader([&]() {
+        DWORD read;
+        CHAR buf[4096];
+        while (ReadFile(hOutRd, buf, sizeof(buf) - 1, &read, NULL) && read > 0) {
+            buf[read] = '\0';
+            std::cout << buf; // echo output for debugging
+            std::lock_guard<std::mutex> lock(output_mutex);
+            output.append(buf, read);
+        }
+    });
+
+    bool timed_out = false;
+    bool marker_found = false;
+    const DWORD poll_interval_ms = 100;
+    DWORD waited_ms = 0;
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lock(output_mutex);
+            if (output.find("PROFILO") != std::string::npos || output.find("PROFILE:") != std::string::npos) {
+                marker_found = true;
+            }
+        }
+        if (marker_found) break;
+
+        DWORD exitCode;
+        if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+            break; // Process died on its own
+        }
+
+        if (waited_ms >= COLIBRI_TIMEOUT_MS) {
+            timed_out = true;
+            break;
+        }
+        Sleep(poll_interval_ms);
+        waited_ms += poll_interval_ms;
+    }
+
+    // Terminate only the exact child process we spawned (by handle, never by
+    // image name — a taskkill /IM would kill every colibri.exe on the
+    // machine): COLI_API=1 mode may keep looping even after printing the
+    // marker, so we always stop it here rather than trust it to exit itself.
+    TerminateProcess(pi.hProcess, 0);
+    WaitForSingleObject(pi.hProcess, 5000); // reap the terminated/exited process
+
+    // The reader thread's ReadFile loop only returns once every write handle
+    // to the pipe is closed, which happens once the child (the pipe's sole
+    // writer) exits or is terminated above — so this join can no longer
+    // block indefinitely.
+    reader.join();
+
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(hOutRd);
+
+    if (timed_out) {
+        return "Error: Colibri C-Engine timed out after 180s and was terminated.";
+    }
 
     // Clean up output (strip profiling data)
     std::string final_answer = output;

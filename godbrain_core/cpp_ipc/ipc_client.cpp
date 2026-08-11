@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
     
     std::cout << "[IPC CLIENT] Blasting payload: " << payload << "\n";
     
-    auto start = std::chrono::high_resolution_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
     
     DWORD bytesWritten;
     BOOL success = WriteFile(hPipe, payload.c_str(), payload.length(), &bytesWritten, NULL);
@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
         DWORD bytesRead;
         if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             buffer[bytesRead] = '\0';
-            auto end = std::chrono::high_resolution_resolution_clock::now();
+            auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
             
             std::cout << "[IPC CLIENT] Reply: " << buffer << "\n";

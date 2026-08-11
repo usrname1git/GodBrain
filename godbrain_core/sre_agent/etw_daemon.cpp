@@ -5,12 +5,30 @@
 #include <string>
 #include <fstream>
 #include <ctime>
+#include <cstdlib>
 
 // GodBrain SRE ETW Consumer: "The Quarantine Protocol"
 
+static std::string get_exe_dir() {
+    char path[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return ".";
+    std::string full(path, len);
+    size_t pos = full.find_last_of("\\/");
+    return pos == std::string::npos ? "." : full.substr(0, pos);
+}
+
+// Telemetry log path: GODBRAIN_TELEMETRY_LOG wins outright, otherwise the log
+// is written next to this executable instead of a hardcoded per-user path.
+static std::string resolve_telemetry_log_path() {
+    const char* env = std::getenv("GODBRAIN_TELEMETRY_LOG");
+    if (env && *env) return std::string(env);
+    return get_exe_dir() + "\\GodBrain_Telemetry_Hits.log";
+}
+
 void LogToGodBrain(const std::string& anomaly) {
     std::cout << "[*] Logging to GodBrain: " << anomaly << "\n";
-    std::ofstream logfile("C:\\Users\\autismo\\Documents\\GodBrain_Telemetry_Hits.log", std::ios_base::app);
+    std::ofstream logfile(resolve_telemetry_log_path(), std::ios_base::app);
     time_t now = time(0);
     char* dt = ctime(&now);
     if (logfile.is_open()) {

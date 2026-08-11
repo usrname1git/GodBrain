@@ -6,15 +6,18 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include "../st.h"
 
 #ifdef _WIN32
 #include <direct.h>
 #define MKDIR(p) _mkdir(p)
+#define RMDIR(p) _rmdir(p)
 #else
 #include <sys/stat.h>
 #define MKDIR(p) mkdir(p, 0777)
+#define RMDIR(p) rmdir(p)
 #endif
 
 #define CHECK(condition) do { \
@@ -50,14 +53,33 @@ static int write_model(const char *dir, int flip, int pad) {
     return 0;
 }
 
-static void cleanup(void) {
+/* Removes the fixture files/dirs created by write_model(). Idempotent: safe
+ * to call before creation (nothing exists yet) and again after the test
+ * (files/dirs already gone) — a missing target (ENOENT) is not reported as a
+ * failure, but any other removal error is, so a locked/undeletable fixture
+ * doesn't pass silently. Returns 1 on success (or nothing to remove), 0 if
+ * any fixture could not be fully removed. */
+static int cleanup(void) {
     const char *dirs[] = {DIR_A, DIR_B, DIR_C, DIR_D, DIR_E};
+    int all_ok = 1;
     for (int i = 0; i < 5; i++) {
         char path[256];
         snprintf(path, sizeof(path), "%s/model.safetensors", dirs[i]);
-        remove(path);
-        remove(dirs[i]);
+        if (remove(path) != 0 && errno != ENOENT) {
+            fprintf(stderr, "cleanup: remove(%s) failed: %s\n", path, strerror(errno));
+            all_ok = 0;
+        }
+        /* remove() on MSVC/MinGW does not reliably delete directories; use the
+         * real Windows directory-removal call instead. */
+        if (RMDIR(dirs[i]) != 0 && errno != ENOENT) {
+            fprintf(stderr, "cleanup: rmdir(%s) failed: %s\n", dirs[i], strerror(errno));
+            all_ok = 0;
+        }
     }
+    if (!all_ok) {
+        fprintf(stderr, "cleanup: one or more mirror-test fixtures could not be fully removed\n");
+    }
+    return all_ok;
 }
 
 int main(void) {
@@ -103,7 +125,14 @@ int main(void) {
     /* unknown fd never maps to a replica */
     CHECK(st_fd_rep(&S, 987654, 1) == -1);
 
-    cleanup();
+    st_close(&S);   /* close every primary/direct/mirror fd before removing the fixtures */
+    /* A failed teardown (e.g. a fixture directory that couldn't be removed)
+     * must fail the test run, not just print a warning and exit 0 — a silent
+     * "ok" would let a locked/undeletable fixture corrupt the next run. */
+    if (!cleanup()) {
+        fprintf(stderr, "safetensors mirror tests: FAILED (fixture cleanup)\n");
+        return 1;
+    }
     puts("safetensors mirror tests: ok");
     return 0;
 }
