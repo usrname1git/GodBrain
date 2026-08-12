@@ -21,6 +21,7 @@ type IngestionRun struct {
 	ModelHash      string    `bson:"model_hash,omitempty" json:"model_hash,omitempty"`
 	LLMTemperature float64   `bson:"llm_temperature,omitempty" json:"llm_temperature,omitempty"`
 	Active           bool               `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
+	LeaseToken       string             `bson:"lease_token,omitempty" json:"lease_token,omitempty"`
 	SourceID         primitive.ObjectID `bson:"source_id,omitempty" json:"source_id,omitempty"`
 	ExternalSourceID string             `bson:"external_source_id,omitempty" json:"external_source_id,omitempty"`
 	RetryOf          *string            `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
@@ -31,11 +32,20 @@ type IngestionRun struct {
 
 // Source represents the immutable raw transcript or document.
 type Source struct {
+	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SourceHash string             `bson:"source_hash" json:"source_hash"`
+	SourceType string             `bson:"source_type" json:"source_type"`
+	Language   string             `bson:"language" json:"language"`
+	Content    string             `bson:"content" json:"content"` // Immutable
+	CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
+}
+
+// SourceObservation records an instance of raw data being processed, linking external sessions to the immutable source.
+type SourceObservation struct {
 	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	SourceHash       string             `bson:"source_hash" json:"source_hash"`
-	SourceType       string             `bson:"source_type" json:"source_type"`
-	Language         string             `bson:"language" json:"language"`
-	Content          string             `bson:"content" json:"content"` // Immutable
+	ExternalSourceID string             `bson:"external_source_id" json:"external_source_id"`
+	RunID            string             `bson:"run_id" json:"run_id"`
 	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
 }
 

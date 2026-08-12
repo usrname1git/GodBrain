@@ -23,8 +23,8 @@ var (
 	ErrStateConflict     = errors.New("ingestion run is not in the expected state")
 )
 
-// TransitionRunState atomically updates the ingestion run's status only if it matches expectedCurrent.
-func TransitionRunState(ctx context.Context, db *mongo.Database, runID string, expectedCurrent string, newStatus string, errorMsg *string) error {
+// TransitionRunState atomically updates the ingestion run's status only if it matches expectedCurrent and lease token.
+func TransitionRunState(ctx context.Context, db *mongo.Database, runID string, expectedCurrent string, newStatus string, leaseToken string, errorMsg *string) error {
 	valid := false
 
 	// Enforce strict DAG transitions with retry semantics
@@ -45,8 +45,9 @@ func TransitionRunState(ctx context.Context, db *mongo.Database, runID string, e
 
 	coll := db.Collection("ingestion_runs")
 	filter := bson.M{
-		"run_id": runID,
-		"status": expectedCurrent,
+		"run_id":      runID,
+		"status":      expectedCurrent,
+		"lease_token": leaseToken,
 	}
 
 	updateDoc := bson.M{

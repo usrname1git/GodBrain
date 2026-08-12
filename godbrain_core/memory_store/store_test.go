@@ -44,13 +44,13 @@ func TestDuplicateIngestion(t *testing.T) {
 	ctx := context.Background()
 
 	// First run
-	run1, created1, err := store.StartIngestion(ctx, "hash_123", "ext_1", "v1", "s1", nil)
+	run1, created1, err := store.StartIngestion(ctx, "hash_123", "ext_1", "ext_1", "v1", "s1", nil)
 	if err != nil || !created1 {
 		t.Fatalf("Expected new ingestion run, got err: %v", err)
 	}
 
 	// Second run identical
-	run2, created2, err := store.StartIngestion(ctx, "hash_123", "ext_1", "v1", "s1", nil)
+	run2, created2, err := store.StartIngestion(ctx, "hash_123", "ext_1", "ext_1", "v1", "s1", nil)
 	if err != nil || created2 {
 		t.Fatalf("Expected duplicate run to be caught (created2=false)")
 	}
@@ -65,10 +65,10 @@ func TestForbiddenStateTransition(t *testing.T) {
 	store := memorystore.NewStore(db)
 	ctx := context.Background()
 
-	run, _, _ := store.StartIngestion(ctx, "hash_state", "ext_1", "v1", "s1", nil)
+	run, _, _ := store.StartIngestion(ctx, "hash_state", "ext_1", "ext_1", "v1", "s1", nil)
 
 	// Try jumping directly staging -> committed
-	err := memorystore.TransitionRunState(ctx, db, run.RunID, memorystore.StatusStaging, memorystore.StatusCommitted, nil)
+	err := memorystore.TransitionRunState(ctx, db, run.RunID, memorystore.StatusStaging, memorystore.StatusCommitted, run.LeaseToken, nil)
 	if err != memorystore.ErrInvalidTransition {
 		t.Fatalf("Expected ErrInvalidTransition, got %v", err)
 	}
@@ -80,13 +80,13 @@ func TestInterruptedStagingRetry(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial failing run
-	run1, _, _ := store.StartIngestion(ctx, "hash_fail", "ext_1", "v1", "s1", nil)
+	run1, _, _ := store.StartIngestion(ctx, "hash_fail", "ext_1", "ext_1", "v1", "s1", nil)
 
 	errStr := "interrupted"
-	_ = memorystore.TransitionRunState(ctx, db, run1.RunID, memorystore.StatusStaging, memorystore.StatusFailed, &errStr)
+	_ = memorystore.TransitionRunState(ctx, db, run1.RunID, memorystore.StatusStaging, memorystore.StatusFailed, run1.LeaseToken, &errStr)
 
 	// Retry creates a NEW run
-	run2, created, err := store.StartIngestion(ctx, "hash_fail", "ext_1", "v1", "s1", &run1.RunID)
+	run2, created, err := store.StartIngestion(ctx, "hash_fail", "ext_1", "ext_1", "v1", "s1", &run1.RunID)
 	if err != nil {
 		t.Fatalf("Failed to start retry run: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestLeaseTimeout(t *testing.T) {
 	}
 
 	// 2. StartIngestion should preemptively fail the stale run and create a new one
-	newRun, created, err := store.StartIngestion(ctx, sourceHash, "ext_1", "v1", "s1", nil)
+	newRun, created, err := store.StartIngestion(ctx, sourceHash, "ext_1", "ext_1", "v1", "s1", nil)
 	if err != nil {
 		t.Fatalf("StartIngestion failed: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestForbiddenVerifiedIngestion(t *testing.T) {
 	hash.Write([]byte(transcript))
 	hashStr := hex.EncodeToString(hash.Sum(nil))
 
-	run, _, _ := store.StartIngestion(ctx, hashStr, "ext_1", "v1", "s1", nil)
+	run, _, _ := store.StartIngestion(ctx, hashStr, "ext_1", "ext_1", "v1", "s1", nil)
 
 	payload := memorystore.DistillationPayload{
 		RawTranscript:    transcript,
@@ -203,7 +203,7 @@ func TestForbiddenVerifiedIngestion(t *testing.T) {
 		},
 	}
 
-	err := store.StageDistillation(ctx, run.RunID, payload)
+	err := store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload)
 	if err != nil {
 		t.Fatalf("StageDistillation failed: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSourceHashMismatch(t *testing.T) {
 	store := memorystore.NewStore(db)
 	ctx := context.Background()
 
-	run, _, _ := store.StartIngestion(ctx, "hash_mismatch_test", "ext_1", "v1", "s1", nil)
+	run, _, _ := store.StartIngestion(ctx, "hash_mismatch_test", "ext_1", "ext_1", "v1", "s1", nil)
 
 	payload := memorystore.DistillationPayload{
 		RawTranscript: "actual transcript content",
@@ -236,7 +236,7 @@ func TestSourceHashMismatch(t *testing.T) {
 		},
 	}
 
-	err := store.StageDistillation(ctx, run.RunID, payload)
+	err := store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload)
 	if err == nil {
 		t.Fatalf("Expected error due to source_hash mismatch, got nil")
 	}

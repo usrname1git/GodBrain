@@ -116,7 +116,7 @@ func run() error {
 	// 6. Ingestion Pipeline
 	store := memorystore.NewStore(db)
 
-	irun, created, err := store.StartIngestion(ctx, payload.Payload.Provenance.SourceHash, "Librarian-CPP-Colibri", payload.ExtractorVersion, payload.SchemaVersion, nil)
+	irun, created, err := store.StartIngestion(ctx, payload.Payload.Provenance.SourceHash, payload.Payload.Provenance.SourceID, "Librarian-CPP-Colibri", payload.ExtractorVersion, payload.SchemaVersion, nil)
 	if err != nil {
 		return failWithEnvelope("StartIngestion failed", err)
 	}
@@ -138,20 +138,20 @@ func run() error {
 	} else {
 		// Write Data
 		if irun.Status == memorystore.StatusStaging {
-			err = store.StageDistillation(ctx, irun.RunID, payload)
+			err = store.StageDistillation(ctx, irun.RunID, irun.LeaseToken, payload)
 			if err != nil {
 				errStr := err.Error()
-				_ = memorystore.TransitionRunState(context.Background(), db, irun.RunID, memorystore.StatusStaging, memorystore.StatusFailed, &errStr)
+				_ = memorystore.TransitionRunState(context.Background(), db, irun.RunID, memorystore.StatusStaging, memorystore.StatusFailed, irun.LeaseToken, &errStr)
 				return failWithEnvelope("StageDistillation failed", err)
 			}
 
-			err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusStaging, memorystore.StatusValidated, nil)
+			err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusStaging, memorystore.StatusValidated, irun.LeaseToken, nil)
 			if err != nil {
 				return failWithEnvelope("Transition to validated failed", err)
 			}
 		}
 
-		err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusValidated, memorystore.StatusCommitted, nil)
+		err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusValidated, memorystore.StatusCommitted, irun.LeaseToken, nil)
 		if err != nil {
 			return failWithEnvelope("Transition to committed failed", err)
 		}
