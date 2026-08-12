@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 var (
 	ErrSkillOriginNotVerified  = errors.New("skill origin node is not verified")
 	ErrSkillOriginHashMismatch = errors.New("skill origin node hash mismatch")
+	ErrKnowledgeNodeNotFound   = errors.New("knowledge node not found")
 )
 
 type Store struct {
@@ -25,6 +27,14 @@ type Store struct {
 
 func NewStore(db *mongo.Database) *Store {
 	return &Store{db: db}
+}
+
+func claimStableID(claim Claim) string {
+	claimType := strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
+	content := strings.Join(strings.Fields(claim.Content), " ")
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte("claim\x00" + claimType + "\x00" + content))
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // StartIngestion ensures idempotency for a run. Uses $setOnInsert to prevent duplicates.
@@ -282,10 +292,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	candidateDocuments := make(map[string]bson.M)
 
 	for _, claim := range payload.Payload.Claims {
-		hashStr := claim.ClaimID + "_" + claim.Type + "_" + claim.Content
-		hash := sha3.NewLegacyKeccak256()
-		hash.Write([]byte(hashStr))
-		stableID := hex.EncodeToString(hash.Sum(nil))
+		stableID := claimStableID(claim)
 		candidateDocuments[stableID] = bson.M{
 			"stable_id":      stableID,
 			"version":        "v1",
@@ -491,7 +498,7 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 	err := nodesColl.FindOne(ctx, filter).Decode(&node)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, ErrRunNotFound
+			return nil, ErrKnowledgeNodeNotFound
 		}
 		return nil, err
 	}
