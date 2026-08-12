@@ -66,24 +66,34 @@ extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
 
     # Execute Python
     $pythonRunSuccess = $false
+    $pythonFailures = @()
     try {
         $pythonScript | py -
-        if ($LASTEXITCODE -eq 0) { $pythonRunSuccess = $true }
+        if ($LASTEXITCODE -eq 0) {
+            $pythonRunSuccess = $true
+        } else {
+            $pythonFailures += "py exited with code $LASTEXITCODE"
+        }
     } catch {
+        $pythonFailures += "py failed: $($_.Exception.Message)"
         Write-Host "py launcher failed, trying python..."
     }
 
     if (-Not $pythonRunSuccess) {
         try {
             $pythonScript | python -
-            if ($LASTEXITCODE -eq 0) { $pythonRunSuccess = $true }
+            if ($LASTEXITCODE -eq 0) {
+                $pythonRunSuccess = $true
+            } else {
+                $pythonFailures += "python exited with code $LASTEXITCODE"
+            }
         } catch {
-            throw "Failed to extract transcript using both py and python: $($_.Exception.Message)"
+            $pythonFailures += "python failed: $($_.Exception.Message)"
         }
     }
 
     if (-Not $pythonRunSuccess) {
-        throw "Failed to extract transcript using both py and python."
+        throw "Failed to extract transcript using both py and python: $($pythonFailures -join '; ')"
     }
     if (-Not (Test-Path -LiteralPath $tempTranscriptPath -PathType Leaf)) {
         throw "Transcript extraction completed without creating $tempTranscriptPath"

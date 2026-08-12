@@ -297,14 +297,14 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 					Type:          "Fact",
 					Content:       "The same semantic claim",
 					Confidence:    0.4,
-					EvidenceSpans: []string{"[0:3]", "[4:7]"},
+					EvidenceSpans: []string{"[10:12]", "[2:4]", "[2:4]"},
 				},
 				{
 					ClaimID:       "provider-b",
 					Type:          " fact ",
 					Content:       "The  same semantic claim",
 					Confidence:    0.9,
-					EvidenceSpans: []string{"[4:7]", "[8:11]"},
+					EvidenceSpans: []string{"invalid", "[8:11]", "[10:12]"},
 				},
 			},
 			CoreConcepts:    []string{"Semantic identity"},
@@ -329,7 +329,10 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 	if claimNode.Confidence != 0.9 {
 		t.Fatalf("Expected maximum confidence 0.9, got %v", claimNode.Confidence)
 	}
-	expectedSpans := []string{"[0:3]", "[4:7]", "[8:11]"}
+	if claimNode.Sector != "fact" || claimNode.Content != "The same semantic claim" {
+		t.Fatalf("Expected normalized claim fields, got sector=%q content=%q", claimNode.Sector, claimNode.Content)
+	}
+	expectedSpans := []string{"[2:4]", "[8:11]", "[10:12]", "invalid"}
 	if len(claimNode.EvidenceSpans) != len(expectedSpans) {
 		t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
 	}

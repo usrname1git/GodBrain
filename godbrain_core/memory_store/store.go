@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +31,32 @@ func NewStore(db *mongo.Database) *Store {
 	return &Store{db: db}
 }
 
+func normalizeClaim(claim Claim) Claim {
+	claim.Type = strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
+	claim.Content = strings.Join(strings.Fields(claim.Content), " ")
+	return claim
+}
+
 func claimStableID(claim Claim) string {
-	claimType := strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
-	content := strings.Join(strings.Fields(claim.Content), " ")
 	hash := sha3.NewLegacyKeccak256()
-	hash.Write([]byte("claim\x00" + claimType + "\x00" + content))
+	hash.Write([]byte("claim\x00" + claim.Type + "\x00" + claim.Content))
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func parseEvidenceSpan(span string) (int, int, bool) {
+	if len(span) < 5 || span[0] != '[' || span[len(span)-1] != ']' {
+		return 0, 0, false
+	}
+	startText, endText, found := strings.Cut(span[1:len(span)-1], ":")
+	if !found {
+		return 0, 0, false
+	}
+	start, startErr := strconv.Atoi(startText)
+	end, endErr := strconv.Atoi(endText)
+	if startErr != nil || endErr != nil || start < 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 func mergeClaims(existing, incoming Claim) Claim {
@@ -45,6 +67,9 @@ func mergeClaims(existing, incoming Claim) Claim {
 	seen := make(map[string]struct{}, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
 	merged := make([]string, 0, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
 	for _, span := range existing.EvidenceSpans {
+		if _, ok := seen[span]; ok {
+			continue
+		}
 		seen[span] = struct{}{}
 		merged = append(merged, span)
 	}
@@ -55,6 +80,22 @@ func mergeClaims(existing, incoming Claim) Claim {
 		seen[span] = struct{}{}
 		merged = append(merged, span)
 	}
+	sort.Slice(merged, func(i, j int) bool {
+		leftStart, leftEnd, leftValid := parseEvidenceSpan(merged[i])
+		rightStart, rightEnd, rightValid := parseEvidenceSpan(merged[j])
+		if leftValid != rightValid {
+			return leftValid
+		}
+		if leftValid {
+			if leftStart != rightStart {
+				return leftStart < rightStart
+			}
+			if leftEnd != rightEnd {
+				return leftEnd < rightEnd
+			}
+		}
+		return merged[i] < merged[j]
+	})
 	existing.EvidenceSpans = merged
 	return existing
 }
@@ -315,6 +356,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	claimsByStableID := make(map[string]Claim)
 
 	for _, claim := range payload.Payload.Claims {
+		claim = normalizeClaim(claim)
 		stableID := claimStableID(claim)
 		if existing, ok := claimsByStableID[stableID]; ok {
 			claim = mergeClaims(existing, claim)
