@@ -36,7 +36,6 @@ func normalizeClaim(claim Claim) Claim {
 }
 
 func claimStableID(claim Claim) string {
-	claim = normalizeClaim(claim)
 	hash := sha3.NewLegacyKeccak256()
 	hash.Write([]byte("claim\x00" + claim.Type + "\x00" + claim.Content))
 	return hex.EncodeToString(hash.Sum(nil))
