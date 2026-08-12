@@ -2,7 +2,6 @@ package memorystore_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"testing"
@@ -10,6 +9,7 @@ import (
 
 	"godbrain_core/memory_store"
 
+	"golang.org/x/crypto/sha3"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -183,11 +183,12 @@ func TestForbiddenVerifiedIngestion(t *testing.T) {
 	store := memorystore.NewStore(db)
 	ctx := context.Background()
 
-	run, _, _ := store.StartIngestion(ctx, "hash_verify_test", "ext_1", "v1", "s1", nil)
-
 	transcript := "test transcript"
-	hash := sha256.Sum256([]byte(transcript))
-	hashStr := hex.EncodeToString(hash[:])
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(transcript))
+	hashStr := hex.EncodeToString(hash.Sum(nil))
+
+	run, _, _ := store.StartIngestion(ctx, hashStr, "ext_1", "v1", "s1", nil)
 
 	payload := memorystore.DistillationPayload{
 		RawTranscript:    transcript,

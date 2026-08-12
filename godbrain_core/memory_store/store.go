@@ -2,12 +2,12 @@ package memorystore
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/sha3"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -133,9 +133,23 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 
 // StageDistillation performs bulk writes of the parsed payload into staging.
 func (s *Store) StageDistillation(ctx context.Context, runID string, payload DistillationPayload) error {
-	// Verify SourceHash matches the RawTranscript
-	computedHash := sha256.Sum256([]byte(payload.RawTranscript))
-	computedHashStr := hex.EncodeToString(computedHash[:])
+	// Verify run status is Staging
+	var run IngestionRun
+	err := s.db.Collection("ingestion_runs").FindOne(ctx, bson.M{"run_id": runID}).Decode(&run)
+	if err != nil {
+		return errors.New("failed to find ingestion run: " + err.Error())
+	}
+	if run.Status != StatusStaging {
+		return errors.New("run is not in staging status")
+	}
+	if run.SourceHash != payload.Payload.Provenance.SourceHash {
+		return errors.New("run source_hash does not match payload provenance source_hash")
+	}
+
+	// Verify SourceHash matches the RawTranscript using Keccak-256
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(payload.RawTranscript))
+	computedHashStr := hex.EncodeToString(hash.Sum(nil))
 	if computedHashStr != payload.Payload.Provenance.SourceHash {
 		return errors.New("source_hash mismatch: transcript hash does not match provenance source_hash")
 	}
@@ -146,7 +160,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	}
 	// 1. Stage Source
 	sourceColl := s.db.Collection("sources")
-	_, err := sourceColl.UpdateOne(ctx,
+	_, err = sourceColl.UpdateOne(ctx,
 		bson.M{"source_hash": payload.Payload.Provenance.SourceHash},
 		bson.M{
 			"$setOnInsert": bson.M{
@@ -202,8 +216,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	// Claims
 	for _, claim := range payload.Payload.Claims {
 		hashStr := claim.ClaimID + "_" + claim.Type + "_" + claim.Content
-		stableHash := sha256.Sum256([]byte(hashStr))
-		stableID := hex.EncodeToString(stableHash[:])
+		hash := sha3.NewLegacyKeccak256()
+		hash.Write([]byte(hashStr))
+		stableID := hex.EncodeToString(hash.Sum(nil))
 
 		wm := mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
@@ -229,8 +244,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	// Core Concepts
 	for _, concept := range payload.Payload.CoreConcepts {
 		hashStr := "concept_" + concept
-		stableHash := sha256.Sum256([]byte(hashStr))
-		stableID := hex.EncodeToString(stableHash[:])
+		hash := sha3.NewLegacyKeccak256()
+		hash.Write([]byte(hashStr))
+		stableID := hex.EncodeToString(hash.Sum(nil))
 
 		wm := mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
@@ -255,8 +271,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	// Opsec Candidates
 	for _, opsec := range payload.Payload.OpsecCandidates {
 		hashStr := "opsec_" + opsec
-		stableHash := sha256.Sum256([]byte(hashStr))
-		stableID := hex.EncodeToString(stableHash[:])
+		hash := sha3.NewLegacyKeccak256()
+		hash.Write([]byte(hashStr))
+		stableID := hex.EncodeToString(hash.Sum(nil))
 
 		wm := mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
@@ -372,8 +389,9 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 	}
 
 	// Double check hash logic if implemented
-	contentHash := sha256.Sum256([]byte(node.Content))
-	expectedHash := hex.EncodeToString(contentHash[:])
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(node.Content))
+	expectedHash := hex.EncodeToString(hash.Sum(nil))
 	if expectedHash != originHash {
 		return nil, ErrSkillOriginHashMismatch
 	}
