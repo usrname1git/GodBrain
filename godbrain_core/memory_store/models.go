@@ -32,13 +32,11 @@ type IngestionRun struct {
 // Source represents the immutable raw transcript or document.
 type Source struct {
 	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	ExternalSourceID string             `bson:"external_source_id" json:"external_source_id"`
-	SourceHash     string    `bson:"source_hash" json:"source_hash"`
-	SourceType     string    `bson:"source_type" json:"source_type"`
-	Language       string    `bson:"language" json:"language"`
-	Content        string    `bson:"content" json:"content"` // Immutable
-	IngestionRunID string    `bson:"ingestion_run_id" json:"ingestion_run_id"`
-	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
+	SourceHash       string             `bson:"source_hash" json:"source_hash"`
+	SourceType       string             `bson:"source_type" json:"source_type"`
+	Language         string             `bson:"language" json:"language"`
+	Content          string             `bson:"content" json:"content"` // Immutable
+	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
 }
 
 // Chunk represents a segment of a Source, indexed by exact UTF-8 byte offsets.

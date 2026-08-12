@@ -50,6 +50,28 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 
 	// We only look for active/committed runs to enforce idempotency.
 	// Failed runs are ignored by this filter, so a new one will be upserted.
+	// If an active run is found but its lease has expired (stale for > 5 min),
+	// we will consider it failed.
+	fiveMinsAgo := time.Now().UTC().Add(-5 * time.Minute)
+	
+	// Pre-emptively fail stale active runs
+	_, _ = coll.UpdateMany(ctx, 
+		bson.M{
+			"source_hash": sourceHash,
+			"active":      true,
+			"status":      bson.M{"$in": []string{StatusStaging, StatusValidated}},
+			"updated_at":  bson.M{"$lt": fiveMinsAgo},
+		},
+		bson.M{
+			"$set": bson.M{
+				"status": StatusFailed,
+				"active": false,
+				"error_msg": "lease_timeout",
+				"updated_at": time.Now().UTC(),
+			},
+		},
+	)
+
 	filter := bson.M{
 		"source_hash":       sourceHash,
 		"extractor_id":      extID,
@@ -100,6 +122,8 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
 		)
 		if err != nil {
+			// Rollback the newly created run since migration failed
+			_, _ = coll.DeleteOne(ctx, bson.M{"_id": run.ID})
 			return nil, false, err
 		}
 	}
@@ -109,6 +133,17 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 
 // StageDistillation performs bulk writes of the parsed payload into staging.
 func (s *Store) StageDistillation(ctx context.Context, runID string, payload DistillationPayload) error {
+	// Verify SourceHash matches the RawTranscript
+	computedHash := sha256.Sum256([]byte(payload.RawTranscript))
+	computedHashStr := hex.EncodeToString(computedHash[:])
+	if computedHashStr != payload.Payload.Provenance.SourceHash {
+		return errors.New("source_hash mismatch: transcript hash does not match provenance source_hash")
+	}
+
+	// Force trust_tier to "candidate" if it tries to bypass verification
+	if payload.Payload.TrustTier == "verified" {
+		payload.Payload.TrustTier = "candidate"
+	}
 	// 1. Stage Source
 	sourceColl := s.db.Collection("sources")
 	_, err := sourceColl.UpdateOne(ctx,

@@ -2,12 +2,15 @@ package memorystore_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"testing"
 	"time"
 
 	"godbrain_core/memory_store"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -123,5 +126,117 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	_, err := store.PromoteSkill(ctx, "test-skill", "skill data", nodeID.Hex(), "v1", "wrong_hash", "1.0")
 	if err != memorystore.ErrSkillOriginHashMismatch {
 		t.Fatalf("Expected hash mismatch error, got: %v", err)
+	}
+}
+
+func TestLeaseTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+
+	// 1. Manually insert a stale active run
+	staleRunID := "stale_run"
+	sourceHash := "hash_stale"
+	now := time.Now().UTC()
+	staleTime := now.Add(-10 * time.Minute)
+
+	_, err := db.Collection("ingestion_runs").InsertOne(ctx, memorystore.IngestionRun{
+		RunID:         staleRunID,
+		Status:        memorystore.StatusStaging,
+		Active:        true,
+		SourceHash:    sourceHash,
+		ExtractorID:   "ext_1",
+		ExtractorVer:  "v1",
+		SchemaVersion: "s1",
+		CreatedAt:     staleTime,
+		UpdatedAt:     staleTime,
+	})
+	if err != nil {
+		t.Fatalf("Failed to insert stale run: %v", err)
+	}
+
+	// 2. StartIngestion should preemptively fail the stale run and create a new one
+	newRun, created, err := store.StartIngestion(ctx, sourceHash, "ext_1", "v1", "s1", nil)
+	if err != nil {
+		t.Fatalf("StartIngestion failed: %v", err)
+	}
+	if !created {
+		t.Fatalf("Expected a new run to be created, but got existing")
+	}
+	if newRun.RunID == staleRunID {
+		t.Fatalf("Expected a new RunID, got the stale one")
+	}
+
+	// 3. Verify the old run is marked failed
+	var oldRun memorystore.IngestionRun
+	err = db.Collection("ingestion_runs").FindOne(ctx, bson.M{"run_id": staleRunID}).Decode(&oldRun)
+	if err != nil {
+		t.Fatalf("Failed to find old run: %v", err)
+	}
+	if oldRun.Status != memorystore.StatusFailed || oldRun.Active {
+		t.Fatalf("Old run should be inactive and failed, got status=%s, active=%v", oldRun.Status, oldRun.Active)
+	}
+}
+
+func TestForbiddenVerifiedIngestion(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+
+	run, _, _ := store.StartIngestion(ctx, "hash_verify_test", "ext_1", "v1", "s1", nil)
+
+	transcript := "test transcript"
+	hash := sha256.Sum256([]byte(transcript))
+	hashStr := hex.EncodeToString(hash[:])
+
+	payload := memorystore.DistillationPayload{
+		RawTranscript:    transcript,
+		ExtractorVersion: "v1",
+		SchemaVersion:    "s1",
+		Payload: memorystore.AlexandriaPayload{
+			TrustTier: "verified", // Should be forbidden/overridden
+			Provenance: memorystore.Provenance{
+				SourceHash: hashStr,
+			},
+			CoreConcepts: []string{"Concept1"},
+		},
+	}
+
+	err := store.StageDistillation(ctx, run.RunID, payload)
+	if err != nil {
+		t.Fatalf("StageDistillation failed: %v", err)
+	}
+
+	// Check if the concept was saved as "candidate" instead of "verified"
+	var node memorystore.KnowledgeNode
+	err = db.Collection("knowledge_nodes").FindOne(ctx, bson.M{"ingestion_run_id": run.RunID, "content": "Concept1"}).Decode(&node)
+	if err != nil {
+		t.Fatalf("Failed to find node: %v", err)
+	}
+	
+	if node.Status != "candidate" {
+		t.Fatalf("Expected node status to be forced to 'candidate', got '%s'", node.Status)
+	}
+}
+
+func TestSourceHashMismatch(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+
+	run, _, _ := store.StartIngestion(ctx, "hash_mismatch_test", "ext_1", "v1", "s1", nil)
+
+	payload := memorystore.DistillationPayload{
+		RawTranscript: "actual transcript content",
+		Payload: memorystore.AlexandriaPayload{
+			Provenance: memorystore.Provenance{
+				SourceHash: "completely_wrong_hash_12345",
+			},
+		},
+	}
+
+	err := store.StageDistillation(ctx, run.RunID, payload)
+	if err == nil {
+		t.Fatalf("Expected error due to source_hash mismatch, got nil")
 	}
 }
