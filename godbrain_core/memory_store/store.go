@@ -72,7 +72,7 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 			retryOf = &lastFailed.RunID
 		}
 	} else {
-		// Validate that the explicitly provided retryOf run is failed and matches the source_hash
+		// Validate that the explicitly provided retryOf run is failed and matches the source_hash and schema versions
 		var providedFailed IngestionRun
 		err := coll.FindOne(ctx, bson.M{"run_id": *retryOf}).Decode(&providedFailed)
 		if err != nil {
@@ -84,31 +84,14 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 		if providedFailed.SourceHash != sourceHash {
 			return nil, false, errors.New("provided retryOf run does not match source_hash")
 		}
+		if providedFailed.ExtractorID != extID || providedFailed.ExtractorVer != extVer || providedFailed.SchemaVersion != schemaVer {
+			return nil, false, errors.New("provided retryOf run does not match extractor or schema versions")
+		}
 	}
 
 	// We only look for active/committed runs to enforce idempotency.
 	newRunID := uuid.New().String()
 	now := time.Now().UTC()
-
-	// Record the observation of this source from this external session
-	_, err := s.db.Collection("source_observations").UpdateOne(ctx,
-		bson.M{
-			"source_hash":        sourceHash,
-			"external_source_id": extSourceID,
-		},
-		bson.M{
-			"$setOnInsert": bson.M{
-				"source_hash":        sourceHash,
-				"external_source_id": extSourceID,
-				"run_id":             newRunID, // Will be overridden to existing RunID if we didn't create a new one
-				"created_at":         time.Now().UTC(),
-			},
-		},
-		options.Update().SetUpsert(true),
-	)
-	if err != nil {
-		return nil, false, errors.New("failed to record source observation: " + err.Error())
-	}
 
 	filter := bson.M{
 		"source_hash":       sourceHash,
@@ -145,7 +128,7 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
 
 	var run IngestionRun
-	err = coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&run)
+	err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&run)
 	if err != nil {
 		return nil, false, err
 	}
@@ -153,48 +136,47 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	// If the runID matches the one we just generated, it was created new.
 	createdNew := run.RunID == newRunID
 
-	// Start transaction for atomic migration
-	session, err := s.db.Client().StartSession()
+	// Record the observation of this source from this external session
+	// We do this AFTER getting the runID so we have the definitive runID
+	_, err = s.db.Collection("source_observations").UpdateOne(ctx,
+		bson.M{
+			"source_hash":        sourceHash,
+			"external_source_id": extSourceID,
+		},
+		bson.M{
+			"$setOnInsert": bson.M{
+				"source_hash":        sourceHash,
+				"external_source_id": extSourceID,
+				"created_at":         now,
+			},
+			"$set": bson.M{
+				"run_id": run.RunID,
+			},
+		},
+		options.Update().SetUpsert(true),
+	)
 	if err != nil {
-		return nil, false, errors.New("failed to start session for migration: " + err.Error())
+		return nil, false, errors.New("failed to record source observation: " + err.Error())
 	}
-	defer session.EndSession(ctx)
 
-	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
-		// Update observation with actual returned RunID
-		if !createdNew {
-			_, innerErr := s.db.Collection("source_observations").UpdateOne(sessCtx,
-				bson.M{"source_hash": sourceHash, "external_source_id": extSourceID},
-				bson.M{"$set": bson.M{"run_id": run.RunID}},
-			)
-			if innerErr != nil {
-				return nil, errors.New("failed to update source observation run_id: " + innerErr.Error())
-			}
+	if createdNew && retryOf != nil {
+		// Migrate candidate nodes from the failed run to this new run
+		// Since we cannot use MongoDB transactions on standalone, we use a compensation approach
+		_, innerErr := s.db.Collection("knowledge_nodes").UpdateMany(ctx,
+			bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
+			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
+		)
+		if innerErr != nil {
+			// Rollback the newly created run by marking it failed, avoiding dangling references
+			_, _ = coll.UpdateOne(ctx, bson.M{"_id": run.ID}, bson.M{"$set": bson.M{
+				"status":      StatusFailed,
+				"active":      false,
+				"error_msg":   "migration_failed",
+				"lease_token": "",
+				"updated_at":  time.Now().UTC(),
+			}})
+			return nil, false, innerErr
 		}
-
-		if createdNew && retryOf != nil {
-			// Migrate candidate nodes from the failed run to this new run
-			_, innerErr := s.db.Collection("knowledge_nodes").UpdateMany(sessCtx,
-				bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
-				bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
-			)
-			if innerErr != nil {
-				// Rollback the newly created run by marking it failed, avoiding dangling references
-				_, _ = coll.UpdateOne(sessCtx, bson.M{"_id": run.ID}, bson.M{"$set": bson.M{
-					"status":      StatusFailed,
-					"active":      false,
-					"error_msg":   "migration_failed",
-					"lease_token": "",
-					"updated_at":  time.Now().UTC(),
-				}})
-				return nil, innerErr
-			}
-		}
-		return nil, nil
-	})
-
-	if err != nil {
-		return nil, false, err
 	}
 	
 	return &run, createdNew, nil
@@ -303,6 +285,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 					"confidence":       claim.Confidence,
 					"evidence_spans":   claim.EvidenceSpans,
 					"ingestion_run_id": runID,
+					"lease_token":      leaseToken,
 					"created_at":       now,
 				},
 			}).
@@ -330,6 +313,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 					"status":           payload.Payload.TrustTier,
 					"confidence":       1.0,
 					"ingestion_run_id": runID,
+					"lease_token":      leaseToken,
 					"created_at":       now,
 				},
 			}).
@@ -357,6 +341,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 					"status":           payload.Payload.TrustTier,
 					"confidence":       1.0,
 					"ingestion_run_id": runID,
+					"lease_token":      leaseToken,
 					"created_at":       now,
 				},
 			}).
@@ -374,8 +359,8 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	// Double check lease token to ensure we didn't lose it during bulk write
 	err = s.db.Collection("ingestion_runs").FindOne(ctx, bson.M{"run_id": runID, "lease_token": leaseToken, "status": StatusStaging}).Decode(&run)
 	if err != nil {
-		// Compensation: we lost the lease! Delete the candidate nodes we just wrote.
-		_, _ = nodesColl.DeleteMany(ctx, bson.M{"ingestion_run_id": runID, "status": "candidate"})
+		// Compensation: we lost the lease! Delete ONLY the candidate nodes we just wrote (using lease_token).
+		_, _ = nodesColl.DeleteMany(ctx, bson.M{"ingestion_run_id": runID, "status": "candidate", "lease_token": leaseToken})
 		return errors.New("lease expired during staging writes, compensation applied")
 	}
 

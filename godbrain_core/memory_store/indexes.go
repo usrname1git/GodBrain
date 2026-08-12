@@ -20,6 +20,18 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
+	// Source Observations: Unique by source_hash + external_source_id
+	_, err = db.Collection("source_observations").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "source_hash", Value: 1},
+			{Key: "external_source_id", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		return err
+	}
+
 	// 2. Chunks: Unique by (source_hash, chunk_index)
 	_, err = db.Collection("chunks").Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{

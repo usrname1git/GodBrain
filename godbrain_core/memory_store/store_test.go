@@ -204,19 +204,15 @@ func TestForbiddenVerifiedIngestion(t *testing.T) {
 	}
 
 	err := store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload)
-	if err != nil {
-		t.Fatalf("StageDistillation failed: %v", err)
+	if err == nil {
+		t.Fatalf("Expected StageDistillation to fail due to forbidden TrustTier")
 	}
 
-	// Check if the concept was saved as "candidate" instead of "verified"
+	// Verify no node was created
 	var node memorystore.KnowledgeNode
 	err = db.Collection("knowledge_nodes").FindOne(ctx, bson.M{"ingestion_run_id": run.RunID, "content": "Concept1"}).Decode(&node)
-	if err != nil {
-		t.Fatalf("Failed to find node: %v", err)
-	}
-	
-	if node.Status != "candidate" {
-		t.Fatalf("Expected node status to be forced to 'candidate', got '%s'", node.Status)
+	if err != mongo.ErrNoDocuments {
+		t.Fatalf("Expected no documents, got err: %v", err)
 	}
 }
 
