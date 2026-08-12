@@ -23,8 +23,7 @@ components are explicitly marked and specified separately in
 - GodBrain does not provide kernel-mode or Ring 0 execution.
 - Loopback binding and CORS are not substitutes for authentication.
 - LLM reasoning is not authorization.
-- MongoDB and Neo4j are not interchangeable stores and are not synchronized
-  automatically.
+- The archived Neo4j implementation is not an active runtime dependency.
 - The current runtime is not a decentralized cluster or infinitely scalable.
 - Model output is not automatically executed as a tool call.
 
@@ -48,8 +47,7 @@ flowchart LR
     Mongo[(MongoDB :27017)]
     Colibri[Colibri inference process]
     Librarian[Native Librarian]
-    Memory[Go Memory Engine]
-    Neo4j[(Neo4j Aura)]
+    Memory[Go Memory Store]
     Factory[Agent Factory control plane]
 
     Operator --> UI
@@ -61,7 +59,7 @@ flowchart LR
     RustRouter --> Mongo
     RustRouter --> Colibri
     Librarian --> Memory
-    Memory --> Neo4j
+    Memory --> Mongo
     Factory -. planned .-> Kernel
     Factory -. planned .-> Librarian
 ```
@@ -78,8 +76,8 @@ routers both use port `8082`, so only one can bind that port at a time.
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and Colibri invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and asynchronous Colibri invocation |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
-| Go Memory Engine | Implemented write path | `godbrain_core/memory_engine/` | JSON on stdin, Neo4j driver outbound | Validated Golden Record writes to Neo4j |
-| Native Librarian | Implemented, deterministic local distillation | `godbrain_core/cpp_tools/librarian.cpp` | CLI and child process | Derive a bounded Golden Record from a transcript and invoke the Memory Engine |
+| Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
+| Native Librarian | Implemented, deterministic local distillation | `godbrain_core/cpp_tools/librarian.cpp` | CLI and child process | Derive a bounded Golden Record from a transcript and invoke the Memory Store |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Data ingestion, diagnostics, and bounded native automation prototypes |
@@ -104,22 +102,22 @@ such as `title`, `content`, `type`, and tags. It is a document database. The
 current C++ Kernel queries it through `mongosh`; the Go and Rust alternatives use
 MongoDB drivers.
 
-MongoDB is the source of truth for runtime retrieval documents. It is not the
-Neo4j Golden Record store.
+MongoDB is the source of truth for both runtime retrieval documents and
+Alexandria Golden Records. These use separate collections and validated schemas.
 
-### Teaching boundary: Neo4j
+### Teaching boundary: MongoDB
 
-Neo4j stores distilled session records and their relationships to concepts and
-OpSec rules. The Go Memory Engine is the validated write boundary:
+The Go Memory Store is the validated Golden Record write boundary:
 
 1. Read one JSON payload from stdin.
-2. Validate JSON and required environment configuration.
-3. Verify Neo4j connectivity.
-4. Execute and consume the write transaction.
-5. Exit non-zero if any step fails.
+2. Validate schema, source hash, trust tier, ingestion identity, and lease.
+3. Persist immutable sources and knowledge nodes.
+4. Associate nodes with ingestion attempts through append-only `run_node_links`.
+5. Commit the ingestion state only after staging and validation succeed.
+6. Exit non-zero if any step fails.
 
-The Memory Engine currently writes `Session`, `Concept`, and `OpSecRule` nodes.
-It does not automatically replicate data into MongoDB.
+The archived Neo4j implementation remains under `archive/neo4j/` for historical
+reference and is not part of the active build or runtime.
 
 ### Execution boundary: C++ Kernel
 
@@ -231,21 +229,22 @@ construct a separate authenticated `command_type` request.
 sequenceDiagram
     participant T as trigger_librarian.ps1
     participant L as librarian.exe
-    participant G as memory_engine.exe
-    participant N as Neo4j
+    participant G as memory-store.exe
+    participant M as MongoDB
 
-    T->>T: Locate latest session and compile checkpoints
+    T->>T: Locate latest events.jsonl and extract transcript
     T->>L: session_id --file transcript
-    L->>L: Derive summary, concepts, and candidate rules
+    L->>L: Verify source hash and derive candidate records
     L->>G: Golden Record JSON on stdin
-    G->>N: Consumed write transaction
-    N-->>G: Commit result
-    G-->>L: Process exit status
+    G->>M: Stage immutable records and run links
+    M-->>G: Persisted results
+    G->>M: Validate and commit ingestion run
+    G-->>L: StoreReceipt JSON
     L-->>T: Process exit status
 ```
 
 Every layer propagates failure through a non-zero exit code. The trigger prints
-success only after the Neo4j write succeeds.
+success only after MongoDB reports a committed or idempotent ingestion.
 
 ## Data ownership and provenance
 
@@ -253,7 +252,7 @@ success only after the Neo4j write succeeds.
 |---|---|---|
 | Retrieved articles, CVEs, SRE notes | MongoDB | Source URL or origin, retrieval time, content hash, type/tags |
 | Session transcript | Copilot session state / retained source artifact | Session ID, timestamp, content hash |
-| Golden Record | Neo4j through Go Memory Engine | Source session reference, distiller version, timestamp |
+| Golden Record | MongoDB through Go Memory Store | Source hash/session, extractor and schema versions, model/prompt hashes, ingestion run and attempt |
 | Runtime logs | Local process logs | Component, request/job ID, timestamp, severity |
 | Agent Factory evidence | Planned append-only Evidence Store | Job ID, attempt, before/after hashes, producer |
 
@@ -268,9 +267,9 @@ relationships or supersession markers rather than delete source evidence.
    and model output.
 2. **Local application zone:** UI and ordinary RAG APIs on loopback.
 3. **Privileged execution zone:** Authenticated C++ Kernel dispatch.
-4. **Credential zone:** Environment-provided API, Neo4j, and future capability
+4. **Credential zone:** Environment-provided API, MongoDB, and future capability
    credentials.
-5. **External services:** Neo4j Aura, market APIs, advisory sources, and other
+5. **External services:** Market APIs, advisory sources, and other
    explicitly configured endpoints.
 
 Data never becomes executable merely because it came from a model or database.
@@ -281,7 +280,7 @@ Data never becomes executable merely because it came from a model or database.
 - Browser CORS is restricted to trusted local/Tauri origins.
 - Privileged HTTP dispatch requires a bearer token.
 - High-risk kernel commands require non-empty reasoning.
-- Neo4j credentials are read from the environment.
+- MongoDB connection configuration is read from the environment.
 - Child-process timeouts target the exact spawned process.
 - UI text is inserted through text nodes rather than raw HTML.
 
@@ -304,12 +303,12 @@ Data never becomes executable merely because it came from a model or database.
 | `GODBRAIN_FRONTEND_DIR` | C++ and Go routers | Override the Galaxy static-file directory |
 | `GODBRAIN_SNAPSHOT_PATH` | Routers and SRE tools | Override the model snapshot directory |
 | `GODBRAIN_LIBRARIAN_PATH` | `trigger_librarian.ps1` | Override `librarian.exe` |
-| `GODBRAIN_MEMORY_ENGINE_PATH` | Native Librarian | Override `memory_engine.exe` |
+| `LLM_RUNNER_PATH` | Native Librarian | Override the Colibri executable used for framed inference |
+| `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temporary script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
-| `NEO4J_URI` | Go Memory Engine | Neo4j endpoint |
-| `NEO4J_USERNAME` | Go Memory Engine | Neo4j username |
-| `NEO4J_PASSWORD` | Go Memory Engine | Neo4j password |
+| `MONGODB_URI` | Go Memory Store | MongoDB connection string |
+| `MONGODB_DB_NAME` | Go Memory Store | Override the `godbrain` database name |
 
 MongoDB currently defaults to `mongodb://localhost:27017` and database
 `godbrain`.
@@ -330,11 +329,10 @@ records.
 
 ### Golden Record path
 
-1. Set `NEO4J_URI`, `NEO4J_USERNAME`, and `NEO4J_PASSWORD`.
-2. Build `godbrain_core/memory_engine/memory_engine.exe`.
-3. Build `godbrain_core/cpp_tools/librarian.exe`.
-4. Set path overrides when the binaries are not in their default locations.
-5. Run `trigger_librarian.ps1`.
+1. Start MongoDB and set `MONGODB_URI`.
+2. Run `build_pipeline.ps1` to build `memory-store.exe` and `librarian.exe`.
+3. Set `LLM_RUNNER_PATH`, `GODBRAIN_SNAPSHOT_PATH`, and optional binary overrides.
+4. Run `trigger_librarian.ps1`.
 
 ### Alternative router path
 
@@ -349,7 +347,7 @@ dispatch.
   model output.
 - Database writes are consumed before success is reported.
 - Test cleanup failures return non-zero.
-- The Librarian propagates Memory Engine failure to its caller.
+- The Librarian propagates Memory Store failure to its caller.
 - Generated build artifacts are excluded from source control.
 
 Automated state snapshots, rollback execution, durable retries, and lease
@@ -365,7 +363,7 @@ production control plane should standardize:
 - Database query/write latency and failure counters.
 - Audit events for authentication, policy decisions, privileged execution, and
   rollback.
-- Correlation IDs propagated across router, Librarian, Memory Engine, and agents.
+- Correlation IDs propagated across router, Librarian, Memory Store, and agents.
 
 Logs must redact bearer tokens, credentials, private keys, and sensitive prompt
 content.
@@ -390,8 +388,8 @@ risk classes, lifecycle, and implementation phases.
    responsibilities for all three.
 2. Replace coarse bearer authorization with short-lived capability grants.
 3. Define versioned HTTP, job, result, and evidence JSON Schemas.
-4. Decide how MongoDB source records and Neo4j derived records reference each
-   other without dual-write ambiguity.
+4. Define retention and supersession policy for immutable MongoDB source and
+   Golden Record collections.
 5. Replace `mongosh` subprocess queries with a native client if the C++ Kernel
    becomes the long-term production router.
 6. Add structured audit storage and recovery semantics before enabling autonomous

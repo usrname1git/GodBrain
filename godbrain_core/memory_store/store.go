@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 var (
 	ErrSkillOriginNotVerified  = errors.New("skill origin node is not verified")
 	ErrSkillOriginHashMismatch = errors.New("skill origin node hash mismatch")
+	ErrKnowledgeNodeNotFound   = errors.New("knowledge node not found")
 )
 
 type Store struct {
@@ -25,6 +27,36 @@ type Store struct {
 
 func NewStore(db *mongo.Database) *Store {
 	return &Store{db: db}
+}
+
+func claimStableID(claim Claim) string {
+	claimType := strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
+	content := strings.Join(strings.Fields(claim.Content), " ")
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte("claim\x00" + claimType + "\x00" + content))
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func mergeClaims(existing, incoming Claim) Claim {
+	if incoming.Confidence > existing.Confidence {
+		existing.Confidence = incoming.Confidence
+	}
+
+	seen := make(map[string]struct{}, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
+	merged := make([]string, 0, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
+	for _, span := range existing.EvidenceSpans {
+		seen[span] = struct{}{}
+		merged = append(merged, span)
+	}
+	for _, span := range incoming.EvidenceSpans {
+		if _, ok := seen[span]; ok {
+			continue
+		}
+		seen[span] = struct{}{}
+		merged = append(merged, span)
+	}
+	existing.EvidenceSpans = merged
+	return existing
 }
 
 // StartIngestion ensures idempotency for a run. Uses $setOnInsert to prevent duplicates.
@@ -280,12 +312,17 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 
 	now := time.Now().UTC()
 	candidateDocuments := make(map[string]bson.M)
+	claimsByStableID := make(map[string]Claim)
 
 	for _, claim := range payload.Payload.Claims {
-		hashStr := claim.ClaimID + "_" + claim.Type + "_" + claim.Content
-		hash := sha3.NewLegacyKeccak256()
-		hash.Write([]byte(hashStr))
-		stableID := hex.EncodeToString(hash.Sum(nil))
+		stableID := claimStableID(claim)
+		if existing, ok := claimsByStableID[stableID]; ok {
+			claim = mergeClaims(existing, claim)
+		}
+		claimsByStableID[stableID] = claim
+	}
+
+	for stableID, claim := range claimsByStableID {
 		candidateDocuments[stableID] = bson.M{
 			"stable_id":      stableID,
 			"version":        "v1",
@@ -404,6 +441,15 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	return nil
 }
 
+// CountRunNodeLinks returns the number of unique knowledge nodes linked to a run.
+func (s *Store) CountRunNodeLinks(ctx context.Context, runID string) (int, error) {
+	count, err := s.db.Collection("run_node_links").CountDocuments(ctx, bson.M{"run_id": runID})
+	if err != nil {
+		return 0, err
+	}
+	return int(count), nil
+}
+
 // RetrieveCommittedNodes returns immutable nodes linked to at least one committed run.
 func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]KnowledgeNode, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
@@ -491,7 +537,7 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 	err := nodesColl.FindOne(ctx, filter).Decode(&node)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, ErrRunNotFound
+			return nil, ErrKnowledgeNodeNotFound
 		}
 		return nil, err
 	}

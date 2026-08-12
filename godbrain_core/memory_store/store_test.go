@@ -3,6 +3,7 @@ package memorystore_test
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -139,6 +140,24 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	}
 }
 
+func TestPromoteSkillMissingNodeError(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+
+	_, err := store.PromoteSkill(
+		context.Background(),
+		"missing-node",
+		"skill data",
+		primitive.NewObjectID().Hex(),
+		"v1",
+		"unused",
+		"1.0",
+	)
+	if !errors.Is(err, memorystore.ErrKnowledgeNodeNotFound) {
+		t.Fatalf("expected ErrKnowledgeNodeNotFound, got %v", err)
+	}
+}
+
 func TestLeaseTimeout(t *testing.T) {
 	db := setupTestDB(t)
 	store := memorystore.NewStore(db)
@@ -245,6 +264,87 @@ func TestSourceHashMismatch(t *testing.T) {
 	err := store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload)
 	if err == nil {
 		t.Fatalf("Expected error due to source_hash mismatch, got nil")
+	}
+}
+
+func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+
+	transcript := "stable claim identity transcript"
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(transcript))
+	sourceHash := hex.EncodeToString(hash.Sum(nil))
+	run, _, err := store.StartIngestion(ctx, sourceHash, "session_1", "extractor", "v1", "s1", nil)
+	if err != nil {
+		t.Fatalf("StartIngestion failed: %v", err)
+	}
+
+	payload := memorystore.DistillationPayload{
+		RawTranscript:    transcript,
+		ExtractorVersion: "v1",
+		SchemaVersion:    "s1",
+		Payload: memorystore.AlexandriaPayload{
+			TrustTier: "candidate",
+			Provenance: memorystore.Provenance{
+				SourceID:   "session_1",
+				SourceHash: sourceHash,
+			},
+			Claims: []memorystore.Claim{
+				{
+					ClaimID:       "provider-a",
+					Type:          "Fact",
+					Content:       "The same semantic claim",
+					Confidence:    0.4,
+					EvidenceSpans: []string{"[0:3]", "[4:7]"},
+				},
+				{
+					ClaimID:       "provider-b",
+					Type:          " fact ",
+					Content:       "The  same semantic claim",
+					Confidence:    0.9,
+					EvidenceSpans: []string{"[4:7]", "[8:11]"},
+				},
+			},
+			CoreConcepts:    []string{"Semantic identity"},
+			OpsecCandidates: []string{"Preserve all evidence"},
+		},
+	}
+	if err = store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload); err != nil {
+		t.Fatalf("StageDistillation failed: %v", err)
+	}
+
+	nodeCount, err := db.Collection("knowledge_nodes").CountDocuments(ctx, bson.M{"kind": "claim"})
+	if err != nil {
+		t.Fatalf("Failed to count claim nodes: %v", err)
+	}
+	if nodeCount != 1 {
+		t.Fatalf("Expected one semantic claim node, got %d", nodeCount)
+	}
+	var claimNode memorystore.KnowledgeNode
+	if err = db.Collection("knowledge_nodes").FindOne(ctx, bson.M{"kind": "claim"}).Decode(&claimNode); err != nil {
+		t.Fatalf("Failed to read semantic claim node: %v", err)
+	}
+	if claimNode.Confidence != 0.9 {
+		t.Fatalf("Expected maximum confidence 0.9, got %v", claimNode.Confidence)
+	}
+	expectedSpans := []string{"[0:3]", "[4:7]", "[8:11]"}
+	if len(claimNode.EvidenceSpans) != len(expectedSpans) {
+		t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
+	}
+	for index, span := range expectedSpans {
+		if claimNode.EvidenceSpans[index] != span {
+			t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
+		}
+	}
+
+	linkCount, err := store.CountRunNodeLinks(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("Failed to count claim links: %v", err)
+	}
+	if linkCount != 3 {
+		t.Fatalf("Expected three unique run-node links, got %d", linkCount)
 	}
 }
 

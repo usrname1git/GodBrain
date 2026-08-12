@@ -13,6 +13,8 @@
 #include <memory>
 #include <optional>
 #include <cmath>
+#include <cstring>
+#include <sstream>
 
 // Include JSON support
 #include "../cpp_kernel/json.hpp"
@@ -28,6 +30,38 @@ static std::string get_exe_dir() {
     std::string full(path, len);
     size_t pos = full.find_last_of("\\/");
     return pos == std::string::npos ? "" : full.substr(0, pos);
+}
+
+static std::vector<char> child_environment_with(const std::string& name, const std::string& value) {
+    LPCH raw_environment = GetEnvironmentStringsA();
+    if (!raw_environment) {
+        throw std::runtime_error("Failed to read process environment");
+    }
+
+    std::vector<std::string> entries;
+    for (LPCH current = raw_environment; *current; current += std::strlen(current) + 1) {
+        std::string entry(current);
+        size_t separator = entry.find('=', entry.front() == '=' ? 1 : 0);
+        if (separator != std::string::npos &&
+            _stricmp(entry.substr(0, separator).c_str(), name.c_str()) == 0) {
+            continue;
+        }
+        entries.push_back(std::move(entry));
+    }
+    FreeEnvironmentStringsA(raw_environment);
+
+    entries.push_back(name + "=" + value);
+    std::sort(entries.begin(), entries.end(), [](const std::string& left, const std::string& right) {
+        return _stricmp(left.c_str(), right.c_str()) < 0;
+    });
+
+    std::vector<char> block;
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back('\0');
+    }
+    block.push_back('\0');
+    return block;
 }
 
 std::string get_iso_timestamp() {
@@ -289,15 +323,15 @@ private:
             SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
         }
 
-        // Enable legacy framed protocol
-        SetEnvironmentVariableA("SERVE", "1");
+        // Enable the legacy framed protocol only for the Colibri child.
+        std::vector<char> child_environment = child_environment_with("SERVE", "1");
 
         // CREATE_SUSPENDED ensures no rogue children are spawned before the job object is attached
         std::string cmdline_str = "\"" + config.llm_executable_path + "\"";
         std::vector<char> cmdline(cmdline_str.begin(), cmdline_str.end());
         cmdline.push_back('\0');
 
-        BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+        BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, child_environment.data(), NULL, &si, &pi);
         
         if (!success) {
             CloseHandle(hInWr); CloseHandle(hOutRd); CloseHandle(hOutWr); CloseHandle(hInRd);

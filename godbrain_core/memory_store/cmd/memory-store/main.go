@@ -18,6 +18,28 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+const maxInputBytes = 15 * 1024 * 1024
+
+var (
+	errInputTooLarge = errors.New("input payload exceeds maximum size of 15 MiB")
+	errNoInput       = errors.New("no JSON payload received on stdin")
+)
+
+func readInput(reader io.Reader) ([]byte, error) {
+	limitedReader := io.LimitReader(reader, maxInputBytes+1)
+	inputData, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, err
+	}
+	if len(inputData) > maxInputBytes {
+		return nil, errInputTooLarge
+	}
+	if len(inputData) == 0 {
+		return nil, errNoInput
+	}
+	return inputData, nil
+}
+
 func failWithEnvelope(msg string, err error) error {
 	errDetails := ""
 	if err != nil {
@@ -87,18 +109,15 @@ func run() error {
 		return failWithEnvelope("Failed to ensure indexes", err)
 	}
 
-	// 5. Read EXACTLY ONE JSON document (Limit to 50MB to prevent memory exhaustion)
-	const maxBytes = 50 * 1024 * 1024
-	limitedReader := io.LimitReader(os.Stdin, maxBytes+1)
-	inputData, err := io.ReadAll(limitedReader)
+	// 5. Read EXACTLY ONE JSON document below MongoDB's 16 MiB document limit.
+	inputData, err := readInput(os.Stdin)
 	if err != nil {
-		return failWithEnvelope("Failed to read from stdin", err)
-	}
-	if len(inputData) > maxBytes {
-		return failWithEnvelope("Input payload exceeds maximum size of 50MB", nil)
-	}
-	if len(inputData) == 0 {
-		return failWithEnvelope("No JSON payload received on stdin", nil)
+		switch {
+		case errors.Is(err, errInputTooLarge), errors.Is(err, errNoInput):
+			return failWithEnvelope(err.Error(), nil)
+		default:
+			return failWithEnvelope("Failed to read from stdin", err)
+		}
 	}
 
 	var payload memorystore.DistillationPayload
@@ -145,6 +164,13 @@ func run() error {
 				return failWithEnvelope("StageDistillation failed", err)
 			}
 
+			inserts, err = store.CountRunNodeLinks(ctx, irun.RunID)
+			if err != nil {
+				errStr := err.Error()
+				_ = memorystore.TransitionRunState(context.Background(), db, irun.RunID, memorystore.StatusStaging, memorystore.StatusFailed, irun.LeaseToken, &errStr)
+				return failWithEnvelope("Failed to count staged knowledge nodes", err)
+			}
+
 			err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusStaging, memorystore.StatusValidated, irun.LeaseToken, nil)
 			if err != nil {
 				return failWithEnvelope("Transition to validated failed", err)
@@ -156,7 +182,6 @@ func run() error {
 			return failWithEnvelope("Transition to committed failed", err)
 		}
 
-		inserts = len(payload.Payload.Claims)
 	}
 
 	// 7. Write EXACTLY ONE JSON Response to stdout

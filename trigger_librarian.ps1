@@ -74,12 +74,21 @@ extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
     }
 
     if (-Not $pythonRunSuccess) {
-        $pythonScript | python -
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to extract transcript using Python."
+        try {
+            $pythonScript | python -
+            if ($LASTEXITCODE -eq 0) { $pythonRunSuccess = $true }
+        } catch {
+            throw "Failed to extract transcript using both py and python: $($_.Exception.Message)"
         }
     }
-    
+
+    if (-Not $pythonRunSuccess) {
+        throw "Failed to extract transcript using both py and python."
+    }
+    if (-Not (Test-Path -LiteralPath $tempTranscriptPath -PathType Leaf)) {
+        throw "Transcript extraction completed without creating $tempTranscriptPath"
+    }
+
     $transcriptLength = (Get-Item $tempTranscriptPath).Length
     if ($transcriptLength -eq 0) {
         Write-Warning "[LIBRARIAN HOOK] Transcript is empty. Nothing to distill."
@@ -91,7 +100,14 @@ extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
     # 4. Fire up the C++ Librarian Pipeline
     Write-Host "[LIBRARIAN HOOK] Waking up the GodBrain Librarian (C++)..."
     
-    $librarianExe = Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
+    $librarianExe = if ([string]::IsNullOrWhiteSpace($env:GODBRAIN_LIBRARIAN_PATH)) {
+        Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
+    } else {
+        $env:GODBRAIN_LIBRARIAN_PATH
+    }
+    if (-Not (Test-Path -LiteralPath $librarianExe -PathType Leaf)) {
+        throw "Librarian executable not found at '$librarianExe'. Run build_pipeline.ps1 or set GODBRAIN_LIBRARIAN_PATH."
+    }
     
     # Execute the native pipeline
     Write-Host "Executing: & `"$librarianExe`" $sessionId `"$tempTranscriptPath`""
