@@ -29,11 +29,16 @@ func NewStore(db *mongo.Database) *Store {
 	return &Store{db: db}
 }
 
+func normalizeClaim(claim Claim) Claim {
+	claim.Type = strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
+	claim.Content = strings.Join(strings.Fields(claim.Content), " ")
+	return claim
+}
+
 func claimStableID(claim Claim) string {
-	claimType := strings.ToLower(strings.Join(strings.Fields(claim.Type), " "))
-	content := strings.Join(strings.Fields(claim.Content), " ")
+	claim = normalizeClaim(claim)
 	hash := sha3.NewLegacyKeccak256()
-	hash.Write([]byte("claim\x00" + claimType + "\x00" + content))
+	hash.Write([]byte("claim\x00" + claim.Type + "\x00" + claim.Content))
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
@@ -315,6 +320,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	claimsByStableID := make(map[string]Claim)
 
 	for _, claim := range payload.Payload.Claims {
+		claim = normalizeClaim(claim)
 		stableID := claimStableID(claim)
 		if existing, ok := claimsByStableID[stableID]; ok {
 			claim = mergeClaims(existing, claim)

@@ -329,6 +329,9 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 	if claimNode.Confidence != 0.9 {
 		t.Fatalf("Expected maximum confidence 0.9, got %v", claimNode.Confidence)
 	}
+	if claimNode.Sector != "fact" || claimNode.Content != "The same semantic claim" {
+		t.Fatalf("Expected normalized claim fields, got sector=%q content=%q", claimNode.Sector, claimNode.Content)
+	}
 	expectedSpans := []string{"[0:3]", "[4:7]", "[8:11]"}
 	if len(claimNode.EvidenceSpans) != len(expectedSpans) {
 		t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
