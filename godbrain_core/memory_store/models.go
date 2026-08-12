@@ -20,9 +20,10 @@ type IngestionRun struct {
 	ModelID        string    `bson:"model_id,omitempty" json:"model_id,omitempty"`
 	ModelHash      string    `bson:"model_hash,omitempty" json:"model_hash,omitempty"`
 	LLMTemperature float64   `bson:"llm_temperature,omitempty" json:"llm_temperature,omitempty"`
-	Active         bool               `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
-	SourceID       primitive.ObjectID `bson:"source_id,omitempty" json:"source_id,omitempty"`
-	RetryOf        *string            `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
+	Active           bool               `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
+	SourceID         primitive.ObjectID `bson:"source_id,omitempty" json:"source_id,omitempty"`
+	ExternalSourceID string             `bson:"external_source_id,omitempty" json:"external_source_id,omitempty"`
+	RetryOf          *string            `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
 	ErrorMsg       *string   `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
 	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt      time.Time `bson:"updated_at" json:"updated_at"`
@@ -30,7 +31,8 @@ type IngestionRun struct {
 
 // Source represents the immutable raw transcript or document.
 type Source struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	ExternalSourceID string             `bson:"external_source_id" json:"external_source_id"`
 	SourceHash     string    `bson:"source_hash" json:"source_hash"`
 	SourceType     string    `bson:"source_type" json:"source_type"`
 	Language       string    `bson:"language" json:"language"`

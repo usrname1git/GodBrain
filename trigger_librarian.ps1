@@ -10,10 +10,13 @@ if (-Not (Test-Path $copilotStatePath)) {
     Write-Error "Copilot session state directory not found at $copilotStatePath"
 }
 
-# Find the most recently modified session directory
-$latestSessionDir = Get-ChildItem -Path $copilotStatePath -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+# Find the session directory containing the most recently modified events.jsonl
+$latestSessionDir = Get-ChildItem -Path $copilotStatePath -Directory | Where-Object {
+    Test-Path (Join-Path $_.FullName "events.jsonl")
+} | Sort-Object { (Get-Item (Join-Path $_.FullName "events.jsonl")).LastWriteTime } -Descending | Select-Object -First 1
+
 if (-Not $latestSessionDir) {
-    Write-Error "No session directories found in $copilotStatePath"
+    Write-Error "No session directories with events.jsonl found in $copilotStatePath"
 }
 
 $sessionFolder = $latestSessionDir.FullName
@@ -62,9 +65,15 @@ extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
 "@
 
     # Execute Python
-    $pythonScript | py -
-    if ($LASTEXITCODE -ne 0) {
-        # Fallback to python if py is not found
+    $pythonRunSuccess = $false
+    try {
+        $pythonScript | py -
+        if ($LASTEXITCODE -eq 0) { $pythonRunSuccess = $true }
+    } catch {
+        Write-Host "py launcher failed, trying python..."
+    }
+
+    if (-Not $pythonRunSuccess) {
         $pythonScript | python -
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Failed to extract transcript using Python."

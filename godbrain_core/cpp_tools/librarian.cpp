@@ -351,6 +351,7 @@ private:
         {
             std::unique_lock<std::mutex> lock(output_mutex);
             if (!ready_cv.wait_for(lock, std::chrono::seconds(30), [&]{ return is_ready; })) {
+                lock.unlock(); // Prevent deadlock with reader thread
                 if (hJob) CloseHandle(hJob); else TerminateProcess(pi.hProcess, 1);
                 CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
                 if (reader.joinable()) reader.join();

@@ -124,6 +124,13 @@ func run() error {
 	status := "committed"
 	inserts := 0
 
+	if !created && irun.Status == memorystore.StatusStaging {
+		return failWithEnvelope("Concurrent ingestion detected: run is currently in staging", nil)
+	}
+	if !created && irun.Status == memorystore.StatusValidated {
+		return failWithEnvelope("Concurrent ingestion detected: run is currently validating", nil)
+	}
+
 	if !created && irun.Status == memorystore.StatusCommitted {
 		// Idempotent No-Op
 		log.Printf("Run %s is already committed. Idempotent no-op.", irun.RunID)

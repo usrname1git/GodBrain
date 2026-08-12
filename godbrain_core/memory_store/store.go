@@ -95,10 +95,13 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, s
 	
 	if createdNew && retryOf != nil {
 		// Migrate candidate nodes from the failed run to this new run
-		s.db.Collection("knowledge_nodes").UpdateMany(ctx,
+		_, err := s.db.Collection("knowledge_nodes").UpdateMany(ctx,
 			bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
 			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
 		)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	
 	return &run, createdNew, nil
@@ -112,11 +115,12 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 		bson.M{"source_hash": payload.Payload.Provenance.SourceHash},
 		bson.M{
 			"$setOnInsert": bson.M{
-				"source_hash":      payload.Payload.Provenance.SourceHash,
-				"source_type":      payload.Payload.Provenance.SourceType,
-				"language":         payload.Payload.Provenance.Language,
-				"content":          payload.RawTranscript,
-				"created_at":       time.Now().UTC(),
+				"source_hash":        payload.Payload.Provenance.SourceHash,
+				"external_source_id": payload.Payload.Provenance.SourceID,
+				"source_type":        payload.Payload.Provenance.SourceType,
+				"language":           payload.Payload.Provenance.Language,
+				"content":            payload.RawTranscript,
+				"created_at":         time.Now().UTC(),
 			},
 			"$set": bson.M{
 				"ingestion_run_id": runID,
@@ -147,11 +151,12 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 		bson.M{"run_id": runID},
 		bson.M{
 			"$set": bson.M{
-				"prompt_hash":     payload.Payload.Provenance.PromptHash,
-				"model_id":        payload.Payload.Provenance.ModelID,
-				"model_hash":      payload.Payload.Provenance.ModelHash,
-				"llm_temperature": payload.Payload.Provenance.LLMTemperature,
-				"source_id":       sourceID,
+				"prompt_hash":        payload.Payload.Provenance.PromptHash,
+				"model_id":           payload.Payload.Provenance.ModelID,
+				"model_hash":         payload.Payload.Provenance.ModelHash,
+				"llm_temperature":    payload.Payload.Provenance.LLMTemperature,
+				"source_id":          sourceID,
+				"external_source_id": payload.Payload.Provenance.SourceID,
 			},
 		},
 	)
