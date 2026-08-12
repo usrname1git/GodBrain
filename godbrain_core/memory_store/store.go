@@ -37,6 +37,28 @@ func claimStableID(claim Claim) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+func mergeClaims(existing, incoming Claim) Claim {
+	if incoming.Confidence > existing.Confidence {
+		existing.Confidence = incoming.Confidence
+	}
+
+	seen := make(map[string]struct{}, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
+	merged := make([]string, 0, len(existing.EvidenceSpans)+len(incoming.EvidenceSpans))
+	for _, span := range existing.EvidenceSpans {
+		seen[span] = struct{}{}
+		merged = append(merged, span)
+	}
+	for _, span := range incoming.EvidenceSpans {
+		if _, ok := seen[span]; ok {
+			continue
+		}
+		seen[span] = struct{}{}
+		merged = append(merged, span)
+	}
+	existing.EvidenceSpans = merged
+	return existing
+}
+
 // StartIngestion ensures idempotency for a run. Uses $setOnInsert to prevent duplicates.
 // If retryOf is provided, it marks this run as a retry of a previous failed run.
 func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, extID, extVer, schemaVer string, retryOf *string) (*IngestionRun, bool, error) {
@@ -290,9 +312,17 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 
 	now := time.Now().UTC()
 	candidateDocuments := make(map[string]bson.M)
+	claimsByStableID := make(map[string]Claim)
 
 	for _, claim := range payload.Payload.Claims {
 		stableID := claimStableID(claim)
+		if existing, ok := claimsByStableID[stableID]; ok {
+			claim = mergeClaims(existing, claim)
+		}
+		claimsByStableID[stableID] = claim
+	}
+
+	for stableID, claim := range claimsByStableID {
 		candidateDocuments[stableID] = bson.M{
 			"stable_id":      stableID,
 			"version":        "v1",
@@ -409,6 +439,15 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	}
 
 	return nil
+}
+
+// CountRunNodeLinks returns the number of unique knowledge nodes linked to a run.
+func (s *Store) CountRunNodeLinks(ctx context.Context, runID string) (int, error) {
+	count, err := s.db.Collection("run_node_links").CountDocuments(ctx, bson.M{"run_id": runID})
+	if err != nil {
+		return 0, err
+	}
+	return int(count), nil
 }
 
 // RetrieveCommittedNodes returns immutable nodes linked to at least one committed run.

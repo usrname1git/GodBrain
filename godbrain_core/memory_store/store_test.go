@@ -292,9 +292,23 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 				SourceHash: sourceHash,
 			},
 			Claims: []memorystore.Claim{
-				{ClaimID: "provider-a", Type: "Fact", Content: "The same semantic claim"},
-				{ClaimID: "provider-b", Type: " fact ", Content: "The  same semantic claim"},
+				{
+					ClaimID:       "provider-a",
+					Type:          "Fact",
+					Content:       "The same semantic claim",
+					Confidence:    0.4,
+					EvidenceSpans: []string{"[0:3]", "[4:7]"},
+				},
+				{
+					ClaimID:       "provider-b",
+					Type:          " fact ",
+					Content:       "The  same semantic claim",
+					Confidence:    0.9,
+					EvidenceSpans: []string{"[4:7]", "[8:11]"},
+				},
 			},
+			CoreConcepts:    []string{"Semantic identity"},
+			OpsecCandidates: []string{"Preserve all evidence"},
 		},
 	}
 	if err = store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload); err != nil {
@@ -308,12 +322,29 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 	if nodeCount != 1 {
 		t.Fatalf("Expected one semantic claim node, got %d", nodeCount)
 	}
-	linkCount, err := db.Collection("run_node_links").CountDocuments(ctx, bson.M{"run_id": run.RunID})
+	var claimNode memorystore.KnowledgeNode
+	if err = db.Collection("knowledge_nodes").FindOne(ctx, bson.M{"kind": "claim"}).Decode(&claimNode); err != nil {
+		t.Fatalf("Failed to read semantic claim node: %v", err)
+	}
+	if claimNode.Confidence != 0.9 {
+		t.Fatalf("Expected maximum confidence 0.9, got %v", claimNode.Confidence)
+	}
+	expectedSpans := []string{"[0:3]", "[4:7]", "[8:11]"}
+	if len(claimNode.EvidenceSpans) != len(expectedSpans) {
+		t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
+	}
+	for index, span := range expectedSpans {
+		if claimNode.EvidenceSpans[index] != span {
+			t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
+		}
+	}
+
+	linkCount, err := store.CountRunNodeLinks(ctx, run.RunID)
 	if err != nil {
 		t.Fatalf("Failed to count claim links: %v", err)
 	}
-	if linkCount != 1 {
-		t.Fatalf("Expected one run-node link, got %d", linkCount)
+	if linkCount != 3 {
+		t.Fatalf("Expected three unique run-node links, got %d", linkCount)
 	}
 }
 

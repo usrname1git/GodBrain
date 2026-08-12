@@ -21,7 +21,7 @@ import (
 const maxInputBytes = 15 * 1024 * 1024
 
 var (
-	errInputTooLarge = errors.New("input payload exceeds maximum size of 15MB")
+	errInputTooLarge = errors.New("input payload exceeds maximum size of 15 MiB")
 	errNoInput       = errors.New("no JSON payload received on stdin")
 )
 
@@ -38,12 +38,6 @@ func readInput(reader io.Reader) ([]byte, error) {
 		return nil, errNoInput
 	}
 	return inputData, nil
-}
-
-func payloadNodeCount(payload memorystore.DistillationPayload) int {
-	return len(payload.Payload.Claims) +
-		len(payload.Payload.CoreConcepts) +
-		len(payload.Payload.OpsecCandidates)
 }
 
 func failWithEnvelope(msg string, err error) error {
@@ -170,6 +164,13 @@ func run() error {
 				return failWithEnvelope("StageDistillation failed", err)
 			}
 
+			inserts, err = store.CountRunNodeLinks(ctx, irun.RunID)
+			if err != nil {
+				errStr := err.Error()
+				_ = memorystore.TransitionRunState(context.Background(), db, irun.RunID, memorystore.StatusStaging, memorystore.StatusFailed, irun.LeaseToken, &errStr)
+				return failWithEnvelope("Failed to count staged knowledge nodes", err)
+			}
+
 			err = memorystore.TransitionRunState(ctx, db, irun.RunID, memorystore.StatusStaging, memorystore.StatusValidated, irun.LeaseToken, nil)
 			if err != nil {
 				return failWithEnvelope("Transition to validated failed", err)
@@ -181,7 +182,6 @@ func run() error {
 			return failWithEnvelope("Transition to committed failed", err)
 		}
 
-		inserts = payloadNodeCount(payload)
 	}
 
 	// 7. Write EXACTLY ONE JSON Response to stdout
