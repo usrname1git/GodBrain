@@ -1,52 +1,22 @@
 # trigger_librarian.ps1
-# This script extracts the latest GitHub Copilot CLI session transcript and
-# feeds it into the real native GodBrain Librarian (godbrain_core/cpp_tools/
-# librarian.cpp, compiled to librarian.exe) for distillation and storage.
-#
-# The Librarian binary forwards the distilled "golden record" to the Go
-# Memory Engine (godbrain_core/memory_engine), which writes it into Neo4j
-# Aura. That write requires NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD to
-# already be present in the environment -- this script does NOT set or
-# substitute them; it only warns if they look missing, since silently
-# supplying/bypassing credentials would defeat the explicit-credential
-# requirement documented in .github/copilot-instructions.md.
+# This script extracts the latest GitHub Copilot CLI session transcript
+# and feeds it into the GodBrain Librarian for distillation and storage.
 
 $ErrorActionPreference = "Stop"
-
-function Fail {
-    param([string]$Message)
-    Write-Error "[LIBRARIAN HOOK] FAILED: $Message"
-    exit 1
-}
-
-# 0. Portable paths: everything is resolved relative to this script's own
-# location (the repository root), never a hardcoded per-user path.
-$repoRoot = $PSScriptRoot
-$librarianExe = Join-Path $repoRoot "godbrain_core\cpp_tools\librarian.exe"
-if ($env:GODBRAIN_LIBRARIAN_PATH) {
-    $librarianExe = $env:GODBRAIN_LIBRARIAN_PATH
-}
-
-if (-not (Test-Path $librarianExe -PathType Leaf)) {
-    Fail "native Librarian executable not found at '$librarianExe'. Build it first (e.g. from godbrain_core/cpp_tools: cl /std:c++17 /EHsc librarian.cpp) or set GODBRAIN_LIBRARIAN_PATH."
-}
-
-foreach ($credVar in @("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD")) {
-    if (-not (Get-Item -Path "Env:$credVar" -ErrorAction SilentlyContinue)) {
-        Write-Warning "[LIBRARIAN HOOK] $credVar is not set in the environment. The Memory Engine write to Neo4j Aura will fail without it."
-    }
-}
 
 # 1. Locate the latest Copilot session directory
 $copilotStatePath = Join-Path $env:USERPROFILE ".copilot\session-state"
 if (-Not (Test-Path $copilotStatePath)) {
-    Fail "Copilot session state directory not found at $copilotStatePath"
+    Write-Error "Copilot session state directory not found at $copilotStatePath"
 }
 
-# Find the most recently modified session directory
-$latestSessionDir = Get-ChildItem -Path $copilotStatePath -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+# Find the session directory containing the most recently modified events.jsonl
+$latestSessionDir = Get-ChildItem -Path $copilotStatePath -Directory | Where-Object {
+    Test-Path (Join-Path $_.FullName "events.jsonl")
+} | Sort-Object { (Get-Item (Join-Path $_.FullName "events.jsonl")).LastWriteTime } -Descending | Select-Object -First 1
+
 if (-Not $latestSessionDir) {
-    Fail "No session directories found in $copilotStatePath"
+    Write-Error "No session directories with events.jsonl found in $copilotStatePath"
 }
 
 $sessionFolder = $latestSessionDir.FullName
@@ -55,51 +25,90 @@ $sessionId = $latestSessionDir.Name
 Write-Host "[LIBRARIAN HOOK] Found active session ID: $sessionId"
 Write-Host "[LIBRARIAN HOOK] Extracting transcript from: $sessionFolder"
 
-# 2. Extract the transcript from the session's SQLite/JSON data
-# Note: The CLI stores turn data either in turns.json or via local SQLite databases.
-# For this PoC, we are doing a quick aggregate of checkpoint/markdown files if they exist,
-# or alerting if we need to parse the DB directly.
-
-$transcript = ""
-$checkpointsDir = Join-Path $sessionFolder "checkpoints"
-
-if (Test-Path $checkpointsDir) {
-    Write-Host "[LIBRARIAN HOOK] Compiling checkpoints for distillation..."
-    $checkpointFiles = Get-ChildItem -Path $checkpointsDir -Filter "*.md" | Sort-Object Name
-    foreach ($file in $checkpointFiles) {
-        $transcript += "`n--- $($file.Name) ---`n"
-        $transcript += Get-Content $file.FullName -Raw
-    }
-} else {
-    Write-Host "[WARN] No checkpoints found. Librarian will need to parse the raw session DB."
-    $transcript = "RAW_SESSION_DUMP_PLACEHOLDER"
+# 2. Extract the transcript from the session's events.jsonl using Python
+$eventsFile = Join-Path $sessionFolder "events.jsonl"
+if (-Not (Test-Path $eventsFile)) {
+    Write-Error "events.jsonl not found in session folder"
 }
 
-if ([string]::IsNullOrWhiteSpace($transcript)) {
-    Write-Warning "[LIBRARIAN HOOK] Transcript is empty. Nothing to distill."
-    exit 0
-}
-
-# 3. Save the transcript to a file so it can be handed to librarian.exe
-# without hitting the Windows command-line length limit or quoting issues a
-# full transcript would otherwise run into as a literal argv string.
 $tempTranscriptPath = Join-Path $env:TEMP "godbrain_transcript_$sessionId.txt"
-$transcript | Out-File -FilePath $tempTranscriptPath -Encoding utf8
 
-# 4. Fire up the native C++ Librarian: `librarian.exe <session_id> --file <path>`
-Write-Host "[LIBRARIAN HOOK] Waking up the native GodBrain Librarian ($librarianExe)..."
-Write-Host "Executing: $librarianExe $sessionId --file $tempTranscriptPath"
+# Safe temp file cleanup via try/finally
+try {
+    Write-Host "[LIBRARIAN HOOK] Compiling full conversation..."
+    
+    $pythonScript = @"
+import json
+import sys
 
-& $librarianExe $sessionId "--file" $tempTranscriptPath
-$librarianExitCode = $LASTEXITCODE
+def extract_transcript(jsonl_path, out_path):
+    transcript = []
+    try:
+        with open(jsonl_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if not line.strip(): continue
+                evt = json.loads(line)
+                if evt.get('type') == 'user.message':
+                    content = evt.get('data', {}).get('content', '')
+                    transcript.append(f'User:\n{content}\n')
+                elif evt.get('type') == 'assistant.message':
+                    content = evt.get('data', {}).get('content', '')
+                    if content:
+                        transcript.append(f'AI:\n{content}\n')
+        
+        with open(out_path, 'w', encoding='utf-8') as out:
+            out.write('\n'.join(transcript))
+    except Exception as e:
+        sys.exit(f'Error extracting transcript: {e}')
 
-Remove-Item -Path $tempTranscriptPath -ErrorAction SilentlyContinue
+extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
+"@
 
-if ($librarianExitCode -ne 0) {
-    Fail "librarian.exe exited with status $librarianExitCode. Distillation did NOT complete; the golden record was not committed."
+    # Execute Python
+    $pythonRunSuccess = $false
+    try {
+        $pythonScript | py -
+        if ($LASTEXITCODE -eq 0) { $pythonRunSuccess = $true }
+    } catch {
+        Write-Host "py launcher failed, trying python..."
+    }
+
+    if (-Not $pythonRunSuccess) {
+        $pythonScript | python -
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to extract transcript using Python."
+        }
+    }
+    
+    $transcriptLength = (Get-Item $tempTranscriptPath).Length
+    if ($transcriptLength -eq 0) {
+        Write-Warning "[LIBRARIAN HOOK] Transcript is empty. Nothing to distill."
+        exit 0
+    }
+    
+    Write-Host "[LIBRARIAN HOOK] Extracted $($transcriptLength) bytes of transcript."
+    
+    # 4. Fire up the C++ Librarian Pipeline
+    Write-Host "[LIBRARIAN HOOK] Waking up the GodBrain Librarian (C++)..."
+    
+    $librarianExe = Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
+    
+    # Execute the native pipeline
+    Write-Host "Executing: & `"$librarianExe`" $sessionId `"$tempTranscriptPath`""
+    & $librarianExe $sessionId $tempTranscriptPath
+    $librarianExitCode = $LASTEXITCODE
+    
+    if ($librarianExitCode -ne 0) {
+        Write-Host "[LIBRARIAN HOOK] Native pipeline failed with exit code $librarianExitCode" -ForegroundColor Red
+        exit $librarianExitCode
+    }
+    
+    Write-Host "[LIBRARIAN HOOK] Distillation complete. Golden record secured."
+    Write-Host "Goodbye, Architect. See you next session."
+
+} finally {
+    # Clean up temp file
+    if (Test-Path $tempTranscriptPath) {
+        Remove-Item -Force $tempTranscriptPath
+    }
 }
-
-# Only reachable after the native tool itself reported success via exit code 0.
-Write-Host "[LIBRARIAN HOOK] Distillation complete. Golden record secured."
-Write-Host "Goodbye, Architect. See you next session."
-exit 0
