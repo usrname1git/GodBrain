@@ -78,12 +78,24 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	now := time.Now().UTC()
 
 	// Record the observation of this source from this external session
-	_, _ = s.db.Collection("source_observations").InsertOne(ctx, SourceObservation{
-		SourceHash:       sourceHash,
-		ExternalSourceID: extSourceID,
-		RunID:            newRunID, // Will be overridden to existing RunID if we didn't create a new one
-		CreatedAt:        time.Now().UTC(),
-	})
+	_, err := s.db.Collection("source_observations").UpdateOne(ctx,
+		bson.M{
+			"source_hash":        sourceHash,
+			"external_source_id": extSourceID,
+		},
+		bson.M{
+			"$setOnInsert": bson.M{
+				"source_hash":        sourceHash,
+				"external_source_id": extSourceID,
+				"run_id":             newRunID, // Will be overridden to existing RunID if we didn't create a new one
+				"created_at":         time.Now().UTC(),
+			},
+		},
+		options.Update().SetUpsert(true),
+	)
+	if err != nil {
+		return nil, false, errors.New("failed to record source observation: " + err.Error())
+	}
 
 	filter := bson.M{
 		"source_hash":       sourceHash,
@@ -120,7 +132,7 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
 
 	var run IngestionRun
-	err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&run)
+	err = coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&run)
 	if err != nil {
 		return nil, false, err
 	}
@@ -128,31 +140,48 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	// If the runID matches the one we just generated, it was created new.
 	createdNew := run.RunID == newRunID
 
-	if !createdNew {
-		// Update observation with actual returned RunID
-		_, _ = s.db.Collection("source_observations").UpdateOne(ctx,
-			bson.M{"source_hash": sourceHash, "external_source_id": extSourceID, "run_id": newRunID},
-			bson.M{"$set": bson.M{"run_id": run.RunID}},
-		)
+	// Start transaction for atomic migration
+	session, err := s.db.Client().StartSession()
+	if err != nil {
+		return nil, false, errors.New("failed to start session for migration: " + err.Error())
 	}
-	
-	if createdNew && retryOf != nil {
-		// Migrate candidate nodes from the failed run to this new run
-		_, err := s.db.Collection("knowledge_nodes").UpdateMany(ctx,
-			bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
-			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
-		)
-		if err != nil {
-			// Rollback the newly created run by marking it failed, avoiding dangling references
-			_, _ = coll.UpdateOne(ctx, bson.M{"_id": run.ID}, bson.M{"$set": bson.M{
-				"status":      StatusFailed,
-				"active":      false,
-				"error_msg":   "migration_failed",
-				"lease_token": "",
-				"updated_at":  time.Now().UTC(),
-			}})
-			return nil, false, err
+	defer session.EndSession(ctx)
+
+	_, err = session.WithTransaction(ctx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+		// Update observation with actual returned RunID
+		if !createdNew {
+			_, innerErr := s.db.Collection("source_observations").UpdateOne(sessCtx,
+				bson.M{"source_hash": sourceHash, "external_source_id": extSourceID},
+				bson.M{"$set": bson.M{"run_id": run.RunID}},
+			)
+			if innerErr != nil {
+				return nil, errors.New("failed to update source observation run_id: " + innerErr.Error())
+			}
 		}
+
+		if createdNew && retryOf != nil {
+			// Migrate candidate nodes from the failed run to this new run
+			_, innerErr := s.db.Collection("knowledge_nodes").UpdateMany(sessCtx,
+				bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
+				bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
+			)
+			if innerErr != nil {
+				// Rollback the newly created run by marking it failed, avoiding dangling references
+				_, _ = coll.UpdateOne(sessCtx, bson.M{"_id": run.ID}, bson.M{"$set": bson.M{
+					"status":      StatusFailed,
+					"active":      false,
+					"error_msg":   "migration_failed",
+					"lease_token": "",
+					"updated_at":  time.Now().UTC(),
+				}})
+				return nil, innerErr
+			}
+		}
+		return nil, nil
+	})
+
+	if err != nil {
+		return nil, false, err
 	}
 	
 	return &run, createdNew, nil
