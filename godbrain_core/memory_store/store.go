@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,6 +60,7 @@ func mergeClaims(existing, incoming Claim) Claim {
 		seen[span] = struct{}{}
 		merged = append(merged, span)
 	}
+	sort.Strings(merged)
 	existing.EvidenceSpans = merged
 	return existing
 }
