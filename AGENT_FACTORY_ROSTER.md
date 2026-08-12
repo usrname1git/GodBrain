@@ -357,7 +357,7 @@ same idempotency key; it does not erase the previous attempt.
 
 - `godbrain_core/cpp_kernel` remains the authenticated privileged execution
   boundary.
-- `godbrain_core/memory_engine` remains the validated Neo4j write path.
+- `godbrain_core/memory_store` remains the validated MongoDB write path.
 - `godbrain_core/rust_router` and the root Go router remain model/RAG API
   surfaces, not authorization services.
 - `godbrain_core/cpp_tools/librarian.cpp` produces derived records for the Memory

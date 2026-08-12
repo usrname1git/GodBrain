@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/sha3"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/sha3"
 )
 
 var (
@@ -31,15 +31,15 @@ func NewStore(db *mongo.Database) *Store {
 // If retryOf is provided, it marks this run as a retry of a previous failed run.
 func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, extID, extVer, schemaVer string, retryOf *string) (*IngestionRun, bool, error) {
 	coll := s.db.Collection("ingestion_runs")
-	
+
 	// We only look for active/committed runs to enforce idempotency.
 	// Failed runs are ignored by this filter, so a new one will be upserted.
 	// If an active run is found but its lease has expired (stale for > 5 min),
 	// we will consider it failed.
 	fiveMinsAgo := time.Now().UTC().Add(-5 * time.Minute)
-	
+
 	// Pre-emptively fail stale active runs
-	_, _ = coll.UpdateMany(ctx, 
+	if _, err := coll.UpdateMany(ctx,
 		bson.M{
 			"source_hash": sourceHash,
 			"active":      true,
@@ -48,14 +48,16 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 		},
 		bson.M{
 			"$set": bson.M{
-				"status": StatusFailed,
-				"active": false,
-				"error_msg": "lease_timeout",
+				"status":      StatusFailed,
+				"active":      false,
+				"error_msg":   "lease_timeout",
 				"lease_token": "", // Revoke lease
-				"updated_at": time.Now().UTC(),
+				"updated_at":  time.Now().UTC(),
 			},
 		},
-	)
+	); err != nil {
+		return nil, false, errors.New("failed to expire stale ingestion leases: " + err.Error())
+	}
 
 	// Auto-detect retryOf if not provided
 	if retryOf == nil {
@@ -105,18 +107,19 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	leaseToken := uuid.New().String()
 
 	setOnInsert := bson.M{
-		"run_id":            newRunID,
-		"status":            StatusStaging,
-		"active":            true,
-		"lease_token":       leaseToken,
-		"source_hash":       sourceHash,
-		"extractor_id":      extID,
-		"extractor_version": extVer,
-		"schema_version":    schemaVer,
-		"created_at":        now,
-		"updated_at":        now,
+		"run_id":             newRunID,
+		"status":             StatusStaging,
+		"active":             true,
+		"lease_token":        leaseToken,
+		"source_hash":        sourceHash,
+		"extractor_id":       extID,
+		"extractor_version":  extVer,
+		"schema_version":     schemaVer,
+		"external_source_id": extSourceID,
+		"created_at":         now,
+		"updated_at":         now,
 	}
-	
+
 	if retryOf != nil {
 		setOnInsert["retry_of"] = *retryOf
 	}
@@ -129,6 +132,9 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 
 	var run IngestionRun
 	err := coll.FindOneAndUpdate(ctx, filter, update, opts).Decode(&run)
+	if mongo.IsDuplicateKeyError(err) {
+		err = coll.FindOne(ctx, filter).Decode(&run)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -142,43 +148,54 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 		bson.M{
 			"source_hash":        sourceHash,
 			"external_source_id": extSourceID,
+			"extractor_id":       extID,
+			"extractor_version":  extVer,
+			"schema_version":     schemaVer,
 		},
 		bson.M{
 			"$setOnInsert": bson.M{
 				"source_hash":        sourceHash,
 				"external_source_id": extSourceID,
+				"extractor_id":       extID,
+				"extractor_version":  extVer,
+				"schema_version":     schemaVer,
+				"run_id":             run.RunID,
 				"created_at":         now,
-			},
-			"$set": bson.M{
-				"run_id": run.RunID,
 			},
 		},
 		options.Update().SetUpsert(true),
 	)
+	if mongo.IsDuplicateKeyError(err) {
+		err = s.db.Collection("source_observations").FindOne(ctx, bson.M{
+			"source_hash":        sourceHash,
+			"external_source_id": extSourceID,
+			"extractor_id":       extID,
+			"extractor_version":  extVer,
+			"schema_version":     schemaVer,
+		}).Err()
+	}
 	if err != nil {
+		if createdNew {
+			if _, rollbackErr := coll.UpdateOne(ctx,
+				bson.M{"_id": run.ID, "status": StatusStaging, "lease_token": leaseToken},
+				bson.M{"$set": bson.M{
+					"status":      StatusFailed,
+					"active":      false,
+					"error_msg":   "observation_failed",
+					"lease_token": "",
+					"updated_at":  time.Now().UTC(),
+				}},
+			); rollbackErr != nil {
+				return nil, false, errors.New("failed to record source observation: " + err.Error() + "; failed to release ingestion lease: " + rollbackErr.Error())
+			}
+		}
 		return nil, false, errors.New("failed to record source observation: " + err.Error())
 	}
 
-	if createdNew && retryOf != nil {
-		// Migrate candidate nodes from the failed run to this new run
-		// Since we cannot use MongoDB transactions on standalone, we use a compensation approach
-		_, innerErr := s.db.Collection("knowledge_nodes").UpdateMany(ctx,
-			bson.M{"ingestion_run_id": *retryOf, "status": "candidate"},
-			bson.M{"$set": bson.M{"ingestion_run_id": newRunID}},
-		)
-		if innerErr != nil {
-			// Rollback the newly created run by marking it failed, avoiding dangling references
-			_, _ = coll.UpdateOne(ctx, bson.M{"_id": run.ID}, bson.M{"$set": bson.M{
-				"status":      StatusFailed,
-				"active":      false,
-				"error_msg":   "migration_failed",
-				"lease_token": "",
-				"updated_at":  time.Now().UTC(),
-			}})
-			return nil, false, innerErr
-		}
+	if !createdNew {
+		run.LeaseToken = ""
 	}
-	
+
 	return &run, createdNew, nil
 }
 
@@ -196,6 +213,12 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	if run.SourceHash != payload.Payload.Provenance.SourceHash {
 		return errors.New("run source_hash does not match payload provenance source_hash")
 	}
+	if run.ExternalSourceID != payload.Payload.Provenance.SourceID {
+		return errors.New("run external_source_id does not match payload provenance source_id")
+	}
+	if run.ExtractorVer != payload.ExtractorVersion || run.SchemaVersion != payload.SchemaVersion {
+		return errors.New("run extractor or schema version does not match payload")
+	}
 
 	// Verify SourceHash matches the RawTranscript using Keccak-256
 	hash := sha3.NewLegacyKeccak256()
@@ -209,21 +232,18 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	if payload.Payload.TrustTier != "candidate" {
 		return errors.New("trust_tier must be 'candidate'")
 	}
-	// 1. Stage Source
+	// Store the source as immutable content. Per-run provenance belongs on the run
+	// and append-only association records, never on the source or node.
 	sourceColl := s.db.Collection("sources")
 	_, err = sourceColl.UpdateOne(ctx,
 		bson.M{"source_hash": payload.Payload.Provenance.SourceHash},
 		bson.M{
 			"$setOnInsert": bson.M{
-				"source_hash":        payload.Payload.Provenance.SourceHash,
-				"external_source_id": payload.Payload.Provenance.SourceID,
-				"source_type":        payload.Payload.Provenance.SourceType,
-				"language":           payload.Payload.Provenance.Language,
-				"content":            payload.RawTranscript,
-				"created_at":         time.Now().UTC(),
-			},
-			"$set": bson.M{
-				"ingestion_run_id": runID,
+				"source_hash": payload.Payload.Provenance.SourceHash,
+				"source_type": payload.Payload.Provenance.SourceType,
+				"language":    payload.Payload.Provenance.Language,
+				"content":     payload.RawTranscript,
+				"created_at":  time.Now().UTC(),
 			},
 		},
 		options.Update().SetUpsert(true),
@@ -232,147 +252,163 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 		return err
 	}
 
-	// 2. Stage Nodes (Claims/Concepts/Opsec)
-	// IMPORTANT: We only update nodes that are in "candidate" status.
-	// If a node was previously promoted to "verified", a new staging run should NOT revert it to "candidate".
-	var writeModels []mongo.WriteModel
-	nodesColl := s.db.Collection("knowledge_nodes")
-	now := time.Now().UTC()
-	
-	// Update IngestionRun with provenance details
 	var sourceNode Source
-	err = sourceColl.FindOne(ctx, bson.M{"source_hash": payload.Payload.Provenance.SourceHash}).Decode(&sourceNode)
-	var sourceID primitive.ObjectID
-	if err == nil {
-		sourceID = sourceNode.ID
+	if err = sourceColl.FindOne(ctx, bson.M{"source_hash": payload.Payload.Provenance.SourceHash}).Decode(&sourceNode); err != nil {
+		return errors.New("failed to resolve immutable source: " + err.Error())
 	}
 
-	_, err = s.db.Collection("ingestion_runs").UpdateOne(ctx,
-		bson.M{"run_id": runID},
+	runResult, err := s.db.Collection("ingestion_runs").UpdateOne(ctx,
+		bson.M{"run_id": runID, "status": StatusStaging, "lease_token": leaseToken},
 		bson.M{
 			"$set": bson.M{
 				"prompt_hash":        payload.Payload.Provenance.PromptHash,
 				"model_id":           payload.Payload.Provenance.ModelID,
 				"model_hash":         payload.Payload.Provenance.ModelHash,
 				"llm_temperature":    payload.Payload.Provenance.LLMTemperature,
-				"source_id":          sourceID,
+				"source_id":          sourceNode.ID,
 				"external_source_id": payload.Payload.Provenance.SourceID,
+				"updated_at":         time.Now().UTC(),
 			},
 		},
 	)
 	if err != nil {
 		return err
 	}
+	if runResult.MatchedCount != 1 {
+		return errors.New("ingestion lease expired before staging")
+	}
 
-	// Claims
+	now := time.Now().UTC()
+	candidateDocuments := make(map[string]bson.M)
+
 	for _, claim := range payload.Payload.Claims {
 		hashStr := claim.ClaimID + "_" + claim.Type + "_" + claim.Content
 		hash := sha3.NewLegacyKeccak256()
 		hash.Write([]byte(hashStr))
 		stableID := hex.EncodeToString(hash.Sum(nil))
-
-		wm := mongo.NewUpdateOneModel().
-			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
-			SetUpdate(bson.M{
-				"$setOnInsert": bson.M{
-					"stable_id":        stableID,
-					"version":          "v1",
-					"kind":             "claim",
-					"sector":           claim.Type,
-					"content":          claim.Content,
-					"schema_version":   payload.SchemaVersion,
-					"status":           payload.Payload.TrustTier, // typically "candidate"
-					"confidence":       claim.Confidence,
-					"evidence_spans":   claim.EvidenceSpans,
-					"ingestion_run_id": runID,
-					"lease_token":      leaseToken,
-					"created_at":       now,
-				},
-			}).
-			SetUpsert(true)
-		writeModels = append(writeModels, wm)
+		candidateDocuments[stableID] = bson.M{
+			"stable_id":      stableID,
+			"version":        "v1",
+			"kind":           "claim",
+			"sector":         claim.Type,
+			"content":        claim.Content,
+			"schema_version": payload.SchemaVersion,
+			"status":         payload.Payload.TrustTier,
+			"confidence":     claim.Confidence,
+			"evidence_spans": claim.EvidenceSpans,
+			"created_at":     now,
+		}
 	}
 
-	// Core Concepts
 	for _, concept := range payload.Payload.CoreConcepts {
 		hashStr := "concept_" + concept
 		hash := sha3.NewLegacyKeccak256()
 		hash.Write([]byte(hashStr))
 		stableID := hex.EncodeToString(hash.Sum(nil))
-
-		wm := mongo.NewUpdateOneModel().
-			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
-			SetUpdate(bson.M{
-				"$setOnInsert": bson.M{
-					"stable_id":        stableID,
-					"version":          "v1",
-					"kind":             "concept",
-					"sector":           "general",
-					"content":          concept,
-					"schema_version":   payload.SchemaVersion,
-					"status":           payload.Payload.TrustTier,
-					"confidence":       1.0,
-					"ingestion_run_id": runID,
-					"lease_token":      leaseToken,
-					"created_at":       now,
-				},
-			}).
-			SetUpsert(true)
-		writeModels = append(writeModels, wm)
+		candidateDocuments[stableID] = bson.M{
+			"stable_id":      stableID,
+			"version":        "v1",
+			"kind":           "concept",
+			"sector":         "general",
+			"content":        concept,
+			"schema_version": payload.SchemaVersion,
+			"status":         payload.Payload.TrustTier,
+			"confidence":     1.0,
+			"created_at":     now,
+		}
 	}
 
-	// Opsec Candidates
 	for _, opsec := range payload.Payload.OpsecCandidates {
 		hashStr := "opsec_" + opsec
 		hash := sha3.NewLegacyKeccak256()
 		hash.Write([]byte(hashStr))
 		stableID := hex.EncodeToString(hash.Sum(nil))
-
-		wm := mongo.NewUpdateOneModel().
-			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
-			SetUpdate(bson.M{
-				"$setOnInsert": bson.M{
-					"stable_id":        stableID,
-					"version":          "v1",
-					"kind":             "opsec_candidate",
-					"sector":           "security",
-					"content":          opsec,
-					"schema_version":   payload.SchemaVersion,
-					"status":           payload.Payload.TrustTier,
-					"confidence":       1.0,
-					"ingestion_run_id": runID,
-					"lease_token":      leaseToken,
-					"created_at":       now,
-				},
-			}).
-			SetUpsert(true)
-		writeModels = append(writeModels, wm)
-	}
-
-	if len(writeModels) > 0 {
-		_, err = nodesColl.BulkWrite(ctx, writeModels, options.BulkWrite().SetOrdered(false))
-		if err != nil {
-			return err
+		candidateDocuments[stableID] = bson.M{
+			"stable_id":      stableID,
+			"version":        "v1",
+			"kind":           "opsec_candidate",
+			"sector":         "security",
+			"content":        opsec,
+			"schema_version": payload.SchemaVersion,
+			"status":         payload.Payload.TrustTier,
+			"confidence":     1.0,
+			"created_at":     now,
 		}
 	}
 
-	// Double check lease token to ensure we didn't lose it during bulk write
-	err = s.db.Collection("ingestion_runs").FindOne(ctx, bson.M{"run_id": runID, "lease_token": leaseToken, "status": StatusStaging}).Decode(&run)
+	if len(candidateDocuments) == 0 {
+		return nil
+	}
+
+	nodesColl := s.db.Collection("knowledge_nodes")
+	nodeWrites := make([]mongo.WriteModel, 0, len(candidateDocuments))
+	stableIDs := make([]string, 0, len(candidateDocuments))
+	for stableID, document := range candidateDocuments {
+		stableIDs = append(stableIDs, stableID)
+		nodeWrites = append(nodeWrites, mongo.NewUpdateOneModel().
+			SetFilter(bson.M{"stable_id": stableID, "version": "v1"}).
+			SetUpdate(bson.M{"$setOnInsert": document}).
+			SetUpsert(true))
+	}
+	if _, err = nodesColl.BulkWrite(ctx, nodeWrites, options.BulkWrite().SetOrdered(false)); err != nil {
+		return err
+	}
+
+	cursor, err := nodesColl.Find(ctx, bson.M{
+		"stable_id": bson.M{"$in": stableIDs},
+		"version":   "v1",
+	})
 	if err != nil {
-		// Compensation: we lost the lease! Delete ONLY the candidate nodes we just wrote (using lease_token).
-		_, _ = nodesColl.DeleteMany(ctx, bson.M{"ingestion_run_id": runID, "status": "candidate", "lease_token": leaseToken})
-		return errors.New("lease expired during staging writes, compensation applied")
+		return err
+	}
+	defer cursor.Close(ctx)
+
+	var nodes []KnowledgeNode
+	if err = cursor.All(ctx, &nodes); err != nil {
+		return err
+	}
+	if len(nodes) != len(candidateDocuments) {
+		return errors.New("failed to resolve all staged knowledge nodes")
+	}
+
+	linkWrites := make([]mongo.WriteModel, 0, len(nodes))
+	for _, node := range nodes {
+		linkWrites = append(linkWrites, mongo.NewUpdateOneModel().
+			SetFilter(bson.M{"run_id": runID, "node_id": node.ID}).
+			SetUpdate(bson.M{"$setOnInsert": bson.M{
+				"run_id":        runID,
+				"node_id":       node.ID,
+				"stable_id":     node.StableID,
+				"node_version":  node.Version,
+				"attempt_token": leaseToken,
+				"created_at":    now,
+			}}).
+			SetUpsert(true))
+	}
+	linksColl := s.db.Collection("run_node_links")
+	if _, err = linksColl.BulkWrite(ctx, linkWrites, options.BulkWrite().SetOrdered(false)); err != nil {
+		return err
+	}
+
+	if err = s.db.Collection("ingestion_runs").FindOne(ctx, bson.M{
+		"run_id": runID, "lease_token": leaseToken, "status": StatusStaging,
+	}).Decode(&run); err != nil {
+		if _, compensationErr := linksColl.DeleteMany(ctx, bson.M{
+			"run_id": runID, "attempt_token": leaseToken,
+		}); compensationErr != nil {
+			return errors.New("lease expired during staging writes: " + err.Error() + "; link compensation failed: " + compensationErr.Error())
+		}
+		return errors.New("lease expired during staging writes; attempt links removed")
 	}
 
 	return nil
 }
 
-// RetrieveCommittedNodes returns all knowledge nodes that belong to a committed ingestion run.
+// RetrieveCommittedNodes returns immutable nodes linked to at least one committed run.
 func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]KnowledgeNode, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
 	runsColl := s.db.Collection("ingestion_runs")
 
-	// 1. Get all committed run IDs
 	cursor, err := runsColl.Find(ctx, bson.M{"status": StatusCommitted})
 	if err != nil {
 		return nil, err
@@ -393,14 +429,39 @@ func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]Kn
 		return []KnowledgeNode{}, nil
 	}
 
-	// 2. Add run ID filter
-	if filter == nil {
-		filter = bson.M{}
+	linkCursor, err := s.db.Collection("run_node_links").Find(ctx, bson.M{
+		"run_id": bson.M{"$in": committedRunIDs},
+	})
+	if err != nil {
+		return nil, err
 	}
-	filter["ingestion_run_id"] = bson.M{"$in": committedRunIDs}
+	defer linkCursor.Close(ctx)
 
-	// 3. Find nodes
-	nodeCursor, err := nodesColl.Find(ctx, filter)
+	var links []RunNodeLink
+	if err = linkCursor.All(ctx, &links); err != nil {
+		return nil, err
+	}
+
+	nodeIDSet := make(map[primitive.ObjectID]struct{}, len(links))
+	for _, link := range links {
+		nodeIDSet[link.NodeID] = struct{}{}
+	}
+	if len(nodeIDSet) == 0 {
+		return []KnowledgeNode{}, nil
+	}
+
+	nodeIDs := make([]primitive.ObjectID, 0, len(nodeIDSet))
+	for nodeID := range nodeIDSet {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+
+	nodeFilter := make(bson.M, len(filter)+1)
+	for key, value := range filter {
+		nodeFilter[key] = value
+	}
+	nodeFilter["_id"] = bson.M{"$in": nodeIDs}
+
+	nodeCursor, err := nodesColl.Find(ctx, nodeFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -413,19 +474,20 @@ func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]Kn
 
 	return nodes, nil
 }
+
 // Ensures that the origin node exists, is verified, and the hash matches exactly.
 func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer string) (*Skill, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
 
 	// 1. Fetch the origin node
 	var node KnowledgeNode
-	
+
 	// Handle ObjectID vs string lookup gracefully
 	filter := bson.M{"_id": originNodeID}
 	if objID, parseErr := primitive.ObjectIDFromHex(originNodeID); parseErr == nil {
 		filter = bson.M{"_id": objID}
 	}
-	
+
 	err := nodesColl.FindOne(ctx, filter).Decode(&node)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -434,11 +496,32 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 		return nil, err
 	}
 
-	// 1b. Verify the node's run is committed
-	var run IngestionRun
-	err = s.db.Collection("ingestion_runs").FindOne(ctx, bson.M{"run_id": node.IngestionRunID}).Decode(&run)
-	if err != nil || run.Status != StatusCommitted {
-		return nil, errors.New("origin node belongs to an uncommitted ingestion run")
+	linkCursor, err := s.db.Collection("run_node_links").Find(ctx, bson.M{"node_id": node.ID})
+	if err != nil {
+		return nil, err
+	}
+	defer linkCursor.Close(ctx)
+
+	var links []RunNodeLink
+	if err = linkCursor.All(ctx, &links); err != nil {
+		return nil, err
+	}
+	runIDs := make([]string, 0, len(links))
+	for _, link := range links {
+		runIDs = append(runIDs, link.RunID)
+	}
+	if len(runIDs) == 0 {
+		return nil, errors.New("origin node is not linked to a committed ingestion run")
+	}
+	committedCount, err := s.db.Collection("ingestion_runs").CountDocuments(ctx, bson.M{
+		"run_id": bson.M{"$in": runIDs},
+		"status": StatusCommitted,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if committedCount == 0 {
+		return nil, errors.New("origin node is not linked to a committed ingestion run")
 	}
 
 	// 2. Validate invariants (must be verified, version must match)
@@ -481,6 +564,9 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 
 	var skill Skill
 	err = skillsColl.FindOneAndUpdate(ctx, bson.M{"name": name}, update, opts).Decode(&skill)
+	if mongo.IsDuplicateKeyError(err) {
+		err = skillsColl.FindOne(ctx, bson.M{"name": name}).Decode(&skill)
+	}
 	if err != nil {
 		return nil, err
 	}
