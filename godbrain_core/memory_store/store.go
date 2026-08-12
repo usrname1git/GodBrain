@@ -71,6 +71,19 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 		if err := coll.FindOne(ctx, failedFilter, opts).Decode(&lastFailed); err == nil {
 			retryOf = &lastFailed.RunID
 		}
+	} else {
+		// Validate that the explicitly provided retryOf run is failed and matches the source_hash
+		var providedFailed IngestionRun
+		err := coll.FindOne(ctx, bson.M{"run_id": *retryOf}).Decode(&providedFailed)
+		if err != nil {
+			return nil, false, errors.New("provided retryOf run not found: " + err.Error())
+		}
+		if providedFailed.Status != StatusFailed {
+			return nil, false, errors.New("provided retryOf run is not in failed status")
+		}
+		if providedFailed.SourceHash != sourceHash {
+			return nil, false, errors.New("provided retryOf run does not match source_hash")
+		}
 	}
 
 	// We only look for active/committed runs to enforce idempotency.
