@@ -7,6 +7,8 @@
 #include <chrono>
 #include <stdexcept>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -279,9 +281,6 @@ private:
         PROCESS_INFORMATION pi;
         ZeroMemory(&pi, sizeof(pi));
 
-        std::vector<char> cmdline(config.llm_executable_path.begin(), config.llm_executable_path.end());
-        cmdline.push_back('\0');
-
         // Create Job Object to kill the ENTIRE process tree on timeout
         HANDLE hJob = CreateJobObjectA(NULL, NULL);
         if (hJob) {
@@ -294,6 +293,10 @@ private:
         SetEnvironmentVariableA("SERVE", "1");
 
         // CREATE_SUSPENDED ensures no rogue children are spawned before the job object is attached
+        std::string cmdline_str = "\"" + config.llm_executable_path + "\"";
+        std::vector<char> cmdline(cmdline_str.begin(), cmdline_str.end());
+        cmdline.push_back('\0');
+
         BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
         
         if (!success) {
@@ -324,14 +327,37 @@ private:
 
         // Read stdout and stderr in a separate thread BEFORE writing to prevent pipe deadlock
         std::string output = "";
+        std::mutex output_mutex;
+        std::condition_variable ready_cv;
+        bool is_ready = false;
+        
         std::thread reader([&]() {
             DWORD read; 
             CHAR buf[4096]; 
             while(ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
                 buf[read] = '\0';
-                output.append(buf, read);
+                {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    output.append(buf, read);
+                    if (!is_ready && output.find("READY") != std::string::npos) {
+                        is_ready = true;
+                        ready_cv.notify_one();
+                    }
+                }
             }
         });
+
+        // Wait for READY
+        {
+            std::unique_lock<std::mutex> lock(output_mutex);
+            if (!ready_cv.wait_for(lock, std::chrono::seconds(30), [&]{ return is_ready; })) {
+                if (hJob) CloseHandle(hJob); else TerminateProcess(pi.hProcess, 1);
+                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+                if (reader.joinable()) reader.join();
+                CloseHandle(hOutRd); CloseHandle(hInWr);
+                throw std::runtime_error("LLM timed out waiting for READY.");
+            }
+        }
 
         // Write full prompt to stdin in a separate thread to prevent deadlocking if process hangs on boot
         std::thread writer([&]() {
@@ -523,7 +549,8 @@ public:
         PROCESS_INFORMATION pi;
         ZeroMemory(&pi, sizeof(pi));
 
-        std::vector<char> cmdline(go_executable_path.begin(), go_executable_path.end());
+        std::string go_cmdline_str = "\"" + go_executable_path + "\"";
+        std::vector<char> cmdline(go_cmdline_str.begin(), go_cmdline_str.end());
         cmdline.push_back('\0');
 
         BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
@@ -558,29 +585,38 @@ public:
             }
         });
 
-        DWORD totalWritten = 0;
-        DWORD toWrite = payload_str.length();
-        const char* ptr = payload_str.c_str();
-        while (totalWritten < toWrite) {
-            DWORD written = 0;
-            if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
-                std::cerr << "[LIBRARIAN ERR] Failed to write to Go process pipe." << std::endl;
-                break;
+        std::thread writer([&]() {
+            DWORD totalWritten = 0;
+            DWORD toWrite = payload_str.length();
+            const char* ptr = payload_str.c_str();
+            while (totalWritten < toWrite) {
+                DWORD written = 0;
+                if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
+                    std::cerr << "[LIBRARIAN ERR] Failed to write to Go process pipe." << std::endl;
+                    break;
+                }
+                totalWritten += written;
             }
-            totalWritten += written;
-        }
-        CloseHandle(hInWr); // Send EOF to Go
+            CloseHandle(hInWr); // Send EOF to Go
+        });
 
         DWORD waitRes = WaitForSingleObject(pi.hProcess, 35000); // Wait slightly longer than Go's 30s context
         if (waitRes == WAIT_TIMEOUT) {
             TerminateProcess(pi.hProcess, 1);
             if (reader.joinable()) reader.join();
             CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(hOutRd);
+            if (writer.joinable()) {
+                CancelSynchronousIo(writer.native_handle());
+                writer.join();
+            }
             throw std::runtime_error("Go memory-store timed out.");
         }
         
         if (reader.joinable()) {
             reader.join();
+        }
+        if (writer.joinable()) {
+            writer.join();
         }
         
         DWORD exitCode;

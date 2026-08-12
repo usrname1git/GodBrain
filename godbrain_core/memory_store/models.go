@@ -1,11 +1,15 @@
 package memorystore
 
-import "time"
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
 
 // IngestionRun models the state machine: staging -> validated -> committed / failed
 // Only committed runs allow their nodes/edges to be queried.
 type IngestionRun struct {
-	ID             string    `bson:"_id,omitempty" json:"id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	RunID          string    `bson:"run_id" json:"run_id"` // Stable UUID
 	Status         string    `bson:"status" json:"status"` // "staging", "validated", "committed", "failed"
 	ExtractorID    string    `bson:"extractor_id" json:"extractor_id"`
@@ -16,8 +20,9 @@ type IngestionRun struct {
 	ModelID        string    `bson:"model_id,omitempty" json:"model_id,omitempty"`
 	ModelHash      string    `bson:"model_hash,omitempty" json:"model_hash,omitempty"`
 	LLMTemperature float64   `bson:"llm_temperature,omitempty" json:"llm_temperature,omitempty"`
-	Active         bool      `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
-	RetryOf        *string   `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
+	Active         bool               `bson:"active" json:"active"` // Used for partial unique index (true if not failed)
+	SourceID       primitive.ObjectID `bson:"source_id,omitempty" json:"source_id,omitempty"`
+	RetryOf        *string            `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
 	ErrorMsg       *string   `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
 	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt      time.Time `bson:"updated_at" json:"updated_at"`
@@ -25,7 +30,7 @@ type IngestionRun struct {
 
 // Source represents the immutable raw transcript or document.
 type Source struct {
-	ID             string    `bson:"_id,omitempty" json:"id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	SourceHash     string    `bson:"source_hash" json:"source_hash"`
 	SourceType     string    `bson:"source_type" json:"source_type"`
 	Language       string    `bson:"language" json:"language"`
@@ -36,7 +41,7 @@ type Source struct {
 
 // Chunk represents a segment of a Source, indexed by exact UTF-8 byte offsets.
 type Chunk struct {
-	ID             string `bson:"_id,omitempty" json:"id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	SourceHash     string `bson:"source_hash" json:"source_hash"`
 	ChunkIndex     int    `bson:"chunk_index" json:"chunk_index"`
 	StartByte      int    `bson:"start_byte" json:"start_byte"`
@@ -47,7 +52,7 @@ type Chunk struct {
 
 // KnowledgeNode represents Concepts, Claims, and Candidates.
 type KnowledgeNode struct {
-	ID             string    `bson:"_id,omitempty" json:"id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	StableID       string    `bson:"stable_id" json:"stable_id"` // Hash of normalized content/kind
 	Version        string    `bson:"version" json:"version"`     // Versioning for immutability when verified
 	Kind           string    `bson:"kind" json:"kind"`           // e.g., "concept", "claim", "opsec_candidate"
@@ -63,7 +68,7 @@ type KnowledgeNode struct {
 
 // KnowledgeEdge defines typed relations (e.g., node -> node, or evidence -> node).
 type KnowledgeEdge struct {
-	ID             string    `bson:"_id,omitempty" json:"id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	StableID       string    `bson:"stable_id" json:"stable_id"` // Hash of From+To+Type
 	FromID         string    `bson:"from_id" json:"from_id"`
 	ToID           string    `bson:"to_id" json:"to_id"`
@@ -76,7 +81,7 @@ type KnowledgeEdge struct {
 // Skill represents a verified capability for Hermes.
 // Invariant: Skills can ONLY be derived/created from verified KnowledgeNodes.
 type Skill struct {
-	ID            string    `bson:"_id,omitempty" json:"id"`
+	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Name          string    `bson:"name" json:"name"`
 	Version       string    `bson:"version" json:"version"`
 	Content       string    `bson:"content" json:"content"`

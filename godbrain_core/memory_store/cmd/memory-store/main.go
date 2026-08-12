@@ -155,7 +155,7 @@ func run() error {
 	// 7. Write EXACTLY ONE JSON Response to stdout
 	receipt := memorystore.StoreReceipt{
 		RunID:         irun.RunID,
-		RecordID:      irun.ID,
+		RecordID:      irun.ID.Hex(),
 		Version:       irun.ExtractorVer,
 		SchemaVersion: irun.SchemaVersion,
 		Status:        status,

@@ -4,7 +4,7 @@ Welcome to the GodBrain repository. This project is a Cognitive OS designed to t
 
 ## Build and Test Commands
 - **Go Tests**: Run unit and integration tests with `go test ./...` in the `godbrain_core/memory_store` directory.
-- **Go Memory Engine**: Navigate to `godbrain_core/memory_engine` and use standard Go commands (`go build`, `go run main.go`).
+- **Go Memory Store**: Navigate to `godbrain_core/memory_store/cmd/memory-store` and use standard Go commands (`go build`, `go run main.go`).
 
 ## High-Level Architecture
 GodBrain decouples the cognitive model from the hardware and persists "teachings" using MongoDB.

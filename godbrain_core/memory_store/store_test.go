@@ -8,6 +8,7 @@ import (
 
 	"godbrain_core/memory_store"
 
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -101,7 +102,7 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 
 	// Seed a verified node
 	nodesColl := db.Collection("knowledge_nodes")
-	nodeID := "node_123"
+	nodeID := primitive.NewObjectID()
 
 	_, _ = nodesColl.InsertOne(ctx, memorystore.KnowledgeNode{
 		ID:             nodeID,
@@ -119,7 +120,7 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	})
 
 	// Attempt promotion with WRONG hash
-	_, err := store.PromoteSkill(ctx, "test-skill", "skill data", nodeID, "v1", "wrong_hash", "1.0")
+	_, err := store.PromoteSkill(ctx, "test-skill", "skill data", nodeID.Hex(), "v1", "wrong_hash", "1.0")
 	if err != memorystore.ErrSkillOriginHashMismatch {
 		t.Fatalf("Expected hash mismatch error, got: %v", err)
 	}

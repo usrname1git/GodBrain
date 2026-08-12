@@ -32,6 +32,22 @@ func NewStore(db *mongo.Database) *Store {
 func (s *Store) StartIngestion(ctx context.Context, sourceHash, extID, extVer, schemaVer string, retryOf *string) (*IngestionRun, bool, error) {
 	coll := s.db.Collection("ingestion_runs")
 	
+	// Auto-detect retryOf if not provided
+	if retryOf == nil {
+		var lastFailed IngestionRun
+		failedFilter := bson.M{
+			"source_hash":       sourceHash,
+			"extractor_id":      extID,
+			"extractor_version": extVer,
+			"schema_version":    schemaVer,
+			"status":            StatusFailed,
+		}
+		opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
+		if err := coll.FindOne(ctx, failedFilter, opts).Decode(&lastFailed); err == nil {
+			retryOf = &lastFailed.RunID
+		}
+	}
+
 	// We only look for active/committed runs to enforce idempotency.
 	// Failed runs are ignored by this filter, so a new one will be upserted.
 	filter := bson.M{
@@ -120,7 +136,14 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 	now := time.Now().UTC()
 	
 	// Update IngestionRun with provenance details
-	_, _ = s.db.Collection("ingestion_runs").UpdateOne(ctx,
+	var sourceNode Source
+	err = sourceColl.FindOne(ctx, bson.M{"source_hash": payload.Payload.Provenance.SourceHash}).Decode(&sourceNode)
+	var sourceID primitive.ObjectID
+	if err == nil {
+		sourceID = sourceNode.ID
+	}
+
+	_, err = s.db.Collection("ingestion_runs").UpdateOne(ctx,
 		bson.M{"run_id": runID},
 		bson.M{
 			"$set": bson.M{
@@ -128,9 +151,13 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, payload Dis
 				"model_id":        payload.Payload.Provenance.ModelID,
 				"model_hash":      payload.Payload.Provenance.ModelHash,
 				"llm_temperature": payload.Payload.Provenance.LLMTemperature,
+				"source_id":       sourceID,
 			},
 		},
 	)
+	if err != nil {
+		return err
+	}
 
 	// Claims
 	for _, claim := range payload.Payload.Claims {
