@@ -744,7 +744,7 @@ int main(int argc, char* argv[]) {
     std::string exe_dir = get_exe_dir();
     
     LibrarianConfig config{
-        env_llm ? std::string(env_llm) : exe_dir + "\\..\\..\\LLM\\colibri_LLM\\colibri.exe",
+        env_llm ? std::string(env_llm) : exe_dir + "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
         env_prompt ? std::string(env_prompt) : exe_dir + "\\prompts\\hermes_v1.json",
         env_mongo ? std::string(env_mongo) : exe_dir + "\\..\\memory_store\\memory-store.exe",
         "Colibri-Llama-3-8B",
