@@ -48,6 +48,7 @@ flowchart LR
     Colibri[Colibri inference process]
     Librarian[Native Librarian]
     Memory[Go Memory Store]
+    RAG[Golden Record RAG Service :8084]
     Factory[Agent Factory control plane]
 
     Operator --> UI
@@ -60,6 +61,7 @@ flowchart LR
     RustRouter --> Colibri
     Librarian --> Memory
     Memory --> Mongo
+    RAG --> Mongo
     Factory -. planned .-> Kernel
     Factory -. planned .-> Librarian
 ```
@@ -77,6 +79,7 @@ routers both use port `8082`, so only one can bind that port at a time.
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and asynchronous Colibri invocation |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
 | Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
+| Golden Record RAG service | Implemented lexical retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search with source-resolved citations |
 | Native Librarian | Implemented, deterministic local distillation | `godbrain_core/cpp_tools/librarian.cpp` | CLI and child process | Derive a bounded Golden Record from a transcript and invoke the Memory Store |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
@@ -97,10 +100,12 @@ architecture does not require a specific parameter count or model family.
 
 ### Retrieval boundary: MongoDB
 
-MongoDB stores source-oriented records used by the RAG routers, including fields
-such as `title`, `content`, `type`, and tags. It is a document database. The
-current C++ Kernel queries it through `mongosh`; the Go and Rust alternatives use
-MongoDB drivers.
+MongoDB stores both legacy source-oriented router records and Alexandria Golden
+Records. The current C++ Kernel and alternative Go/Rust routers still query the
+legacy `nodes` collection; they do not consume Golden Records. The canonical
+Golden Record service uses the Go driver and an indexed, generation-addressed
+`rag_documents` projection. It never mixes legacy `nodes` into committed
+Alexandria results.
 
 MongoDB is the source of truth for both runtime retrieval documents and
 Alexandria Golden Records. These use separate collections and validated schemas.
@@ -114,7 +119,10 @@ The Go Memory Store is the validated Golden Record write boundary:
 3. Persist immutable sources and knowledge nodes.
 4. Associate nodes with ingestion attempts through append-only `run_node_links`.
 5. Commit the ingestion state only after staging and validation succeed.
-6. Exit non-zero if any step fails.
+6. Materialize the committed run into `rag_documents` and append-only
+   `rag_provenance`.
+7. Return success only after the projection is confirmed; projection failure
+   leaves the run committed and makes an idempotent retry repair it.
 
 The archived Neo4j implementation remains under `archive/neo4j/` for historical
 reference and is not part of the active build or runtime.
@@ -239,6 +247,7 @@ sequenceDiagram
     G->>M: Stage immutable records and run links
     M-->>G: Persisted results
     G->>M: Validate and commit ingestion run
+    G->>M: Confirm committed RAG projection
     G-->>L: StoreReceipt JSON
     L-->>T: Process exit status
 ```
@@ -276,7 +285,7 @@ Data never becomes executable merely because it came from a model or database.
 
 ### Current controls
 
-- Routers bind to loopback only.
+- Routers and the Golden Record RAG service bind to loopback only.
 - Browser CORS is restricted to trusted local/Tauri origins.
 - Privileged HTTP dispatch requires a bearer token.
 - High-risk kernel commands require non-empty reasoning.
@@ -291,6 +300,8 @@ Data never becomes executable merely because it came from a model or database.
 - Ordinary local chat/graph routes are intentionally unauthenticated.
 - Raw PowerShell remains available behind the privileged boundary.
 - The C++ RAG path shells out to `mongosh` instead of using an embedded driver.
+- Golden Record retrieval is lexical MongoDB text search, not vector or semantic
+  search. The active C++/Go/Rust routers are not wired to the service yet.
 - Structured audit events, approval records, and automated rollback belong to
   the planned Agent Factory control plane.
 
@@ -307,8 +318,10 @@ Data never becomes executable merely because it came from a model or database.
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temporary script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
-| `MONGODB_URI` | Go Memory Store | MongoDB connection string |
-| `MONGODB_DB_NAME` | Go Memory Store | Override the `godbrain` database name |
+| `MONGODB_URI` | Go Memory Store and Golden Record RAG tools | Required MongoDB connection string |
+| `MONGODB_DB_NAME` | Go Memory Store and Golden Record RAG tools | Override the `godbrain` database name |
+| `GODBRAIN_RAG_PORT` | Golden Record RAG service | Override loopback port `8084`; bind address is not configurable |
+| `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | Golden Record RAG service | Optional schema version ranking preference |
 
 MongoDB currently defaults to `mongodb://localhost:27017` and database
 `godbrain`.
@@ -330,9 +343,12 @@ records.
 ### Golden Record path
 
 1. Start MongoDB and set `MONGODB_URI`.
-2. Run `build_pipeline.ps1` to build `memory-store.exe` and `librarian.exe`.
+2. Run `build_pipeline.ps1` to build `memory-store.exe`, `rag-service.exe`,
+   `rag-rebuild.exe`, and `librarian.exe`.
 3. Set `LLM_RUNNER_PATH`, `GODBRAIN_SNAPSHOT_PATH`, and optional binary overrides.
 4. Run `trigger_librarian.ps1`.
+5. Run `rag-rebuild.exe` once to project committed records written before this
+   retrieval layer, then start `rag-service.exe`.
 
 ### Alternative router path
 
@@ -348,6 +364,12 @@ dispatch.
 - Database writes are consumed before success is reported.
 - Test cleanup failures return non-zero.
 - The Librarian propagates Memory Store failure to its caller.
+- A post-commit projection failure is explicit. The committed source records are
+  not rolled back or marked failed; retrying ingestion or running
+  `rag-rebuild.exe` repairs the derivative projection.
+- Rebuilds populate a non-active generation, reconcile committed node and
+  provenance counts, then atomically switch one metadata pointer. Retired
+  generations are deleted only after the maximum request lifetime has elapsed.
 - Generated build artifacts are excluded from source control.
 
 Automated state snapshots, rollback execution, durable retries, and lease
@@ -384,8 +406,8 @@ risk classes, lifecycle, and implementation phases.
 
 ## Architectural decisions still required
 
-1. Select one canonical non-privileged RAG router or define distinct ports and
-   responsibilities for all three.
+1. Connect a selected non-privileged router to the committed Golden Record RAG
+   service or define distinct responsibilities for all router alternatives.
 2. Replace coarse bearer authorization with short-lived capability grants.
 3. Define versioned HTTP, job, result, and evidence JSON Schemas.
 4. Define retention and supersession policy for immutable MongoDB source and

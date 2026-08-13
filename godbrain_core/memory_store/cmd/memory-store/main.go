@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"godbrain_core/memory_store"
+	"godbrain_core/memory_store/rag"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -108,6 +109,9 @@ func run() error {
 	if err := memorystore.EnsureIndexes(ctx, db); err != nil {
 		return failWithEnvelope("Failed to ensure indexes", err)
 	}
+	if err := rag.EnsureIndexes(ctx, db); err != nil {
+		return failWithEnvelope("Failed to ensure RAG projection indexes", err)
+	}
 
 	// 5. Read EXACTLY ONE JSON document below MongoDB's 16 MiB document limit.
 	inputData, err := readInput(os.Stdin)
@@ -181,7 +185,12 @@ func run() error {
 		if err != nil {
 			return failWithEnvelope("Transition to committed failed", err)
 		}
+	}
 
+	// A committed run is not acknowledged until its derivative retrieval projection
+	// is confirmed. Retrying an already committed ingestion repairs this projection.
+	if err = rag.NewProjector(db).ProjectCommittedRun(ctx, irun.RunID); err != nil {
+		return failWithEnvelope("Committed ingestion RAG projection failed", err)
 	}
 
 	// 7. Write EXACTLY ONE JSON Response to stdout

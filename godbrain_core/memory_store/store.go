@@ -353,6 +353,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 
 	now := time.Now().UTC()
 	candidateDocuments := make(map[string]bson.M)
+	evidenceSpansByStableID := make(map[string][]string)
 	claimsByStableID := make(map[string]Claim)
 
 	for _, claim := range payload.Payload.Claims {
@@ -377,6 +378,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 			"evidence_spans": claim.EvidenceSpans,
 			"created_at":     now,
 		}
+		evidenceSpansByStableID[stableID] = claim.EvidenceSpans
 	}
 
 	for _, concept := range payload.Payload.CoreConcepts {
@@ -455,12 +457,13 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 		linkWrites = append(linkWrites, mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"run_id": runID, "node_id": node.ID}).
 			SetUpdate(bson.M{"$setOnInsert": bson.M{
-				"run_id":        runID,
-				"node_id":       node.ID,
-				"stable_id":     node.StableID,
-				"node_version":  node.Version,
-				"attempt_token": leaseToken,
-				"created_at":    now,
+				"run_id":         runID,
+				"node_id":        node.ID,
+				"stable_id":      node.StableID,
+				"node_version":   node.Version,
+				"evidence_spans": evidenceSpansByStableID[node.StableID],
+				"attempt_token":  leaseToken,
+				"created_at":     now,
 			}}).
 			SetUpsert(true))
 	}
@@ -494,62 +497,28 @@ func (s *Store) CountRunNodeLinks(ctx context.Context, runID string) (int, error
 
 // RetrieveCommittedNodes returns immutable nodes linked to at least one committed run.
 func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]KnowledgeNode, error) {
-	nodesColl := s.db.Collection("knowledge_nodes")
-	runsColl := s.db.Collection("ingestion_runs")
-
-	cursor, err := runsColl.Find(ctx, bson.M{"status": StatusCommitted})
-	if err != nil {
-		return nil, err
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: filter}},
+		{{Key: "$lookup", Value: bson.M{
+			"from":         "run_node_links",
+			"localField":   "_id",
+			"foreignField": "node_id",
+			"as":           "links",
+		}}},
+		{{Key: "$unwind", Value: "$links"}},
+		{{Key: "$lookup", Value: bson.M{
+			"from":         "ingestion_runs",
+			"localField":   "links.run_id",
+			"foreignField": "run_id",
+			"as":           "runs",
+		}}},
+		{{Key: "$unwind", Value: "$runs"}},
+		{{Key: "$match", Value: bson.M{"runs.status": StatusCommitted}}},
+		{{Key: "$group", Value: bson.M{"_id": "$_id", "node": bson.M{"$first": "$$ROOT"}}}},
+		{{Key: "$replaceRoot", Value: bson.M{"newRoot": "$node"}}},
+		{{Key: "$unset", Value: bson.A{"links", "runs"}}},
 	}
-	defer cursor.Close(ctx)
-
-	var committedRuns []IngestionRun
-	if err = cursor.All(ctx, &committedRuns); err != nil {
-		return nil, err
-	}
-
-	var committedRunIDs []string
-	for _, r := range committedRuns {
-		committedRunIDs = append(committedRunIDs, r.RunID)
-	}
-
-	if len(committedRunIDs) == 0 {
-		return []KnowledgeNode{}, nil
-	}
-
-	linkCursor, err := s.db.Collection("run_node_links").Find(ctx, bson.M{
-		"run_id": bson.M{"$in": committedRunIDs},
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer linkCursor.Close(ctx)
-
-	var links []RunNodeLink
-	if err = linkCursor.All(ctx, &links); err != nil {
-		return nil, err
-	}
-
-	nodeIDSet := make(map[primitive.ObjectID]struct{}, len(links))
-	for _, link := range links {
-		nodeIDSet[link.NodeID] = struct{}{}
-	}
-	if len(nodeIDSet) == 0 {
-		return []KnowledgeNode{}, nil
-	}
-
-	nodeIDs := make([]primitive.ObjectID, 0, len(nodeIDSet))
-	for nodeID := range nodeIDSet {
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-
-	nodeFilter := make(bson.M, len(filter)+1)
-	for key, value := range filter {
-		nodeFilter[key] = value
-	}
-	nodeFilter["_id"] = bson.M{"$in": nodeIDs}
-
-	nodeCursor, err := nodesColl.Find(ctx, nodeFilter)
+	nodeCursor, err := s.db.Collection("knowledge_nodes").Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}

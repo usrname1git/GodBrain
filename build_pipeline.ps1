@@ -1,17 +1,21 @@
 # build_pipeline.ps1
-# Builds the C++ Librarian and Go Memory Store to their expected locations
+# Builds the C++ Librarian and Go Alexandria services to their expected locations
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "Building Alexandria Pipeline..."
 
-# 1. Build Memory Store
-Write-Host "Building Memory Store (Go)..."
+# 1. Build Memory Store and canonical lexical retrieval tools
+Write-Host "Building Memory Store and RAG tools (Go)..."
 Push-Location "$PSScriptRoot\godbrain_core\memory_store"
 try {
     go build -o memory-store.exe ./cmd/memory-store
     if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
-    Write-Host "Memory Store built successfully."
+    go build -o rag-service.exe ./cmd/rag-service
+    if ($LASTEXITCODE -ne 0) { throw "RAG service build failed" }
+    go build -o rag-rebuild.exe ./cmd/rag-rebuild
+    if ($LASTEXITCODE -ne 0) { throw "RAG rebuild build failed" }
+    Write-Host "Memory Store and RAG tools built successfully."
 } finally {
     Pop-Location
 }
@@ -30,17 +34,14 @@ try {
         if (-Not (Test-Path $vswhere)) {
             throw "Could not find vswhere.exe and cl.exe is not in PATH."
         }
-        
         $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         $vcvars = "$vsPath\VC\Auxiliary\Build\vcvars64.bat"
-        
         if (-Not (Test-Path $vcvars)) {
             throw "Could not find vcvars64.bat at $vcvars"
         }
 
         cmd.exe /c "call `"$vcvars`" >nul && cl /EHsc /Fe:librarian.exe librarian.cpp"
     }
-    
     if ($LASTEXITCODE -ne 0) { throw "C++ build failed" }
     Write-Host "Librarian built successfully."
 } finally {
