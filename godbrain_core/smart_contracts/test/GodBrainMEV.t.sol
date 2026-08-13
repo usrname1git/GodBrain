@@ -75,6 +75,26 @@ contract GodBrainMEVTest is Test {
         atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, solverOpData);
     }
 
+    function testAtlasSolverCallAcceptsNearMaximumCanonicalSolverOpData() external {
+        bytes memory deliverData = _deliverData(1 ether);
+        // ABI payloads grow in 32-byte words, making 16,356 bytes the largest canonical encoding below 16 KiB.
+        bytes memory nearMaximumCallData = bytes.concat(deliverData, new bytes(16_192 - deliverData.length));
+        bytes memory solverOpData =
+            abi.encodeCall(solver.execute, (address(target), nearMaximumCallData, address(outputToken), 1 ether));
+
+        assertEq(solverOpData.length, solver.MAX_SOLVER_OP_DATA_LENGTH() - 28);
+        atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, solverOpData);
+        assertEq(outputToken.balanceOf(address(solver)), 1 ether);
+    }
+
+    function testAtlasSolverCallRejectsSolverOpDataAboveMaximumBeforeDecode() external {
+        uint256 maximum = solver.MAX_SOLVER_OP_DATA_LENGTH();
+        bytes memory oversizedData = new bytes(maximum + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(GodBrainMEV.SolverOpDataTooLarge.selector, maximum + 1, maximum));
+        atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, oversizedData);
+    }
+
     function testAtlasSolverCallRejectsTrailingSolverOpData() external {
         bytes memory solverOpData = bytes.concat(_executionData(1 ether), hex"00");
 

@@ -8,6 +8,8 @@ import { SafeTransferLib } from "solady/utils/SafeTransferLib.sol";
 /// @notice Minimal Atlas solver skeleton for allowlisted ERC-20 output-producing calls.
 /// @dev SolverBase enforces Atlas entry, owner-originated solver operations, bid payment, and reconciliation.
 contract GodBrainMEV is SolverBase {
+    uint256 public constant MAX_SOLVER_OP_DATA_LENGTH = 16 * 1024;
+
     mapping(address target => bool allowed) public isTargetAllowed;
 
     error NotOwner();
@@ -17,6 +19,7 @@ contract GodBrainMEV is SolverBase {
     error InvalidAmount();
     error EmptyCallData();
     error InvalidSolverOpData();
+    error SolverOpDataTooLarge(uint256 actual, uint256 maximum);
     error TargetNotAllowed(address target);
     error TargetCallFailed(bytes returnData);
     error InsufficientNetOutputIncrease(uint256 actual, uint256 minimum);
@@ -153,6 +156,9 @@ contract GodBrainMEV is SolverBase {
         pure
         returns (address outputToken, uint256 minimumNetOutputIncrease)
     {
+        if (solverOpData.length > MAX_SOLVER_OP_DATA_LENGTH) {
+            revert SolverOpDataTooLarge(solverOpData.length, MAX_SOLVER_OP_DATA_LENGTH);
+        }
         if (solverOpData.length < 4) revert InvalidSolverOpData();
 
         bytes4 selector;

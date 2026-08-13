@@ -64,6 +64,8 @@ forge test --match-contract GodBrainMEVPolygonForkTest
 Deployments, if ever independently approved, must explicitly supply `(wrappedNative, atlas, owner)` constructor
 arguments. Atlas is immutable. `solverOpData` must canonically encode `GodBrainMEV.execute(target, callData,
 outputToken, minimumNetOutputIncrease)`; other selectors, malformed encodings, and trailing data are rejected.
+Total `solverOpData` is capped at 16 KiB before decoding, copying dynamic calldata, or hashing. This leaves ample room
+for ordinary multi-hop calls while bounding worst-case memory expansion and gas consumption from owner-supplied data.
 
 The six-argument `atlasSolverCall` applies the official inherited `safetyFirst` modifier outermost, executes only the
 validated self-call, pays the bid through the official inherited `payBids` modifier, checks the resulting net output
