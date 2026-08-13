@@ -37,10 +37,30 @@ outcompeted, be invalidated by a reorg, or earn less than modeled costs.
 
 The paper-only Polygon searcher lives in
 [`godbrain_core/polygon_searcher`](godbrain_core/polygon_searcher/README.md).
-It has no node transport or transaction path. A future read-only observer may
-provide standard block-pinned JSON-RPC quote results; a separate future Atlas
-boundary may simulate plans. Signing, submission, broadcasting, private keys,
-and chain-state mutation are absent.
+The confirmed-chain boundary lives in
+[`godbrain_core/polygon_observer`](godbrain_core/polygon_observer/README.md).
+Polygon's supported local stack is Bor plus Heimdall v2; Polygon Labs sunset
+its Erigon fork, so there is no Erigon compatibility path.
+
+The observer accepts only loopback Bor JSON-RPC, requires chain ID 137, a
+supported Bor client, completed sync, peers, and a recent canonical-format
+block header. It excludes pending/txpool/mempool, signing, submission, account,
+wallet, personal, and miner methods. Heimdall v2 is consensus infrastructure,
+not a quote source, and must finish catching up before Bor is considered an
+operator-ready dependency.
+
+A quote-provider adapter may read one pinned, confirmed Bor block and provide
+verified exact-input venue quotes to `polygon_searcher`. Searcher output remains
+paper-only plans plus append-only audit evidence. Separately, the observer may
+ingest normalized successful-receipt evidence for externally allowlisted
+two-venue/two-token atomic actions and export conservative per-token historical
+rankings. Those public-chain aggregates are research inputs, not user targets
+or profit guarantees.
+
+A future Atlas adapter may simulate a paper plan against the same pinned block.
+Any execution adapter remains a separate future security boundary. Signing,
+submission, broadcasting, private keys, deployment, and chain-state mutation
+are absent.
 
 ### 4. Cross-exchange arbitrage research (CEX/DEX)
 *   **Target:** Price discrepancies between exchanges.
