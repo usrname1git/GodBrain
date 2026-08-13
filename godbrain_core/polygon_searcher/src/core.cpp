@@ -92,11 +92,14 @@ bool valid_identifier(std::string_view value) {
 }
 
 bool valid_evidence_hash(std::string_view value) {
-    return value.size() >= 3 && value.size() <= 128 &&
+    if (value.starts_with("0x")) {
+        value.remove_prefix(2);
+    }
+    return !value.empty() && value.size() <= 126 &&
         std::all_of(value.begin(), value.end(), [](unsigned char character) {
             return (character >= '0' && character <= '9') ||
                 (character >= 'a' && character <= 'f') ||
-                (character >= 'A' && character <= 'F') || character == 'x';
+                (character >= 'A' && character <= 'F');
         });
 }
 
@@ -480,28 +483,49 @@ Decision Searcher::evaluate(
     if (second_quote.amount_out <= amount_in) {
         return reject("no_gross_profit");
     }
+    if (second_quote.amount_out / amount_in >
+            SearchConfig::hard_max_gross_output_multiple ||
+        (second_quote.amount_out / amount_in ==
+             SearchConfig::hard_max_gross_output_multiple &&
+         second_quote.amount_out % amount_in != 0)) {
+        return reject("quote_output_sanity_limit");
+    }
     const Amount gross_profit = second_quote.amount_out - amount_in;
-    CostBreakdown breakdown{
-        .gas = cost.input_token_cost,
-        .atlas_bid_reserve =
-            mul_div_up(gross_profit, config_.atlas_bid_reserve_bps, basis_points),
-        .safety_margin =
-            mul_div_up(amount_in, config_.safety_margin_bps, basis_points),
-        .adverse_slippage = mul_div_up(
-            second_quote.amount_out,
-            static_cast<std::uint64_t>(config_.slippage_bps_per_leg) * 2,
-            basis_points),
-        .execution_failure_reserve = mul_div_up(
-            amount_in, config_.execution_failure_reserve_bps, basis_points),
-    };
-    const Amount modeled_costs = breakdown.total();
+    CostBreakdown breakdown;
+    Amount modeled_costs = 0;
+    try {
+        breakdown = {
+            .gas = cost.input_token_cost,
+            .atlas_bid_reserve =
+                mul_div_up(gross_profit, config_.atlas_bid_reserve_bps, basis_points),
+            .safety_margin =
+                mul_div_up(amount_in, config_.safety_margin_bps, basis_points),
+            .adverse_slippage = mul_div_up(
+                second_quote.amount_out,
+                static_cast<std::uint64_t>(config_.slippage_bps_per_leg) * 2,
+                basis_points),
+            .execution_failure_reserve = mul_div_up(
+                amount_in, config_.execution_failure_reserve_bps, basis_points),
+        };
+        modeled_costs = breakdown.total();
+    } catch (const SearcherError&) {
+        return reject("quote_derived_arithmetic_overflow");
+    }
     if (modeled_costs >= gross_profit ||
         gross_profit - modeled_costs >
             static_cast<Amount>(std::numeric_limits<std::int64_t>::max())) {
         return reject("not_profitable_after_costs");
     }
     const Amount expected = gross_profit - modeled_costs;
-    const std::uint32_t edge = ratio_bps_down(expected, amount_in);
+    if (amount_in > std::numeric_limits<Amount>::max() - expected) {
+        return reject("final_amount_overflow");
+    }
+    std::uint32_t edge = 0;
+    try {
+        edge = ratio_bps_down(expected, amount_in);
+    } catch (const SearcherError&) {
+        return reject("quote_derived_arithmetic_overflow");
+    }
     if (expected == 0 || edge < config_.min_net_edge_bps) {
         return reject("edge_below_threshold");
     }

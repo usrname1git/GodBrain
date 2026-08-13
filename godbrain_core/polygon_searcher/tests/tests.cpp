@@ -1,10 +1,13 @@
 #include "polygon_searcher/searcher.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -459,6 +462,46 @@ void confidence_and_malformed_provider_data_reject() {
     CHECK(std::none_of(
         result.decisions.begin(), result.decisions.end(),
         [](const Decision& value) { return value.plan.has_value(); }));
+
+    Rig malformed_hash;
+    malformed_hash.quotes.values["a-b-v1:1000000"].quote_hash = "0x12x34";
+    const SearchResult malformed = malformed_hash.scan();
+    CHECK(std::none_of(
+        malformed.decisions.begin(), malformed.decisions.end(),
+        [](const Decision& value) { return value.plan.has_value(); }));
+}
+
+void absurd_quote_rejects_without_aborting_scan() {
+    Rig rig;
+    rig.sizes["token-a"] = {1, 1'000'000};
+    rig.quotes.values.emplace(
+        "a-b-v1:1", quote(first_route(), 1, 1, "0x401"));
+    rig.quotes.values.emplace(
+        "b-a-v2:1",
+        quote(
+            second_route(),
+            1,
+            std::numeric_limits<Amount>::max(),
+            "0x402"));
+    rig.quotes.values["b-a-v2:1"].max_supported_input =
+        std::numeric_limits<Amount>::max();
+
+    const SearchResult result = rig.scan();
+    CHECK(result.paper_result.has_value());
+    CHECK(std::any_of(
+        result.decisions.begin(), result.decisions.end(),
+        [](const Decision& value) {
+            return value.amount_in == 1 &&
+                value.reason == "quote_output_sanity_limit";
+        }));
+    CHECK(std::any_of(
+        result.decisions.begin(), result.decisions.end(),
+        [](const Decision& value) { return value.plan.has_value(); }));
+
+    Rig invalid_config;
+    invalid_config.settings.max_gas_units =
+        SearchConfig::hard_max_gas_units + 1;
+    expect_throw([&] { (void)invalid_config.scan(); });
 }
 
 void kill_loss_and_partial_incident_latch() {
@@ -698,6 +741,9 @@ int main() {
     run("duplicate idempotency", duplicate_plan_is_idempotent);
     run("allowlists and hard caps", allowlists_and_hard_caps_enforce);
     run("provider confidence", confidence_and_malformed_provider_data_reject);
+    run(
+        "absurd quote isolation",
+        absurd_quote_rejects_without_aborting_scan);
     run("kill loss and partial latches", kill_loss_and_partial_incident_latch);
     run("deterministic schema and ids", deterministic_schema_and_ids);
     run(

@@ -10,8 +10,9 @@ add_library(polygon_searcher_core
     src/repository.cpp
 )
 target_include_directories(polygon_searcher_core
-    PUBLIC include
-    PRIVATE ../cpp_kernel
+    PUBLIC
+        include
+        ../cpp_kernel
 )
 target_compile_definitions(
     polygon_searcher_core
@@ -20,7 +21,6 @@ target_compile_definitions(
 
 add_executable(polygon-searcher-replay src/replay.cpp)
 target_link_libraries(polygon-searcher-replay PRIVATE polygon_searcher_core)
-target_include_directories(polygon-searcher-replay PRIVATE ../cpp_kernel)
 target_compile_definitions(
     polygon-searcher-replay
     PRIVATE POLYGON_SEARCHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
@@ -41,7 +41,6 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(polygon_searcher_tests tests/tests.cpp)
     target_link_libraries(polygon_searcher_tests PRIVATE polygon_searcher_core)
-    target_include_directories(polygon_searcher_tests PRIVATE ../cpp_kernel)
     target_compile_definitions(
         polygon_searcher_tests
         PRIVATE POLYGON_SEARCHER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

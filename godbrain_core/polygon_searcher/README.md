@@ -127,6 +127,7 @@ the Polymarket paper node:
 | Safety margin | 30 bps of input | 200 bps |
 | Execution-failure reserve | 25 bps of input | 200 bps |
 | Atlas/FastLane bid reserve | 2,000 bps of gross profit | 5,000 bps |
+| Gross cycle output sanity | at most 100x input | fixed 100x ceiling |
 | Per-token paper notional | explicit; fixture uses 2.0 tokens | at most 10 whole tokens |
 | Per-token UTC daily paper loss | explicit; fixture uses 0.25 token | at most 2 whole tokens |
 

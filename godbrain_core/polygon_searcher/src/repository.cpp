@@ -1,6 +1,7 @@
 #include "polygon_searcher/searcher.hpp"
 
 #include <fstream>
+#include <limits>
 #include <utility>
 
 #ifdef _WIN32

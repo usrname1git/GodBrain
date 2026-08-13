@@ -263,6 +263,7 @@ struct SearchConfig {
     static constexpr std::uint32_t hard_max_safety_bps = 200;
     static constexpr std::uint32_t hard_max_failure_reserve_bps = 200;
     static constexpr std::uint32_t hard_max_bid_reserve_bps = 5'000;
+    static constexpr Amount hard_max_gross_output_multiple = 100;
     static constexpr std::uint32_t hard_min_net_edge_bps = 1;
     static constexpr Amount hard_max_whole_tokens = 10;
     static constexpr Amount hard_max_daily_loss_whole_tokens = 2;
