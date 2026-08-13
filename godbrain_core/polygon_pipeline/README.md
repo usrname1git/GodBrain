@@ -71,7 +71,7 @@ No example live addresses are provided. The authoritative fixed interface
 review source is:
 
 - Uniswap V2 router interface, immutable commit:
-  <https://github.com/Uniswap/v2-periphery/blob/696171155b136b52ae96f1da61b237ccd6abf7bd/contracts/interfaces/IUniswapV2Router02.sol>
+  <https://github.com/Uniswap/v2-periphery/tree/ed24991304291297c3b4a52818d02f46a17aa9a2/contracts/interfaces>
 - Bor v2.10.0, immutable commit already reviewed by the observer:
   <https://github.com/0xPolygon/bor/tree/82d3b610d48468462a504245b5839de66dc86272>
 
@@ -99,5 +99,14 @@ deployment surface. The only executor is a deterministic in-process paper
 result model; there is no live executor.
 
 Nothing here proves live liquidity, realizable profit, inclusion, atomicity, or
-post-check canonicality. `GodBrainMEV.sol` is not integrated and is not claimed
-to be capable of executing these plans.
+post-check canonicality. The separate smart-contract project now has an
+offline-tested, typed two-router Atlas simulation boundary, but it is not
+integrated with this pipeline. This envelope is not ABI calldata and deliberately
+omits deployed solver/executor bindings and the reviewed slippage policy needed
+to derive per-leg and final execution minima. Observed quote outputs must not be
+silently treated as executable minima.
+
+The end-to-end boundary is therefore Bor/Heimdall observation -> paper search
+and pipeline -> data-only simulation plan -> separately configured typed
+Solidity simulation. No layer here deploys, signs, submits, broadcasts, funds,
+or includes live router/token addresses.
