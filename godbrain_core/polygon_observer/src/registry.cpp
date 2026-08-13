@@ -20,7 +20,7 @@
 #include <unistd.h>
 #endif
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::observer {
 namespace {
 
 constexpr std::size_t maximum_record_bytes = 256 * 1024;
@@ -931,4 +931,4 @@ Json build_tuning_export(
     };
 }
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::observer

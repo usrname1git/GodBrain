@@ -32,11 +32,12 @@ profitable.
 | `AuditStore` | Persist sanitized decisions, claims, PnL, incidents, and latches |
 | `PaperExecutor` | Produce a deterministic paper-only result |
 
-There is no HTTP or JSON-RPC implementation here. A future observer may adapt
+There is no HTTP or JSON-RPC implementation here. The separate
+[`polygon_pipeline`](../polygon_pipeline/README.md) adapts
 read-only `eth_call` results into `ExactInputQuote` records only after it verifies
 the venue, router/quoter ABI, route, token metadata, response block, and quote
-provenance. V2 and V3 are deliberately represented as opaque venue/route
-identities; this PR invents no deployment address or ABI behavior.
+provenance. The searcher continues to represent venue/route identities
+opaquely and invents no deployment address.
 
 The future observer should target the local Polygon-native node stack and use
 standard Ethereum execution APIs exposed by Bor. The currently provisioned
@@ -57,9 +58,10 @@ References:
 - [Ethereum Execution APIs](https://ethereum.github.io/execution-apis/)
 - [Polygon documentation](https://docs.polygon.technology/)
 
-A future Atlas integration is a separate simulation/solver boundary. It must
-consume `ArbitragePlan` as data, perform its own block-pinned simulation and
-safety review, and must not add transaction capabilities to this library:
+The pipeline emits a data-only Atlas simulation envelope from `ArbitragePlan`.
+Any future solver remains a separate boundary that must perform its own
+block-pinned simulation and safety review without adding transaction
+capabilities to this library:
 
 - [FastLane Atlas documentation](https://docs.fastlane.xyz/)
 - [FastLane Atlas source](https://github.com/FastLane-Labs/atlas)

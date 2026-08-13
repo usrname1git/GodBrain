@@ -13,7 +13,7 @@
 #include <string>
 #include <utility>
 
-using namespace godbrain::polygon;
+using namespace godbrain::polygon::searcher;
 
 namespace {
 

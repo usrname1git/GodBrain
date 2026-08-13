@@ -11,9 +11,10 @@
 
 namespace {
 
-using godbrain::polygon::Json;
-using godbrain::polygon::ObserverError;
-using godbrain::polygon::SanitizedLogger;
+namespace observer = godbrain::polygon::observer;
+using observer::Json;
+using observer::ObserverError;
+using observer::SanitizedLogger;
 
 constexpr std::size_t maximum_input_bytes = 4 * 1024 * 1024;
 
@@ -160,7 +161,7 @@ int run_config(const Options& options, const SanitizedLogger& logger) {
         usage_error();
     }
     const auto config =
-        godbrain::polygon::OperatorConfig::from_json(load_json(options.config));
+        observer::OperatorConfig::from_json(load_json(options.config));
     if (options.command == "validate-config") {
         logger.event("info", "operator_config_valid");
         if (options.json) {
@@ -170,7 +171,7 @@ int run_config(const Options& options, const SanitizedLogger& logger) {
         }
         return 0;
     }
-    const auto rendered = godbrain::polygon::render_operator_config(config);
+    const auto rendered = observer::render_operator_config(config);
     logger.event("info", "operator_config_rendered");
     if (options.json) {
         std::cout << rendered.manifest.dump(2) << '\n';
@@ -185,24 +186,24 @@ int run_status(const Options& options, const SanitizedLogger& logger) {
     if (options.endpoint.empty() || options.heimdall_status_endpoint.empty()) {
         usage_error();
     }
-    const auto endpoint = godbrain::polygon::parse_local_endpoint(options.endpoint);
+    const auto endpoint = observer::parse_local_endpoint(options.endpoint);
     const auto heimdall_endpoint =
-        godbrain::polygon::parse_local_endpoint(options.heimdall_status_endpoint);
-    godbrain::polygon::WinHttpRpcTransport transport;
-    godbrain::polygon::RpcClient client(transport, endpoint);
-    godbrain::polygon::HeimdallStatusClient heimdall(
+        observer::parse_local_endpoint(options.heimdall_status_endpoint);
+    observer::WinHttpRpcTransport transport;
+    observer::RpcClient client(transport, endpoint);
+    observer::HeimdallStatusClient heimdall(
         transport, heimdall_endpoint);
-    godbrain::polygon::SystemClock clock;
-    godbrain::polygon::HealthObserver observer(client, heimdall, clock);
-    const auto health = observer.inspect();
+    observer::SystemClock clock;
+    observer::HealthObserver health_observer(client, heimdall, clock);
+    const auto health = health_observer.inspect();
     logger.event(
         health.ready ? "info" : "warning",
         health.ready ? "observer_ready" : "observer_not_ready");
     if (options.json) {
-        std::cout << godbrain::polygon::health_to_json(health).dump(2) << '\n';
+        std::cout << observer::health_to_json(health).dump(2) << '\n';
     } else {
         std::cout << "Bor observer: " << (health.ready ? "READY" : "NOT READY")
-                  << "\nEndpoint: " << godbrain::polygon::endpoint_display(endpoint)
+                  << "\nEndpoint: " << observer::endpoint_display(endpoint)
                   << "\n";
         for (const auto& reason : health.readiness_reasons) {
             std::cout << "- " << reason << '\n';
@@ -211,11 +212,11 @@ int run_status(const Options& options, const SanitizedLogger& logger) {
     return health.ready ? 0 : 2;
 }
 
-godbrain::polygon::VerifiedAllowlist load_allowlist(const Options& options) {
+observer::VerifiedAllowlist load_allowlist(const Options& options) {
     if (options.allowlist.empty()) {
         usage_error();
     }
-    return godbrain::polygon::VerifiedAllowlist::from_json(
+    return observer::VerifiedAllowlist::from_json(
         load_json(options.allowlist));
 }
 
@@ -228,16 +229,16 @@ int run_ingest(const Options& options, const SanitizedLogger& logger) {
     if (!source.is_array() || source.size() > 10'000) {
         throw ObserverError("ingest input must be a bounded action array");
     }
-    godbrain::polygon::ActionRegistry registry(options.registry);
+    observer::ActionRegistry registry(options.registry);
     registry.initialize();
     std::size_t appended = 0;
     std::size_t duplicates = 0;
-    const godbrain::polygon::ObservationPolicy policy{
+    const observer::ObservationPolicy policy{
         .minimum_confirmations = options.minimum_confirmations,
     };
     for (const auto& value : source) {
         const auto action =
-            godbrain::polygon::parse_confirmed_action(value, allowlist, policy);
+            observer::parse_confirmed_action(value, allowlist, policy);
         if (registry.append(action)) {
             ++appended;
         } else {
@@ -259,13 +260,13 @@ int run_exports(const Options& options) {
         usage_error();
     }
     const auto allowlist = load_allowlist(options);
-    godbrain::polygon::ActionRegistry registry(options.registry);
+    observer::ActionRegistry registry(options.registry);
     const auto actions = registry.load();
     if (options.command == "rank") {
-        const Json rankings = godbrain::polygon::build_rankings(
+        const Json rankings = observer::build_rankings(
             actions, allowlist, options.as_of, options.window_days);
         if (options.format == "csv") {
-            std::cout << godbrain::polygon::rankings_to_csv(rankings);
+            std::cout << observer::rankings_to_csv(rankings);
         } else {
             std::cout << rankings.dump(2) << '\n';
         }
@@ -274,7 +275,7 @@ int run_exports(const Options& options) {
     if (options.format != "json") {
         throw ObserverError("tuning export supports JSON only");
     }
-    std::cout << godbrain::polygon::build_tuning_export(
+    std::cout << observer::build_tuning_export(
         actions, allowlist, options.as_of, options.window_days).dump(2) << '\n';
     return 0;
 }

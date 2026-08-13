@@ -7,7 +7,7 @@
 #include <sstream>
 #include <utility>
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::searcher {
 namespace {
 
 constexpr std::uint64_t basis_points = 10'000;
@@ -780,4 +780,4 @@ std::string utc_day(std::int64_t epoch_ms) {
     return output.str();
 }
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::searcher

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "chain_id": 137,
+  "evidence_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source": {
+    "url": "https://github.com/Uniswap/v2-periphery/blob/696171155b136b52ae96f1da61b237ccd6abf7bd/contracts/interfaces/IUniswapV2Router02.sol",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "confirmation_depth": 10,
+  "maximum_block_age_seconds": 120,
+  "maximum_future_seconds": 2,
+  "maximum_quote_amount": 10000000,
+  "maximum_calldata_bytes": 256,
+  "gas_units_ceiling": 300000,
+  "tokens": [
+    {
+      "address": "0x0000000000000000000000000000000000000001",
+      "symbol": "TSTA",
+      "decimals": 6
+    },
+    {
+      "address": "0x0000000000000000000000000000000000000002",
+      "symbol": "TSTB",
+      "decimals": 18
+    }
+  ],
+  "venues": [
+    {
+      "address": "0x0000000000000000000000000000000000000100",
+      "kind": "uniswap_v2_get_amounts_out"
+    },
+    {
+      "address": "0x0000000000000000000000000000000000000200",
+      "kind": "uniswap_v2_get_amounts_out"
+    }
+  ],
+  "routes": [
+    {
+      "id": "a-b",
+      "venue": "0x0000000000000000000000000000000000000100",
+      "token_in": "0x0000000000000000000000000000000000000001",
+      "token_out": "0x0000000000000000000000000000000000000002"
+    },
+    {
+      "id": "b-a",
+      "venue": "0x0000000000000000000000000000000000000200",
+      "token_in": "0x0000000000000000000000000000000000000002",
+      "token_out": "0x0000000000000000000000000000000000000001"
+    },
+    {
+      "id": "gas-b-a",
+      "venue": "0x0000000000000000000000000000000000000100",
+      "token_in": "0x0000000000000000000000000000000000000002",
+      "token_out": "0x0000000000000000000000000000000000000001"
+    }
+  ],
+  "cycles": [
+    {
+      "id": "a-b-a",
+      "first_route": "a-b",
+      "second_route": "b-a"
+    }
+  ],
+  "gas_conversion": {
+    "wrapped_native": "0x0000000000000000000000000000000000000002",
+    "input_token": "0x0000000000000000000000000000000000000001",
+    "route_id": "gas-b-a"
+  }
+}
