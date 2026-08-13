@@ -166,8 +166,9 @@ not be treated as baseline validation.
 - Keep the C++ HTTP server bound to `127.0.0.1`. Preserve the explicit
   localhost/Tauri CORS allowlist. Loopback and CORS are not authorization.
 - Every HTTP request containing `command_type` must continue to require a
-  configured `GODBRAIN_API_TOKEN` and a matching `Authorization: Bearer ...`
-  header. Missing server configuration must fail closed. Never log the token.
+  configured `GODBRAIN_API_TOKEN`. Its `Authorization` header must use the
+  `Bearer` scheme and carry that configured token. Missing server configuration
+  must fail closed. Never log the token.
 - The bearer token is the current authorization gate; a `reasoning` string is an
   additional intent check, not authentication or proof of safety. New
   side-effecting command types must not bypass either the HTTP authorization
