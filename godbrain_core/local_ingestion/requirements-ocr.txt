@@ -1,0 +1,2 @@
+# Optional: text-only ingestion uses the Python standard library.
+easyocr>=1.7.2,<2.0
