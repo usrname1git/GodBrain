@@ -135,11 +135,18 @@ func run() error {
 	if _, err := decoder.Token(); err != io.EOF {
 		return failWithEnvelope("Multiple JSON documents or trailing garbage found in input", nil)
 	}
+	if err := memorystore.ValidatePreIngestionPayload(payload); err != nil {
+		return failWithEnvelope("Payload validation failed", err)
+	}
 
 	// 6. Ingestion Pipeline
 	store := memorystore.NewStore(db)
 
-	irun, created, err := store.StartIngestion(ctx, payload.Payload.Provenance.SourceHash, payload.Payload.Provenance.SourceID, "Librarian-CPP-Colibri", payload.ExtractorVersion, payload.SchemaVersion, nil)
+	extractorID := payload.ExtractorID
+	if extractorID == "" {
+		extractorID = "Librarian-CPP-Colibri"
+	}
+	irun, created, err := store.StartIngestionWithMetadata(ctx, payload.Payload.Provenance.SourceHash, payload.Payload.Provenance.SourceID, extractorID, payload.ExtractorVersion, payload.SchemaVersion, nil, payload.Document)
 	if err != nil {
 		return failWithEnvelope("StartIngestion failed", err)
 	}

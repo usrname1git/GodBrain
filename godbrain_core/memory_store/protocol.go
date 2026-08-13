@@ -15,6 +15,31 @@ type Provenance struct {
 	LLMTemperature float64 `json:"llm_temperature"`
 }
 
+// DocumentMetadata is optional provenance for local document adapters. Paths are
+// deliberately represented by a caller-supplied label and a basename only.
+type DocumentMetadata struct {
+	SourceLabel      string   `json:"source_label" bson:"source_label"`
+	DisplayName      string   `json:"display_name" bson:"display_name"`
+	FileSHA256       string   `json:"file_sha256" bson:"file_sha256"`
+	ContentSHA256    string   `json:"content_sha256" bson:"content_sha256"`
+	ExtractionMethod string   `json:"extraction_method" bson:"extraction_method"`
+	Languages        []string `json:"languages" bson:"languages"`
+	Backend          string   `json:"backend" bson:"backend"`
+	BackendVersion   string   `json:"backend_version" bson:"backend_version"`
+	ChunkCount       int      `json:"chunk_count" bson:"chunk_count"`
+	OCRConfidence    *float64 `json:"ocr_confidence,omitempty" bson:"ocr_confidence,omitempty"`
+}
+
+// SourceChunk is an exact UTF-8 byte range in RawTranscript.
+type SourceChunk struct {
+	Index      int      `json:"index"`
+	Count      int      `json:"count"`
+	StartByte  int      `json:"start_byte"`
+	EndByte    int      `json:"end_byte"`
+	Text       string   `json:"text"`
+	Confidence *float64 `json:"confidence,omitempty"`
+}
+
 type Claim struct {
 	ClaimID       string   `json:"claim_id"`
 	Type          string   `json:"type"`
@@ -33,11 +58,14 @@ type AlexandriaPayload struct {
 
 // DistillationPayload is the master envelope sent on stdin
 type DistillationPayload struct {
+	ExtractorID      string            `json:"extractor_id,omitempty"` // Empty selects the default; otherwise starts alphanumeric and uses 1-64 ASCII letters, digits, dots, underscores, or hyphens.
 	ExtractorVersion string            `json:"extractor_version"`
 	SchemaVersion    string            `json:"schema_version"`
 	Degraded         bool              `json:"degraded"`
 	Payload          AlexandriaPayload `json:"payload"`
 	RawTranscript    string            `json:"raw_transcript"` // Bypasses C++ size limits
+	Document         *DocumentMetadata `json:"document,omitempty"`
+	Chunks           []SourceChunk     `json:"chunks,omitempty"`
 }
 
 // StoreReceipt is the exact JSON structure written back to stdout for the C++ Librarian.

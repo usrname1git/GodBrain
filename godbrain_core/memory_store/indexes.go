@@ -23,11 +23,9 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	// Replace the earlier, incomplete observation identity if it exists.
-	_, err = db.Collection("source_observations").Indexes().DropOne(ctx, "source_hash_1_external_source_id_1")
-	if err != nil {
-		var commandErr mongo.CommandError
-		if !errors.As(err, &commandErr) || (commandErr.Code != 26 && commandErr.Code != 27) {
+	// Replace earlier observation identities that did not distinguish source files.
+	for _, name := range []string{"source_hash_1_external_source_id_1", "source_observation_identity"} {
+		if err = dropIndexIfExists(ctx, db.Collection("source_observations"), name); err != nil {
 			return err
 		}
 	}
@@ -40,20 +38,29 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 			{Key: "extractor_id", Value: 1},
 			{Key: "extractor_version", Value: 1},
 			{Key: "schema_version", Value: 1},
+			{Key: "document.file_sha256", Value: 1},
 		},
-		Options: options.Index().SetName("source_observation_identity").SetUnique(true),
+		Options: options.Index().SetName("source_observation_file_identity").SetUnique(true),
 	})
 	if err != nil {
 		return err
 	}
 
-	// 2. Chunks: Unique by (source_hash, chunk_index)
+	// Replace the source-only chunk identity with extractor-aware chunks.
+	if err = dropIndexIfExists(ctx, db.Collection("chunks"), "source_hash_1_chunk_index_1"); err != nil {
+		return err
+	}
+
+	// 2. Chunks: immutable per source and extractor/schema identity.
 	_, err = db.Collection("chunks").Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{
 			{Key: "source_hash", Value: 1},
+			{Key: "extractor_id", Value: 1},
+			{Key: "extractor_version", Value: 1},
+			{Key: "schema_version", Value: 1},
 			{Key: "chunk_index", Value: 1},
 		},
-		Options: options.Index().SetUnique(true),
+		Options: options.Index().SetName("source_chunk_extractor_identity").SetUnique(true),
 	})
 	if err != nil {
 		return err
@@ -147,6 +154,18 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	}
 
 	return nil
+}
+
+func dropIndexIfExists(ctx context.Context, collection *mongo.Collection, name string) error {
+	_, err := collection.Indexes().DropOne(ctx, name)
+	if err == nil {
+		return nil
+	}
+	var commandErr mongo.CommandError
+	if errors.As(err, &commandErr) && (commandErr.Code == 26 || commandErr.Code == 27) {
+		return nil
+	}
+	return err
 }
 
 func migrateLegacyNodeOwnership(ctx context.Context, db *mongo.Database) error {

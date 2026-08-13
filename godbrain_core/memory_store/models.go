@@ -24,6 +24,7 @@ type IngestionRun struct {
 	LeaseToken       string             `bson:"lease_token,omitempty" json:"lease_token,omitempty"`
 	SourceID         primitive.ObjectID `bson:"source_id,omitempty" json:"source_id,omitempty"`
 	ExternalSourceID string             `bson:"external_source_id,omitempty" json:"external_source_id,omitempty"`
+	Document         *DocumentMetadata  `bson:"document,omitempty" json:"document,omitempty"`
 	RetryOf          *string            `bson:"retry_of,omitempty" json:"retry_of,omitempty"`
 	ErrorMsg         *string            `bson:"error_msg,omitempty" json:"error_msg,omitempty"`
 	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
@@ -49,18 +50,23 @@ type SourceObservation struct {
 	ExtractorVer     string             `bson:"extractor_version" json:"extractor_version"`
 	SchemaVersion    string             `bson:"schema_version" json:"schema_version"`
 	RunID            string             `bson:"run_id" json:"run_id"`
+	Document         *DocumentMetadata  `bson:"document,omitempty" json:"document,omitempty"`
 	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
 }
 
 // Chunk represents a segment of a Source, indexed by exact UTF-8 byte offsets.
 type Chunk struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	SourceHash     string             `bson:"source_hash" json:"source_hash"`
-	ChunkIndex     int                `bson:"chunk_index" json:"chunk_index"`
-	StartByte      int                `bson:"start_byte" json:"start_byte"`
-	EndByte        int                `bson:"end_byte" json:"end_byte"`
-	Text           string             `bson:"text" json:"text"`
-	IngestionRunID string             `bson:"ingestion_run_id" json:"ingestion_run_id"`
+	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	SourceHash    string             `bson:"source_hash" json:"source_hash"`
+	ExtractorID   string             `bson:"extractor_id" json:"extractor_id"`
+	ExtractorVer  string             `bson:"extractor_version" json:"extractor_version"`
+	SchemaVersion string             `bson:"schema_version" json:"schema_version"`
+	ChunkIndex    int                `bson:"chunk_index" json:"chunk_index"`
+	StartByte     int                `bson:"start_byte" json:"start_byte"`
+	EndByte       int                `bson:"end_byte" json:"end_byte"`
+	Text          string             `bson:"text" json:"text"`
+	ChunkCount    int                `bson:"chunk_count" json:"chunk_count"`
+	Confidence    *float64           `bson:"confidence,omitempty" json:"confidence,omitempty"`
 }
 
 // KnowledgeNode represents Concepts, Claims, and Candidates.

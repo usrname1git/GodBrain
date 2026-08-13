@@ -2,8 +2,10 @@ package memorystore
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +23,24 @@ var (
 	ErrSkillOriginNotVerified  = errors.New("skill origin node is not verified")
 	ErrSkillOriginHashMismatch = errors.New("skill origin node hash mismatch")
 	ErrKnowledgeNodeNotFound   = errors.New("knowledge node not found")
+)
+
+var forbiddenDocumentPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)otpauth(?:-migration)?://`),
+	regexp.MustCompile(`-----BEGIN (?:ENCRYPTED |RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----`),
+	regexp.MustCompile(`(?i)\bbearer[ \t]+[A-Za-z0-9._~+/=-]{16,}`),
+	regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+	regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{40,255})\b`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
+	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{20,}\b`),
+	regexp.MustCompile(`\b(?:sk_live_|rk_live_)[0-9A-Za-z]{16,}\b`),
+	regexp.MustCompile(`\beyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\b`),
+	regexp.MustCompile(`(?im)^[\s\v\x{001c}-\x{001f}\x{0085}\p{Z}]*(?:api[_-]?key|password|passwd|private[_-]?key|client[_-]?secret|access[_-]?token|bearer[_-]?token)[\s\v\x{001c}-\x{001f}\x{0085}\p{Z}]*[:=][\s\v\x{001c}-\x{001f}\x{0085}\p{Z}]*["']?[^\s\v\x{001c}-\x{001f}\x{0085}\p{Z}"']{8,}`),
+}
+
+var (
+	safeSourceLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	safeExtractorIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
 type Store struct {
@@ -103,6 +123,17 @@ func mergeClaims(existing, incoming Claim) Claim {
 // StartIngestion ensures idempotency for a run. Uses $setOnInsert to prevent duplicates.
 // If retryOf is provided, it marks this run as a retry of a previous failed run.
 func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, extID, extVer, schemaVer string, retryOf *string) (*IngestionRun, bool, error) {
+	return s.StartIngestionWithMetadata(ctx, sourceHash, extSourceID, extID, extVer, schemaVer, retryOf, nil)
+}
+
+// StartIngestionWithMetadata records optional adapter provenance on the run and
+// immutable source observation without changing the ingestion identity.
+func (s *Store) StartIngestionWithMetadata(ctx context.Context, sourceHash, extSourceID, extID, extVer, schemaVer string, retryOf *string, document *DocumentMetadata) (*IngestionRun, bool, error) {
+	if document != nil {
+		if err := validateDocumentMetadata(document, extSourceID); err != nil {
+			return nil, false, err
+		}
+	}
 	coll := s.db.Collection("ingestion_runs")
 
 	// We only look for active/committed runs to enforce idempotency.
@@ -196,6 +227,9 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 	if retryOf != nil {
 		setOnInsert["retry_of"] = *retryOf
 	}
+	if document != nil {
+		setOnInsert["document"] = document
+	}
 
 	update := bson.M{
 		"$setOnInsert": setOnInsert,
@@ -217,35 +251,37 @@ func (s *Store) StartIngestion(ctx context.Context, sourceHash, extSourceID, ext
 
 	// Record the observation of this source from this external session
 	// We do this AFTER getting the runID so we have the definitive runID
+	observation := bson.M{
+		"source_hash":        sourceHash,
+		"external_source_id": extSourceID,
+		"extractor_id":       extID,
+		"extractor_version":  extVer,
+		"schema_version":     schemaVer,
+		"run_id":             run.RunID,
+		"created_at":         now,
+	}
+	if document != nil {
+		observation["document"] = document
+	}
+	observationFilter := bson.M{
+		"source_hash":        sourceHash,
+		"external_source_id": extSourceID,
+		"extractor_id":       extID,
+		"extractor_version":  extVer,
+		"schema_version":     schemaVer,
+	}
+	if document != nil {
+		observationFilter["document.file_sha256"] = document.FileSHA256
+	}
 	_, err = s.db.Collection("source_observations").UpdateOne(ctx,
+		observationFilter,
 		bson.M{
-			"source_hash":        sourceHash,
-			"external_source_id": extSourceID,
-			"extractor_id":       extID,
-			"extractor_version":  extVer,
-			"schema_version":     schemaVer,
-		},
-		bson.M{
-			"$setOnInsert": bson.M{
-				"source_hash":        sourceHash,
-				"external_source_id": extSourceID,
-				"extractor_id":       extID,
-				"extractor_version":  extVer,
-				"schema_version":     schemaVer,
-				"run_id":             run.RunID,
-				"created_at":         now,
-			},
+			"$setOnInsert": observation,
 		},
 		options.Update().SetUpsert(true),
 	)
 	if mongo.IsDuplicateKeyError(err) {
-		err = s.db.Collection("source_observations").FindOne(ctx, bson.M{
-			"source_hash":        sourceHash,
-			"external_source_id": extSourceID,
-			"extractor_id":       extID,
-			"extractor_version":  extVer,
-			"schema_version":     schemaVer,
-		}).Err()
+		err = s.db.Collection("source_observations").FindOne(ctx, observationFilter).Err()
 	}
 	if err != nil {
 		if createdNew {
@@ -292,6 +328,13 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	if run.ExtractorVer != payload.ExtractorVersion || run.SchemaVersion != payload.SchemaVersion {
 		return errors.New("run extractor or schema version does not match payload")
 	}
+	extractorID := payload.ExtractorID
+	if extractorID == "" {
+		extractorID = "Librarian-CPP-Colibri"
+	}
+	if run.ExtractorID != extractorID {
+		return errors.New("run extractor_id does not match payload")
+	}
 
 	// Verify SourceHash matches the RawTranscript using Keccak-256
 	hash := sha3.NewLegacyKeccak256()
@@ -304,6 +347,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	// Force trust_tier to "candidate" if it tries to bypass verification
 	if payload.Payload.TrustTier != "candidate" {
 		return errors.New("trust_tier must be 'candidate'")
+	}
+	if err := ValidatePreIngestionPayload(payload); err != nil {
+		return err
 	}
 	// Store the source as immutable content. Per-run provenance belongs on the run
 	// and append-only association records, never on the source or node.
@@ -329,6 +375,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	if err = sourceColl.FindOne(ctx, bson.M{"source_hash": payload.Payload.Provenance.SourceHash}).Decode(&sourceNode); err != nil {
 		return errors.New("failed to resolve immutable source: " + err.Error())
 	}
+	if err = s.stageSourceChunks(ctx, payload); err != nil {
+		return err
+	}
 
 	runResult, err := s.db.Collection("ingestion_runs").UpdateOne(ctx,
 		bson.M{"run_id": runID, "status": StatusStaging, "lease_token": leaseToken},
@@ -347,6 +396,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	if err != nil {
 		return err
 	}
+
 	if runResult.MatchedCount != 1 {
 		return errors.New("ingestion lease expired before staging")
 	}
@@ -484,6 +534,226 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	}
 
 	return nil
+}
+
+// ValidatePreIngestionPayload verifies identities and content before a run or
+// source observation can be persisted. StageDistillation repeats these checks.
+func ValidatePreIngestionPayload(payload DistillationPayload) error {
+	extractorID := payload.ExtractorID
+	if extractorID == "" {
+		extractorID = "Librarian-CPP-Colibri"
+	}
+	if !safeExtractorIDPattern.MatchString(extractorID) || payload.ExtractorVersion == "" ||
+		len(payload.ExtractorVersion) > 128 || payload.SchemaVersion == "" ||
+		len(payload.SchemaVersion) > 64 {
+		return errors.New("extractor identity is invalid")
+	}
+	if payload.Payload.TrustTier != "candidate" {
+		return errors.New("trust_tier must be 'candidate'")
+	}
+	if payload.Payload.Provenance.SourceID == "" || len(payload.Payload.Provenance.SourceID) > 512 ||
+		payload.Payload.Provenance.SourceType == "" || len(payload.Payload.Provenance.SourceType) > 64 ||
+		payload.Payload.Provenance.Language == "" || len(payload.Payload.Provenance.Language) > 64 {
+		return errors.New("source provenance identity is invalid")
+	}
+	hash := sha3.NewLegacyKeccak256()
+	_, _ = hash.Write([]byte(payload.RawTranscript))
+	if hex.EncodeToString(hash.Sum(nil)) != payload.Payload.Provenance.SourceHash {
+		return errors.New("source_hash mismatch: transcript hash does not match provenance source_hash")
+	}
+	return ValidateDocumentPayload(payload)
+}
+
+// ValidateDocumentPayload checks the optional local-document fields.
+func ValidateDocumentPayload(payload DistillationPayload) error {
+	isLocalDocument := payload.ExtractorID == "Local-Document-Adapter" ||
+		payload.Payload.Provenance.SourceType == "local_document" ||
+		strings.HasPrefix(payload.Payload.Provenance.SourceID, "local-document:") ||
+		payload.Document != nil || len(payload.Chunks) != 0
+	if !isLocalDocument {
+		return nil
+	}
+	if payload.Document == nil || len(payload.Chunks) == 0 {
+		return errors.New("document metadata and chunks must be provided together")
+	}
+	document := payload.Document
+	if !safeExtractorIDPattern.MatchString(payload.ExtractorID) ||
+		payload.ExtractorVersion == "" || len(payload.ExtractorVersion) > 128 ||
+		payload.SchemaVersion == "" || len(payload.SchemaVersion) > 64 {
+		return errors.New("document extractor identity is invalid")
+	}
+	if err := validateDocumentMetadata(document, payload.Payload.Provenance.SourceID); err != nil {
+		return err
+	}
+	if payload.Payload.Provenance.SourceType != "local_document" ||
+		payload.Payload.Provenance.Language != strings.Join(document.Languages, ",") {
+		return errors.New("document provenance does not match its safe source identity")
+	}
+	contentHash := sha256.Sum256([]byte(payload.RawTranscript))
+	if hex.EncodeToString(contentHash[:]) != document.ContentSHA256 {
+		return errors.New("document content_sha256 does not match raw_transcript")
+	}
+	if document.ChunkCount != len(payload.Chunks) || len(payload.Chunks) > 256 {
+		return errors.New("document chunk_count does not match bounded chunks")
+	}
+	if containsForbiddenDocumentContent(payload.RawTranscript) {
+		return errors.New("document contains forbidden sensitive content")
+	}
+	raw := []byte(payload.RawTranscript)
+	previousEnd := 0
+	for index, chunk := range payload.Chunks {
+		if chunk.Index != index || chunk.Count != len(payload.Chunks) {
+			return errors.New("document chunks must have contiguous indexes and a consistent count")
+		}
+		if chunk.StartByte < 0 || chunk.EndByte <= chunk.StartByte || chunk.EndByte > len(raw) ||
+			chunk.EndByte-chunk.StartByte > 32*1024 {
+			return errors.New("document chunk byte range is invalid")
+		}
+		if string(raw[chunk.StartByte:chunk.EndByte]) != chunk.Text {
+			return errors.New("document chunk text does not match raw_transcript byte range")
+		}
+		if chunk.StartByte < previousEnd || strings.TrimSpace(string(raw[previousEnd:chunk.StartByte])) != "" {
+			return errors.New("document chunks overlap or omit non-whitespace content")
+		}
+		if chunk.Confidence != nil && (*chunk.Confidence < 0 || *chunk.Confidence > 1) {
+			return errors.New("document chunk confidence is out of bounds")
+		}
+		previousEnd = chunk.EndByte
+	}
+	if strings.TrimSpace(string(raw[previousEnd:])) != "" {
+		return errors.New("document chunks omit trailing non-whitespace content")
+	}
+	return nil
+}
+
+func validateDocumentMetadata(document *DocumentMetadata, sourceID string) error {
+	if document.SourceLabel == "" || document.DisplayName == "" || document.ExtractionMethod == "" ||
+		document.Backend == "" || document.BackendVersion == "" || len(document.Languages) == 0 {
+		return errors.New("document provenance fields must not be blank")
+	}
+	if len(document.SourceLabel) > 64 || len(document.DisplayName) > 128 ||
+		len(document.ExtractionMethod) > 64 || len(document.Backend) > 64 ||
+		len(document.BackendVersion) > 64 || len(document.Languages) > 8 {
+		return errors.New("document provenance exceeds field bounds")
+	}
+	if !safeSourceLabelPattern.MatchString(document.SourceLabel) ||
+		!isSafeDisplayName(document.DisplayName) {
+		return errors.New("document source label or display name is unsafe")
+	}
+	if !isLowerHexHash(document.FileSHA256, sha256.Size) || !isLowerHexHash(document.ContentSHA256, sha256.Size) {
+		return errors.New("document SHA-256 fields must be lowercase hexadecimal")
+	}
+	if document.OCRConfidence != nil && (*document.OCRConfidence < 0 || *document.OCRConfidence > 1) {
+		return errors.New("document OCR confidence is out of bounds")
+	}
+	expectedSourceID := "local-document:" + document.SourceLabel + ":" + document.DisplayName
+	if sourceID != expectedSourceID {
+		return errors.New("document metadata does not match its safe source identity")
+	}
+	if containsForbiddenDocumentContent(document.SourceLabel) ||
+		containsForbiddenDocumentContent(document.DisplayName) {
+		return errors.New("document contains forbidden sensitive content")
+	}
+	return nil
+}
+
+func isSafeDisplayName(value string) bool {
+	if value == "" || len(value) > 128 || value == "." || value == ".." {
+		return false
+	}
+	for _, character := range value {
+		if character == '/' || character == '\\' || character == ':' ||
+			character <= '\u001f' ||
+			(character >= '\u007f' && character <= '\u009f') ||
+			character == '\u2028' || character == '\u2029' {
+			return false
+		}
+	}
+	return true
+}
+
+func containsForbiddenDocumentContent(value string) bool {
+	value = strings.Map(func(character rune) rune {
+		switch character {
+		case '\r', '\v', '\f', '\u001c', '\u001d', '\u001e', '\u0085', '\u2028', '\u2029':
+			return '\n'
+		default:
+			return character
+		}
+	}, value)
+	for _, pattern := range forbiddenDocumentPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLowerHexHash(value string, byteLength int) bool {
+	if len(value) != byteLength*2 || strings.ToLower(value) != value {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == byteLength
+}
+
+func (s *Store) stageSourceChunks(ctx context.Context, payload DistillationPayload) error {
+	if len(payload.Chunks) == 0 {
+		return nil
+	}
+	collection := s.db.Collection("chunks")
+	writes := make([]mongo.WriteModel, 0, len(payload.Chunks))
+	for _, chunk := range payload.Chunks {
+		document := bson.M{
+			"source_hash":       payload.Payload.Provenance.SourceHash,
+			"extractor_id":      payload.ExtractorID,
+			"extractor_version": payload.ExtractorVersion,
+			"schema_version":    payload.SchemaVersion,
+			"chunk_index":       chunk.Index,
+			"start_byte":        chunk.StartByte,
+			"end_byte":          chunk.EndByte,
+			"text":              chunk.Text,
+			"chunk_count":       chunk.Count,
+			"confidence":        chunk.Confidence,
+		}
+		writes = append(writes, mongo.NewUpdateOneModel().
+			SetFilter(sourceChunkFilter(payload, chunk.Index)).
+			SetUpdate(bson.M{"$setOnInsert": document}).
+			SetUpsert(true))
+	}
+	if _, err := collection.BulkWrite(ctx, writes, options.BulkWrite().SetOrdered(false)); err != nil {
+		return errors.New("failed to stage source chunks: " + err.Error())
+	}
+	for _, expected := range payload.Chunks {
+		var stored Chunk
+		if err := collection.FindOne(ctx, sourceChunkFilter(payload, expected.Index)).Decode(&stored); err != nil {
+			return errors.New("failed to resolve staged source chunk: " + err.Error())
+		}
+		if stored.StartByte != expected.StartByte || stored.EndByte != expected.EndByte ||
+			stored.Text != expected.Text || stored.ChunkCount != expected.Count ||
+			!equalOptionalFloat(stored.Confidence, expected.Confidence) {
+			return errors.New("stored source chunk conflicts with immutable chunk content")
+		}
+	}
+
+	return nil
+}
+
+func sourceChunkFilter(payload DistillationPayload, index int) bson.M {
+	return bson.M{
+		"source_hash":       payload.Payload.Provenance.SourceHash,
+		"extractor_id":      payload.ExtractorID,
+		"extractor_version": payload.ExtractorVersion,
+		"schema_version":    payload.SchemaVersion,
+		"chunk_index":       index,
+	}
+}
+
+func equalOptionalFloat(left, right *float64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // CountRunNodeLinks returns the number of unique knowledge nodes linked to a run.
