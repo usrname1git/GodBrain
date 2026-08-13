@@ -1,9 +1,14 @@
-# The Oracle Fleet: Arbitrage & Trading Strategies
+# The Oracle Fleet: Research and Paper-Simulation Strategies
 
-To achieve financial independence and fund the acquisition of heavy compute (e.g., DGX Station/Spark), the GodBrain will deploy a fleet of specialized Oracle agents. Each agent focuses on a single, high-probability asynchronous data advantage.
+These are research directions, not promises of profit. Every strategy starts
+with bounded, auditable paper evidence. No win-rate threshold, latency target,
+backtest, quote, or simulation can make a trade certain.
 
-## Phase 1: Paper Trading (Current)
-All strategies must run in "Shadow Mode" for 14-30 days. Win rates must exceed 95% before live capital is allocated.
+## Phase 1: Paper simulation
+
+Strategies must remain in shadow mode until their assumptions, costs, failure
+modes, and realized paper PnL are independently reviewed. A high historical win
+rate alone is not sufficient evidence for allocating capital.
 
 ## Target Strategies
 
@@ -13,19 +18,36 @@ All strategies must run in "Shadow Mode" for 14-30 days. Win rates must exceed 9
     *   **Weather Events:** API data (NOAA, local radar) shows rain is actively falling. Market closes in 2 minutes but still prices "Will it rain?" at 80%. Oracle buys the 20% margin.
     *   **Flight Delays:** FAA/FlightAware API confirms a plane has been diverted or delayed. Oracle buys the "Flight delayed" contract before market makers parse the data.
 
-### 2. Fast-News Sentiment Snipe
-*   **Target:** High-impact, structured news drops (e.g., SEC filings, FDA approvals, CPI data).
-*   **Mechanic:** The Oracle connects directly to government RSS/API feeds. It parses the JSON/XML the millisecond it drops and executes trades on related assets *before* human traders read the headline.
+### 2. Structured public-data research
+*   **Target:** Public, structured releases such as regulatory filings or economic data.
+*   **Mechanic:** Measure whether public-data parsing can produce a repeatable paper signal after realistic latency, spread, fees, and adverse-selection costs. Do not assume faster parsing creates a fair, executable, or profitable trade.
 
-### 3. On-Chain MEV (Maximal Extractable Value)
-*   **Target:** Decentralized Exchanges (DEXs).
-*   **Mechanic:** Monitor the mempool for large, unconfirmed transactions that will shift the price of a token. The Oracle pays a higher gas fee to front-run the transaction, profiting from the guaranteed price slippage.
+### 3. Atomic DEX backrun arbitrage research
+*   **Target:** Same-chain cyclic price discrepancies across verified DEX quote sources.
+*   **Mechanic:** Compare block-consistent exact-input quotes and model gas, bid reserve, slippage, safety margin, and execution-failure reserve. A future solver could compete to execute an atomic cycle after the state transition that creates the discrepancy.
 
-### 4. Cross-Exchange Arbitrage (CEX/DEX)
+Paying higher gas to front-run does **not** create guaranteed profit. A
+front-run deliberately orders before another pending transaction. A sandwich
+places transactions before and after a user's trade to worsen that user's
+execution and extract value from it; that behavior is outside this project's
+scope. A backrun executes after an observed state transition and can pursue an
+independent price discrepancy without intentionally degrading a user's quoted
+execution. Even an atomic backrun can lose its bid, fail simulation, be
+outcompeted, be invalidated by a reorg, or earn less than modeled costs.
+
+The paper-only Polygon searcher lives in
+[`godbrain_core/polygon_searcher`](godbrain_core/polygon_searcher/README.md).
+It has no node transport or transaction path. A future read-only observer may
+provide standard block-pinned JSON-RPC quote results; a separate future Atlas
+boundary may simulate plans. Signing, submission, broadcasting, private keys,
+and chain-state mutation are absent.
+
+### 4. Cross-exchange arbitrage research (CEX/DEX)
 *   **Target:** Price discrepancies between exchanges.
-*   **Mechanic:** Token X is $1.00 on Binance and $1.02 on Uniswap. Oracle instantly buys on Binance and sells on Uniswap. Requires extremely low-latency execution and capital on both ends.
+*   **Mechanic:** Paper-model both legs, transfer/custody constraints, latency, fees, inventory, and failure risk. A displayed price difference is not an executable profit.
 
 ## Capital Allocation Rules
-1. **Rule of Ruin:** Never risk more than 1% of the total pool on a single >95% probability event.
-2. **Execution Speed:** Network latency must be under 50ms to the exchange API.
-3. **No Emotions:** If the algorithm fails the shadow test, it is scrapped or refined. No manual overrides.
+1. **Capital preservation:** Strategy-specific compiled limits and loss latches must cap exposure; a confidence estimate is not certainty.
+2. **Net accounting:** Evaluate realized results only after fees, gas, bids, slippage, failures, latency, and settlement.
+3. **Fail closed:** Stale, mixed, malformed, unreconciled, non-atomic, or ambiguous state stops new paper cycles.
+4. **Human review:** No strategy may auto-enable or raise its own limits. Any future live-capital decision requires a separate reviewed design and explicit authorization.
