@@ -85,7 +85,7 @@ func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {
 		Kind:          "claim",
 		Status:        "candidate",
 		Sector:        "architecture",
-		Content:       "architecture evidence",
+		Content:       "lexical architecture evidence",
 		Confidence:    0.91,
 		EvidenceSpans: []string{"[0:12]"},
 		SchemaVersion: "s1",
@@ -179,6 +179,64 @@ func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {
 	if err := projector.ProjectCommittedRun(ctx, "staging-run"); !errors.Is(err, rag.ErrRunNotCommitted) {
 		t.Fatalf("expected staging projection rejection, got %v", err)
 	}
+	if err := projector.ProjectCommittedRun(ctx, "committed-run-1"); err != nil {
+		t.Fatalf("project committed run: %v", err)
+	}
+
+	metadata, err := projector.Metadata(ctx)
+	if err != nil {
+		t.Fatalf("read projection metadata: %v", err)
+	}
+	documentCount, err := db.Collection(rag.DocumentsCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
+	if err != nil || documentCount != 1 {
+		t.Fatalf("expected one committed document immediately after projection, count=%d err=%v", documentCount, err)
+	}
+	provenanceCount, err := db.Collection(rag.ProvenanceCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
+	if err != nil || provenanceCount != 1 {
+		t.Fatalf("expected one committed provenance link immediately after projection, count=%d err=%v", provenanceCount, err)
+	}
+
+	engine := rag.NewEngine(db, rag.Config{PreferredSchemaVersion: "s1"})
+	minConfidence := 0.9
+	searchRequest := rag.SearchRequest{
+		Query:         "lexical",
+		TopK:          5,
+		Kind:          "claim",
+		Sector:        "architecture",
+		Status:        "candidate",
+		MinConfidence: &minConfidence,
+		ContextBytes:  1024,
+	}
+	assertCommittedSearch := func(label string, expectedCitations int) rag.SearchResponse {
+		t.Helper()
+		search, searchErr := engine.Search(ctx, searchRequest)
+		if searchErr != nil {
+			t.Fatalf("%s committed content and exact metadata search: %v", label, searchErr)
+		}
+		if len(search.Results) != 1 || search.Results[0].StableID != committedNode.StableID {
+			t.Fatalf("%s unexpected committed search results %#v", label, search.Results)
+		}
+		if len(search.Results[0].Citations) != expectedCitations || search.Results[0].CitationStatus != "available" {
+			t.Fatalf("%s expected %d resolved citations, got %#v", label, expectedCitations, search.Results[0])
+		}
+		return search
+	}
+	assertHiddenNodesAbsent := func(label string) {
+		t.Helper()
+		search, searchErr := engine.Search(ctx, rag.SearchRequest{
+			Query:        "secret",
+			TopK:         5,
+			ContextBytes: 1024,
+		})
+		if searchErr != nil {
+			t.Fatalf("%s search for uncommitted content: %v", label, searchErr)
+		}
+		if len(search.Results) != 0 {
+			t.Fatalf("%s exposed staging, failed, or unlinked nodes: %#v", label, search.Results)
+		}
+	}
+	assertCommittedSearch("immediate projection", 1)
+	assertHiddenNodesAbsent("immediate projection")
 
 	var waitGroup sync.WaitGroup
 	errorsChannel := make(chan error, 12)
@@ -199,36 +257,16 @@ func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {
 		}
 	}
 
-	metadata, err := projector.Metadata(ctx)
-	if err != nil {
-		t.Fatalf("read projection metadata: %v", err)
-	}
-	documentCount, err := db.Collection(rag.DocumentsCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
+	documentCount, err = db.Collection(rag.DocumentsCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
 	if err != nil || documentCount != 1 {
 		t.Fatalf("expected one deduplicated document, count=%d err=%v", documentCount, err)
 	}
-	provenanceCount, err := db.Collection(rag.ProvenanceCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
+	provenanceCount, err = db.Collection(rag.ProvenanceCollection).CountDocuments(ctx, bson.M{"generation": metadata.ActiveGeneration})
 	if err != nil || provenanceCount != 2 {
 		t.Fatalf("expected both provenance links, count=%d err=%v", provenanceCount, err)
 	}
 
-	engine := rag.NewEngine(db, rag.Config{PreferredSchemaVersion: "s1"})
-	search, err := engine.Search(ctx, rag.SearchRequest{
-		Query:        "architecture",
-		TopK:         5,
-		Kind:         "claim",
-		Sector:       "architecture",
-		ContextBytes: 1024,
-	})
-	if err != nil {
-		t.Fatalf("text and metadata search: %v", err)
-	}
-	if len(search.Results) != 1 || search.Results[0].StableID != committedNode.StableID {
-		t.Fatalf("unexpected search results %#v", search.Results)
-	}
-	if len(search.Results[0].Citations) != 2 || search.Results[0].CitationStatus != "available" {
-		t.Fatalf("expected two resolved citations, got %#v", search.Results[0])
-	}
+	search := assertCommittedSearch("concurrent idempotent projection", 2)
 	for _, citation := range search.Results[0].Citations {
 		if len(citation.Evidence) != 1 || !citation.Evidence[0].ByteValid {
 			t.Fatalf("expected byte-valid evidence citation, got %#v", citation)
@@ -289,6 +327,11 @@ func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {
 	if err != nil || staleCount != 0 {
 		t.Fatalf("stale derivative cleanup failed count=%d err=%v", staleCount, err)
 	}
+	search = assertCommittedSearch("generation rebuild", 2)
+	if search.Generation != report.Generation {
+		t.Fatalf("search used generation %q after rebuild, want %q", search.Generation, report.Generation)
+	}
+	assertHiddenNodesAbsent("generation rebuild")
 
 	indexCursor, err := db.Collection(rag.DocumentsCollection).Indexes().List(ctx)
 	if err != nil {

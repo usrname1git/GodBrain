@@ -121,7 +121,7 @@ type Engine struct {
 }
 
 type scoredDocument struct {
-	Document
+	Document          `bson:",inline"`
 	TextScore         float64         `bson:"text_score"`
 	PrimarySourceHash string          `bson:"-"`
 	Scores            ScoreComponents `bson:"-"`
