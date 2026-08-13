@@ -7,9 +7,7 @@ Polygon PoS mainnet. It targets the current supported node stack:
   JSON-RPC;
 - **Heimdall v2 v0.10.0** for Polygon consensus/checkpoint coordination.
 
-Polygon Labs ended support for its former Erigon fork on August 1, 2026 and
-directs operators to Bor. There is no Erigon compatibility path, configuration,
-IPC support, or runtime code here.
+This component exclusively supports the Bor and Heimdall v2 architecture.
 
 The component never launches node processes, reads keys, signs, submits or
 broadcasts transactions, installs services, deploys contracts, mutates chain
@@ -251,6 +249,3 @@ Research baseline: **2026-08-13**.
   <https://docs.polygon.technology/pos/how-to/prerequisites>
 - Official snapshot guidance:
   <https://docs.polygon.technology/pos/how-to/snapshots>
-- Polygon Labs' Erigon sunset notice (historical rationale only; no
-  compatibility path):
-  [`0xPolygon/erigon@b778c5b`](https://github.com/0xPolygon/erigon/blob/b778c5b0d1df04a4442f10c589c77029bb3c7f59/README.md)

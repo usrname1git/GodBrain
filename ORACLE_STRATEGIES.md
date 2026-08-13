@@ -39,8 +39,7 @@ The paper-only Polygon searcher lives in
 [`godbrain_core/polygon_searcher`](godbrain_core/polygon_searcher/README.md).
 The confirmed-chain boundary lives in
 [`godbrain_core/polygon_observer`](godbrain_core/polygon_observer/README.md).
-Polygon's supported local stack is Bor plus Heimdall v2; Polygon Labs sunset
-its Erigon fork, so there is no Erigon compatibility path.
+Polygon's supported local stack is Bor plus Heimdall v2.
 
 The observer accepts only loopback Bor JSON-RPC, requires chain ID 137, a
 supported Bor client, completed sync, peers, and a recent canonical-format
