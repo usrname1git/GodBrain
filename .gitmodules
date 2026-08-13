@@ -1,0 +1,9 @@
+[submodule "godbrain_core/smart_contracts/lib/atlas"]
+	path = godbrain_core/smart_contracts/lib/atlas
+	url = https://github.com/FastLane-Labs/atlas.git
+[submodule "godbrain_core/smart_contracts/lib/solady"]
+	path = godbrain_core/smart_contracts/lib/solady
+	url = https://github.com/vectorized/solady.git
+[submodule "godbrain_core/smart_contracts/lib/forge-std"]
+	path = godbrain_core/smart_contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std.git
