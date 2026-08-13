@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "chain_id": 137,
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "venues": [
+    {
+      "address": "0x1111111111111111111111111111111111111111",
+      "label": "Synthetic Fixture Venue A",
+      "source_url": "https://fixtures.invalid/venues.json",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "address": "0x2222222222222222222222222222222222222222",
+      "label": "Synthetic Fixture Venue B",
+      "source_url": "https://fixtures.invalid/venues.json",
+      "source_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "tokens": [
+    {
+      "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "label": "SYNTH-A",
+      "decimals": 18,
+      "source_url": "https://fixtures.invalid/tokens.json",
+      "source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "label": "SYNTH-B",
+      "decimals": 18,
+      "source_url": "https://fixtures.invalid/tokens.json",
+      "source_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ]
+}

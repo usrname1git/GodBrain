@@ -1,0 +1,18 @@
+{
+  "bor_executable": "C:\\Polygon_Bor\\build\\bin\\bor.exe",
+  "bor_data_directory": "D:\\PolygonData\\Bor",
+  "heimdall_executable": "C:\\Polygon_Heimdall_v2\\build\\heimdalld.exe",
+  "heimdall_home_directory": "D:\\PolygonData\\Heimdall",
+  "heimdall_rest_endpoint": "http://127.0.0.1:1317/",
+  "heimdall_comet_endpoint": "http://127.0.0.1:26657/",
+  "ethereum_l1_endpoint": "http://127.0.0.1:9545/",
+  "bor_http_port": 8545,
+  "bor_http_path": "/",
+  "bor_http_api": [
+    "eth",
+    "net",
+    "web3",
+    "bor"
+  ],
+  "minimum_free_space_gib": 8192
+}

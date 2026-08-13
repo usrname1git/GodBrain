@@ -1,0 +1,27 @@
+[
+  {
+    "schema_version": 1,
+    "chain_id": 137,
+    "block_number": 1000,
+    "block_hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "block_timestamp": 1786593540,
+    "observed_head": 1255,
+    "transaction_hash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "transaction_index": 7,
+    "actor": "0xcccccccccccccccccccccccccccccccccccccccc",
+    "executor": "0xcccccccccccccccccccccccccccccccccccccccc",
+    "venues": [
+      "0x1111111111111111111111111111111111111111",
+      "0x2222222222222222222222222222222222222222"
+    ],
+    "token_deltas": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "100",
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0"
+    },
+    "venue_log_indices": [3, 8],
+    "transfer_log_indices": [2, 4, 7, 9],
+    "receipt_success": true,
+    "costs_accounted": true,
+    "allowlist_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+]
