@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "evidence_class": "sanitized_fixture_test_evidence_not_market_evidence",
+  "label": "synthetic-two-venue-cycle-v1",
+  "now_epoch_ms": 1786651200000,
+  "block": {
+    "number": 76543210,
+    "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "parent_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "observed_epoch_ms": 1786651199900
+  },
+  "tokens": [
+    {
+      "id": "test-a",
+      "symbol": "TSTA",
+      "decimals": 6,
+      "max_input": "2000000",
+      "daily_loss_limit": "250000"
+    },
+    {
+      "id": "test-b",
+      "symbol": "TSTB",
+      "decimals": 6,
+      "max_input": "2000000",
+      "daily_loss_limit": "250000"
+    }
+  ],
+  "venues": [
+    {"id": "fixture-v2-a"},
+    {"id": "fixture-v3-b"}
+  ],
+  "routes": [
+    {
+      "id": "a-to-b-v2",
+      "venue_id": "fixture-v2-a",
+      "token_in": "test-a",
+      "token_out": "test-b"
+    },
+    {
+      "id": "b-to-a-v3",
+      "venue_id": "fixture-v3-b",
+      "token_in": "test-b",
+      "token_out": "test-a"
+    }
+  ],
+  "input_sizes": {
+    "test-a": ["1000000", "2000000"],
+    "test-b": ["1000000"]
+  },
+  "quotes": [
+    {
+      "route_id": "a-to-b-v2",
+      "amount_in": "1000000",
+      "amount_out": "1010000",
+      "max_supported_input": "2000000",
+      "confidence_bps": 9900,
+      "observed_epoch_ms": 1786651199950,
+      "provider": "fixture-quoter",
+      "provenance": "sanitized:quote:1",
+      "quote_hash": "0x111"
+    },
+    {
+      "route_id": "a-to-b-v2",
+      "amount_in": "2000000",
+      "amount_out": "2010000",
+      "max_supported_input": "2000000",
+      "confidence_bps": 9900,
+      "observed_epoch_ms": 1786651199950,
+      "provider": "fixture-quoter",
+      "provenance": "sanitized:quote:2",
+      "quote_hash": "0x112"
+    },
+    {
+      "route_id": "b-to-a-v3",
+      "amount_in": "1010000",
+      "amount_out": "1060000",
+      "max_supported_input": "2200000",
+      "confidence_bps": 9900,
+      "observed_epoch_ms": 1786651199950,
+      "provider": "fixture-quoter",
+      "provenance": "sanitized:quote:3",
+      "quote_hash": "0x113"
+    },
+    {
+      "route_id": "b-to-a-v3",
+      "amount_in": "2010000",
+      "amount_out": "2070000",
+      "max_supported_input": "2200000",
+      "confidence_bps": 9900,
+      "observed_epoch_ms": 1786651199950,
+      "provider": "fixture-quoter",
+      "provenance": "sanitized:quote:4",
+      "quote_hash": "0x114"
+    },
+    {
+      "route_id": "b-to-a-v3",
+      "amount_in": "1000000",
+      "amount_out": "970000",
+      "max_supported_input": "2200000",
+      "confidence_bps": 9900,
+      "observed_epoch_ms": 1786651199950,
+      "provider": "fixture-quoter",
+      "provenance": "sanitized:quote:5",
+      "quote_hash": "0x115"
+    }
+  ],
+  "gas_cost": {
+    "gas_units": 180000,
+    "native_wei": "5400000000000000",
+    "input_token_cost": "4000",
+    "observed_epoch_ms": 1786651199950,
+    "conversion_provenance": "sanitized:matic-to-input",
+    "quote_hash": "0x201"
+  }
+}
