@@ -36,6 +36,10 @@
 - `godbrain_core/memory_store/` is the active Alexandria write boundary. It
   validates provenance and ingestion state, then stores immutable sources and
   knowledge nodes plus append-only run-to-node links in MongoDB.
+- `godbrain_core/memory_store/cmd/rag-service/` is the canonical committed
+  Golden Record retrieval boundary on `127.0.0.1:8084`. It searches the
+  generation-addressed `rag_documents` projection and resolves citations through
+  append-only `rag_provenance`. Existing routers are not connected to it yet.
 - `LLM/colibri_LLM/` is a substantial nested Colibri engine project. Treat it as
   an interchangeable inference implementation, not as a protocol authority for
   the kernel or Memory Store.
@@ -80,13 +84,17 @@ changes directory explicitly.
 Push-Location godbrain_core\memory_store
 go test ./...
 go build -o memory-store.exe ./cmd/memory-store
+go build -o rag-service.exe ./cmd/rag-service
+go build -o rag-rebuild.exe ./cmd/rag-rebuild
 Pop-Location
 ```
 
-`build_pipeline.ps1` builds only `memory-store.exe` and `librarian.exe`. The
-Librarian self-test is offline and uses its in-memory store. To exercise MongoDB
-integration tests, set `MONGODB_TEST_URI` to a disposable instance; test setup
-uses and clears the `godbrain_test` database.
+`build_pipeline.ps1` builds `memory-store.exe`, `rag-service.exe`,
+`rag-rebuild.exe`, and `librarian.exe`. The Librarian self-test is offline and
+uses its in-memory store. To exercise MongoDB integration tests, set
+`MONGODB_TEST_URI` to a disposable instance; tests use isolated temporary
+databases for RAG coverage, while the existing Memory Store suite uses and
+clears `godbrain_test`.
 
 ### C++ kernel
 
@@ -213,6 +221,15 @@ not be treated as baseline validation.
 - Retrieval must expose only nodes linked to committed runs. Skill promotion
   must keep requiring a verified origin node linked to a committed run plus
   matching origin version and content hash.
+- A committed ingestion is acknowledged only after its active
+  `rag_documents`/`rag_provenance` projection is confirmed. Projection failure
+  leaves the run committed, returns an explicit failure, and is repaired by an
+  idempotent retry or `rag-rebuild`; committed runs must never transition back
+  to failed.
+- Golden Record rebuilds use a versioned generation and an atomic metadata
+  pointer. Live commits dual-write to an in-progress generation. Only a fully
+  reconciled generation may become active; cleanup may delete derivative
+  generations but never source, node, run, link, observation, or skill records.
 - Changes to the C++/Go protocol require coordinated updates to both sides and
   tests for field names, framing, size limits, receipt/error shape, hashing, and
   exit-code behavior.
@@ -225,7 +242,8 @@ not be treated as baseline validation.
   `GODBRAIN_API_TOKEN`, `MONGODB_URI`, `MONGODB_DB_NAME`,
   `GODBRAIN_COLIBRI_PATH`, `GODBRAIN_SNAPSHOT_PATH`,
   `GODBRAIN_FRONTEND_DIR`, `GODBRAIN_LIBRARIAN_PATH`, `LLM_RUNNER_PATH`,
-  `PROMPT_TEMPLATE_PATH`, and `MONGO_STORE_PATH`.
+  `PROMPT_TEMPLATE_PATH`, `MONGO_STORE_PATH`, `GODBRAIN_RAG_PORT`, and
+  `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION`.
 - Do not print complete environments, secrets, private prompt/transcript
   contents, or credential-bearing URIs. Use synthetic fixtures and reserved
   addresses in tests.

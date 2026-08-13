@@ -80,13 +80,14 @@ type KnowledgeNode struct {
 
 // RunNodeLink records which immutable node was observed by an ingestion attempt.
 type RunNodeLink struct {
-	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	RunID        string             `bson:"run_id" json:"run_id"`
-	NodeID       primitive.ObjectID `bson:"node_id" json:"node_id"`
-	StableID     string             `bson:"stable_id" json:"stable_id"`
-	NodeVersion  string             `bson:"node_version" json:"node_version"`
-	AttemptToken string             `bson:"attempt_token" json:"attempt_token"`
-	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
+	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	RunID         string             `bson:"run_id" json:"run_id"`
+	NodeID        primitive.ObjectID `bson:"node_id" json:"node_id"`
+	StableID      string             `bson:"stable_id" json:"stable_id"`
+	NodeVersion   string             `bson:"node_version" json:"node_version"`
+	EvidenceSpans []string           `bson:"evidence_spans,omitempty" json:"evidence_spans,omitempty"`
+	AttemptToken  string             `bson:"attempt_token" json:"attempt_token"`
+	CreatedAt     time.Time          `bson:"created_at" json:"created_at"`
 }
 
 // KnowledgeEdge defines typed relations (e.g., node -> node, or evidence -> node).

@@ -54,11 +54,11 @@ func TransitionRunState(ctx context.Context, db *mongo.Database, runID string, e
 		"status":     newStatus,
 		"updated_at": time.Now().UTC(),
 	}
-	
+
 	if newStatus == StatusFailed {
 		updateDoc["active"] = false
 	}
-	
+
 	if errorMsg != nil {
 		updateDoc["error_msg"] = *errorMsg
 	}

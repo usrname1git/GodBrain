@@ -112,16 +112,26 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	}
 
 	// 6. Ingestion Runs: Unique idempotency key (excluding failed runs)
-	_, err = db.Collection("ingestion_runs").Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{
-			{Key: "source_hash", Value: 1},
-			{Key: "extractor_id", Value: 1},
-			{Key: "extractor_version", Value: 1},
-			{Key: "schema_version", Value: 1},
+	_, err = db.Collection("ingestion_runs").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "source_hash", Value: 1},
+				{Key: "extractor_id", Value: 1},
+				{Key: "extractor_version", Value: 1},
+				{Key: "schema_version", Value: 1},
+			},
+			Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{
+				"active": true,
+			}),
 		},
-		Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{
-			"active": true,
-		}),
+		{
+			Keys: bson.D{
+				{Key: "status", Value: 1},
+				{Key: "updated_at", Value: -1},
+				{Key: "run_id", Value: 1},
+			},
+			Options: options.Index().SetName("committed_run_projection"),
+		},
 	})
 	if err != nil {
 		return err
