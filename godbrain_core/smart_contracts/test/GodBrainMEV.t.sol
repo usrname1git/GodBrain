@@ -61,6 +61,27 @@ contract GodBrainMEVTest is Test {
         atlas.callSolver(solver, stranger, executionEnvironment, address(0), 0, _executionData(1 ether));
     }
 
+    function testAtlasSolverCallRejectsWrongSolverOpSelector() external {
+        bytes memory solverOpData = abi.encodeCall(solver.withdrawNative, (owner, 1));
+
+        vm.expectRevert(GodBrainMEV.InvalidSolverOpData.selector);
+        atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, solverOpData);
+    }
+
+    function testAtlasSolverCallRejectsMalformedSolverOpData() external {
+        bytes memory solverOpData = abi.encodePacked(GodBrainMEV.execute.selector, bytes32(0));
+
+        vm.expectRevert();
+        atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, solverOpData);
+    }
+
+    function testAtlasSolverCallRejectsTrailingSolverOpData() external {
+        bytes memory solverOpData = bytes.concat(_executionData(1 ether), hex"00");
+
+        vm.expectRevert(GodBrainMEV.InvalidSolverOpData.selector);
+        atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, solverOpData);
+    }
+
     function testExecuteRejectsDirectCaller() external {
         vm.expectRevert(GodBrainMEV.OnlySelf.selector);
         solver.execute(address(target), _deliverData(1 ether), address(outputToken), 1 ether);
@@ -139,7 +160,7 @@ contract GodBrainMEVTest is Test {
     }
 
     function testOutputIncreaseMustMeetMinimum() external {
-        vm.expectRevert(SolverBase.SolverCallUnsuccessful.selector);
+        vm.expectRevert(abi.encodeWithSelector(GodBrainMEV.InsufficientNetOutputIncrease.selector, 1 ether, 2 ether));
         atlas.callSolver(solver, owner, executionEnvironment, address(0), 0, _executionData(2 ether));
     }
 
@@ -165,6 +186,48 @@ contract GodBrainMEVTest is Test {
 
         assertEq(bidToken.balanceOf(executionEnvironment), 3 ether);
         assertEq(bidToken.balanceOf(address(solver)), 1 ether);
+    }
+
+    function testSameOutputTokenBidRevertsWhenNetOutputIsBelowMinimum() external {
+        vm.expectRevert(abi.encodeWithSelector(GodBrainMEV.InsufficientNetOutputIncrease.selector, 1 ether, 2 ether));
+        atlas.callSolver(
+            solver,
+            owner,
+            executionEnvironment,
+            address(outputToken),
+            2 ether,
+            _executionDataFor(outputToken, 3 ether, 2 ether)
+        );
+    }
+
+    function testSameOutputTokenBidPassesAtExactNetMinimum() external {
+        atlas.callSolver(
+            solver,
+            owner,
+            executionEnvironment,
+            address(outputToken),
+            2 ether,
+            _executionDataFor(outputToken, 3 ether, 1 ether)
+        );
+
+        assertEq(outputToken.balanceOf(address(solver)), 1 ether);
+        assertEq(outputToken.balanceOf(executionEnvironment), 2 ether);
+    }
+
+    function testWrappedNativeOutputAccountsForNativeBidUnwrap() external {
+        vm.deal(address(weth), 2 ether);
+        weth.mint(address(target), 3 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(GodBrainMEV.InsufficientNetOutputIncrease.selector, 1 ether, 2 ether));
+        atlas.callSolver(
+            solver, owner, executionEnvironment, address(0), 2 ether, _executionDataFor(weth, 3 ether, 2 ether)
+        );
+
+        atlas.callSolver(
+            solver, owner, executionEnvironment, address(0), 2 ether, _executionDataFor(weth, 3 ether, 1 ether)
+        );
+        assertEq(weth.balanceOf(address(solver)), 1 ether);
+        assertEq(executionEnvironment.balance, 2 ether);
     }
 
     function testNativeValueIsRetainedForReconciliation() external {
@@ -209,9 +272,27 @@ contract GodBrainMEVTest is Test {
         solver.withdrawNative(address(0), 1);
     }
 
-    function _executionData(uint256 minimumOutputIncrease) internal view returns (bytes memory) {
+    function _executionData(uint256 minimumNetOutputIncrease) internal view returns (bytes memory) {
+        return _executionDataFor(outputToken, 1 ether, minimumNetOutputIncrease);
+    }
+
+    function _executionDataFor(
+        MockERC20 token,
+        uint256 grossOutput,
+        uint256 minimumNetOutputIncrease
+    )
+        internal
+        view
+        returns (bytes memory)
+    {
         return abi.encodeCall(
-            solver.execute, (address(target), _deliverData(1 ether), address(outputToken), minimumOutputIncrease)
+            solver.execute,
+            (
+                address(target),
+                abi.encodeCall(target.deliver, (token, address(solver), grossOutput)),
+                address(token),
+                minimumNetOutputIncrease
+            )
         );
     }
 
