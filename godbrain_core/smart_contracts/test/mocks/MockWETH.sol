@@ -7,15 +7,15 @@ contract MockWETH is MockERC20 {
     constructor() MockERC20("Wrapped Ether", "WETH") { }
 
     receive() external payable {
-        balanceOf[msg.sender] += msg.value;
+        _balanceOf[msg.sender] += msg.value;
     }
 
     function deposit() external payable {
-        balanceOf[msg.sender] += msg.value;
+        _balanceOf[msg.sender] += msg.value;
     }
 
     function withdraw(uint256 amount) external {
-        balanceOf[msg.sender] -= amount;
+        _balanceOf[msg.sender] -= amount;
         (bool success,) = msg.sender.call{ value: amount }("");
         require(success, "ETH transfer failed");
     }

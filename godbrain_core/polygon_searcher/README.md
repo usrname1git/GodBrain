@@ -59,9 +59,13 @@ References:
 - [Polygon documentation](https://docs.polygon.technology/)
 
 The pipeline emits a data-only Atlas simulation envelope from `ArbitragePlan`.
-Any future solver remains a separate boundary that must perform its own
-block-pinned simulation and safety review without adding transaction
-capabilities to this library:
+The smart-contract project has a separate, offline-tested typed Atlas
+two-router simulation boundary. It is not integrated with this library: the
+paper plan has no deployed solver/executor binding, ABI calldata, or approved
+policy for deriving executable per-leg minima from observed quotes. Keeping
+those inputs separate preserves this library's no-wallet, no-signing,
+no-submission boundary and still requires block-pinned simulation and an
+independent safety review:
 
 - [FastLane Atlas documentation](https://docs.fastlane.xyz/)
 - [FastLane Atlas source](https://github.com/FastLane-Labs/atlas)
