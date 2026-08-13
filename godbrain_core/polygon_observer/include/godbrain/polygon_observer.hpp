@@ -14,7 +14,7 @@
 
 #include "json.hpp"
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::observer {
 
 using Json = nlohmann::json;
 
@@ -105,11 +105,22 @@ enum class RpcMethod {
     eth_syncing,
     net_peer_count,
     eth_get_block_by_number,
+    eth_get_code,
+    eth_call,
     eth_get_transaction_receipt,
 };
 
 std::string_view rpc_method_name(RpcMethod method);
 const std::set<std::string>& read_only_rpc_method_names();
+std::string canonical_block_number_tag(std::uint64_t block_number);
+Json build_get_block_params(std::uint64_t block_number);
+Json build_get_code_params(
+    std::string_view canonical_address,
+    std::string_view canonical_block_tag);
+Json build_eth_call_params(
+    std::string_view canonical_to,
+    std::string_view canonical_calldata,
+    std::string_view canonical_block_tag);
 
 class RpcClient {
 public:
@@ -327,4 +338,4 @@ Json build_tuning_export(
     std::int64_t as_of_epoch_seconds,
     unsigned int window_days = 7);
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::observer

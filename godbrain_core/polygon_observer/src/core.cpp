@@ -8,10 +8,11 @@
 #include <sstream>
 #include <utility>
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::observer {
 namespace {
 
 constexpr std::size_t maximum_endpoint_length = 2'048;
+constexpr std::size_t maximum_eth_call_data_bytes = 4 * 1024;
 
 bool is_ascii_printable(std::string_view value) {
     return std::all_of(value.begin(), value.end(), [](unsigned char character) {
@@ -63,6 +64,109 @@ bool is_hash(std::string_view value) {
     return std::all_of(value.begin() + 2, value.end(), [](unsigned char character) {
         return std::isxdigit(character) != 0;
     });
+}
+
+bool is_lower_hex(std::string_view value) {
+    return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return (character >= '0' && character <= '9') ||
+            (character >= 'a' && character <= 'f');
+    });
+}
+
+bool is_canonical_address(std::string_view value) {
+    return value.size() == 42 && value.starts_with("0x") &&
+        is_lower_hex(value.substr(2));
+}
+
+bool is_canonical_hash(std::string_view value) {
+    return value.size() == 66 && value.starts_with("0x") &&
+        is_lower_hex(value.substr(2));
+}
+
+bool is_canonical_block_tag(std::string_view value) {
+    if (!value.starts_with("0x") || value.size() < 3 ||
+        (value.size() > 3 && value[2] == '0')) {
+        return false;
+    }
+    return is_lower_hex(value.substr(2));
+}
+
+bool is_canonical_calldata(std::string_view value) {
+    if (!value.starts_with("0x") || value.size() % 2 != 0 ||
+        value.size() > 2 + maximum_eth_call_data_bytes * 2) {
+        return false;
+    }
+    return is_lower_hex(value.substr(2));
+}
+
+void require_exact_keys(
+    const Json& value,
+    const std::set<std::string>& expected,
+    std::string_view label) {
+    if (!value.is_object() || value.size() != expected.size()) {
+        throw ObserverError(std::string(label) + " has an invalid field set");
+    }
+    for (const auto& [key, child] : value.items()) {
+        (void)child;
+        if (!expected.contains(key)) {
+            throw ObserverError(std::string(label) + " has an invalid field set");
+        }
+    }
+}
+
+void validate_rpc_params(RpcMethod method, const Json& params) {
+    if (!params.is_array()) {
+        throw ObserverError("JSON-RPC params must be an array");
+    }
+    switch (method) {
+    case RpcMethod::web3_client_version:
+    case RpcMethod::eth_chain_id:
+    case RpcMethod::eth_block_number:
+    case RpcMethod::eth_syncing:
+    case RpcMethod::net_peer_count:
+        if (!params.empty()) {
+            throw ObserverError("JSON-RPC method requires empty params");
+        }
+        return;
+    case RpcMethod::eth_get_block_by_number:
+        if (params.size() != 2 || !params[0].is_string() ||
+            (params[0] != "latest" &&
+             !is_canonical_block_tag(params[0].get_ref<const std::string&>())) ||
+            !params[1].is_boolean() || params[1].get<bool>()) {
+            throw ObserverError("eth_getBlockByNumber params are invalid");
+        }
+        return;
+    case RpcMethod::eth_get_code:
+        if (params.size() != 2 || !params[0].is_string() ||
+            !is_canonical_address(params[0].get_ref<const std::string&>()) ||
+            !params[1].is_string() ||
+            !is_canonical_block_tag(params[1].get_ref<const std::string&>())) {
+            throw ObserverError("eth_getCode params are invalid");
+        }
+        return;
+    case RpcMethod::eth_call:
+        if (params.size() != 2 || !params[1].is_string() ||
+            !is_canonical_block_tag(params[1].get_ref<const std::string&>())) {
+            throw ObserverError("eth_call block tag is invalid");
+        }
+        require_exact_keys(params[0], {"data", "to"}, "eth_call request");
+        if (!params[0].at("to").is_string() ||
+            !is_canonical_address(
+                params[0].at("to").get_ref<const std::string&>()) ||
+            !params[0].at("data").is_string() ||
+            !is_canonical_calldata(
+                params[0].at("data").get_ref<const std::string&>())) {
+            throw ObserverError("eth_call request is invalid");
+        }
+        return;
+    case RpcMethod::eth_get_transaction_receipt:
+        if (params.size() != 1 || !params[0].is_string() ||
+            !is_canonical_hash(params[0].get_ref<const std::string&>())) {
+            throw ObserverError("eth_getTransactionReceipt params are invalid");
+        }
+        return;
+    }
+    throw ObserverError("unknown RPC method enum");
 }
 
 std::string client_release(std::string_view version) {
@@ -299,6 +403,10 @@ std::string_view rpc_method_name(RpcMethod method) {
         return "net_peerCount";
     case RpcMethod::eth_get_block_by_number:
         return "eth_getBlockByNumber";
+    case RpcMethod::eth_get_code:
+        return "eth_getCode";
+    case RpcMethod::eth_call:
+        return "eth_call";
     case RpcMethod::eth_get_transaction_receipt:
         return "eth_getTransactionReceipt";
     }
@@ -313,9 +421,45 @@ const std::set<std::string>& read_only_rpc_method_names() {
         "eth_syncing",
         "net_peerCount",
         "eth_getBlockByNumber",
+        "eth_getCode",
+        "eth_call",
         "eth_getTransactionReceipt",
     };
     return names;
+}
+
+std::string canonical_block_number_tag(std::uint64_t block_number) {
+    std::ostringstream output;
+    output << "0x" << std::hex << block_number;
+    return output.str();
+}
+
+Json build_get_block_params(std::uint64_t block_number) {
+    return Json::array({canonical_block_number_tag(block_number), false});
+}
+
+Json build_get_code_params(
+    std::string_view canonical_address,
+    std::string_view canonical_block_tag) {
+    const Json params =
+        Json::array({std::string(canonical_address), std::string(canonical_block_tag)});
+    validate_rpc_params(RpcMethod::eth_get_code, params);
+    return params;
+}
+
+Json build_eth_call_params(
+    std::string_view canonical_to,
+    std::string_view canonical_calldata,
+    std::string_view canonical_block_tag) {
+    const Json params = Json::array({
+        Json{
+            {"to", std::string(canonical_to)},
+            {"data", std::string(canonical_calldata)},
+        },
+        std::string(canonical_block_tag),
+    });
+    validate_rpc_params(RpcMethod::eth_call, params);
+    return params;
 }
 
 RpcClient::RpcClient(
@@ -330,9 +474,7 @@ RpcClient::RpcClient(
 }
 
 Json RpcClient::call(RpcMethod method, Json params) {
-    if (!params.is_array()) {
-        throw ObserverError("JSON-RPC params must be an array");
-    }
+    validate_rpc_params(method, params);
     if (next_id_ == std::numeric_limits<std::uint64_t>::max()) {
         throw ObserverError("JSON-RPC request ID space exhausted");
     }
@@ -378,7 +520,8 @@ Json RpcClient::call(RpcMethod method, Json params) {
     }
 
     if (!parsed.is_object() || !parsed.contains("jsonrpc") ||
-        parsed.at("jsonrpc") != "2.0" || !parsed.contains("id")) {
+        parsed.at("jsonrpc") != "2.0" || !parsed.contains("id") ||
+        parsed.size() != 3) {
         throw RpcProtocolError("JSON-RPC response envelope is invalid");
     }
     const Json& response_id = parsed.at("id");
@@ -396,7 +539,7 @@ Json RpcClient::call(RpcMethod method, Json params) {
     }
     if (has_error) {
         const Json& error = parsed.at("error");
-        if (!error.is_object() || !error.contains("code") ||
+        if (!error.is_object() || error.size() != 2 || !error.contains("code") ||
             !error.at("code").is_number_integer() || !error.contains("message") ||
             !error.at("message").is_string()) {
             throw RpcProtocolError("JSON-RPC error object is invalid");
@@ -866,4 +1009,4 @@ void SanitizedLogger::event(
     std::cerr << entry.dump() << '\n';
 }
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::observer

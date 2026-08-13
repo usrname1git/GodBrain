@@ -11,7 +11,7 @@
 #include <windows.h>
 #endif
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::searcher {
 namespace {
 
 constexpr int snapshot_schema_version = 1;
@@ -291,4 +291,4 @@ void FileAuditStore::append(const Json& event) {
     }
 }
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::searcher

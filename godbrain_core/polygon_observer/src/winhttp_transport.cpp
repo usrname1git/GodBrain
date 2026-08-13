@@ -13,7 +13,7 @@
 #include <winhttp.h>
 #endif
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::observer {
 namespace {
 
 #ifdef _WIN32
@@ -222,4 +222,4 @@ HttpResponse WinHttpRpcTransport::get(
 #endif
 }
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::observer

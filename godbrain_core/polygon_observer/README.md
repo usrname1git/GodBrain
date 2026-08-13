@@ -28,11 +28,17 @@ The built-in Bor RPC enum contains only:
 - `eth_syncing`
 - `net_peerCount`
 - `eth_getBlockByNumber`
+- `eth_getCode`
+- `eth_call`
 - `eth_getTransactionReceipt`
 
 There is no string-based RPC method entry point. The enum structurally excludes
 transaction submission, signing, account management, personal/wallet/miner
-methods, pending block queries, txpool methods, and mempool methods. Health
+methods, pending block queries, txpool methods, and mempool methods.
+`eth_getCode` accepts only a canonical lowercase address and explicit canonical
+block number. `eth_call` accepts only `to` and bounded canonical calldata plus
+an explicit canonical block number; pending tags, state overrides, batch
+requests, transaction fields, and unbounded calldata are rejected. Health
 fetches `eth_getBlockByNumber("latest", false)` and requires:
 
 - chain ID exactly `137`;
@@ -215,7 +221,10 @@ current sizing and snapshot hashes when the SSD arrives.
 ## Integration boundary
 
 [`polygon_searcher`](../polygon_searcher/README.md) remains a paper-only
-block-pinned exact-quote searcher. A future decoder may use this observer's
+block-pinned exact-quote searcher. The
+[`polygon_pipeline`](../polygon_pipeline/README.md) binds the observer's
+confirmed explicit-block calls to the searcher through a narrowly fixed
+Uniswap-V2-compatible `getAmountsOut` adapter. A future decoder may use this observer's
 confirmed Bor block/receipt boundary to produce normalized historical actor
 evidence. Quote observations feed the searcher; confirmed-action rankings feed
 research/tuning only. Neither path creates transactions.

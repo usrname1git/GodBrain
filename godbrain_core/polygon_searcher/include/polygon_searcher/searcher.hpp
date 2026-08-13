@@ -13,7 +13,7 @@
 
 #include "json.hpp"
 
-namespace godbrain::polygon {
+namespace godbrain::polygon::searcher {
 
 using Json = nlohmann::json;
 using Amount = std::uint64_t;
@@ -338,4 +338,4 @@ private:
 [[nodiscard]] std::string utc_day(std::int64_t epoch_ms);
 [[nodiscard]] Amount token_whole_limit(const Token& token, Amount whole_tokens);
 
-}  // namespace godbrain::polygon
+}  // namespace godbrain::polygon::searcher

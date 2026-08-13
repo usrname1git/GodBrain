@@ -39,6 +39,8 @@ The paper-only Polygon searcher lives in
 [`godbrain_core/polygon_searcher`](godbrain_core/polygon_searcher/README.md).
 The confirmed-chain boundary lives in
 [`godbrain_core/polygon_observer`](godbrain_core/polygon_observer/README.md).
+The read-only adapter and replay boundary lives in
+[`godbrain_core/polygon_pipeline`](godbrain_core/polygon_pipeline/README.md).
 Polygon's supported local stack is Bor plus Heimdall v2.
 
 The observer accepts only loopback Bor JSON-RPC, requires chain ID 137, a
@@ -48,16 +50,19 @@ wallet, personal, and miner methods. Heimdall v2 is consensus infrastructure,
 not a quote source, and must finish catching up before Bor is considered an
 operator-ready dependency.
 
-A quote-provider adapter may read one pinned, confirmed Bor block and provide
-verified exact-input venue quotes to `polygon_searcher`. Searcher output remains
-paper-only plans plus append-only audit evidence. Separately, the observer may
+The pipeline reads one confirmed Bor block selected below the ready head,
+rechecks its canonical hash around fixed-ABI exact-input calls, and provides
+verified quote and conservatively modeled gas inputs to `polygon_searcher`.
+Searcher output remains paper-only plans plus append-only audit evidence.
+Separately, the observer may
 ingest normalized successful-receipt evidence for externally allowlisted
 two-venue/two-token atomic actions and export conservative per-token historical
 rankings. Those public-chain aggregates are research inputs, not user targets
 or profit guarantees.
 
-A future Atlas adapter may simulate a paper plan against the same pinned block.
-Any execution adapter remains a separate future security boundary. Signing,
+A versioned data-only Atlas simulation envelope may carry a paper plan across
+the next review boundary. It contains no solver or transaction calldata. Any
+execution adapter remains a separate future security boundary. Signing,
 submission, broadcasting, private keys, deployment, and chain-state mutation
 are absent.
 

@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-using namespace godbrain::polygon;
+using namespace godbrain::polygon::observer;
 
 namespace {
 
@@ -131,6 +131,8 @@ FakeTransport healthy_transport() {
              {"hash", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
              {"timestamp", "0x6a7d4136"},
          }},
+        {"eth_getCode", "0x6000"},
+        {"eth_call", "0x"},
         {"eth_getTransactionReceipt", Json::object()},
     };
     return transport;
@@ -298,7 +300,9 @@ void rpc_protocol_is_bounded() {
 
 void rpc_surface_is_confirmed_read_only() {
     const auto& methods = read_only_rpc_method_names();
-    CHECK(methods.size() == 7);
+    CHECK(methods.size() == 9);
+    CHECK(methods.contains("eth_call"));
+    CHECK(methods.contains("eth_getCode"));
     CHECK(methods.contains("eth_getTransactionReceipt"));
     for (const auto& method : methods) {
         CHECK(method.find("txpool") == std::string::npos);
@@ -315,6 +319,79 @@ void rpc_surface_is_confirmed_read_only() {
         (void)client.call(static_cast<RpcMethod>(999), Json::array());
     });
     CHECK(transport.requests.empty());
+}
+
+void rpc_parameters_are_method_specific() {
+    const std::string address = "0x1111111111111111111111111111111111111111";
+    const std::string block_tag = canonical_block_number_tag(16);
+    CHECK(block_tag == "0x10");
+    CHECK(build_get_block_params(16) == Json::array({"0x10", false}));
+    CHECK(
+        build_get_code_params(address, block_tag) ==
+        Json::array({address, block_tag}));
+    CHECK(
+        build_eth_call_params(address, "0xd06ca61f", block_tag) ==
+        Json::array({
+            Json{{"to", address}, {"data", "0xd06ca61f"}},
+            block_tag,
+        }));
+
+    FakeTransport transport = healthy_transport();
+    RpcClient client(transport, local_endpoint());
+    CHECK(
+        client.call(
+            RpcMethod::eth_get_code,
+            build_get_code_params(address, block_tag)) == "0x6000");
+    CHECK(
+        client.call(
+            RpcMethod::eth_call,
+            build_eth_call_params(address, "0xd06ca61f", block_tag)) == "0x");
+
+    expect_throw([&] {
+        (void)client.call(
+            RpcMethod::eth_call,
+            Json::array({
+                Json{{"to", address}, {"data", "0x"}, {"gas", "0x1"}},
+                block_tag,
+            }));
+    });
+    expect_throw([&] {
+        (void)client.call(
+            RpcMethod::eth_call,
+            Json::array({
+                Json{{"to", address}, {"data", "0x"}},
+                "pending",
+            }));
+    });
+    expect_throw([&] {
+        (void)client.call(
+            RpcMethod::eth_call,
+            Json::array({
+                Json{{"to", address}, {"data", "0x"}},
+                "latest",
+            }));
+    });
+    expect_throw([&] {
+        (void)client.call(
+            RpcMethod::eth_call,
+            Json::array({
+                Json{{"to", address}, {"data", "0x"}},
+                block_tag,
+                Json::object(),
+            }));
+    });
+    expect_throw([&] {
+        (void)build_get_code_params(
+            "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", block_tag);
+    });
+    expect_throw([&] {
+        (void)build_eth_call_params(address, "0x0", block_tag);
+    });
+    expect_throw([&] {
+        (void)build_eth_call_params(
+            address, "0x" + std::string(4 * 1024 * 2 + 2, '0'), block_tag);
+    });
+    CHECK(transport.requests.size() == 2);
 }
 
 void health_fails_closed() {
@@ -588,6 +665,7 @@ int main() {
     run("endpoint policy", endpoint_policy);
     run("RPC protocol is bounded", rpc_protocol_is_bounded);
     run("RPC surface is confirmed read-only", rpc_surface_is_confirmed_read_only);
+    run("RPC parameters are method specific", rpc_parameters_are_method_specific);
     run("health fails closed", health_fails_closed);
     run("allowlist is external and strict", allowlist_is_external_and_strict);
     run("fixture evidence parses", fixture_evidence_parses);
