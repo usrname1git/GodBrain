@@ -1,0 +1,18 @@
+[
+  {
+    "id": "1001",
+    "conditionId": "0xcondition",
+    "question": "Will the fixture resolve YES?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "clobTokenIds": "[\"111\", \"222\"]",
+    "acceptingOrders": true,
+    "active": true,
+    "closed": false,
+    "archived": false,
+    "restricted": false,
+    "enableOrderBook": true,
+    "negRisk": false,
+    "orderPriceMinTickSize": 0.000001,
+    "orderMinSize": 1
+  }
+]

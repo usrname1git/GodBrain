@@ -1,0 +1,16 @@
+{
+  "market": "0xcondition",
+  "asset_id": "222",
+  "timestamp": "1786593600000",
+  "hash": "no-fixture-hash",
+  "bids": [
+    {"price": "0.46", "size": "10"}
+  ],
+  "asks": [
+    {"price": "0.48", "size": "10"}
+  ],
+  "min_order_size": "1",
+  "tick_size": "0.000001",
+  "neg_risk": false,
+  "last_trade_price": "0.47"
+}
