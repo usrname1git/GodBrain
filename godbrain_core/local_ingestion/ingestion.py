@@ -350,11 +350,22 @@ def extract_file(
 
 
 def _safe_display_name(name: str) -> str:
-    safe = "".join(character if character.isprintable() and character not in "/\\" else "_" for character in name)
+    safe = "".join(character if _is_safe_display_name_character(character) else "_" for character in name)
     safe = safe.strip()
-    if not safe:
+    safe = safe.encode("utf-8")[:128].decode("utf-8", errors="ignore")
+    if not safe or safe in {".", ".."}:
         raise IngestionError("file name has no safe display representation")
-    return safe[:128]
+    return safe
+
+
+def _is_safe_display_name_character(character: str) -> bool:
+    codepoint = ord(character)
+    return (
+        character not in "/\\:"
+        and codepoint > 0x1F
+        and not 0x7F <= codepoint <= 0x9F
+        and codepoint not in {0x2028, 0x2029}
+    )
 
 
 def _safe_source_label(label: str) -> str:
@@ -412,6 +423,7 @@ def chunk_text(text: str, max_bytes: int = MAX_CHUNK_BYTES) -> list[dict[str, An
 
 def build_payload(document: ExtractedDocument, source_label: str = "local") -> dict[str, Any]:
     label = _safe_source_label(source_label)
+    display_name = _safe_display_name(document.display_name)
     raw = document.text.encode("utf-8")
     source_hash = legacy_keccak256(raw)
     content_hash = hashlib.sha256(raw).hexdigest()
@@ -429,7 +441,7 @@ def build_payload(document: ExtractedDocument, source_label: str = "local") -> d
         "payload": {
             "trust_tier": "candidate",
             "provenance": {
-                "source_id": f"local-document:{label}:{document.display_name}",
+                "source_id": f"local-document:{label}:{display_name}",
                 "source_type": "local_document",
                 "source_hash": source_hash,
                 "language": ",".join(document.languages),
@@ -445,7 +457,7 @@ def build_payload(document: ExtractedDocument, source_label: str = "local") -> d
         "raw_transcript": document.text,
         "document": {
             "source_label": label,
-            "display_name": document.display_name,
+            "display_name": display_name,
             "file_sha256": document.file_sha256,
             "content_sha256": content_hash,
             "extraction_method": document.extraction_method,

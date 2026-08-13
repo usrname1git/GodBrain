@@ -58,7 +58,7 @@ type AlexandriaPayload struct {
 
 // DistillationPayload is the master envelope sent on stdin
 type DistillationPayload struct {
-	ExtractorID      string            `json:"extractor_id,omitempty"`
+	ExtractorID      string            `json:"extractor_id,omitempty"` // Empty selects the default; otherwise starts alphanumeric and uses 1-64 ASCII letters, digits, dots, underscores, or hyphens.
 	ExtractorVersion string            `json:"extractor_version"`
 	SchemaVersion    string            `json:"schema_version"`
 	Degraded         bool              `json:"degraded"`

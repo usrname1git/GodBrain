@@ -15,6 +15,7 @@ from godbrain_core.local_ingestion.ingestion import (
     build_payload,
     chunk_text,
     extract_file,
+    _safe_display_name,
     legacy_keccak256,
     scan_sensitive_content,
     invoke_memory_store,
@@ -187,6 +188,38 @@ class LocalIngestionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(IngestionError, "source label"):
             build_payload(document, "../private")
+
+    def test_display_name_sanitization_matches_memory_store_contract(self) -> None:
+        self.assertEqual(
+            _safe_display_name("report:final/name\\draft.txt"),
+            "report_final_name_draft.txt",
+        )
+        self.assertEqual(
+            _safe_display_name("c1-\u0080\u0085\u009f-line\u2028paragraph\u2029.txt"),
+            "c1-___-line_paragraph_.txt",
+        )
+        self.assertEqual(
+            _safe_display_name("räksmörgås-東京.txt"),
+            "räksmörgås-東京.txt",
+        )
+        self.assertLessEqual(len(_safe_display_name("界" * 100 + ".txt").encode("utf-8")), 128)
+
+        document = ExtractedDocument(
+            display_name="report:final.txt",
+            file_sha256="0" * 64,
+            text="safe",
+            extraction_method="utf-8",
+            languages=("und",),
+            backend="python-codecs",
+            backend_version="3",
+            confidence=None,
+        )
+        payload = build_payload(document)
+        self.assertEqual(payload["document"]["display_name"], "report_final.txt")
+        self.assertEqual(
+            payload["payload"]["provenance"]["source_id"],
+            "local-document:local:report_final.txt",
+        )
 
     def test_incomplete_success_receipt_is_rejected(self) -> None:
         process = mock.Mock()

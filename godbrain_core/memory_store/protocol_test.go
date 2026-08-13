@@ -74,6 +74,60 @@ func TestValidatePreIngestionPayloadRejectsHashAndTrustBeforePersistence(t *test
 	}
 }
 
+func TestValidatePreIngestionPayloadExtractorID(t *testing.T) {
+	for _, extractorID := range []string{"", "Librarian-CPP-Colibri"} {
+		t.Run("valid-"+extractorID, func(t *testing.T) {
+			payload := validPreIngestionPayload(extractorID)
+			if err := ValidatePreIngestionPayload(payload); err != nil {
+				t.Fatalf("expected extractor ID %q to be valid, got %v", extractorID, err)
+			}
+		})
+	}
+
+	localPayload := validDocumentPayload("räksmörgås-東京.txt")
+	if err := ValidatePreIngestionPayload(localPayload); err != nil {
+		t.Fatalf("expected Local-Document-Adapter to be valid, got %v", err)
+	}
+
+	for _, extractorID := range []string{
+		"contains space",
+		"line\nbreak",
+		"tab\tbreak",
+		"control\u0085character",
+		"-leading-hyphen",
+	} {
+		t.Run("invalid-"+extractorID, func(t *testing.T) {
+			payload := validPreIngestionPayload(extractorID)
+			if err := ValidatePreIngestionPayload(payload); err == nil {
+				t.Fatalf("expected extractor ID %q to fail", extractorID)
+			}
+		})
+	}
+}
+
+func TestValidateDocumentPayloadDisplayNameSafety(t *testing.T) {
+	valid := validDocumentPayload("räksmörgås-東京.txt")
+	if err := ValidateDocumentPayload(valid); err != nil {
+		t.Fatalf("expected international printable display name to be valid, got %v", err)
+	}
+
+	for _, displayName := range []string{
+		"colon:name.txt",
+		"c1-\u0080.txt",
+		"c1-\u0085.txt",
+		"c1-\u009f.txt",
+		"line\u2028separator.txt",
+		"paragraph\u2029separator.txt",
+	} {
+		t.Run(displayName, func(t *testing.T) {
+			payload := validDocumentPayload(displayName)
+			if err := ValidateDocumentPayload(payload); err == nil {
+				t.Fatalf("expected display name %q to fail", displayName)
+			}
+		})
+	}
+}
+
 func TestValidateDocumentPayloadRejectsUnsafePathAndOverlappingChunks(t *testing.T) {
 	raw := "hello world"
 	contentHash := sha256.Sum256([]byte(raw))
@@ -221,4 +275,51 @@ func TestValidateDocumentPayloadRejectsUnicodeWhitespaceCredential(t *testing.T)
 			t.Fatal("expected Unicode-whitespace credential assignment to fail")
 		}
 	}
+}
+
+func validPreIngestionPayload(extractorID string) DistillationPayload {
+	raw := "hello"
+	hash := sha3.NewLegacyKeccak256()
+	_, _ = hash.Write([]byte(raw))
+	return DistillationPayload{
+		ExtractorID:      extractorID,
+		ExtractorVersion: "v1",
+		SchemaVersion:    "1.0",
+		RawTranscript:    raw,
+		Payload: AlexandriaPayload{
+			TrustTier: "candidate",
+			Provenance: Provenance{
+				SourceID:   "session",
+				SourceType: "session_transcript",
+				SourceHash: hex.EncodeToString(hash.Sum(nil)),
+				Language:   "mixed",
+			},
+		},
+	}
+}
+
+func validDocumentPayload(displayName string) DistillationPayload {
+	payload := validPreIngestionPayload("Local-Document-Adapter")
+	contentHash := sha256.Sum256([]byte(payload.RawTranscript))
+	payload.ExtractorVersion = "1.0.0"
+	payload.SchemaVersion = "1.1-document"
+	payload.Payload.Provenance.SourceID = "local-document:local:" + displayName
+	payload.Payload.Provenance.SourceType = "local_document"
+	payload.Payload.Provenance.Language = "und"
+	payload.Document = &DocumentMetadata{
+		SourceLabel:      "local",
+		DisplayName:      displayName,
+		FileSHA256:       strings.Repeat("a", 64),
+		ContentSHA256:    hex.EncodeToString(contentHash[:]),
+		ExtractionMethod: "utf-8",
+		Languages:        []string{"und"},
+		Backend:          "python-codecs",
+		BackendVersion:   "3",
+		ChunkCount:       1,
+	}
+	payload.Chunks = []SourceChunk{{
+		Index: 0, Count: 1, StartByte: 0, EndByte: len(payload.RawTranscript),
+		Text: payload.RawTranscript,
+	}}
+	return payload
 }

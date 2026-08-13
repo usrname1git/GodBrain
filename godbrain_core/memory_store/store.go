@@ -40,7 +40,7 @@ var forbiddenDocumentPatterns = []*regexp.Regexp{
 
 var (
 	safeSourceLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	safeDisplayNamePattern = regexp.MustCompile(`^[^/\\:\x00-\x1f\x7f]{1,128}$`)
+	safeExtractorIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
 type Store struct {
@@ -540,7 +540,7 @@ func ValidatePreIngestionPayload(payload DistillationPayload) error {
 	if extractorID == "" {
 		extractorID = "Librarian-CPP-Colibri"
 	}
-	if len(extractorID) > 64 || payload.ExtractorVersion == "" ||
+	if !safeExtractorIDPattern.MatchString(extractorID) || payload.ExtractorVersion == "" ||
 		len(payload.ExtractorVersion) > 128 || payload.SchemaVersion == "" ||
 		len(payload.SchemaVersion) > 64 {
 		return errors.New("extractor identity is invalid")
@@ -574,7 +574,7 @@ func ValidateDocumentPayload(payload DistillationPayload) error {
 		return errors.New("document metadata and chunks must be provided together")
 	}
 	document := payload.Document
-	if payload.ExtractorID == "" || len(payload.ExtractorID) > 64 ||
+	if !safeExtractorIDPattern.MatchString(payload.ExtractorID) ||
 		payload.ExtractorVersion == "" || len(payload.ExtractorVersion) > 128 ||
 		payload.SchemaVersion == "" || len(payload.SchemaVersion) > 64 {
 		return errors.New("document extractor identity is invalid")
@@ -634,8 +634,7 @@ func validateDocumentMetadata(document *DocumentMetadata, sourceID string) error
 		return errors.New("document provenance exceeds field bounds")
 	}
 	if !safeSourceLabelPattern.MatchString(document.SourceLabel) ||
-		!safeDisplayNamePattern.MatchString(document.DisplayName) ||
-		document.DisplayName == "." || document.DisplayName == ".." {
+		!isSafeDisplayName(document.DisplayName) {
 		return errors.New("document source label or display name is unsafe")
 	}
 	if !isLowerHexHash(document.FileSHA256, sha256.Size) || !isLowerHexHash(document.ContentSHA256, sha256.Size) {
@@ -653,6 +652,21 @@ func validateDocumentMetadata(document *DocumentMetadata, sourceID string) error
 		return errors.New("document contains forbidden sensitive content")
 	}
 	return nil
+}
+
+func isSafeDisplayName(value string) bool {
+	if value == "" || len(value) > 128 || value == "." || value == ".." {
+		return false
+	}
+	for _, character := range value {
+		if character == '/' || character == '\\' || character == ':' ||
+			character <= '\u001f' ||
+			(character >= '\u007f' && character <= '\u009f') ||
+			character == '\u2028' || character == '\u2029' {
+			return false
+		}
+	}
+	return true
 }
 
 func containsForbiddenDocumentContent(value string) bool {
