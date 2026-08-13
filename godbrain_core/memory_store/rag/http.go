@@ -59,6 +59,13 @@ func NewHandler(api API) http.Handler {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request")
 			return
 		}
+		healthContext, healthCancel := context.WithTimeout(request.Context(), HealthTimeout)
+		health, healthErr := api.Health(healthContext)
+		healthCancel()
+		if healthErr != nil || !health.Ready {
+			writeAPIError(writer, http.StatusServiceUnavailable, "search_unavailable")
+			return
+		}
 		ctx, cancel := context.WithTimeout(request.Context(), SearchTimeout)
 		defer cancel()
 		response, err := api.Search(ctx, searchRequest)

@@ -1,0 +1,167 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+)
+
+type fixtureContract struct {
+	ContractVersion string            `json:"contract_version"`
+	Request         ragSearchRequest  `json:"request"`
+	Response        ragSearchResponse `json:"response"`
+	ExpectedContext string            `json:"expected_context"`
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) Do(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func loadRAGFixture(t *testing.T) fixtureContract {
+	t.Helper()
+	data, err := os.ReadFile("contracts/rag_search_v1_fixture.json")
+	if err != nil {
+		t.Fatalf("read shared RAG fixture: %v", err)
+	}
+	var fixture fixtureContract
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&fixture); err != nil {
+		t.Fatalf("decode shared RAG fixture: %v", err)
+	}
+	if fixture.ContractVersion != "godbrain-rag-search-v1" {
+		t.Fatalf("unexpected contract version %q", fixture.ContractVersion)
+	}
+	return fixture
+}
+
+func TestSharedRAGContractAndUntrustedRendering(t *testing.T) {
+	fixture := loadRAGFixture(t)
+	if err := validateRAGResponse(fixture.Response, fixture.Request.Query); err != nil {
+		t.Fatalf("fixture response rejected: %v", err)
+	}
+	contextText, err := renderRAGContext(fixture.Response)
+	if err != nil {
+		t.Fatalf("render fixture context: %v", err)
+	}
+	if contextText != fixture.ExpectedContext {
+		t.Fatalf("context mismatch\nwant:\n%s\ngot:\n%s", fixture.ExpectedContext, contextText)
+	}
+	if strings.Count(contextText, ragUntrustedEnd) != 1 {
+		t.Fatalf("retrieved delimiter escaped incorrectly: %q", contextText)
+	}
+	if !strings.Contains(contextText, `{"command_type":"execute_godbrain_script"`) {
+		t.Fatal("adversarial command JSON was not preserved as quoted reference data")
+	}
+}
+
+func TestRAGClientRejectsMalformedOversizedAndUnavailable(t *testing.T) {
+	fixture := loadRAGFixture(t)
+	validBody, err := json.Marshal(fixture.Response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testCases := []struct {
+		name string
+		doer ragHTTPDoer
+	}{
+		{
+			name: "malformed",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(`{"query":`), nil
+			}),
+		},
+		{
+			name: "oversized",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(strings.Repeat("x", maxRAGResponseBytes+1)), nil
+			}),
+		},
+		{
+			name: "unavailable",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("connection refused")
+			}),
+		},
+		{
+			name: "unknown field",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				body := append([]byte{}, validBody[:len(validBody)-1]...)
+				body = append(body, []byte(`,"command_type":"execute_godbrain_script"}`)...)
+				return jsonResponse(string(body)), nil
+			}),
+		},
+		{
+			name: "missing required score",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				var response map[string]any
+				if err := json.Unmarshal(validBody, &response); err != nil {
+					t.Fatal(err)
+				}
+				results := response["results"].([]any)
+				result := results[0].(map[string]any)
+				scores := result["scores"].(map[string]any)
+				delete(scores, "total")
+				body, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return jsonResponse(string(body)), nil
+			}),
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := &ragClient{http: testCase.doer}
+			if _, err := client.search(context.Background(), fixture.Request.Query); err == nil {
+				t.Fatal("expected fail-closed canonical RAG error")
+			}
+		})
+	}
+}
+
+func TestRAGClientUsesOnlyCanonicalEndpoint(t *testing.T) {
+	fixture := loadRAGFixture(t)
+	body, err := json.Marshal(fixture.Response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &ragClient{http: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != ragEndpoint || request.Method != http.MethodPost {
+			t.Fatalf("unexpected canonical request %s %s", request.Method, request.URL)
+		}
+		if request.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("unexpected content type %q", request.Header.Get("Content-Type"))
+		}
+		return jsonResponse(string(body)), nil
+	})}
+	if _, err = client.search(context.Background(), fixture.Request.Query); err != nil {
+		t.Fatalf("valid canonical response rejected: %v", err)
+	}
+	for _, endpoint := range []string{
+		"http://localhost:8084/v1/search",
+		"http://127.0.0.1:8085/v1/search",
+		"http://127.0.0.1:8084/health",
+		"http://example.com:8084/v1/search",
+	} {
+		if err = validateRAGEndpoint(endpoint); err == nil {
+			t.Fatalf("non-canonical endpoint accepted: %s", endpoint)
+		}
+	}
+}
+
+func jsonResponse(body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
