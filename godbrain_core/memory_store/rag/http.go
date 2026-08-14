@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -23,6 +24,8 @@ var ErrSearchSnapshotChanged = errors.New("RAG search snapshot is unstable or un
 type API interface {
 	Search(context.Context, SearchRequest) (SearchResponse, error)
 	Health(context.Context) (HealthResponse, error)
+	Graph(context.Context, int) (GraphResponse, error)
+	Document(context.Context, string) (DocumentResponse, error)
 }
 
 func NewHandler(api API) http.Handler {
@@ -79,6 +82,71 @@ func NewHandler(api API) http.Handler {
 				writeAPIError(writer, http.StatusServiceUnavailable, "semantic_unavailable")
 			default:
 				writeAPIError(writer, http.StatusServiceUnavailable, "search_unavailable")
+			}
+			return
+		}
+		writeJSON(writer, http.StatusOK, response)
+	})
+	mux.HandleFunc("/v1/graph", func(writer http.ResponseWriter, request *http.Request) {
+		setResponseHeaders(writer)
+		if request.Method != http.MethodGet {
+			writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+		limit := DefaultGraphLimit
+		if raw := request.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeAPIError(writer, http.StatusBadRequest, ErrInvalidGraphLimit.Error())
+				return
+			}
+			limit = parsed
+		}
+		healthCtx, healthCancel := context.WithTimeout(request.Context(), HealthTimeout)
+		health, err := api.Health(healthCtx)
+		healthCancel()
+		if err != nil || !health.Ready {
+			writeAPIError(writer, http.StatusServiceUnavailable, "graph_unavailable")
+			return
+		}
+		ctx, cancel := context.WithTimeout(request.Context(), SearchTimeout)
+		defer cancel()
+		response, err := api.Graph(ctx, limit)
+		if err != nil {
+			if errors.Is(err, ErrInvalidGraphLimit) {
+				writeAPIError(writer, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeAPIError(writer, http.StatusServiceUnavailable, "graph_unavailable")
+			return
+		}
+		writeJSON(writer, http.StatusOK, response)
+	})
+	mux.HandleFunc("/v1/document", func(writer http.ResponseWriter, request *http.Request) {
+		setResponseHeaders(writer)
+		if request.Method != http.MethodGet {
+			writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+		id := request.URL.Query().Get("id")
+		healthCtx, healthCancel := context.WithTimeout(request.Context(), HealthTimeout)
+		health, err := api.Health(healthCtx)
+		healthCancel()
+		if err != nil || !health.Ready {
+			writeAPIError(writer, http.StatusServiceUnavailable, "document_unavailable")
+			return
+		}
+		ctx, cancel := context.WithTimeout(request.Context(), SearchTimeout)
+		defer cancel()
+		response, err := api.Document(ctx, id)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrDocumentIDRequired):
+				writeAPIError(writer, http.StatusBadRequest, err.Error())
+			case errors.Is(err, ErrDocumentNotFound):
+				writeAPIError(writer, http.StatusNotFound, err.Error())
+			default:
+				writeAPIError(writer, http.StatusServiceUnavailable, "document_unavailable")
 			}
 			return
 		}

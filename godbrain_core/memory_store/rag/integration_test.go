@@ -46,6 +46,14 @@ func (api *hookedSearchAPI) Search(ctx context.Context, request rag.SearchReques
 	return response, err
 }
 
+func (api *hookedSearchAPI) Graph(ctx context.Context, limit int) (rag.GraphResponse, error) {
+	return api.engine.Graph(ctx, limit)
+}
+
+func (api *hookedSearchAPI) Document(ctx context.Context, id string) (rag.DocumentResponse, error) {
+	return api.engine.Document(ctx, id)
+}
+
 func setupRAGTestDB(t *testing.T) *mongo.Database {
 	t.Helper()
 	uri := os.Getenv("MONGODB_TEST_URI")

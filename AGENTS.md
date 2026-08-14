@@ -40,9 +40,11 @@
 - `godbrain_core/memory_store/cmd/rag-service/` is the canonical committed
   Golden Record retrieval boundary on `127.0.0.1:8084`. It searches the
   generation-addressed `rag_documents` projection, optionally fuses bounded
-  generation-addressed local embeddings, and resolves citations through
-  append-only `rag_provenance`. The C++, Go, and Rust routers fail closed when
-  this service is unavailable, unready, or invalid.
+  generation-addressed local embeddings, resolves citations through
+  append-only `rag_provenance`, and exposes a bounded graph/document read for
+  Galaxy. The C++ and Go routers fail closed when this service is unavailable,
+  unready, or invalid. The experimental Rust router still uses search-only and
+  returns `410` for `/api/graph` and `/api/node`.
 - `LLM/colibri_LLM/` is a substantial nested Colibri engine project. Treat it as
   an interchangeable inference implementation, not as a protocol authority for
   the kernel or Memory Store.

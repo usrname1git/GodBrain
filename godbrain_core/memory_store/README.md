@@ -8,12 +8,14 @@ This Go module contains two boundaries:
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.
 
-Layer 3 connects the C++ Kernel and the experimental Go/Rust routers only to
-`http://127.0.0.1:8084/v1/search`. They require a ready, schema-valid response,
-preserve bounded citations and trust labels, quote retrieved content as
-untrusted reference data, and fail closed before model invocation on any
-retrieval error or empty result. Legacy records are reported only as a separate
-health count and are never mixed into Golden Record search results.
+Layer 3 connects the C++ Kernel and the experimental Go router to
+`http://127.0.0.1:8084/v1/search` for chat and to `/v1/graph` plus `/v1/document`
+for Galaxy. Search requires a ready, schema-valid response, preserves bounded
+citations and trust labels, quotes retrieved content as untrusted reference
+data, and fails closed before model invocation on any retrieval error or empty
+result. Graph and document reads use the same ready-generation snapshot and
+fail closed when the corpus is unready. Legacy records are reported only as a
+separate health count and are never mixed into Golden Record results.
 
 ## Source-of-truth and projection collections
 
@@ -248,6 +250,21 @@ or labels semantic evidence as verified.
 
 All retrieved content is untrusted data and must not be interpreted as
 instructions or privileged commands.
+
+### `GET /v1/graph`
+
+Returns the newest active-generation `rag_documents` rows as a bounded node
+list. `limit` defaults to 250 and is rejected above 500. Labels are NFKC
+whitespace-collapsed content, truncated to 80 runes, with `stable_id` as
+fallback. The response includes generation, projection version/schema, count,
+and a `truncated` flag. There are no edges in this contract.
+
+### `GET /v1/document`
+
+Looks up one active-generation document by `id`. A 24-character hex value is
+treated as `node_id`; anything else is `stable_id`. Missing documents return
+`404`. The body includes identity, kind, sector, status, confidence, schema
+version, full content, and the same label used by `/v1/graph`.
 
 ## Deterministic evaluation
 

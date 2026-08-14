@@ -53,11 +53,11 @@ flowchart LR
 
     Operator --> UI
     UI --> Kernel
-    Kernel --> Mongo
+    Kernel --> RAG
     Kernel --> Colibri
-    GoRouter --> Mongo
+    GoRouter --> RAG
     GoRouter --> Colibri
-    RustRouter --> Mongo
+    RustRouter --> RAG
     RustRouter --> Colibri
     Librarian --> Memory
     Memory --> Mongo
@@ -74,12 +74,12 @@ routers both use port `8082`, so only one can bind that port at a time.
 | Component | Status | Path | Interface | Responsibility |
 |---|---|---|---|---|
 | Colibri C engine | Implemented | `LLM/colibri_LLM/c/` | Child process and environment | Local model inference and memory-tiered model loading |
-| C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, MongoDB-backed RAG, Colibri invocation, privileged command dispatch |
+| C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, Colibri invocation, privileged command dispatch |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and Colibri invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and asynchronous Colibri invocation |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
 | Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
-| Golden Record RAG service | Implemented lexical retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search with source-resolved citations |
+| Golden Record RAG service | Implemented retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search, graph, and document reads with source-resolved citations |
 | Native Librarian | Implemented, deterministic local distillation | `godbrain_core/cpp_tools/librarian.cpp` | CLI and child process | Derive a bounded Golden Record from a transcript and invoke the Memory Store |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
@@ -101,11 +101,10 @@ architecture does not require a specific parameter count or model family.
 ### Retrieval boundary: MongoDB
 
 MongoDB stores both legacy source-oriented router records and Alexandria Golden
-Records. The current C++ Kernel and alternative Go/Rust routers still query the
-legacy `nodes` collection; they do not consume Golden Records. The canonical
-Golden Record service uses the Go driver and an indexed, generation-addressed
-`rag_documents` projection. It never mixes legacy `nodes` into committed
-Alexandria results.
+Records. Ordinary chat, Galaxy graph, and node lookup go through the Golden
+Record service on `127.0.0.1:8084`. That service uses the Go driver and an
+indexed, generation-addressed `rag_documents` projection. It never mixes legacy
+`nodes` into committed Alexandria results.
 
 MongoDB is the source of truth for both runtime retrieval documents and
 Alexandria Golden Records. These use separate collections and validated schemas.
@@ -168,13 +167,27 @@ does not provide kernel-mode access.
 | `GET` | `/galaxy` | None | Serve the operator UI |
 | `GET` | `/frontend/*` | None | Static frontend assets |
 | `GET` | `/api/test` | None | Liveness response |
-| `GET` | `/api/graph` | None | Read a bounded MongoDB graph projection |
+| `GET` | `/api/graph` | None | Bounded Golden Record graph for Galaxy (`rag_documents`, max 500 nodes) |
+| `GET` | `/api/node` | None | Single Golden Record document by `node_id` or `stable_id` |
 | `POST` | `/api/chat` | None for ordinary chat | RAG plus Colibri inference |
 | `POST` | `/api/chat` with `command_type` | Bearer token; reasoning for high-risk commands | Direct privileged kernel dispatch |
 
 The Kernel accepts CORS only from exact trusted loopback/Tauri origins. CORS
 controls browser access; non-browser callers still require authentication for
 privileged commands.
+
+### Golden Record RAG service (`127.0.0.1:8084`)
+
+| Method | Route | Authentication | Purpose |
+|---|---|---|---|
+| `GET` | `/health` | None | Readiness, generation, and retrieval-mode watermarks |
+| `POST` | `/v1/search` | None | Bounded lexical or measured hybrid retrieval |
+| `GET` | `/v1/graph` | None | Bounded active-generation node list (`limit` default 250, max 500) |
+| `GET` | `/v1/document` | None | One active-generation document by `id` (`node_id` hex or `stable_id`) |
+
+Graph and document reads require a ready corpus and fail closed with `503` when
+the projection is unready. They return nodes only; Galaxy currently renders an
+empty `links` array.
 
 ### Go and Rust alternatives (`127.0.0.1:8082`)
 
@@ -193,12 +206,15 @@ choose one because they share a port.
 sequenceDiagram
     participant U as Galaxy or extension
     participant K as C++ Kernel
+    participant R as RAG service
     participant M as MongoDB
     participant C as Colibri
 
     U->>K: POST /api/chat {"message": "..."}
-    K->>M: Retrieve bounded context
-    M-->>K: Source documents
+    K->>R: POST /v1/search
+    R->>M: Active-generation rag_documents
+    M-->>R: Bounded results
+    R-->>K: Schema-valid untrusted context
     K->>K: Build augmented prompt
     K->>C: Spawn child with prompt/config
     C-->>K: stdout/stderr
@@ -206,9 +222,12 @@ sequenceDiagram
     K-->>U: {"response": "..."}
 ```
 
-Failure to query MongoDB, spawn Colibri, parse output, or finish before the
-timeout is reported as an error. A timed-out request must not kill unrelated
+Failure to reach the RAG service, spawn Colibri, parse output, or finish before
+the timeout is reported as an error. A timed-out request must not kill unrelated
 Colibri processes.
+
+Galaxy `GET /api/graph` and `GET /api/node` use the same RAG service
+(`/v1/graph`, `/v1/document`) and the same fail-closed rule.
 
 ### Privileged command
 
@@ -299,9 +318,14 @@ Data never becomes executable merely because it came from a model or database.
   commands, resources, or time windows.
 - Ordinary local chat/graph routes are intentionally unauthenticated.
 - Raw PowerShell remains available behind the privileged boundary.
-- The C++ RAG path shells out to `mongosh` instead of using an embedded driver.
-- Golden Record retrieval is lexical MongoDB text search, not vector or semantic
-  search. The active C++/Go/Rust routers are not wired to the service yet.
+- Chat, graph, and node lookup go through the loopback RAG service rather than
+  a native MongoDB driver in C++.
+- Default Golden Record retrieval is lexical MongoDB text search. Hybrid
+  retrieval is opt-in behind a pinned loopback embedding provider.
+- Galaxy graph is a bounded node list from `rag_documents`. It does not yet
+  render provenance or knowledge-graph edges.
+- The experimental Rust router still returns `410` for `/api/graph` and
+  `/api/node`.
 - Structured audit events, approval records, and automated rollback belong to
   the planned Agent Factory control plane.
 
@@ -406,13 +430,11 @@ risk classes, lifecycle, and implementation phases.
 
 ## Architectural decisions still required
 
-1. Connect a selected non-privileged router to the committed Golden Record RAG
-   service or define distinct responsibilities for all router alternatives.
-2. Replace coarse bearer authorization with short-lived capability grants.
-3. Define versioned HTTP, job, result, and evidence JSON Schemas.
-4. Define retention and supersession policy for immutable MongoDB source and
+1. Replace coarse bearer authorization with short-lived capability grants.
+2. Define versioned HTTP, job, result, and evidence JSON Schemas.
+3. Define retention and supersession policy for immutable MongoDB source and
    Golden Record collections.
-5. Replace `mongosh` subprocess queries with a native client if the C++ Kernel
-   becomes the long-term production router.
-6. Add structured audit storage and recovery semantics before enabling autonomous
+4. Decide whether Galaxy should render provenance or knowledge-graph edges from
+   `rag_provenance` in addition to the current node list.
+5. Add structured audit storage and recovery semantics before enabling autonomous
    privileged execution.

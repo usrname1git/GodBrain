@@ -297,10 +297,42 @@ int main() {
 
     svr.Get("/api/graph", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        res.status = 410;
-        res.set_content(
-            "{\"error\":\"Legacy graph enumeration is disabled; canonical RAG supports bounded lexical search only.\"}",
-            "application/json");
+        int limit = godbrain_rag::kDefaultGraphLimit;
+        if (req.has_param("limit")) {
+            try {
+                limit = std::stoi(req.get_param_value("limit"));
+            } catch (...) {
+                res.status = 400;
+                res.set_content(
+                    json({{"error", godbrain_rag::kErrGraphLimit}}).dump(),
+                    "application/json");
+                return;
+            }
+        }
+        json rag_graph;
+        std::string rag_error;
+        if (!rag_client.graph(limit, rag_graph, rag_error)) {
+            res.status = rag_error == godbrain_rag::kErrGraphLimit ? 400 : 503;
+            res.set_content(json({{"error", rag_error}}).dump(), "application/json");
+            return;
+        }
+        res.set_content(godbrain_rag::galaxy_graph(rag_graph).dump(), "application/json");
+    });
+
+    svr.Get("/api/node", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        const std::string id = req.has_param("id") ? req.get_param_value("id") : "";
+        json document;
+        std::string rag_error;
+        if (!rag_client.document(id, document, rag_error)) {
+            int status = 503;
+            if (rag_error == godbrain_rag::kErrDocumentNotFound) status = 404;
+            else if (rag_error == godbrain_rag::kErrDocumentIDRequired) status = 400;
+            res.status = status;
+            res.set_content(json({{"error", rag_error}}).dump(), "application/json");
+            return;
+        }
+        res.set_content(godbrain_rag::galaxy_node(document).dump(), "application/json");
     });
 
     svr.Post("/api/chat", [&](const httplib::Request& req, httplib::Response& res) {

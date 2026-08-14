@@ -50,8 +50,9 @@ Rust routers retrieve prompt context only through
 `hybrid-v1` contract, preserve bounded citations and trust labels, and wrap
 retrieved text as explicitly untrusted reference data. If the service is
 unavailable, unready, malformed, oversized, or returns no usable context, chat
-fails closed before a model is started. Legacy graph enumeration and direct node
-lookup are disabled rather than falling back to the old `nodes` collection.
+fails closed before a model is started. Galaxy graph and node lookup use the
+same service (`/v1/graph`, `/v1/document`) and the active `rag_documents`
+generation. They do not fall back to the old `nodes` collection.
 
 Lexical/metadata retrieval remains the zero-configuration canonical fallback.
 An optional exact-loopback OpenAI-compatible embedding provider enables
