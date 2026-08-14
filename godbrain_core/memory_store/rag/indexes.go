@@ -10,7 +10,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
+func EnsureIndexes(ctx context.Context, db *mongo.Database, runtimes ...EmbeddingRuntime) error {
+	if len(runtimes) > 1 {
+		return ErrEmbeddingConfiguration
+	}
 	if _, err := db.Collection("ingestion_runs").Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{
 			{Key: "status", Value: 1},
@@ -125,19 +128,59 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
+	embeddings := db.Collection(EmbeddingsCollection)
+	if _, err := embeddings.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "generation", Value: 1},
+				{Key: "node_id", Value: 1},
+				{Key: "provider_kind", Value: 1},
+				{Key: "model_identifier", Value: 1},
+				{Key: "model_revision", Value: 1},
+				{Key: "model_hash", Value: 1},
+				{Key: "embedding_schema", Value: 1},
+				{Key: "indexer_version", Value: 1},
+			},
+			Options: options.Index().SetName("rag_embedding_identity").SetUnique(true),
+		},
+		{
+			Keys: bson.D{
+				{Key: "generation", Value: 1},
+				{Key: "provider_kind", Value: 1},
+				{Key: "model_identifier", Value: 1},
+				{Key: "model_revision", Value: 1},
+				{Key: "model_hash", Value: 1},
+				{Key: "dimension", Value: 1},
+				{Key: "stable_id", Value: 1},
+				{Key: "node_version", Value: 1},
+			},
+			Options: options.Index().SetName("rag_embedding_generation_scan"),
+		},
+	}); err != nil {
+		return err
+	}
+
 	now := time.Now().UTC()
 	initialGeneration := "live-" + uuid.NewString()
+	initialMetadata := bson.M{
+		"active_generation":  initialGeneration,
+		"projection_version": ProjectionVersion,
+		"projection_schema":  ProjectionSchema,
+		"indexer_version":    IndexerVersion,
+		"active_since":       now,
+		"updated_at":         now,
+	}
+	if len(runtimes) == 1 && runtimes[0].Provider != nil {
+		identity := runtimes[0].Provider.Identity()
+		if err := identity.Validate(); err != nil {
+			return err
+		}
+		initialMetadata["embedding"] = identity
+	}
 	_, err := db.Collection(MetadataCollection).UpdateOne(
 		ctx,
 		bson.M{"_id": metadataID},
-		bson.M{"$setOnInsert": bson.M{
-			"active_generation":  initialGeneration,
-			"projection_version": ProjectionVersion,
-			"projection_schema":  ProjectionSchema,
-			"indexer_version":    IndexerVersion,
-			"active_since":       now,
-			"updated_at":         now,
-		}},
+		bson.M{"$setOnInsert": initialMetadata},
 		options.Update().SetUpsert(true),
 	)
 	return err

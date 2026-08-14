@@ -23,7 +23,8 @@ var (
 )
 
 type Projector struct {
-	db *mongo.Database
+	db      *mongo.Database
+	runtime EmbeddingRuntime
 }
 
 type linkedNode struct {
@@ -31,8 +32,17 @@ type linkedNode struct {
 	Node memorystore.KnowledgeNode `bson:"node"`
 }
 
-func NewProjector(db *mongo.Database) *Projector {
-	return &Projector{db: db}
+type projectionTarget struct {
+	Generation string
+	Embedding  *EmbeddingIdentity
+}
+
+func NewProjector(db *mongo.Database, runtimes ...EmbeddingRuntime) *Projector {
+	projector := &Projector{db: db}
+	if len(runtimes) == 1 {
+		projector.runtime = runtimes[0]
+	}
+	return projector
 }
 
 func (p *Projector) Metadata(ctx context.Context) (Metadata, error) {
@@ -53,11 +63,11 @@ func (p *Projector) ProjectCommittedRun(ctx context.Context, runID string) error
 	if err != nil {
 		return err
 	}
-	generations := uniqueSortedStrings(metadata.ActiveGeneration, metadata.BuildingGeneration)
-	if len(generations) == 0 {
+	targets := projectionTargets(metadata)
+	if len(targets) == 0 {
 		return ErrProjectionMetadataMissing
 	}
-	return p.projectRun(ctx, run, nodes, generations)
+	return p.projectRun(ctx, run, nodes, targets)
 }
 
 func (p *Projector) loadCommittedRun(ctx context.Context, runID string) (memorystore.IngestionRun, []linkedNode, error) {
@@ -120,9 +130,10 @@ func (p *Projector) loadCommittedRun(ctx context.Context, runID string) (memorys
 	return run, nodes, nil
 }
 
-func (p *Projector) projectRun(ctx context.Context, run memorystore.IngestionRun, nodes []linkedNode, generations []string) error {
+func (p *Projector) projectRun(ctx context.Context, run memorystore.IngestionRun, nodes []linkedNode, targets []projectionTarget) error {
 	now := time.Now().UTC()
-	for _, generation := range generations {
+	for _, target := range targets {
+		generation := target.Generation
 		nodeIDs := make([]primitive.ObjectID, 0, len(nodes))
 		for _, linked := range nodes {
 			nodeIDs = append(nodeIDs, linked.Node.ID)
@@ -167,12 +178,128 @@ func (p *Projector) projectRun(ctx context.Context, run memorystore.IngestionRun
 			if err := p.upsertProvenance(ctx, provenance); err != nil {
 				return fmt.Errorf("project provenance for node %s into generation %s: %w", linked.Node.ID.Hex(), generation, err)
 			}
+			if target.Embedding != nil {
+				if err := p.projectEmbedding(ctx, generation, linked.Node, *target.Embedding, now); err != nil {
+					return fmt.Errorf("project embedding for node %s into generation %s: %w", linked.Node.ID.Hex(), generation, err)
+				}
+			}
 		}
-		if err := p.verifyRunProjection(ctx, generation, run.RunID, nodeIDs); err != nil {
+		if err := p.verifyRunProjection(ctx, generation, run.RunID, nodeIDs, target.Embedding); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func projectionTargets(metadata Metadata) []projectionTarget {
+	targets := make([]projectionTarget, 0, 2)
+	if metadata.ActiveGeneration != "" {
+		targets = append(targets, projectionTarget{
+			Generation: metadata.ActiveGeneration,
+			Embedding:  metadata.Embedding,
+		})
+	}
+	if metadata.BuildingGeneration != "" && metadata.BuildingGeneration != metadata.ActiveGeneration {
+		targets = append(targets, projectionTarget{
+			Generation: metadata.BuildingGeneration,
+			Embedding:  metadata.BuildingEmbedding,
+		})
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].Generation < targets[j].Generation
+	})
+	return targets
+}
+
+func (p *Projector) projectEmbedding(
+	ctx context.Context,
+	generation string,
+	node memorystore.KnowledgeNode,
+	expected EmbeddingIdentity,
+	projectedAt time.Time,
+) error {
+	if err := expected.Validate(); err != nil {
+		return err
+	}
+	if p.runtime.Provider == nil || !p.runtime.Provider.Identity().Equal(expected) {
+		return ErrEmbeddingUnavailable
+	}
+	normalized, inputHash := normalizeEmbeddingInput(node.Content)
+	filter := embeddingIdentityFilter(generation, node.ID, expected)
+	var existing EmbeddingRecord
+	err := p.db.Collection(EmbeddingsCollection).FindOne(
+		ctx,
+		bson.M{
+			"generation":       generation,
+			"node_id":          node.ID,
+			"provider_kind":    expected.ProviderKind,
+			"model_identifier": expected.ModelIdentifier,
+			"model_revision":   expected.ModelRevision,
+			"model_hash":       expected.ModelHash,
+			"embedding_schema": expected.SchemaVersion,
+			"indexer_version":  expected.IndexerVersion,
+			"input_hash":       inputHash,
+			"dimension":        expected.Dimension,
+		},
+		options.FindOne().SetProjection(bson.M{"vector": 1}),
+	).Decode(&existing)
+	if err == nil && validEmbeddingVector(existing.Vector, expected.Dimension) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+		return err
+	}
+	vector, err := p.runtime.Provider.Embed(ctx, normalized)
+	if err != nil {
+		return err
+	}
+	if !validEmbeddingVector(vector, expected.Dimension) {
+		return ErrEmbeddingResponse
+	}
+	record := bson.M{
+		"generation":       generation,
+		"node_id":          node.ID,
+		"stable_id":        node.StableID,
+		"node_version":     node.Version,
+		"provider_kind":    expected.ProviderKind,
+		"model_identifier": expected.ModelIdentifier,
+		"model_revision":   expected.ModelRevision,
+		"model_hash":       expected.ModelHash,
+		"dimension":        expected.Dimension,
+		"input_hash":       inputHash,
+		"embedding_schema": expected.SchemaVersion,
+		"indexer_version":  expected.IndexerVersion,
+		"vector_backend":   expected.VectorBackend,
+		"vector":           vector,
+		"projected_at":     projectedAt,
+	}
+	_, err = p.db.Collection(EmbeddingsCollection).UpdateOne(
+		ctx,
+		filter,
+		bson.M{"$set": record},
+		options.Update().SetUpsert(true),
+	)
+	if mongo.IsDuplicateKeyError(err) {
+		_, err = p.db.Collection(EmbeddingsCollection).UpdateOne(ctx, filter, bson.M{"$set": record})
+	}
+	return err
+}
+
+func embeddingIdentityFilter(
+	generation string,
+	nodeID primitive.ObjectID,
+	identity EmbeddingIdentity,
+) bson.M {
+	return bson.M{
+		"generation":       generation,
+		"node_id":          nodeID,
+		"provider_kind":    identity.ProviderKind,
+		"model_identifier": identity.ModelIdentifier,
+		"model_revision":   identity.ModelRevision,
+		"model_hash":       identity.ModelHash,
+		"embedding_schema": identity.SchemaVersion,
+		"indexer_version":  identity.IndexerVersion,
+	}
 }
 
 func (p *Projector) upsertDocument(ctx context.Context, document Document) error {
@@ -231,7 +358,12 @@ func (p *Projector) upsertProvenance(ctx context.Context, provenance Provenance)
 	return err
 }
 
-func (p *Projector) verifyRunProjection(ctx context.Context, generation, runID string, nodeIDs []primitive.ObjectID) error {
+func (p *Projector) verifyRunProjection(
+	ctx context.Context,
+	generation, runID string,
+	nodeIDs []primitive.ObjectID,
+	embedding *EmbeddingIdentity,
+) error {
 	if len(nodeIDs) == 0 {
 		return nil
 	}
@@ -244,7 +376,7 @@ func (p *Projector) verifyRunProjection(ctx context.Context, generation, runID s
 		ids = append(ids, nodeID)
 	}
 	const batchSize = 500
-	var documentCount, provenanceCount int64
+	var documentCount, provenanceCount, embeddingCount int64
 	for start := 0; start < len(ids); start += batchSize {
 		end := start + batchSize
 		if end > len(ids) {
@@ -268,27 +400,30 @@ func (p *Projector) verifyRunProjection(ctx context.Context, generation, runID s
 			return err
 		}
 		provenanceCount += count
+		if embedding != nil {
+			embeddingFilter := bson.M{
+				"generation":       generation,
+				"node_id":          bson.M{"$in": batch},
+				"provider_kind":    embedding.ProviderKind,
+				"model_identifier": embedding.ModelIdentifier,
+				"model_revision":   embedding.ModelRevision,
+				"model_hash":       embedding.ModelHash,
+				"dimension":        embedding.Dimension,
+				"embedding_schema": embedding.SchemaVersion,
+				"indexer_version":  embedding.IndexerVersion,
+				"vector_backend":   embedding.VectorBackend,
+			}
+			count, err = p.db.Collection(EmbeddingsCollection).CountDocuments(ctx, embeddingFilter)
+			if err != nil {
+				return err
+			}
+			embeddingCount += count
+		}
 	}
 	expected := int64(len(ids))
-	if documentCount != expected || provenanceCount != expected {
-		return fmt.Errorf("%w: generation %s run %s expected %d nodes, found %d documents and %d provenance links", ErrProjectionIncomplete, generation, runID, expected, documentCount, provenanceCount)
+	if documentCount != expected || provenanceCount != expected ||
+		(embedding != nil && embeddingCount != expected) {
+		return fmt.Errorf("%w: generation %s run %s expected %d nodes, found %d documents, %d provenance links, and %d embeddings", ErrProjectionIncomplete, generation, runID, expected, documentCount, provenanceCount, embeddingCount)
 	}
 	return nil
-}
-
-func uniqueSortedStrings(values ...string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
 }

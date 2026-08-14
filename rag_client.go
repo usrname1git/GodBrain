@@ -17,7 +17,8 @@ import (
 
 const (
 	ragEndpoint              = "http://127.0.0.1:8084/v1/search"
-	ragProjectionVersion     = "lexical-v1"
+	ragProjectionVersion     = "hybrid-v1"
+	ragRetrievalMode         = "auto"
 	ragTopK                  = 3
 	ragContextBytes          = 4096
 	maxRAGResponseBytes      = 128 * 1024
@@ -39,9 +40,10 @@ type ragClient struct {
 }
 
 type ragSearchRequest struct {
-	Query        string `json:"query"`
-	TopK         int    `json:"top_k"`
-	ContextBytes int    `json:"context_bytes"`
+	Query         string `json:"query"`
+	TopK          int    `json:"top_k"`
+	ContextBytes  int    `json:"context_bytes"`
+	RetrievalMode string `json:"retrieval_mode"`
 }
 
 type ragSearchResponse struct {
@@ -49,9 +51,57 @@ type ragSearchResponse struct {
 	NormalizedQuery     string            `json:"normalized_query"`
 	Generation          string            `json:"generation"`
 	ProjectionVersion   string            `json:"projection_version"`
+	RetrievalMode       string            `json:"retrieval_mode"`
+	RequestedMode       string            `json:"requested_mode"`
 	Results             []ragSearchResult `json:"results"`
 	ContextBytesUsed    *int              `json:"context_bytes_used"`
 	UntrustedDataNotice string            `json:"untrusted_data_notice"`
+	DegradationReason   *string           `json:"degradation_reason,omitempty"`
+	Embedding           *ragEmbedding     `json:"embedding,omitempty"`
+	degradationPresent  bool              `json:"-"`
+	embeddingPresent    bool              `json:"-"`
+}
+
+type ragEmbedding struct {
+	ProviderKind    string `json:"provider_kind"`
+	ModelIdentifier string `json:"model_identifier"`
+	ModelRevision   string `json:"model_revision"`
+	ModelHash       string `json:"model_hash"`
+	Dimension       *int   `json:"dimension"`
+	EmbeddingSchema string `json:"embedding_schema"`
+	IndexerVersion  string `json:"indexer_version"`
+	VectorBackend   string `json:"vector_backend"`
+}
+
+func (response *ragSearchResponse) UnmarshalJSON(data []byte) error {
+	type responseAlias ragSearchResponse
+	var decoded responseAlias
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("canonical RAG response must contain exactly one JSON object")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if raw, ok := fields["degradation_reason"]; ok {
+		decoded.degradationPresent = true
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return errors.New("canonical RAG degradation reason must not be null")
+		}
+	}
+	if raw, ok := fields["embedding"]; ok {
+		decoded.embeddingPresent = true
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return errors.New("canonical RAG embedding must not be null")
+		}
+	}
+	*response = ragSearchResponse(decoded)
+	return nil
 }
 
 type ragSearchResult struct {
@@ -71,13 +121,17 @@ type ragSearchResult struct {
 }
 
 type ragScoreComponents struct {
-	Lexical       *float64 `json:"lexical"`
-	Trust         *float64 `json:"trust"`
-	Confidence    *float64 `json:"confidence"`
-	CurrentSchema *float64 `json:"current_schema"`
-	Freshness     *float64 `json:"freshness"`
-	Diversity     *float64 `json:"diversity"`
-	Total         *float64 `json:"total"`
+	Lexical          *float64 `json:"lexical"`
+	VectorSimilarity *float64 `json:"vector_similarity"`
+	LexicalRRF       *float64 `json:"lexical_rrf"`
+	SemanticRRF      *float64 `json:"semantic_rrf"`
+	FusionRRF        *float64 `json:"fusion_rrf"`
+	Trust            *float64 `json:"trust"`
+	Confidence       *float64 `json:"confidence"`
+	CurrentSchema    *float64 `json:"current_schema"`
+	Freshness        *float64 `json:"freshness"`
+	Diversity        *float64 `json:"diversity"`
+	Total            *float64 `json:"total"`
 }
 
 type ragCitation struct {
@@ -131,7 +185,9 @@ func (client *ragClient) search(ctx context.Context, query string) (ragSearchRes
 	if query == "" || len(query) > 1024 {
 		return ragSearchResponse{}, errors.New("RAG query is empty or oversized")
 	}
-	body, err := json.Marshal(ragSearchRequest{Query: query, TopK: ragTopK, ContextBytes: ragContextBytes})
+	body, err := json.Marshal(ragSearchRequest{
+		Query: query, TopK: ragTopK, ContextBytes: ragContextBytes, RetrievalMode: ragRetrievalMode,
+	})
 	if err != nil {
 		return ragSearchResponse{}, fmt.Errorf("encode canonical RAG request: %w", err)
 	}
@@ -182,8 +238,14 @@ func validateRAGResponse(response ragSearchResponse, query string) error {
 	}
 	if !validRAGToken(response.Generation, 128) ||
 		response.ProjectionVersion != ragProjectionVersion ||
+		!oneOf(response.RetrievalMode, "lexical", "hybrid") ||
+		!oneOf(response.RequestedMode, "auto", "lexical", "hybrid") ||
+		response.RequestedMode != ragRetrievalMode ||
 		response.UntrustedDataNotice != ragCanonicalDataNotice {
 		return errors.New("canonical RAG generation metadata is invalid")
+	}
+	if err := validateRAGRetrievalMetadata(response); err != nil {
+		return err
 	}
 	if len(response.Results) == 0 {
 		return errNoRAGContext
@@ -199,6 +261,42 @@ func validateRAGResponse(response ragSearchResponse, query string) error {
 		}
 	}
 	return nil
+}
+
+func validateRAGRetrievalMetadata(response ragSearchResponse) error {
+	embeddingPresent := response.embeddingPresent || response.Embedding != nil
+	degradationPresent := response.degradationPresent || response.DegradationReason != nil
+	switch response.RetrievalMode {
+	case "hybrid":
+		if !embeddingPresent || response.Embedding == nil ||
+			degradationPresent ||
+			!validRAGEmbedding(*response.Embedding) {
+			return errors.New("canonical RAG hybrid retrieval metadata is invalid")
+		}
+	case "lexical":
+		if embeddingPresent ||
+			(response.RequestedMode == "auto" &&
+				(!degradationPresent || response.DegradationReason == nil ||
+					!validRAGString(*response.DegradationReason, 512, true))) ||
+			(degradationPresent && response.DegradationReason != nil &&
+				!validRAGString(*response.DegradationReason, 512, true)) {
+			return errors.New("canonical RAG lexical retrieval metadata is invalid")
+		}
+	default:
+		return errors.New("canonical RAG retrieval mode is invalid")
+	}
+	return nil
+}
+
+func validRAGEmbedding(embedding ragEmbedding) bool {
+	return embedding.ProviderKind == "openai-compatible-local" &&
+		validRAGString(embedding.ModelIdentifier, 256, true) &&
+		validRAGString(embedding.ModelRevision, 128, true) &&
+		validLowerHex(embedding.ModelHash, 64) &&
+		embedding.Dimension != nil && *embedding.Dimension >= 1 && *embedding.Dimension <= 4096 &&
+		embedding.EmbeddingSchema == "golden-record-embedding-v1" &&
+		embedding.IndexerVersion == "normalized-input-v1" &&
+		embedding.VectorBackend == "mongodb-bounded-exact-cosine-v1"
 }
 
 func validateRAGResult(result ragSearchResult) error {
@@ -252,9 +350,30 @@ func validateRAGCitation(citation ragCitation) error {
 }
 
 func validRAGScores(scores ragScoreComponents) bool {
-	values := []*float64{scores.Lexical, scores.Trust, scores.Confidence, scores.CurrentSchema, scores.Freshness, scores.Diversity, scores.Total}
-	for _, value := range values {
-		if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) || *value < -1e9 || *value > 1e9 {
+	return validRAGNumber(scores.Lexical, -1e9, 1e9) &&
+		validRAGNumber(scores.VectorSimilarity, -1, 1) &&
+		validRAGNumber(scores.LexicalRRF, 0, 1) &&
+		validRAGNumber(scores.SemanticRRF, 0, 1) &&
+		validRAGNumber(scores.FusionRRF, 0, 1) &&
+		validRAGNumber(scores.Trust, -1, 1.5) &&
+		validRAGNumber(scores.Confidence, 0, 1) &&
+		validRAGNumber(scores.CurrentSchema, 0, 0.5) &&
+		validRAGNumber(scores.Freshness, 0, 1) &&
+		validRAGNumber(scores.Diversity, -1e3, 0) &&
+		validRAGNumber(scores.Total, -1e9, 1e9)
+}
+
+func validRAGNumber(value *float64, minimum, maximum float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) &&
+		*value >= minimum && *value <= maximum
+}
+
+func validLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
 			return false
 		}
 	}
@@ -302,6 +421,21 @@ func renderRAGContext(response ragSearchResponse) (string, error) {
 	appendLine("service_notice", response.UntrustedDataNotice)
 	appendLine("generation", response.Generation)
 	appendLine("projection_version", response.ProjectionVersion)
+	appendLine("retrieval_mode", response.RetrievalMode)
+	appendLine("requested_mode", response.RequestedMode)
+	if response.DegradationReason != nil {
+		appendLine("degradation_reason", *response.DegradationReason)
+	}
+	if response.Embedding != nil {
+		appendLine("embedding.provider_kind", response.Embedding.ProviderKind)
+		appendLine("embedding.model_identifier", response.Embedding.ModelIdentifier)
+		appendLine("embedding.model_revision", response.Embedding.ModelRevision)
+		appendLine("embedding.model_hash", response.Embedding.ModelHash)
+		appendLine("embedding.dimension", fmt.Sprintf("%d", *response.Embedding.Dimension))
+		appendLine("embedding.embedding_schema", response.Embedding.EmbeddingSchema)
+		appendLine("embedding.indexer_version", response.Embedding.IndexerVersion)
+		appendLine("embedding.vector_backend", response.Embedding.VectorBackend)
+	}
 	for resultIndex, result := range response.Results {
 		prefix := fmt.Sprintf("result[%d].", resultIndex+1)
 		appendLine(prefix+"node_id", result.NodeID)

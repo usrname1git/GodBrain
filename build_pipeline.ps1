@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Building Alexandria Pipeline..."
 
-# 1. Build Memory Store and canonical lexical retrieval tools
+# 1. Build Memory Store and canonical retrieval tools
 Write-Host "Building Memory Store and RAG tools (Go)..."
 Push-Location "$PSScriptRoot\godbrain_core\memory_store"
 try {
@@ -15,6 +15,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "RAG service build failed" }
     go build -o rag-rebuild.exe ./cmd/rag-rebuild
     if ($LASTEXITCODE -ne 0) { throw "RAG rebuild build failed" }
+    go build -o rag-eval.exe ./cmd/rag-eval
+    if ($LASTEXITCODE -ne 0) { throw "RAG evaluation build failed" }
     Write-Host "Memory Store and RAG tools built successfully."
 } finally {
     Pop-Location

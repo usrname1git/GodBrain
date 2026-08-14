@@ -39,9 +39,10 @@
   knowledge nodes plus append-only run-to-node links in MongoDB.
 - `godbrain_core/memory_store/cmd/rag-service/` is the canonical committed
   Golden Record retrieval boundary on `127.0.0.1:8084`. It searches the
-  generation-addressed `rag_documents` projection and resolves citations through
+  generation-addressed `rag_documents` projection, optionally fuses bounded
+  generation-addressed local embeddings, and resolves citations through
   append-only `rag_provenance`. The C++, Go, and Rust routers fail closed when
-  this lexical/metadata service is unavailable, unready, or invalid.
+  this service is unavailable, unready, or invalid.
 - `LLM/colibri_LLM/` is a substantial nested Colibri engine project. Treat it as
   an interchangeable inference implementation, not as a protocol authority for
   the kernel or Memory Store.
@@ -92,7 +93,7 @@ Pop-Location
 ```
 
 `build_pipeline.ps1` builds `memory-store.exe`, `rag-service.exe`,
-`rag-rebuild.exe`, and `librarian.exe`. The Librarian self-test is offline and
+`rag-rebuild.exe`, `rag-eval.exe`, and `librarian.exe`. The Librarian self-test is offline and
 uses its in-memory store. To exercise MongoDB integration tests, set
 `MONGODB_TEST_URI` to a disposable instance; tests use isolated temporary
 databases for RAG coverage, while the existing Memory Store suite uses and
@@ -245,7 +246,10 @@ not be treated as baseline validation.
   `GODBRAIN_COLIBRI_PATH`, `GODBRAIN_SNAPSHOT_PATH`,
   `GODBRAIN_FRONTEND_DIR`, `GODBRAIN_LIBRARIAN_PATH`, `LLM_RUNNER_PATH`,
   `PROMPT_TEMPLATE_PATH`, `MONGO_STORE_PATH`, `GODBRAIN_RAG_PORT`, and
-  `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION`.
+  `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION`. Optional local semantic retrieval uses
+  `GODBRAIN_EMBEDDING_ENDPOINT`, `GODBRAIN_EMBEDDING_MODEL`,
+  `GODBRAIN_EMBEDDING_MODEL_REVISION`, `GODBRAIN_EMBEDDING_MODEL_SHA256`,
+  `GODBRAIN_EMBEDDING_DIMENSION`, and `GODBRAIN_RAG_EMBEDDING_REQUIRED`.
 - Do not print complete environments, secrets, private prompt/transcript
   contents, or credential-bearing URIs. Use synthetic fixtures and reserved
   addresses in tests.

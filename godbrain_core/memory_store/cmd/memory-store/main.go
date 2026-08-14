@@ -104,12 +104,16 @@ func run() error {
 		dbName = "godbrain"
 	}
 	db := client.Database(dbName)
+	embeddingRuntime, err := rag.EmbeddingRuntimeFromEnvironment()
+	if err != nil {
+		return failWithEnvelope("Invalid embedding configuration", err)
+	}
 
 	// 4. Schema/Index-init (Idempotent)
 	if err := memorystore.EnsureIndexes(ctx, db); err != nil {
 		return failWithEnvelope("Failed to ensure indexes", err)
 	}
-	if err := rag.EnsureIndexes(ctx, db); err != nil {
+	if err := rag.EnsureIndexes(ctx, db, embeddingRuntime); err != nil {
 		return failWithEnvelope("Failed to ensure RAG projection indexes", err)
 	}
 
@@ -196,7 +200,7 @@ func run() error {
 
 	// A committed run is not acknowledged until its derivative retrieval projection
 	// is confirmed. Retrying an already committed ingestion repairs this projection.
-	if err = rag.NewProjector(db).ProjectCommittedRun(ctx, irun.RunID); err != nil {
+	if err = rag.NewProjector(db, embeddingRuntime).ProjectCommittedRun(ctx, irun.RunID); err != nil {
 		return failWithEnvelope("Committed ingestion RAG projection failed", err)
 	}
 

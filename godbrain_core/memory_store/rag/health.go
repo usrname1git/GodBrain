@@ -15,25 +15,42 @@ import (
 )
 
 type HealthResponse struct {
-	Ready              bool         `json:"ready"`
-	Mongo              string       `json:"mongo"`
-	ActiveGeneration   string       `json:"active_generation,omitempty"`
-	BuildingGeneration string       `json:"building_generation,omitempty"`
-	ProjectionVersion  string       `json:"projection_version,omitempty"`
-	ProjectionSchema   string       `json:"projection_schema,omitempty"`
-	IndexerVersion     string       `json:"indexer_version,omitempty"`
-	Counts             CorpusCounts `json:"counts"`
-	LegacyNodes        int64        `json:"legacy_nodes"`
-	LatestCommittedAt  *time.Time   `json:"latest_committed_at,omitempty"`
-	LatestProjectedAt  *time.Time   `json:"latest_projected_at,omitempty"`
-	LagSeconds         float64      `json:"lag_seconds"`
-	ReadinessReasons   []string     `json:"readiness_reasons"`
-	CheckedAt          time.Time    `json:"checked_at"`
+	Ready              bool               `json:"ready"`
+	Mongo              string             `json:"mongo"`
+	ActiveGeneration   string             `json:"active_generation,omitempty"`
+	BuildingGeneration string             `json:"building_generation,omitempty"`
+	ProjectionVersion  string             `json:"projection_version,omitempty"`
+	ProjectionSchema   string             `json:"projection_schema,omitempty"`
+	IndexerVersion     string             `json:"indexer_version,omitempty"`
+	RetrievalMode      string             `json:"retrieval_mode"`
+	Semantic           SemanticCapability `json:"semantic"`
+	Counts             CorpusCounts       `json:"counts"`
+	LegacyNodes        int64              `json:"legacy_nodes"`
+	LatestCommittedAt  *time.Time         `json:"latest_committed_at,omitempty"`
+	LatestProjectedAt  *time.Time         `json:"latest_projected_at,omitempty"`
+	LatestEmbeddedAt   *time.Time         `json:"latest_embedded_at,omitempty"`
+	LagSeconds         float64            `json:"lag_seconds"`
+	ReadinessReasons   []string           `json:"readiness_reasons"`
+	CheckedAt          time.Time          `json:"checked_at"`
+}
+
+type SemanticCapability struct {
+	Configured        bool               `json:"configured"`
+	Available         bool               `json:"available"`
+	Required          bool               `json:"required"`
+	Identity          *EmbeddingIdentity `json:"identity,omitempty"`
+	CorpusLimit       int                `json:"corpus_limit"`
+	DegradationReason string             `json:"degradation_reason,omitempty"`
 }
 
 func (e *Engine) Health(ctx context.Context) (HealthResponse, error) {
 	response := HealthResponse{
-		Mongo:            "unavailable",
+		Mongo:         "unavailable",
+		RetrievalMode: "lexical",
+		Semantic: SemanticCapability{
+			Required:    e.runtime.Required,
+			CorpusLimit: MaxVectorCorpusDocuments,
+		},
 		ReadinessReasons: []string{},
 		CheckedAt:        time.Now().UTC(),
 	}
@@ -57,16 +74,39 @@ func (e *Engine) Health(ctx context.Context) (HealthResponse, error) {
 	response.ProjectionSchema = metadata.ProjectionSchema
 	response.IndexerVersion = metadata.IndexerVersion
 
-	response.Counts, err = e.projector.CorpusCounts(ctx, metadata.ActiveGeneration)
+	response.Counts, err = e.projector.CorpusCounts(ctx, metadata.ActiveGeneration, metadata.Embedding)
 	if err != nil {
 		return response, err
 	}
 	if response.Counts.CommittedNodes != response.Counts.ProjectedNodes ||
 		response.Counts.CommittedLinks != response.Counts.ProjectedLinks {
-		response.Counts, err = e.projector.CorpusCounts(ctx, metadata.ActiveGeneration)
+		response.Counts, err = e.projector.CorpusCounts(ctx, metadata.ActiveGeneration, metadata.Embedding)
 		if err != nil {
 			return response, err
 		}
+	}
+	embeddingTimeFilter := bson.M{"generation": metadata.ActiveGeneration}
+	if metadata.Embedding != nil {
+		embeddingTimeFilter = bson.M{
+			"generation":       metadata.ActiveGeneration,
+			"provider_kind":    metadata.Embedding.ProviderKind,
+			"model_identifier": metadata.Embedding.ModelIdentifier,
+			"model_revision":   metadata.Embedding.ModelRevision,
+			"model_hash":       metadata.Embedding.ModelHash,
+			"dimension":        metadata.Embedding.Dimension,
+			"embedding_schema": metadata.Embedding.SchemaVersion,
+			"indexer_version":  metadata.Embedding.IndexerVersion,
+			"vector_backend":   metadata.Embedding.VectorBackend,
+		}
+	}
+	response.LatestEmbeddedAt, err = latestTime(
+		ctx,
+		e.db.Collection(EmbeddingsCollection),
+		embeddingTimeFilter,
+		"projected_at",
+	)
+	if err != nil {
+		return response, err
 	}
 	response.LegacyNodes, err = e.db.Collection("nodes").CountDocuments(ctx, bson.M{})
 	if err != nil {
@@ -113,8 +153,57 @@ func (e *Engine) Health(ctx context.Context) (HealthResponse, error) {
 	if response.Counts.CommittedLinks != response.Counts.ProjectedLinks {
 		response.ReadinessReasons = append(response.ReadinessReasons, "projected_provenance_count_mismatch")
 	}
+	response.Semantic = e.semanticCapability(ctx, metadata, response.Counts)
+	if response.Semantic.Available {
+		response.RetrievalMode = "hybrid"
+	}
+	if response.Semantic.Required && !response.Semantic.Available {
+		response.ReadinessReasons = append(response.ReadinessReasons, "required_semantic_projection_unavailable")
+	}
 	response.Ready = len(response.ReadinessReasons) == 0
 	return response, nil
+}
+
+func (e *Engine) semanticCapability(
+	ctx context.Context,
+	metadata Metadata,
+	counts CorpusCounts,
+) SemanticCapability {
+	capability := SemanticCapability{
+		Required:    e.runtime.Required,
+		CorpusLimit: MaxVectorCorpusDocuments,
+	}
+	if e.runtime.Provider == nil {
+		capability.DegradationReason = "embedding_provider_disabled"
+		return capability
+	}
+	capability.Configured = true
+	identity := e.runtime.Provider.Identity()
+	capability.Identity = &identity
+	if metadata.Embedding == nil {
+		capability.DegradationReason = "generation_embedding_identity_missing"
+		return capability
+	}
+	if !identity.Equal(*metadata.Embedding) {
+		capability.DegradationReason = "embedding_identity_mismatch"
+		return capability
+	}
+	if counts.CommittedNodes > MaxVectorCorpusDocuments {
+		capability.DegradationReason = "vector_corpus_limit_exceeded"
+		return capability
+	}
+	if counts.ProjectedEmbeddings != counts.CommittedNodes {
+		capability.DegradationReason = "embedding_count_mismatch"
+		return capability
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, EmbeddingRequestTimeout)
+	defer cancel()
+	if err := e.runtime.Provider.Probe(probeCtx); err != nil {
+		capability.DegradationReason = "embedding_provider_unavailable"
+		return capability
+	}
+	capability.Available = true
+	return capability
 }
 
 func latestTime(
