@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -129,6 +130,9 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database, runtimes ...Embeddin
 	}
 
 	embeddings := db.Collection(EmbeddingsCollection)
+	if err := dropIndexIfExists(ctx, embeddings, "rag_embedding_identity"); err != nil {
+		return err
+	}
 	if _, err := embeddings.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys: bson.D{
@@ -140,6 +144,8 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database, runtimes ...Embeddin
 				{Key: "model_hash", Value: 1},
 				{Key: "embedding_schema", Value: 1},
 				{Key: "indexer_version", Value: 1},
+				{Key: "dimension", Value: 1},
+				{Key: "vector_backend", Value: 1},
 			},
 			Options: options.Index().SetName("rag_embedding_identity").SetUnique(true),
 		},
@@ -183,5 +189,17 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database, runtimes ...Embeddin
 		bson.M{"$setOnInsert": initialMetadata},
 		options.Update().SetUpsert(true),
 	)
+	return err
+}
+
+func dropIndexIfExists(ctx context.Context, collection *mongo.Collection, name string) error {
+	_, err := collection.Indexes().DropOne(ctx, name)
+	if err == nil {
+		return nil
+	}
+	var commandErr mongo.CommandError
+	if errors.As(err, &commandErr) && (commandErr.Code == 26 || commandErr.Code == 27) {
+		return nil
+	}
 	return err
 }

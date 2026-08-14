@@ -3,7 +3,9 @@ package rag
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -45,16 +47,25 @@ func TestDeterministicHybridEvaluationThresholdsAndRepeatability(t *testing.T) {
 }
 
 func TestEvaluationCorpusStrictlyRejectsUnknownFields(t *testing.T) {
-	_, err := DecodeEvalCorpus(bytes.NewBufferString(`{
-		"version":"godbrain-hybrid-eval-v1",
-		"active_generation":"g",
-		"top_k":1,
-		"documents":[],
-		"queries":[],
-		"unexpected":true
-	}`))
+	data, err := os.ReadFile("testdata/hybrid_eval_corpus.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err = json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["unexpected"] = json.RawMessage("true")
+	mutated, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DecodeEvalCorpus(bytes.NewReader(mutated))
 	if err == nil {
 		t.Fatal("unknown corpus field was accepted")
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("want unknown-field error, got %v", err)
 	}
 }
 

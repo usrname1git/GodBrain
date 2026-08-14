@@ -226,21 +226,12 @@ func (p *Projector) projectEmbedding(
 	}
 	normalized, inputHash := normalizeEmbeddingInput(node.Content)
 	filter := embeddingIdentityFilter(generation, node.ID, expected)
+	cacheFilter := embeddingIdentityFilter(generation, node.ID, expected)
+	cacheFilter["input_hash"] = inputHash
 	var existing EmbeddingRecord
 	err := p.db.Collection(EmbeddingsCollection).FindOne(
 		ctx,
-		bson.M{
-			"generation":       generation,
-			"node_id":          node.ID,
-			"provider_kind":    expected.ProviderKind,
-			"model_identifier": expected.ModelIdentifier,
-			"model_revision":   expected.ModelRevision,
-			"model_hash":       expected.ModelHash,
-			"embedding_schema": expected.SchemaVersion,
-			"indexer_version":  expected.IndexerVersion,
-			"input_hash":       inputHash,
-			"dimension":        expected.Dimension,
-		},
+		cacheFilter,
 		options.FindOne().SetProjection(bson.M{"vector": 1}),
 	).Decode(&existing)
 	if err == nil && validEmbeddingVector(existing.Vector, expected.Dimension) {
@@ -299,6 +290,8 @@ func embeddingIdentityFilter(
 		"model_hash":       identity.ModelHash,
 		"embedding_schema": identity.SchemaVersion,
 		"indexer_version":  identity.IndexerVersion,
+		"dimension":        identity.Dimension,
+		"vector_backend":   identity.VectorBackend,
 	}
 }
 
