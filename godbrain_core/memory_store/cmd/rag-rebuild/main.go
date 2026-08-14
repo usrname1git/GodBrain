@@ -48,10 +48,14 @@ func run() error {
 		return errors.New("failed to ping MongoDB")
 	}
 	db := client.Database(dbName)
-	if err = rag.EnsureIndexes(ctx, db); err != nil {
+	embeddingRuntime, err := rag.EmbeddingRuntimeFromEnvironment()
+	if err != nil {
+		return fmt.Errorf("invalid embedding configuration: %w", err)
+	}
+	if err = rag.EnsureIndexes(ctx, db, embeddingRuntime); err != nil {
 		return fmt.Errorf("failed to ensure RAG indexes: %w", err)
 	}
-	report, err := rag.NewProjector(db).Rebuild(ctx)
+	report, err := rag.NewProjector(db, embeddingRuntime).Rebuild(ctx)
 	if err != nil {
 		return err
 	}

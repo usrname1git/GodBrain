@@ -50,8 +50,13 @@ func readyHealth(generation string, counts CorpusCounts) HealthResponse {
 		ProjectionVersion: ProjectionVersion,
 		ProjectionSchema:  ProjectionSchema,
 		IndexerVersion:    IndexerVersion,
-		Counts:            counts,
-		ReadinessReasons:  []string{},
+		RetrievalMode:     "lexical",
+		Semantic: SemanticCapability{
+			CorpusLimit:       MaxVectorCorpusDocuments,
+			DegradationReason: "embedding_provider_disabled",
+		},
+		Counts:           counts,
+		ReadinessReasons: []string{},
 	}
 }
 
@@ -177,6 +182,9 @@ func TestSearchHandlerReturnsOnlyStableSnapshot(t *testing.T) {
 			Query:             "alpha",
 			Generation:        "generation-a",
 			ProjectionVersion: ProjectionVersion,
+			RetrievalMode:     "lexical",
+			RequestedMode:     "auto",
+			DegradationReason: "embedding_provider_disabled",
 			Results:           []SearchResult{},
 		}},
 	}
@@ -205,6 +213,9 @@ func TestSearchHandlerRejectsPartialProjectionInterleaving(t *testing.T) {
 			Query:             "alpha",
 			Generation:        "generation-a",
 			ProjectionVersion: ProjectionVersion,
+			RetrievalMode:     "lexical",
+			RequestedMode:     "auto",
+			DegradationReason: "embedding_provider_disabled",
 			Results: []SearchResult{{
 				StableID:       "partial-node",
 				Snippet:        "partial projection must not escape",
@@ -237,10 +248,12 @@ func TestSearchHandlerRetriesCompletedProjectionWithoutReturningStaleResult(t *t
 		searchResponses: []SearchResponse{
 			{
 				Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion,
+				RetrievalMode: "lexical", RequestedMode: "auto", DegradationReason: "embedding_provider_disabled",
 				Results: []SearchResult{{StableID: "stale-result", Snippet: "discard me"}},
 			},
 			{
 				Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion,
+				RetrievalMode: "lexical", RequestedMode: "auto", DegradationReason: "embedding_provider_disabled",
 				Results: []SearchResult{{StableID: "fresh-result", Snippet: "return me"}},
 			},
 		},
@@ -267,8 +280,8 @@ func TestSearchHandlerRejectsRepeatedRebuildActivation(t *testing.T) {
 			readyHealth("generation-c", counts),
 		},
 		searchResponses: []SearchResponse{
-			{Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion, Results: []SearchResult{}},
-			{Query: "alpha", Generation: "generation-b", ProjectionVersion: ProjectionVersion, Results: []SearchResult{}},
+			{Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion, RetrievalMode: "lexical", RequestedMode: "auto", DegradationReason: "embedding_provider_disabled", Results: []SearchResult{}},
+			{Query: "alpha", Generation: "generation-b", ProjectionVersion: ProjectionVersion, RetrievalMode: "lexical", RequestedMode: "auto", DegradationReason: "embedding_provider_disabled", Results: []SearchResult{}},
 		},
 	}
 	response := searchRecorder(t, api)
@@ -277,5 +290,60 @@ func TestSearchHandlerRejectsRepeatedRebuildActivation(t *testing.T) {
 	}
 	if api.healthCalls != 4 || api.searchCalls != maxSearchAttempts {
 		t.Fatalf("retry bound changed: health=%d search=%d", api.healthCalls, api.searchCalls)
+	}
+}
+
+func TestSameSearchSnapshotRejectsMismatchedHybridIdentity(t *testing.T) {
+	provider, err := NewDeterministicFakeProvider(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := provider.Identity()
+	counts := CorpusCounts{
+		CommittedRuns: 1, CommittedNodes: 1, CommittedLinks: 1,
+		ProjectedNodes: 1, ProjectedLinks: 1, ProjectedEmbeddings: 1,
+	}
+	health := readyHealth("generation-a", counts)
+	health.RetrievalMode = "hybrid"
+	health.Semantic = SemanticCapability{
+		Configured: true, Available: true, Identity: &identity,
+		CorpusLimit: MaxVectorCorpusDocuments,
+	}
+	response := SearchResponse{
+		Query: "alpha", Generation: "generation-a",
+		ProjectionVersion: ProjectionVersion, RetrievalMode: "hybrid",
+		RequestedMode: "auto", Embedding: &identity, Results: []SearchResult{},
+	}
+	if !sameSearchSnapshot(health, health, response) {
+		t.Fatal("matching hybrid snapshot was rejected")
+	}
+	mismatched := identity
+	mismatched.ModelRevision = "other"
+	response.Embedding = &mismatched
+	if sameSearchSnapshot(health, health, response) {
+		t.Fatal("hybrid response with mismatched embedding identity was accepted")
+	}
+}
+
+func TestSearchHandlerReturnsExplicitSemanticUnavailable(t *testing.T) {
+	api := &fakeAPI{
+		searchErr: ErrSemanticModeUnavailable,
+		health: HealthResponse{
+			Ready:            true,
+			Mongo:            "ok",
+			ReadinessReasons: []string{},
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/search",
+		strings.NewReader(`{"query":"alpha","retrieval_mode":"hybrid"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewHandler(api).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(response.Body.String(), "semantic_unavailable") {
+		t.Fatalf("expected explicit semantic unavailable error, got %d body=%s", response.Code, response.Body.String())
 	}
 }

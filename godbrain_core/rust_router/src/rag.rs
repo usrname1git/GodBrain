@@ -8,7 +8,8 @@ use tokio::time::timeout;
 const RAG_ENDPOINT: &str = "http://127.0.0.1:8084/v1/search";
 const RAG_HOST: &str = "127.0.0.1:8084";
 const RAG_PATH: &str = "/v1/search";
-const RAG_PROJECTION_VERSION: &str = "lexical-v1";
+const RAG_PROJECTION_VERSION: &str = "hybrid-v1";
+const RAG_RETRIEVAL_MODE: &str = "auto";
 const RAG_TOP_K: usize = 3;
 const RAG_CONTEXT_BYTES: usize = 4096;
 const MAX_RAG_RESPONSE_BYTES: usize = 128 * 1024;
@@ -30,6 +31,7 @@ struct SearchRequest {
     query: String,
     top_k: usize,
     context_bytes: usize,
+    retrieval_mode: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -39,9 +41,36 @@ pub(crate) struct SearchResponse {
     normalized_query: String,
     generation: String,
     projection_version: String,
+    retrieval_mode: String,
+    requested_mode: String,
     results: Vec<SearchResult>,
     context_bytes_used: usize,
     untrusted_data_notice: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    degradation_reason: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    embedding: Option<Embedding>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Embedding {
+    provider_kind: String,
+    model_identifier: String,
+    model_revision: String,
+    model_hash: String,
+    dimension: usize,
+    embedding_schema: String,
+    indexer_version: String,
+    vector_backend: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -66,6 +95,10 @@ struct SearchResult {
 #[serde(deny_unknown_fields)]
 struct ScoreComponents {
     lexical: f64,
+    vector_similarity: f64,
+    lexical_rrf: f64,
+    semantic_rrf: f64,
+    fusion_rrf: f64,
     trust: f64,
     confidence: f64,
     current_schema: f64,
@@ -100,6 +133,14 @@ struct Evidence {
     byte_valid: bool,
 }
 
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 impl RagClient {
     pub(crate) async fn search(&self, query: &str) -> Result<SearchResponse, String> {
         validate_endpoint(RAG_ENDPOINT)?;
@@ -110,6 +151,7 @@ impl RagClient {
             query: query.to_string(),
             top_k: RAG_TOP_K,
             context_bytes: RAG_CONTEXT_BYTES,
+            retrieval_mode: RAG_RETRIEVAL_MODE.to_string(),
         };
         let body = serde_json::to_vec(&request)
             .map_err(|error| format!("encode canonical RAG request: {error}"))?;
@@ -316,9 +358,36 @@ fn validate_response(response: &SearchResponse, query: &str) -> Result<(), Strin
     }
     if !valid_token(&response.generation, 128)
         || response.projection_version != RAG_PROJECTION_VERSION
+        || !matches!(response.retrieval_mode.as_str(), "lexical" | "hybrid")
+        || !matches!(
+            response.requested_mode.as_str(),
+            "auto" | "lexical" | "hybrid"
+        )
+        || response.requested_mode != RAG_RETRIEVAL_MODE
         || response.untrusted_data_notice != RAG_CANONICAL_NOTICE
     {
         return Err("canonical RAG generation metadata is invalid".to_string());
+    }
+    match response.retrieval_mode.as_str() {
+        "hybrid" => {
+            if response.degradation_reason.is_some()
+                || !response.embedding.as_ref().is_some_and(valid_embedding)
+            {
+                return Err("canonical RAG hybrid retrieval metadata is invalid".to_string());
+            }
+        }
+        "lexical" => {
+            if response.embedding.is_some()
+                || (response.requested_mode == "auto" && response.degradation_reason.is_none())
+                || response
+                    .degradation_reason
+                    .as_ref()
+                    .is_some_and(|reason| !valid_string(reason, 512, true))
+            {
+                return Err("canonical RAG lexical retrieval metadata is invalid".to_string());
+            }
+        }
+        _ => return Err("canonical RAG retrieval mode is invalid".to_string()),
     }
     if response.results.is_empty() {
         return Err("canonical RAG returned no usable context".to_string());
@@ -333,6 +402,17 @@ fn validate_response(response: &SearchResponse, query: &str) -> Result<(), Strin
         validate_result(result)?;
     }
     Ok(())
+}
+
+fn valid_embedding(embedding: &Embedding) -> bool {
+    embedding.provider_kind == "openai-compatible-local"
+        && valid_string(&embedding.model_identifier, 256, true)
+        && valid_string(&embedding.model_revision, 128, true)
+        && valid_lower_hex(&embedding.model_hash, 64)
+        && (1..=4096).contains(&embedding.dimension)
+        && embedding.embedding_schema == "golden-record-embedding-v1"
+        && embedding.indexer_version == "normalized-input-v1"
+        && embedding.vector_backend == "mongodb-bounded-exact-cosine-v1"
 }
 
 fn validate_result(result: &SearchResult) -> Result<(), String> {
@@ -391,17 +471,28 @@ fn validate_citation(citation: &Citation) -> Result<(), String> {
 }
 
 fn valid_scores(scores: &ScoreComponents) -> bool {
-    [
-        scores.lexical,
-        scores.trust,
-        scores.confidence,
-        scores.current_schema,
-        scores.freshness,
-        scores.diversity,
-        scores.total,
-    ]
-    .iter()
-    .all(|value| value.is_finite() && (-1e9..=1e9).contains(value))
+    valid_number(scores.lexical, -1e9, 1e9)
+        && valid_number(scores.vector_similarity, -1.0, 1.0)
+        && valid_number(scores.lexical_rrf, 0.0, 1.0)
+        && valid_number(scores.semantic_rrf, 0.0, 1.0)
+        && valid_number(scores.fusion_rrf, 0.0, 1.0)
+        && valid_number(scores.trust, -1.0, 1.5)
+        && valid_number(scores.confidence, 0.0, 1.0)
+        && valid_number(scores.current_schema, 0.0, 0.5)
+        && valid_number(scores.freshness, 0.0, 1.0)
+        && valid_number(scores.diversity, -1e3, 0.0)
+        && valid_number(scores.total, -1e9, 1e9)
+}
+
+fn valid_number(value: f64, minimum: f64, maximum: f64) -> bool {
+    value.is_finite() && (minimum..=maximum).contains(&value)
+}
+
+fn valid_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn valid_token(value: &str, max: usize) -> bool {
@@ -432,6 +523,49 @@ pub(crate) fn render_context(response: &SearchResponse) -> Result<String, String
         "projection_version",
         &response.projection_version,
     );
+    append_line(&mut output, "retrieval_mode", &response.retrieval_mode);
+    append_line(&mut output, "requested_mode", &response.requested_mode);
+    if let Some(reason) = &response.degradation_reason {
+        append_line(&mut output, "degradation_reason", reason);
+    }
+    if let Some(embedding) = &response.embedding {
+        append_line(
+            &mut output,
+            "embedding.provider_kind",
+            &embedding.provider_kind,
+        );
+        append_line(
+            &mut output,
+            "embedding.model_identifier",
+            &embedding.model_identifier,
+        );
+        append_line(
+            &mut output,
+            "embedding.model_revision",
+            &embedding.model_revision,
+        );
+        append_line(&mut output, "embedding.model_hash", &embedding.model_hash);
+        append_line(
+            &mut output,
+            "embedding.dimension",
+            &embedding.dimension.to_string(),
+        );
+        append_line(
+            &mut output,
+            "embedding.embedding_schema",
+            &embedding.embedding_schema,
+        );
+        append_line(
+            &mut output,
+            "embedding.indexer_version",
+            &embedding.indexer_version,
+        );
+        append_line(
+            &mut output,
+            "embedding.vector_backend",
+            &embedding.vector_backend,
+        );
+    }
     for (result_index, result) in response.results.iter().enumerate() {
         let prefix = format!("result[{}].", result_index + 1);
         append_line(&mut output, &(prefix.clone() + "node_id"), &result.node_id);
@@ -590,7 +724,7 @@ mod tests {
 
     fn fixture() -> ContractFixture {
         serde_json::from_str(include_str!(
-            "../../../contracts/rag_search_v1_fixture.json"
+            "../../../contracts/rag_search_v2_fixture.json"
         ))
         .expect("shared RAG contract fixture must decode")
     }
@@ -619,7 +753,8 @@ mod tests {
     #[test]
     fn shared_contract_renders_adversarial_data_as_untrusted_text() {
         let fixture = fixture();
-        assert_eq!(fixture.contract_version, "godbrain-rag-search-v1");
+        assert_eq!(fixture.contract_version, "godbrain-rag-search-v2");
+        assert_eq!(fixture.request.retrieval_mode, RAG_RETRIEVAL_MODE);
         validate_response(&fixture.response, &fixture.request.query)
             .expect("fixture response must validate");
         let response_body = serde_json::to_vec(&fixture.response).expect("serialize fixture");
@@ -648,6 +783,25 @@ mod tests {
         );
         let body = serde_json::to_vec(&value).expect("serialize adversarial response");
         assert!(parse_http_response(&wire_response(&body)).is_err());
+    }
+
+    #[test]
+    fn rejects_hybrid_response_without_matching_vector_metadata() {
+        let fixture = fixture();
+        let mut missing = serde_json::to_value(&fixture.response).expect("serialize fixture");
+        missing
+            .as_object_mut()
+            .expect("response object")
+            .remove("embedding");
+        let missing: SearchResponse =
+            serde_json::from_value(missing).expect("decode missing embedding response");
+        assert!(validate_response(&missing, &fixture.request.query).is_err());
+
+        let mut mismatched = serde_json::to_value(&fixture.response).expect("serialize fixture");
+        mismatched["embedding"]["vector_backend"] = serde_json::json!("unbounded-vector-backend");
+        let mismatched: SearchResponse =
+            serde_json::from_value(mismatched).expect("decode mismatched embedding response");
+        assert!(validate_response(&mismatched, &fixture.request.query).is_err());
     }
 
     #[test]

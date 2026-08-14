@@ -157,11 +157,11 @@ func main() {
 	})
 
 	r.GET("/api/graph", func(c *gin.Context) {
-		c.JSON(http.StatusGone, gin.H{"error": "Legacy graph enumeration is disabled; canonical RAG supports bounded lexical search only."})
+		c.JSON(http.StatusGone, gin.H{"error": "Legacy graph enumeration is disabled; use canonical bounded RAG search."})
 	})
 
 	r.GET("/api/node", func(c *gin.Context) {
-		c.JSON(http.StatusGone, gin.H{"error": "Legacy node lookup is disabled; canonical RAG supports bounded lexical search only."})
+		c.JSON(http.StatusGone, gin.H{"error": "Legacy node lookup is disabled; use canonical bounded RAG search."})
 	})
 
 	r.POST("/api/chat", func(c *gin.Context) {

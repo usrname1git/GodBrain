@@ -4,10 +4,11 @@ This Go module contains two boundaries:
 
 - `cmd/memory-store` validates one Librarian JSON document from stdin and writes
   immutable Alexandria source-of-truth records.
-- `cmd/rag-service` exposes bounded lexical retrieval of committed Golden
-  Records on `127.0.0.1`. It does not execute models, commands, or writes.
+- `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
+  committed Golden Records on `127.0.0.1`. It does not execute commands or
+  expose writes.
 
-Layer 2 connects the C++ Kernel and the experimental Go/Rust routers only to
+Layer 3 connects the C++ Kernel and the experimental Go/Rust routers only to
 `http://127.0.0.1:8084/v1/search`. They require a ready, schema-valid response,
 preserve bounded citations and trust labels, quote retrieved content as
 untrusted reference data, and fail closed before model invocation on any
@@ -33,7 +34,8 @@ Retrieval uses rebuildable derivative collections:
 |---|---|
 | `rag_documents` | One row per `(generation, node_id)`, containing node content, kind, sector, status/trust label, confidence, evidence spans, schema/version fields, and projection versions |
 | `rag_provenance` | One append-only derivative row per `(generation, node_id, run_id)`, containing every committed run/source/extractor reference |
-| `rag_metadata` | Singleton active/building generation pointer and retired-generation timestamps |
+| `rag_embeddings` | Rebuildable vectors keyed by generation, immutable node identity, provider/model identity, normalized-input hash, dimension, and embedding/indexer versions |
+| `rag_metadata` | Singleton active/building generation pointer, exact active/building embedding identity, and retired-generation timestamps |
 
 Provenance is separate from `rag_documents` so a frequently observed semantic
 node cannot grow past MongoDB's document limit. Search results sort and bound
@@ -44,8 +46,10 @@ link.
 
 After an ingestion reaches `committed`, `memory-store` projects that run into
 the active generation and any generation currently being rebuilt. It writes the
-document and provenance identities idempotently and confirms that each distinct
-run link is present before returning a success receipt.
+document and provenance identities idempotently. When the active generation has
+an embedding identity, it also confirms the exact derived embedding before
+returning a success receipt. A configured projection failure leaves the run
+committed but returns no success-shaped receipt.
 
 If projection fails after commit:
 
@@ -68,7 +72,8 @@ separate `rag_provenance` rows.
 2. Live committed ingestions project into both active and building generations.
 3. It scans committed runs in deterministic run-ID order.
 4. It reconciles distinct committed nodes and committed links against projected
-   documents and provenance. A mismatch refuses the switch.
+   documents, provenance, and configured embeddings. A mismatch refuses the
+   switch.
 5. It atomically changes the singleton active-generation pointer.
 6. It removes only retired derivative generations after a grace period longer
    than the maximum search request lifetime.
@@ -90,6 +95,8 @@ Index initialization is idempotent and does not drop source data:
 - compound metadata/ranking and semantic-identity indexes;
 - unique `rag_provenance(generation, node_id, run_id)` plus run, source, and
   freshness lookup indexes;
+- unique generation/node/provider/model embedding identities and a bounded
+  generation scan index;
 - `ingestion_runs(status, updated_at, run_id)` and existing unique/prefix link
   indexes for committed projection scans.
 
@@ -107,6 +114,7 @@ go vet ./...
 go build -o memory-store.exe ./cmd/memory-store
 go build -o rag-service.exe ./cmd/rag-service
 go build -o rag-rebuild.exe ./cmd/rag-rebuild
+go build -o rag-eval.exe ./cmd/rag-eval
 ```
 
 Set the MongoDB connection and optionally the database:
@@ -126,6 +134,44 @@ closed.
 `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` adds a deterministic ranking preference
 for the configured node schema without hiding older schemas.
 
+### Optional local embeddings
+
+The production default is disabled: no text is sent to any embedding endpoint,
+no API key is used, and lexical/metadata retrieval remains available. To enable
+semantic projection, configure all of these values together:
+
+```powershell
+$env:GODBRAIN_EMBEDDING_ENDPOINT = "http://127.0.0.1:11434/v1/embeddings"
+$env:GODBRAIN_EMBEDDING_MODEL = "local-model-name"
+$env:GODBRAIN_EMBEDDING_MODEL_REVISION = "operator-pinned-revision"
+$env:GODBRAIN_EMBEDDING_MODEL_SHA256 = "<64 lowercase hex characters>"
+$env:GODBRAIN_EMBEDDING_DIMENSION = "768"
+$env:GODBRAIN_RAG_EMBEDDING_REQUIRED = "false" # true makes semantic readiness mandatory
+.\rag-rebuild.exe
+.\rag-service.exe
+```
+
+Only literal `127.0.0.1` or `::1` HTTP URLs with an explicit port and exact
+`/v1/embeddings` path are accepted. DNS names, redirects, proxies, TLS host
+overrides, credentials, query strings, and remote addresses are rejected.
+Requests have a two-second timeout and bounded bodies. Responses require status
+200, `application/json`, one strict JSON document, no unknown fields, the exact
+requested model, a finite non-zero vector, and the configured bounded dimension.
+Source text, vectors, credentials, and response bodies are never logged.
+
+`rag-rebuild` is the only backfill/activation interface. It builds a fresh
+generation, live commits dual-write while it runs, and activation occurs only
+after document, provenance, and embedding cardinalities reconcile. There is no
+HTTP embedding administration endpoint.
+
+The vector backend is `mongodb-bounded-exact-cosine-v1`: it reads at most 4,096
+generation-scoped embedding rows and keeps at most 200 candidates. Above that
+corpus limit semantic capability is unavailable rather than performing an
+unbounded scan. Ordinary MongoDB does not provide Atlas Search without extra
+configuration; the opt-in integration probe reports that exact limitation and
+skips native-vector coverage. The bounded backend does not claim Atlas/native
+vector indexing.
+
 Tests use no MongoDB unless `MONGODB_TEST_URI` is set. RAG integration tests
 create unique disposable databases and drop them during cleanup; the existing
 Memory Store integration suite uses and clears `godbrain_test`. Never point
@@ -140,7 +186,8 @@ wildcard, and exposes no write or administrative route.
 
 Returns MongoDB connectivity, active/building generation and projection
 versions, committed versus projected node/link counts, latest timestamps, lag,
-readiness reasons, and a separate legacy `nodes` count. Readiness requires
+embedding identity/count/corpus limit/provider status, exact retrieval mode,
+degradation reason, readiness reasons, and a separate legacy `nodes` count. Readiness requires
 version agreement and exact committed/projected cardinality. An empty,
 fully-projected corpus is ready.
 
@@ -158,7 +205,8 @@ budgets are rejected.
   "sector": "security",
   "status": "candidate",
   "min_confidence": 0.75,
-  "context_bytes": 8192
+  "context_bytes": 8192,
+  "retrieval_mode": "auto"
 }
 ```
 
@@ -168,6 +216,12 @@ indexed `$text` query. Callers cannot supply MongoDB operators or regular
 expressions. A query with no searchable tokens returns an explicit empty result;
 there is no arbitrary first-N fallback.
 
+`retrieval_mode` is `auto`, `lexical`, or `hybrid`. `auto` explicitly degrades
+to lexical with a machine-readable reason when semantic capability or query
+embedding is unavailable. `hybrid` returns `503 semantic_unavailable` instead.
+A claimed hybrid response always carries the exact provider, model
+revision/hash, dimension, embedding/indexer schema, and vector backend.
+
 Each HTTP search is accepted only when readiness watermarks captured before and
 after the database read agree on the active/building generation, projection
 versions, committed/projected cardinalities, and latest commit/projection
@@ -175,10 +229,12 @@ timestamps, and the response identifies that same generation and version. One
 retry is allowed inside the existing total timeout; an unstable or unready
 projection returns `503` and the attempted results are discarded.
 
-Candidates are reranked deterministically using lexical score, visible
-status/trust, confidence, optional current-schema preference, source timestamp,
-and bounded source/sector diversity. Stable semantic identity is deduplicated
-before top-k selection.
+Hybrid candidates use deterministic reciprocal-rank fusion with stable identity
+ties. Lexical and semantic candidate sets are bounded; status/trust,
+confidence, optional current-schema preference, source timestamp, and bounded
+source/sector diversity remain explicit score components. Semantic similarity
+does not alter trust labels. Stable semantic identity is deduplicated before
+top-k selection.
 
 Every result includes node stable/version/ID, status/trust, confidence,
 kind/sector, score components, a bounded UTF-8 snippet, and bounded structured
@@ -193,10 +249,34 @@ or labels semantic evidence as verified.
 All retrieved content is untrusted data and must not be interpreted as
 instructions or privileged commands.
 
+## Deterministic evaluation
+
+The checked-in synthetic corpus covers semantic paraphrase, exact lexical
+matches, metadata filters, duplicates/diversity, trust/status, stale
+generations, invalid citations, uncommitted records, prompt injection, Unicode,
+and no-result behavior:
+
+```powershell
+.\rag-eval.exe
+.\rag-eval.exe -measure-latency
+```
+
+The default JSON is byte-for-byte deterministic. Current fixture-only metrics
+are Recall@K `1.0`, MRR `1.0`, nDCG@K `1.0`, citation
+correctness/coverage `1.0`, generation correctness `1.0`, and hidden-record
+leakage `0`. Uncommitted, stale-generation, missing-citation, and wrong-citation
+records remain adversarial inputs to the evaluated pipeline instead of being
+removed before measurement. Deterministic work p50/p95/max are `24/24/24`
+bounded document comparisons against an `8192` budget. `-measure-latency` adds a separate
+nondeterministic wall-clock distribution. Threshold tests fail on regression.
+These measurements validate the fake provider and retrieval invariants only;
+they are not a quality or performance claim for any real embedding model.
+
 ## Known limitations
 
-This is an indexed lexical and metadata baseline. Layer 2 router integration is
-implemented, but there are no embeddings, vector index, semantic similarity, or
-hybrid vector ranking claims. MongoDB text tokenization has language-specific
-limitations even with explicit mixed-language behavior. Vector/hybrid retrieval
-belongs to Layer 3.
+MongoDB text tokenization remains language-limited. The exact-cosine backend is
+deliberately capped at 4,096 documents and is not intended for larger corpora.
+Real-model quality and production hardware latency must be measured by the
+operator; no real model is bundled or selected by default. Provider health is
+checked locally, but a capability loss during query embedding can still force
+an explicit lexical degradation for `auto`.

@@ -56,12 +56,17 @@ func run() error {
 		return errors.New("failed to ping MongoDB")
 	}
 	db := client.Database(dbName)
-	if err = rag.EnsureIndexes(connectCtx, db); err != nil {
+	embeddingRuntime, err := rag.EmbeddingRuntimeFromEnvironment()
+	if err != nil {
+		return fmt.Errorf("invalid embedding configuration: %w", err)
+	}
+	if err = rag.EnsureIndexes(connectCtx, db, embeddingRuntime); err != nil {
 		return fmt.Errorf("failed to ensure RAG indexes: %w", err)
 	}
 
 	engine := rag.NewEngine(db, rag.Config{
 		PreferredSchemaVersion: os.Getenv("GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION"),
+		EmbeddingRuntime:       embeddingRuntime,
 	})
 	server := &http.Server{
 		Addr:              "127.0.0.1:" + strconv.Itoa(port),

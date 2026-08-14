@@ -30,7 +30,25 @@ func (p *Projector) Rebuild(ctx context.Context) (report RebuildReport, err erro
 	report.Generation = generation
 	report.PreviousGeneration = metadata.ActiveGeneration
 	startedAt := time.Now().UTC()
+	var buildingEmbedding *EmbeddingIdentity
+	if p.runtime.Provider != nil {
+		identity := p.runtime.Provider.Identity()
+		if err = identity.Validate(); err != nil {
+			return report, err
+		}
+		buildingEmbedding = &identity
+	}
 	var acquired Metadata
+	buildUpdate := bson.M{"$set": bson.M{
+		"building_generation": generation,
+		"build_started_at":    startedAt,
+		"updated_at":          startedAt,
+	}}
+	if buildingEmbedding != nil {
+		buildUpdate["$set"].(bson.M)["building_embedding"] = buildingEmbedding
+	} else {
+		buildUpdate["$unset"] = bson.M{"building_embedding": ""}
+	}
 	err = p.db.Collection(MetadataCollection).FindOneAndUpdate(
 		ctx,
 		bson.M{
@@ -40,11 +58,7 @@ func (p *Projector) Rebuild(ctx context.Context) (report RebuildReport, err erro
 				bson.M{"building_generation": ""},
 			},
 		},
-		bson.M{"$set": bson.M{
-			"building_generation": generation,
-			"build_started_at":    startedAt,
-			"updated_at":          startedAt,
-		}},
+		buildUpdate,
 		options.FindOneAndUpdate().SetReturnDocument(options.After),
 	).Decode(&acquired)
 	if errors.Is(err, mongo.ErrNoDocuments) {
@@ -66,7 +80,7 @@ func (p *Projector) Rebuild(ctx context.Context) (report RebuildReport, err erro
 			abortCtx,
 			bson.M{"_id": metadataID, "building_generation": generation},
 			bson.M{
-				"$unset": bson.M{"building_generation": "", "build_started_at": ""},
+				"$unset": bson.M{"building_generation": "", "building_embedding": "", "build_started_at": ""},
 				"$push": bson.M{"retired_generations": RetiredGeneration{
 					Generation: generation,
 					RetiredAt:  retiredAt,
@@ -80,26 +94,48 @@ func (p *Projector) Rebuild(ctx context.Context) (report RebuildReport, err erro
 		if err = p.projectAllCommittedRuns(ctx, generation); err != nil {
 			return report, err
 		}
-		report.Counts, err = p.CorpusCounts(ctx, generation)
+		report.Counts, err = p.CorpusCounts(ctx, generation, buildingEmbedding)
 		if err != nil {
 			return report, err
 		}
 		if report.Counts.CommittedNodes == report.Counts.ProjectedNodes &&
-			report.Counts.CommittedLinks == report.Counts.ProjectedLinks {
+			report.Counts.CommittedLinks == report.Counts.ProjectedLinks &&
+			(buildingEmbedding == nil ||
+				report.Counts.CommittedNodes == report.Counts.ProjectedEmbeddings) {
 			break
 		}
 		if attempt == 2 {
-			return report, fmt.Errorf("%w: committed nodes/links %d/%d, projected %d/%d",
+			return report, fmt.Errorf("%w: committed nodes/links %d/%d, projected documents/links/embeddings %d/%d/%d",
 				ErrProjectionIncomplete,
 				report.Counts.CommittedNodes,
 				report.Counts.CommittedLinks,
 				report.Counts.ProjectedNodes,
 				report.Counts.ProjectedLinks,
+				report.Counts.ProjectedEmbeddings,
 			)
 		}
 	}
 
 	completedAt := time.Now().UTC()
+	activationSet := bson.M{
+		"active_generation":  generation,
+		"projection_version": ProjectionVersion,
+		"projection_schema":  ProjectionSchema,
+		"indexer_version":    IndexerVersion,
+		"active_since":       completedAt,
+		"last_rebuild_at":    completedAt,
+		"updated_at":         completedAt,
+	}
+	activationUnset := bson.M{
+		"building_generation": "",
+		"building_embedding":  "",
+		"build_started_at":    "",
+	}
+	if buildingEmbedding != nil {
+		activationSet["embedding"] = buildingEmbedding
+	} else {
+		activationUnset["embedding"] = ""
+	}
 	result, err := p.db.Collection(MetadataCollection).UpdateOne(
 		ctx,
 		bson.M{
@@ -108,16 +144,8 @@ func (p *Projector) Rebuild(ctx context.Context) (report RebuildReport, err erro
 			"building_generation": generation,
 		},
 		bson.M{
-			"$set": bson.M{
-				"active_generation":  generation,
-				"projection_version": ProjectionVersion,
-				"projection_schema":  ProjectionSchema,
-				"indexer_version":    IndexerVersion,
-				"active_since":       completedAt,
-				"last_rebuild_at":    completedAt,
-				"updated_at":         completedAt,
-			},
-			"$unset": bson.M{"building_generation": "", "build_started_at": ""},
+			"$set":   activationSet,
+			"$unset": activationUnset,
 			"$push": bson.M{"retired_generations": RetiredGeneration{
 				Generation: metadata.ActiveGeneration,
 				RetiredAt:  completedAt,
@@ -157,7 +185,12 @@ func (p *Projector) projectAllCommittedRuns(ctx context.Context, generation stri
 		if loadErr != nil {
 			return loadErr
 		}
-		if err = p.projectRun(ctx, run, nodes, []string{generation}); err != nil {
+		target := projectionTarget{Generation: generation}
+		if p.runtime.Provider != nil {
+			identity := p.runtime.Provider.Identity()
+			target.Embedding = &identity
+		}
+		if err = p.projectRun(ctx, run, nodes, []projectionTarget{target}); err != nil {
 			return err
 		}
 	}
@@ -183,6 +216,9 @@ func (p *Projector) CleanupRetiredGenerations(ctx context.Context, grace time.Du
 		if _, err = p.db.Collection(ProvenanceCollection).DeleteMany(ctx, bson.M{"generation": retired.Generation}); err != nil {
 			return err
 		}
+		if _, err = p.db.Collection(EmbeddingsCollection).DeleteMany(ctx, bson.M{"generation": retired.Generation}); err != nil {
+			return err
+		}
 		if _, err = p.db.Collection(MetadataCollection).UpdateOne(
 			ctx,
 			bson.M{"_id": metadataID},
@@ -194,7 +230,11 @@ func (p *Projector) CleanupRetiredGenerations(ctx context.Context, grace time.Du
 	return nil
 }
 
-func (p *Projector) CorpusCounts(ctx context.Context, generation string) (CorpusCounts, error) {
+func (p *Projector) CorpusCounts(
+	ctx context.Context,
+	generation string,
+	embedding ...*EmbeddingIdentity,
+) (CorpusCounts, error) {
 	var counts CorpusCounts
 	var err error
 	counts.CommittedRuns, err = p.db.Collection("ingestion_runs").CountDocuments(ctx, bson.M{"status": memorystore.StatusCommitted})
@@ -214,6 +254,25 @@ func (p *Projector) CorpusCounts(ctx context.Context, generation string) (Corpus
 		return counts, err
 	}
 	counts.ProjectedLinks, err = p.db.Collection(ProvenanceCollection).CountDocuments(ctx, bson.M{"generation": generation})
+	if err != nil {
+		return counts, err
+	}
+	embeddingFilter := bson.M{"generation": generation}
+	if len(embedding) == 1 && embedding[0] != nil {
+		identity := embedding[0]
+		embeddingFilter = bson.M{
+			"generation":       generation,
+			"provider_kind":    identity.ProviderKind,
+			"model_identifier": identity.ModelIdentifier,
+			"model_revision":   identity.ModelRevision,
+			"model_hash":       identity.ModelHash,
+			"dimension":        identity.Dimension,
+			"embedding_schema": identity.SchemaVersion,
+			"indexer_version":  identity.IndexerVersion,
+			"vector_backend":   identity.VectorBackend,
+		}
+	}
+	counts.ProjectedEmbeddings, err = p.db.Collection(EmbeddingsCollection).CountDocuments(ctx, embeddingFilter)
 	return counts, err
 }
 

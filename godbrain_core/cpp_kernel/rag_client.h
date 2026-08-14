@@ -26,7 +26,8 @@ using json = nlohmann::json;
 
 constexpr const char* kEndpoint = "http://127.0.0.1:8084/v1/search";
 constexpr const char* kPath = "/v1/search";
-constexpr const char* kProjectionVersion = "lexical-v1";
+constexpr const char* kProjectionVersion = "hybrid-v1";
+constexpr const char* kRetrievalMode = "auto";
 constexpr int kTopK = 3;
 constexpr int kContextBytes = 4096;
 constexpr size_t kMaxResponseBytes = 128 * 1024;
@@ -91,6 +92,16 @@ inline bool valid_number(const json& value, double minimum, double maximum) {
     return std::isfinite(number) && number >= minimum && number <= maximum;
 }
 
+inline bool valid_lower_hex(const json& value, size_t length) {
+    if (!value.is_string()) return false;
+    const std::string text = value.get<std::string>();
+    return text.size() == length &&
+           std::all_of(text.begin(), text.end(), [](unsigned char character) {
+               return (character >= '0' && character <= '9') ||
+                      (character >= 'a' && character <= 'f');
+           });
+}
+
 inline bool string_is_one_of(
     const json& value,
     std::initializer_list<const char*> allowed) {
@@ -104,14 +115,43 @@ inline bool string_is_one_of(
 inline bool validate_scores(const json& scores) {
     if (!has_exact_keys(
             scores,
-            {"lexical", "trust", "confidence", "current_schema", "freshness", "diversity", "total"})) {
+            {"lexical", "vector_similarity", "lexical_rrf", "semantic_rrf",
+             "fusion_rrf", "trust", "confidence", "current_schema", "freshness",
+             "diversity", "total"})) {
         return false;
     }
-    for (const char* key : {
-             "lexical", "trust", "confidence", "current_schema", "freshness", "diversity", "total"}) {
-        if (!valid_number(scores.at(key), -1e9, 1e9)) return false;
+    return valid_number(scores.at("lexical"), -1e9, 1e9) &&
+           valid_number(scores.at("vector_similarity"), -1, 1) &&
+           valid_number(scores.at("lexical_rrf"), 0, 1) &&
+           valid_number(scores.at("semantic_rrf"), 0, 1) &&
+           valid_number(scores.at("fusion_rrf"), 0, 1) &&
+           valid_number(scores.at("trust"), -1, 1.5) &&
+           valid_number(scores.at("confidence"), 0, 1) &&
+           valid_number(scores.at("current_schema"), 0, 0.5) &&
+           valid_number(scores.at("freshness"), 0, 1) &&
+           valid_number(scores.at("diversity"), -1e3, 0) &&
+           valid_number(scores.at("total"), -1e9, 1e9);
+}
+
+inline bool validate_embedding(const json& embedding) {
+    if (!has_exact_keys(
+            embedding,
+            {"provider_kind", "model_identifier", "model_revision", "model_hash",
+             "dimension", "embedding_schema", "indexer_version",
+             "vector_backend"})) {
+        return false;
     }
-    return true;
+    return embedding.at("provider_kind") == "openai-compatible-local" &&
+           valid_string(embedding.at("model_identifier"), 256, true) &&
+           valid_string(embedding.at("model_revision"), 128, true) &&
+           valid_lower_hex(embedding.at("model_hash"), 64) &&
+           embedding.at("dimension").is_number_integer() &&
+           embedding.at("dimension").get<int64_t>() >= 1 &&
+           embedding.at("dimension").get<int64_t>() <= 4096 &&
+           embedding.at("embedding_schema") == "golden-record-embedding-v1" &&
+           embedding.at("indexer_version") == "normalized-input-v1" &&
+           embedding.at("vector_backend") ==
+               "mongodb-bounded-exact-cosine-v1";
 }
 
 inline bool validate_evidence(const json& evidence) {
@@ -197,7 +237,9 @@ inline bool validate_response(
     if (!has_exact_keys(
             response,
             {"query", "normalized_query", "generation", "projection_version",
-             "results", "context_bytes_used", "untrusted_data_notice"})) {
+             "retrieval_mode", "requested_mode", "results",
+             "context_bytes_used", "untrusted_data_notice"},
+            {"degradation_reason", "embedding"})) {
         error = "canonical RAG response has an invalid top-level schema";
         return false;
     }
@@ -207,11 +249,37 @@ inline bool validate_response(
         !valid_token(response.at("generation"), 128) ||
         !valid_string(response.at("projection_version"), 64, true) ||
         response.at("projection_version").get<std::string>() != kProjectionVersion ||
+        !string_is_one_of(response.at("retrieval_mode"), {"lexical", "hybrid"}) ||
+        !string_is_one_of(
+            response.at("requested_mode"),
+            {"auto", "lexical", "hybrid"}) ||
+        response.at("requested_mode").get<std::string>() != kRetrievalMode ||
         !valid_string(response.at("untrusted_data_notice"), 256, true) ||
         response.at("untrusted_data_notice").get<std::string>() != kCanonicalNotice ||
         !response.at("context_bytes_used").is_number_integer()) {
         error = "canonical RAG generation metadata is invalid";
         return false;
+    }
+    const std::string retrieval_mode =
+        response.at("retrieval_mode").get<std::string>();
+    const std::string requested_mode =
+        response.at("requested_mode").get<std::string>();
+    if (retrieval_mode == "hybrid") {
+        if (!response.contains("embedding") ||
+            response.contains("degradation_reason") ||
+            !validate_embedding(response.at("embedding"))) {
+            error = "canonical RAG hybrid retrieval metadata is invalid";
+            return false;
+        }
+    } else {
+        if (response.contains("embedding") ||
+            (requested_mode == "auto" &&
+             !response.contains("degradation_reason")) ||
+            (response.contains("degradation_reason") &&
+             !valid_string(response.at("degradation_reason"), 512, true))) {
+            error = "canonical RAG lexical retrieval metadata is invalid";
+            return false;
+        }
     }
     const int context_bytes_used = response.at("context_bytes_used").get<int>();
     const json& results = response.at("results");
@@ -339,6 +407,55 @@ inline bool render_context(
         output,
         "projection_version",
         response.at("projection_version").get<std::string>());
+    append_line(
+        output,
+        "retrieval_mode",
+        response.at("retrieval_mode").get<std::string>());
+    append_line(
+        output,
+        "requested_mode",
+        response.at("requested_mode").get<std::string>());
+    if (response.contains("degradation_reason")) {
+        append_line(
+            output,
+            "degradation_reason",
+            response.at("degradation_reason").get<std::string>());
+    }
+    if (response.contains("embedding")) {
+        const json& embedding = response.at("embedding");
+        append_line(
+            output,
+            "embedding.provider_kind",
+            embedding.at("provider_kind").get<std::string>());
+        append_line(
+            output,
+            "embedding.model_identifier",
+            embedding.at("model_identifier").get<std::string>());
+        append_line(
+            output,
+            "embedding.model_revision",
+            embedding.at("model_revision").get<std::string>());
+        append_line(
+            output,
+            "embedding.model_hash",
+            embedding.at("model_hash").get<std::string>());
+        append_line(
+            output,
+            "embedding.dimension",
+            std::to_string(embedding.at("dimension").get<int64_t>()));
+        append_line(
+            output,
+            "embedding.embedding_schema",
+            embedding.at("embedding_schema").get<std::string>());
+        append_line(
+            output,
+            "embedding.indexer_version",
+            embedding.at("indexer_version").get<std::string>());
+        append_line(
+            output,
+            "embedding.vector_backend",
+            embedding.at("vector_backend").get<std::string>());
+    }
     const json& results = response.at("results");
     for (size_t result_index = 0; result_index < results.size(); ++result_index) {
         const json& result = results.at(result_index);
@@ -449,6 +566,7 @@ public:
             {"query", query},
             {"top_k", kTopK},
             {"context_bytes", kContextBytes},
+            {"retrieval_mode", kRetrievalMode},
         };
         const HttpResult http = transport_(request.dump());
         if (!http.available) {

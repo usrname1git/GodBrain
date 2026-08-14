@@ -129,12 +129,17 @@ func TestScoreDocumentPreservesTrustLabels(t *testing.T) {
 
 func TestValidDocumentShapeBoundsResponseIdentifiers(t *testing.T) {
 	document := Document{
-		StableID:      "stable",
-		NodeVersion:   "v1",
-		Kind:          "claim",
-		Sector:        "security",
-		Status:        "candidate",
-		SchemaVersion: "s1",
+		NodeID:            primitive.NewObjectID(),
+		Generation:        "generation-a",
+		StableID:          "stable",
+		NodeVersion:       "v1",
+		Kind:              "claim",
+		Sector:            "security",
+		Status:            "candidate",
+		SchemaVersion:     "s1",
+		ProjectionVersion: ProjectionVersion,
+		ProjectionSchema:  ProjectionSchema,
+		IndexerVersion:    IndexerVersion,
 	}
 	if !validDocumentShape(document) {
 		t.Fatal("expected normal document identifiers to be accepted")
@@ -153,5 +158,30 @@ func TestLexicalSnippetRespectsUTF8Budget(t *testing.T) {
 	}
 	if !strings.Contains(snippet, "世界") {
 		t.Fatalf("snippet did not center the matching Unicode token: %q", snippet)
+	}
+}
+
+func TestReciprocalRankFusionAndCosineAreFiniteAndDeterministic(t *testing.T) {
+	lexical := []scoredDocument{
+		{Document: Document{NodeID: primitive.NewObjectID(), StableID: "a", NodeVersion: "v1"}, LexicalRank: 1},
+		{Document: Document{NodeID: primitive.NewObjectID(), StableID: "b", NodeVersion: "v1"}, LexicalRank: 2},
+	}
+	semantic := []scoredDocument{
+		{Document: lexical[1].Document, SemanticRank: 1, VectorSimilarity: 0.9},
+		{Document: lexical[0].Document, SemanticRank: 2, VectorSimilarity: 0.8},
+	}
+	first := fuseCandidates(lexical, semantic)
+	second := fuseCandidates(lexical, semantic)
+	if len(first) != 2 || len(second) != 2 ||
+		first[0].NodeID != second[0].NodeID ||
+		first[1].NodeID != second[1].NodeID {
+		t.Fatal("RRF fusion was not deterministic")
+	}
+	if reciprocalRank(0) != 0 || reciprocalRank(1) <= reciprocalRank(2) {
+		t.Fatal("RRF rank contribution is invalid")
+	}
+	similarity, valid := cosineSimilarity([]float32{1, 0}, []float32{1, 0})
+	if !valid || similarity != 1 || math.IsNaN(similarity) || math.IsInf(similarity, 0) {
+		t.Fatalf("cosine similarity is invalid: %f valid=%v", similarity, valid)
 	}
 }

@@ -283,13 +283,16 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 
 	payload := memorystore.DistillationPayload{
 		RawTranscript:    transcript,
+		ExtractorID:      "extractor",
 		ExtractorVersion: "v1",
 		SchemaVersion:    "s1",
 		Payload: memorystore.AlexandriaPayload{
 			TrustTier: "candidate",
 			Provenance: memorystore.Provenance{
 				SourceID:   "session_1",
+				SourceType: "copilot_session",
 				SourceHash: sourceHash,
+				Language:   "en",
 			},
 			Claims: []memorystore.Claim{
 				{
@@ -384,13 +387,16 @@ func TestRetryPreservesAppendOnlyNodeLinks(t *testing.T) {
 	sourceHash := hex.EncodeToString(hash.Sum(nil))
 	payload := memorystore.DistillationPayload{
 		RawTranscript:    transcript,
+		ExtractorID:      "extractor",
 		ExtractorVersion: "v1",
 		SchemaVersion:    "s1",
 		Payload: memorystore.AlexandriaPayload{
 			TrustTier: "candidate",
 			Provenance: memorystore.Provenance{
 				SourceID:   "session_1",
+				SourceType: "copilot_session",
 				SourceHash: sourceHash,
+				Language:   "en",
 			},
 			CoreConcepts: []string{"Append-only concept"},
 		},

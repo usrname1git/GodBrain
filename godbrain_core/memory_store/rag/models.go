@@ -9,10 +9,11 @@ import (
 const (
 	DocumentsCollection  = "rag_documents"
 	ProvenanceCollection = "rag_provenance"
+	EmbeddingsCollection = "rag_embeddings"
 	MetadataCollection   = "rag_metadata"
 
-	ProjectionVersion = "lexical-v1"
-	ProjectionSchema  = "rag-document-v1"
+	ProjectionVersion = "hybrid-v1"
+	ProjectionSchema  = "rag-document-v2"
 	IndexerVersion    = "mongodb-text-v1"
 
 	metadataID = "canonical"
@@ -30,11 +31,32 @@ type Metadata struct {
 	ProjectionVersion  string              `bson:"projection_version" json:"projection_version"`
 	ProjectionSchema   string              `bson:"projection_schema" json:"projection_schema"`
 	IndexerVersion     string              `bson:"indexer_version" json:"indexer_version"`
+	Embedding          *EmbeddingIdentity  `bson:"embedding,omitempty" json:"embedding,omitempty"`
+	BuildingEmbedding  *EmbeddingIdentity  `bson:"building_embedding,omitempty" json:"building_embedding,omitempty"`
 	ActiveSince        time.Time           `bson:"active_since" json:"active_since"`
 	BuildStartedAt     *time.Time          `bson:"build_started_at,omitempty" json:"build_started_at,omitempty"`
 	LastRebuildAt      *time.Time          `bson:"last_rebuild_at,omitempty" json:"last_rebuild_at,omitempty"`
 	RetiredGenerations []RetiredGeneration `bson:"retired_generations,omitempty" json:"-"`
 	UpdatedAt          time.Time           `bson:"updated_at" json:"updated_at"`
+}
+
+type EmbeddingRecord struct {
+	ID              primitive.ObjectID `bson:"_id,omitempty" json:"-"`
+	Generation      string             `bson:"generation" json:"generation"`
+	NodeID          primitive.ObjectID `bson:"node_id" json:"node_id"`
+	StableID        string             `bson:"stable_id" json:"stable_id"`
+	NodeVersion     string             `bson:"node_version" json:"node_version"`
+	ProviderKind    string             `bson:"provider_kind" json:"provider_kind"`
+	ModelIdentifier string             `bson:"model_identifier" json:"model_identifier"`
+	ModelRevision   string             `bson:"model_revision" json:"model_revision"`
+	ModelHash       string             `bson:"model_hash" json:"model_hash"`
+	Dimension       int                `bson:"dimension" json:"dimension"`
+	InputHash       string             `bson:"input_hash" json:"input_hash"`
+	EmbeddingSchema string             `bson:"embedding_schema" json:"embedding_schema"`
+	IndexerVersion  string             `bson:"indexer_version" json:"indexer_version"`
+	VectorBackend   string             `bson:"vector_backend" json:"vector_backend"`
+	Vector          []float32          `bson:"vector" json:"-"`
+	ProjectedAt     time.Time          `bson:"projected_at" json:"projected_at"`
 }
 
 type Document struct {
@@ -76,11 +98,12 @@ type Provenance struct {
 }
 
 type CorpusCounts struct {
-	CommittedRuns  int64 `json:"committed_runs"`
-	CommittedNodes int64 `json:"committed_nodes"`
-	CommittedLinks int64 `json:"committed_links"`
-	ProjectedNodes int64 `json:"projected_nodes"`
-	ProjectedLinks int64 `json:"projected_links"`
+	CommittedRuns       int64 `json:"committed_runs"`
+	CommittedNodes      int64 `json:"committed_nodes"`
+	CommittedLinks      int64 `json:"committed_links"`
+	ProjectedNodes      int64 `json:"projected_nodes"`
+	ProjectedLinks      int64 `json:"projected_links"`
+	ProjectedEmbeddings int64 `json:"projected_embeddings"`
 }
 
 type RebuildReport struct {

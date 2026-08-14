@@ -44,19 +44,26 @@ GodBrain routes every model's tool calls through a native C++ kernel instead of 
 
 ### Golden Record RAG status
 
-Layer 2 is implemented. The production C++ kernel and the experimental Go and
+Layer 3 is implemented. The production C++ kernel and the experimental Go and
 Rust routers retrieve prompt context only through
 `http://127.0.0.1:8084/v1/search`. They validate the generation and
-`lexical-v1` contract, preserve bounded citations and trust labels, and wrap
+`hybrid-v1` contract, preserve bounded citations and trust labels, and wrap
 retrieved text as explicitly untrusted reference data. If the service is
 unavailable, unready, malformed, oversized, or returns no usable context, chat
 fails closed before a model is started. Legacy graph enumeration and direct node
 lookup are disabled rather than falling back to the old `nodes` collection.
 
-This layer provides lexical and metadata retrieval only. It does not claim
-embedding, vector, semantic-similarity, or hybrid ranking; those remain future
-Layer 3 work. Privileged `command_type` dispatch remains a separate C++ request
-path protected by the configured bearer token and sovereignty checks.
+Lexical/metadata retrieval remains the zero-configuration canonical fallback.
+An optional exact-loopback OpenAI-compatible embedding provider enables
+generation-versioned embeddings and deterministic hybrid RRF over a bounded
+4,096-document exact-cosine backend. Health and search responses state the exact
+mode and degradation reason; they never claim hybrid when the provider, model
+identity, projection, or bounded backend is unavailable. The checked-in
+synthetic fixture currently measures Recall@K, MRR, and nDCG@K at 1.0 with zero
+hidden-record leakage. These are reproducibility checks for the deterministic
+fake provider, not real-model quality claims. Privileged `command_type` dispatch
+remains a separate C++ request path protected by the configured bearer token and
+sovereignty checks.
 
 ### GodBrain-native MCP tools
 

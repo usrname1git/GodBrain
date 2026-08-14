@@ -72,8 +72,11 @@ func NewHandler(api API) http.Handler {
 				errors.Is(err, ErrInvalidTopK),
 				errors.Is(err, ErrInvalidContext),
 				errors.Is(err, ErrInvalidFilter),
-				errors.Is(err, ErrInvalidConfidence):
+				errors.Is(err, ErrInvalidConfidence),
+				errors.Is(err, ErrInvalidRetrievalMode):
 				writeAPIError(writer, http.StatusBadRequest, err.Error())
+			case errors.Is(err, ErrSemanticModeUnavailable):
+				writeAPIError(writer, http.StatusServiceUnavailable, "semantic_unavailable")
 			default:
 				writeAPIError(writer, http.StatusServiceUnavailable, "search_unavailable")
 			}
@@ -90,6 +93,9 @@ func searchConsistently(ctx context.Context, api API, request SearchRequest) (Se
 		if err != nil || !before.Ready {
 			if err != nil {
 				return SearchResponse{}, err
+			}
+			if request.RetrievalMode == "hybrid" && !before.Semantic.Available {
+				return SearchResponse{}, ErrSemanticModeUnavailable
 			}
 			return SearchResponse{}, ErrSearchSnapshotChanged
 		}
@@ -121,9 +127,46 @@ func sameSearchSnapshot(before, after HealthResponse, response SearchResponse) b
 		before.ProjectionVersion == response.ProjectionVersion &&
 		before.ProjectionSchema == after.ProjectionSchema &&
 		before.IndexerVersion == after.IndexerVersion &&
+		before.RetrievalMode == after.RetrievalMode &&
+		sameSemanticCapability(before.Semantic, after.Semantic) &&
 		before.Counts == after.Counts &&
 		sameOptionalTime(before.LatestCommittedAt, after.LatestCommittedAt) &&
-		sameOptionalTime(before.LatestProjectedAt, after.LatestProjectedAt)
+		sameOptionalTime(before.LatestProjectedAt, after.LatestProjectedAt) &&
+		sameOptionalTime(before.LatestEmbeddedAt, after.LatestEmbeddedAt) &&
+		validResponseCapability(before, response)
+}
+
+func sameSemanticCapability(left, right SemanticCapability) bool {
+	if left.Configured != right.Configured ||
+		left.Available != right.Available ||
+		left.Required != right.Required ||
+		left.CorpusLimit != right.CorpusLimit ||
+		left.DegradationReason != right.DegradationReason {
+		return false
+	}
+	switch {
+	case left.Identity == nil && right.Identity == nil:
+		return true
+	case left.Identity == nil || right.Identity == nil:
+		return false
+	default:
+		return left.Identity.Equal(*right.Identity)
+	}
+}
+
+func validResponseCapability(health HealthResponse, response SearchResponse) bool {
+	switch response.RetrievalMode {
+	case "lexical":
+		return response.Embedding == nil
+	case "hybrid":
+		return health.Semantic.Available &&
+			health.Semantic.Identity != nil &&
+			response.Embedding != nil &&
+			health.Semantic.Identity.Equal(*response.Embedding) &&
+			response.DegradationReason == ""
+	default:
+		return false
+	}
 }
 
 func sameOptionalTime(left, right *time.Time) bool {

@@ -207,6 +207,167 @@ func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {
 		Content:    "architecture evidence 世界",
 		CreatedAt:  now,
 	}
+
+	t.Run("hybrid projection search and rebuild remain committed only", func(t *testing.T) {
+		db := setupRAGTestDB(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		fake, err := rag.NewDeterministicFakeProvider(64)
+		if err != nil {
+			t.Fatalf("create deterministic embedding provider: %v", err)
+		}
+		runtime := rag.EmbeddingRuntime{Provider: fake, Required: true}
+		identity := fake.Identity()
+		if _, err = db.Collection(rag.MetadataCollection).UpdateOne(
+			ctx,
+			bson.M{"_id": "canonical"},
+			bson.M{"$set": bson.M{"embedding": identity}},
+		); err != nil {
+			t.Fatalf("configure active embedding identity: %v", err)
+		}
+
+		now := time.Unix(1_750_000_000, 0).UTC()
+		source := memorystore.Source{
+			ID: primitive.NewObjectID(), SourceHash: "hybrid-source", SourceType: "session",
+			Language: "en", Content: "bearer authentication guard", CreatedAt: now,
+		}
+		committedNode := memorystore.KnowledgeNode{
+			ID: primitive.NewObjectID(), StableID: "hybrid-auth-guard", Version: "v1",
+			Kind: "claim", Status: "candidate", Sector: "security",
+			Content: "bearer authentication guard", Confidence: 0.9,
+			SchemaVersion: "s1", CreatedAt: now,
+		}
+		hiddenNode := memorystore.KnowledgeNode{
+			ID: primitive.NewObjectID(), StableID: "hidden-auth-secret", Version: "v1",
+			Kind: "claim", Status: "candidate", Sector: "security",
+			Content: "credential authorization hidden secret", Confidence: 1,
+			SchemaVersion: "s1", CreatedAt: now,
+		}
+		if _, err = db.Collection("sources").InsertOne(ctx, source); err != nil {
+			t.Fatalf("seed hybrid source: %v", err)
+		}
+		if _, err = db.Collection("knowledge_nodes").InsertMany(ctx, []any{committedNode, hiddenNode}); err != nil {
+			t.Fatalf("seed hybrid nodes: %v", err)
+		}
+		committedRun := memorystore.IngestionRun{
+			RunID: "hybrid-committed-run", Status: memorystore.StatusCommitted, Active: true,
+			SourceHash: source.SourceHash, SourceID: source.ID, ExternalSourceID: "fixture://hybrid",
+			ExtractorID: "fixture", ExtractorVer: "v1", SchemaVersion: "s1",
+			CreatedAt: now, UpdatedAt: now,
+		}
+		hiddenRun := memorystore.IngestionRun{
+			RunID: "hybrid-staging-run", Status: memorystore.StatusStaging, Active: true,
+			SourceHash: "hidden-source", ExtractorID: "fixture", ExtractorVer: "v1",
+			SchemaVersion: "s1", CreatedAt: now, UpdatedAt: now,
+		}
+		if _, err = db.Collection("ingestion_runs").InsertMany(ctx, []any{committedRun, hiddenRun}); err != nil {
+			t.Fatalf("seed hybrid runs: %v", err)
+		}
+		if _, err = db.Collection("run_node_links").InsertMany(ctx, []any{
+			memorystore.RunNodeLink{
+				RunID: committedRun.RunID, NodeID: committedNode.ID, StableID: committedNode.StableID,
+				NodeVersion: "v1", EvidenceSpans: []string{"[0:6]"}, AttemptToken: "committed", CreatedAt: now,
+			},
+			memorystore.RunNodeLink{
+				RunID: hiddenRun.RunID, NodeID: hiddenNode.ID, StableID: hiddenNode.StableID,
+				NodeVersion: "v1", AttemptToken: "staging", CreatedAt: now,
+			},
+		}); err != nil {
+			t.Fatalf("seed hybrid links: %v", err)
+		}
+
+		projector := rag.NewProjector(db, runtime)
+		if err = projector.ProjectCommittedRun(ctx, committedRun.RunID); err != nil {
+			t.Fatalf("project committed hybrid run: %v", err)
+		}
+		if err = projector.ProjectCommittedRun(ctx, hiddenRun.RunID); !errors.Is(err, rag.ErrRunNotCommitted) {
+			t.Fatalf("staging hybrid projection must fail closed, got %v", err)
+		}
+		metadata, err := projector.Metadata(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		embeddingCount, err := db.Collection(rag.EmbeddingsCollection).CountDocuments(
+			ctx,
+			bson.M{"generation": metadata.ActiveGeneration},
+		)
+		if err != nil || embeddingCount != 1 {
+			t.Fatalf("expected exactly one committed embedding, count=%d err=%v", embeddingCount, err)
+		}
+
+		engine := rag.NewEngine(db, rag.Config{
+			PreferredSchemaVersion: "s1",
+			EmbeddingRuntime:       runtime,
+		})
+		lexical, err := engine.Search(ctx, rag.SearchRequest{
+			Query: "credential authorization", TopK: 5, ContextBytes: 1024,
+			RetrievalMode: "lexical",
+		})
+		if err != nil {
+			t.Fatalf("lexical control search: %v", err)
+		}
+		if len(lexical.Results) != 0 || lexical.RetrievalMode != "lexical" {
+			t.Fatalf("lexical control unexpectedly matched paraphrase: %#v", lexical)
+		}
+		hybrid, err := engine.Search(ctx, rag.SearchRequest{
+			Query: "credential authorization", TopK: 5, ContextBytes: 1024,
+			RetrievalMode: "hybrid",
+		})
+		if err != nil {
+			t.Fatalf("hybrid paraphrase search: %v", err)
+		}
+		if hybrid.RetrievalMode != "hybrid" ||
+			hybrid.Embedding == nil ||
+			len(hybrid.Results) != 1 ||
+			hybrid.Results[0].StableID != committedNode.StableID ||
+			hybrid.Results[0].CitationStatus != "available" {
+			t.Fatalf("unexpected hybrid paraphrase result %#v", hybrid)
+		}
+		if strings.Contains(hybrid.Results[0].Snippet, "hidden secret") {
+			t.Fatal("staging content leaked through semantic retrieval")
+		}
+
+		report, err := projector.Rebuild(ctx)
+		if err != nil {
+			t.Fatalf("hybrid rebuild: %v", err)
+		}
+		if report.Counts.ProjectedEmbeddings != 1 ||
+			report.Counts.ProjectedNodes != 1 ||
+			report.Generation == metadata.ActiveGeneration {
+			t.Fatalf("unexpected hybrid rebuild report %#v", report)
+		}
+		rebuiltMetadata, err := projector.Metadata(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rebuiltMetadata.ActiveGeneration != report.Generation ||
+			rebuiltMetadata.Embedding == nil ||
+			!rebuiltMetadata.Embedding.Equal(identity) {
+			t.Fatalf("hybrid generation activation metadata mismatch %#v", rebuiltMetadata)
+		}
+	})
+
+	t.Run("native vector capability is explicit", func(t *testing.T) {
+		db := setupRAGTestDB(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := db.Collection("native_vector_probe").InsertOne(ctx, bson.M{"vector": bson.A{1.0, 0.0}}); err != nil {
+			t.Fatalf("seed native vector probe: %v", err)
+		}
+		command := bson.D{
+			{Key: "createSearchIndexes", Value: "native_vector_probe"},
+			{Key: "indexes", Value: bson.A{bson.M{
+				"name": "native_vector_probe",
+				"type": "vectorSearch",
+				"definition": bson.M{"fields": bson.A{bson.M{
+					"type": "vector", "path": "vector", "numDimensions": 2, "similarity": "cosine",
+				}}},
+			}}},
+		}
+		if err := db.RunCommand(ctx, command).Err(); err != nil {
+			t.Skipf("native MongoDB vector capability unavailable; bounded exact-cosine backend remains active: %v", err)
+		}
+	})
 	source2 := memorystore.Source{
 		ID:         primitive.NewObjectID(),
 		SourceHash: "source-hash-2",

@@ -27,7 +27,7 @@ func (function roundTripFunc) Do(request *http.Request) (*http.Response, error) 
 
 func loadRAGFixture(t *testing.T) fixtureContract {
 	t.Helper()
-	data, err := os.ReadFile("contracts/rag_search_v1_fixture.json")
+	data, err := os.ReadFile("contracts/rag_search_v2_fixture.json")
 	if err != nil {
 		t.Fatalf("read shared RAG fixture: %v", err)
 	}
@@ -37,7 +37,7 @@ func loadRAGFixture(t *testing.T) fixtureContract {
 	if err = decoder.Decode(&fixture); err != nil {
 		t.Fatalf("decode shared RAG fixture: %v", err)
 	}
-	if fixture.ContractVersion != "godbrain-rag-search-v1" {
+	if fixture.ContractVersion != "godbrain-rag-search-v2" {
 		t.Fatalf("unexpected contract version %q", fixture.ContractVersion)
 	}
 	return fixture
@@ -125,6 +125,37 @@ func TestRAGClientRejectsMalformedOversizedAndUnavailable(t *testing.T) {
 				return jsonResponse(string(body)), nil
 			}),
 		},
+		{
+			name: "hybrid missing embedding",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				var response map[string]any
+				if err := json.Unmarshal(validBody, &response); err != nil {
+					t.Fatal(err)
+				}
+				delete(response, "embedding")
+				body, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return jsonResponse(string(body)), nil
+			}),
+		},
+		{
+			name: "hybrid mismatched vector metadata",
+			doer: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				var response map[string]any
+				if err := json.Unmarshal(validBody, &response); err != nil {
+					t.Fatal(err)
+				}
+				embedding := response["embedding"].(map[string]any)
+				embedding["vector_backend"] = "unbounded-vector-backend"
+				body, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return jsonResponse(string(body)), nil
+			}),
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -148,6 +179,15 @@ func TestRAGClientUsesOnlyCanonicalEndpoint(t *testing.T) {
 		}
 		if request.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("unexpected content type %q", request.Header.Get("Content-Type"))
+		}
+		var sent ragSearchRequest
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&sent); err != nil {
+			t.Fatalf("decode canonical request: %v", err)
+		}
+		if sent != fixture.Request || sent.RetrievalMode != "auto" {
+			t.Fatalf("unexpected canonical request: %#v", sent)
 		}
 		return jsonResponse(string(body)), nil
 	})}

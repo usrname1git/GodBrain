@@ -11,9 +11,9 @@ using godbrain_rag::HttpResult;
 using godbrain_rag::json;
 
 static json load_fixture() {
-    std::ifstream input("contracts\\rag_search_v1_fixture.json");
+    std::ifstream input("contracts\\rag_search_v2_fixture.json");
     if (!input) {
-        input.open("..\\..\\contracts\\rag_search_v1_fixture.json");
+        input.open("..\\..\\contracts\\rag_search_v2_fixture.json");
     }
     if (!input) {
         throw std::runtime_error("shared RAG fixture not found");
@@ -29,7 +29,7 @@ static bool expect(bool condition, const char* message) {
 int main() {
     const json fixture = load_fixture();
     if (!expect(
-            fixture.at("contract_version") == "godbrain-rag-search-v1",
+            fixture.at("contract_version") == "godbrain-rag-search-v2",
             "unexpected shared contract version")) {
         return 1;
     }
@@ -157,6 +157,35 @@ int main() {
                 response,
                 error),
             "unknown response field did not fail closed")) {
+        return 1;
+    }
+    json missing_embedding = fixture.at("response");
+    missing_embedding.erase("embedding");
+    Client hybrid_without_embedding([&](const std::string&) {
+        return HttpResult{
+            true, 200, "application/json", missing_embedding.dump()};
+    });
+    if (!expect(
+            !hybrid_without_embedding.search(
+                fixture.at("request").at("query").get<std::string>(),
+                response,
+                error),
+            "hybrid response without embedding metadata did not fail closed")) {
+        return 1;
+    }
+    json mismatched_embedding = fixture.at("response");
+    mismatched_embedding["embedding"]["vector_backend"] =
+        "unbounded-vector-backend";
+    Client hybrid_with_mismatched_embedding([&](const std::string&) {
+        return HttpResult{
+            true, 200, "application/json", mismatched_embedding.dump()};
+    });
+    if (!expect(
+            !hybrid_with_mismatched_embedding.search(
+                fixture.at("request").at("query").get<std::string>(),
+                response,
+                error),
+            "hybrid response with mismatched vector metadata did not fail closed")) {
         return 1;
     }
     for (const char* endpoint : {
