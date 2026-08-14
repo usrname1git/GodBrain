@@ -39,8 +39,24 @@ GodBrain routes every model's tool calls through a native C++ kernel instead of 
 
 - **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only) that any model — Colibri, Gemma, or a commercial API — calls with MCP-style JSON tool calls.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
-- **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database so teachings persist across models and sessions via the Alexandria Protocol.
+- **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
+
+### Golden Record RAG status
+
+Layer 2 is implemented. The production C++ kernel and the experimental Go and
+Rust routers retrieve prompt context only through
+`http://127.0.0.1:8084/v1/search`. They validate the generation and
+`lexical-v1` contract, preserve bounded citations and trust labels, and wrap
+retrieved text as explicitly untrusted reference data. If the service is
+unavailable, unready, malformed, oversized, or returns no usable context, chat
+fails closed before a model is started. Legacy graph enumeration and direct node
+lookup are disabled rather than falling back to the old `nodes` collection.
+
+This layer provides lexical and metadata retrieval only. It does not claim
+embedding, vector, semantic-similarity, or hybrid ranking; those remain future
+Layer 3 work. Privileged `command_type` dispatch remains a separate C++ request
+path protected by the configured bearer token and sovereignty checks.
 
 ### GodBrain-native MCP tools
 

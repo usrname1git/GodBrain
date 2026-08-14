@@ -14,19 +14,24 @@ type fakeAPI struct {
 	searchRequest SearchRequest
 	searchErr     error
 	health        HealthResponse
+	searchCalls   int
 }
 
 func (fake *fakeAPI) Search(_ context.Context, request SearchRequest) (SearchResponse, error) {
+	fake.searchCalls++
 	fake.searchRequest = request
 	return SearchResponse{Query: request.Query, Results: []SearchResult{}}, fake.searchErr
 }
 
 func (fake *fakeAPI) Health(context.Context) (HealthResponse, error) {
+	if fake.health.ReadinessReasons == nil {
+		return HealthResponse{Ready: true}, nil
+	}
 	return fake.health, nil
 }
 
 func TestSearchHandlerStrictJSON(t *testing.T) {
-	api := &fakeAPI{}
+	api := &fakeAPI{health: HealthResponse{Ready: true}}
 	handler := NewHandler(api)
 	testCases := []struct {
 		name string
@@ -50,7 +55,7 @@ func TestSearchHandlerStrictJSON(t *testing.T) {
 }
 
 func TestSearchHandlerBoundsBodyAndContentType(t *testing.T) {
-	api := &fakeAPI{}
+	api := &fakeAPI{health: HealthResponse{Ready: true}}
 	handler := NewHandler(api)
 	oversized := `{"query":"` + strings.Repeat("x", MaxRequestBodyBytes) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(oversized))
@@ -94,5 +99,22 @@ func TestSearchHandlerDoesNotExposeInternalErrors(t *testing.T) {
 	NewHandler(api).ServeHTTP(response, request)
 	if strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("internal error leaked in response: %s", response.Body.String())
+	}
+}
+
+func TestSearchHandlerFailsClosedWhenCorpusIsUnready(t *testing.T) {
+	api := &fakeAPI{health: HealthResponse{
+		Ready:            false,
+		ReadinessReasons: []string{"projected_node_count_mismatch"},
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"alpha"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewHandler(api).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for unready corpus, got %d", response.Code)
+	}
+	if api.searchCalls != 0 {
+		t.Fatal("search ran against an unready corpus")
 	}
 }

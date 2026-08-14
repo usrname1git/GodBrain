@@ -7,10 +7,12 @@ This Go module contains two boundaries:
 - `cmd/rag-service` exposes bounded lexical retrieval of committed Golden
   Records on `127.0.0.1`. It does not execute models, commands, or writes.
 
-The C++ Kernel and the experimental Go/Rust routers still query the legacy
-`nodes` collection. They are not connected to this service. Legacy records are
-reported only as a separate health count and are never mixed into Golden Record
-search results.
+Layer 2 connects the C++ Kernel and the experimental Go/Rust routers only to
+`http://127.0.0.1:8084/v1/search`. They require a ready, schema-valid response,
+preserve bounded citations and trust labels, quote retrieved content as
+untrusted reference data, and fail closed before model invocation on any
+retrieval error or empty result. Legacy records are reported only as a separate
+health count and are never mixed into Golden Record search results.
 
 ## Source-of-truth and projection collections
 
@@ -118,6 +120,9 @@ $env:MONGODB_DB_NAME = "godbrain" # default
 
 `GODBRAIN_RAG_PORT` changes the numeric port only; the service always binds to
 `127.0.0.1` and defaults to `8084`.
+Layer 2 routers intentionally accept only the default port and exact
+`/v1/search` path, so changing the service port makes router retrieval fail
+closed.
 `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` adds a deterministic ranking preference
 for the configured node schema without hiding older schemas.
 
@@ -183,7 +188,8 @@ instructions or privileged commands.
 
 ## Known limitations
 
-This is an indexed lexical and metadata baseline. It has no embeddings, vector
-index, semantic similarity, or hybrid vector ranking. MongoDB text tokenization
-has language-specific limitations even with explicit mixed-language behavior.
-Router integration and vector/hybrid retrieval belong to follow-up changes.
+This is an indexed lexical and metadata baseline. Layer 2 router integration is
+implemented, but there are no embeddings, vector index, semantic similarity, or
+hybrid vector ranking claims. MongoDB text tokenization has language-specific
+limitations even with explicit mixed-language behavior. Vector/hybrid retrieval
+belongs to Layer 3.

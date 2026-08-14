@@ -17,9 +17,10 @@
 ## Architecture that exists in source
 
 - `godbrain_core/cpp_kernel/` is the canonical privileged runtime. `main.cpp`
-  serves the Galaxy UI and HTTP API on loopback port 8083, invokes Colibri and
-  `mongosh`, authenticates privileged `command_type` requests, and delegates
-  recognized commands to `GodBrainKernel`.
+  serves the Galaxy UI and HTTP API on loopback port 8083, retrieves committed
+  Golden Records from the canonical loopback RAG service, invokes Colibri,
+  authenticates privileged `command_type` requests, and delegates recognized
+  commands to `GodBrainKernel`.
 - `godbrain_core/cpp_kernel/kernel.cpp` is the command dispatcher. It requires a
   non-blank `reasoning` string for `execute_godbrain_script` and
   `propose_sovereign_architect_change`; `surgery.cpp` executes their PowerShell.
@@ -27,8 +28,8 @@
   persistence path.
 - Root `main.go` and `godbrain_core/rust_router/` are experimental,
   non-privileged RAG router alternatives on loopback port 8082. They cannot run
-  together because they use the same port. Neither exposes the C++ kernel's
-  `command_type` dispatcher.
+  together because they use the same port. Both use the canonical loopback RAG
+  service and neither exposes the C++ kernel's `command_type` dispatcher.
 - `godbrain_core/cpp_tools/librarian.cpp` distills a transcript with Colibri,
   validates the result, and sends one JSON document over stdin to the Go Memory
   Store. `trigger_librarian.ps1` extracts the newest Copilot session transcript
@@ -39,7 +40,8 @@
 - `godbrain_core/memory_store/cmd/rag-service/` is the canonical committed
   Golden Record retrieval boundary on `127.0.0.1:8084`. It searches the
   generation-addressed `rag_documents` projection and resolves citations through
-  append-only `rag_provenance`. Existing routers are not connected to it yet.
+  append-only `rag_provenance`. The C++, Go, and Rust routers fail closed when
+  this lexical/metadata service is unavailable, unready, or invalid.
 - `LLM/colibri_LLM/` is a substantial nested Colibri engine project. Treat it as
   an interchangeable inference implementation, not as a protocol authority for
   the kernel or Memory Store.
@@ -121,8 +123,9 @@ cargo build --locked
 Pop-Location
 ```
 
-The root Go module and Rust router connect to local MongoDB when started, but
-their build/test commands do not require starting the servers.
+The root Go module and Rust router require the canonical RAG service at
+`http://127.0.0.1:8084/v1/search` when handling chat. Their build/test commands
+do not require starting MongoDB or the RAG server.
 
 ### CMake research components
 
@@ -202,9 +205,8 @@ not be treated as baseline validation.
   fail. Stdout is reserved for exactly one JSON receipt or error envelope; logs
   go to stderr so the C++ caller can parse stdout.
 - `MONGODB_URI` is mandatory for the Memory Store.
-  `MONGODB_DB_NAME` defaults to `godbrain`. The root Go and Rust routers and the
-  C++ `mongosh` path currently use local MongoDB defaults instead; do not claim
-  all components share one connection configuration.
+  `MONGODB_DB_NAME` defaults to `godbrain`. Routers do not read MongoDB directly;
+  they use the canonical fixed loopback RAG endpoint.
 - The source hash is legacy Keccak-256 of the exact raw transcript. Keep this
   compatible across C++ and Go. The Memory Store accepts only
   `trust_tier == "candidate"` from ingestion.
