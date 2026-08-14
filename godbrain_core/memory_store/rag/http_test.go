@@ -194,7 +194,7 @@ func TestSearchHandlerRejectsPartialProjectionInterleaving(t *testing.T) {
 	partialCounts := CorpusCounts{CommittedRuns: 2, CommittedNodes: 2, CommittedLinks: 2, ProjectedNodes: 2, ProjectedLinks: 1}
 	partialHealth := readyHealth("generation-a", partialCounts)
 	partialHealth.Ready = false
-	partialHealth.ReadinessReasons = []string{"projected_link_count_mismatch"}
+	partialHealth.ReadinessReasons = []string{"projected_provenance_count_mismatch"}
 	api := &scriptedAPI{
 		healthResponses: []HealthResponse{
 			readyHealth("generation-a", stableCounts),

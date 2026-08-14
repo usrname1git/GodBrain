@@ -18,7 +18,7 @@ const (
 	maxSearchAttempts   = 2
 )
 
-var ErrSearchSnapshotChanged = errors.New("RAG search snapshot changed during retrieval")
+var ErrSearchSnapshotChanged = errors.New("RAG search snapshot is unstable or unready")
 
 type API interface {
 	Search(context.Context, SearchRequest) (SearchResponse, error)
