@@ -360,7 +360,7 @@ func sanitizeRAGValue(value string) string {
 		case '\t':
 			builder.WriteString(`\t`)
 		default:
-			if char < 0x20 || char == 0x7f {
+			if char < 0x20 || (char >= 0x7f && char <= 0x9f) {
 				fmt.Fprintf(&builder, `\u%04X`, char)
 			} else {
 				builder.WriteRune(char)
