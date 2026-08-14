@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <iomanip>
 #include <initializer_list>
@@ -227,11 +228,65 @@ inline bool validate_response(
     return true;
 }
 
-inline std::string sanitize_value(const std::string& value) {
+inline bool decode_utf8_code_point(
+    const std::string& value,
+    size_t& offset,
+    uint32_t& code_point) {
+    if (offset >= value.size()) return false;
+    const unsigned char first = static_cast<unsigned char>(value[offset]);
+    if (first <= 0x7f) {
+        code_point = first;
+        ++offset;
+        return true;
+    }
+
+    size_t length = 0;
+    uint32_t minimum = 0;
+    if (first >= 0xc2 && first <= 0xdf) {
+        length = 2;
+        minimum = 0x80;
+        code_point = first & 0x1f;
+    } else if (first >= 0xe0 && first <= 0xef) {
+        length = 3;
+        minimum = 0x800;
+        code_point = first & 0x0f;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+        length = 4;
+        minimum = 0x10000;
+        code_point = first & 0x07;
+    } else {
+        return false;
+    }
+    if (value.size() - offset < length) return false;
+    for (size_t index = 1; index < length; ++index) {
+        const unsigned char continuation =
+            static_cast<unsigned char>(value[offset + index]);
+        if ((continuation & 0xc0) != 0x80) return false;
+        code_point = (code_point << 6) | (continuation & 0x3f);
+    }
+    if (code_point < minimum ||
+        code_point > 0x10ffff ||
+        (code_point >= 0xd800 && code_point <= 0xdfff)) {
+        return false;
+    }
+    offset += length;
+    return true;
+}
+
+inline bool sanitize_value(
+    const std::string& value,
+    std::string& sanitized) {
     std::ostringstream output;
     output << std::uppercase << std::hex;
-    for (unsigned char character : value) {
-        switch (character) {
+    size_t offset = 0;
+    while (offset < value.size()) {
+        const size_t start = offset;
+        uint32_t code_point = 0;
+        if (!decode_utf8_code_point(value, offset, code_point)) {
+            sanitized.clear();
+            return false;
+        }
+        switch (code_point) {
             case '\\': output << "\\\\"; break;
             case '[': output << "\\u005B"; break;
             case ']': output << "\\u005D"; break;
@@ -239,22 +294,33 @@ inline std::string sanitize_value(const std::string& value) {
             case '\r': output << "\\r"; break;
             case '\t': output << "\\t"; break;
             default:
-                if (character < 0x20 || character == 0x7f) {
+                if (code_point < 0x20 ||
+                    (code_point >= 0x7f && code_point <= 0x9f)) {
                     output << "\\u" << std::setw(4) << std::setfill('0')
-                           << static_cast<unsigned int>(character);
+                           << code_point;
+                } else if (code_point <= 0x7f) {
+                    output << static_cast<char>(code_point);
                 } else {
-                    output << static_cast<char>(character);
+                    output.write(
+                        value.data() + start,
+                        static_cast<std::streamsize>(offset - start));
                 }
         }
     }
-    return output.str();
+    sanitized = output.str();
+    return true;
 }
 
 inline void append_line(
     std::ostringstream& output,
     const std::string& key,
     const std::string& value) {
-    output << key << '=' << sanitize_value(value) << '\n';
+    std::string sanitized;
+    if (!sanitize_value(value, sanitized)) {
+        output.setstate(std::ios::failbit);
+        return;
+    }
+    output << key << '=' << sanitized << '\n';
 }
 
 inline bool render_context(
@@ -328,6 +394,11 @@ inline bool render_context(
         }
     }
     output << kUntrustedEnd << '\n';
+    if (output.fail()) {
+        error = "canonical RAG context contains invalid UTF-8";
+        context.clear();
+        return false;
+    }
     context = output.str();
     if (context.size() > kMaxRenderedContextBytes) {
         error = "canonical RAG prompt context exceeds the deterministic budget";

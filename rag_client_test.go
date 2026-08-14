@@ -63,6 +63,14 @@ func TestSharedRAGContractAndUntrustedRendering(t *testing.T) {
 	}
 }
 
+func TestSanitizeRAGValueEscapesControlsAndPreservesUnicode(t *testing.T) {
+	input := "Svenska åäö 😀 中文 \u007f \u0085 \u009f"
+	want := `Svenska åäö 😀 中文 \u007F \u0085 \u009F`
+	if got := sanitizeRAGValue(input); got != want {
+		t.Fatalf("unexpected sanitized Unicode\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
 func TestRAGClientRejectsMalformedOversizedAndUnavailable(t *testing.T) {
 	fixture := loadRAGFixture(t)
 	validBody, err := json.Marshal(fixture.Response)

@@ -70,6 +70,29 @@ int main() {
             "retrieved delimiter was not escaped")) {
         return 1;
     }
+    const std::string preserved_unicode =
+        "Svenska "
+        "\xC3\xA5\xC3\xA4\xC3\xB6 "
+        "\xF0\x9F\x98\x80 "
+        "\xE4\xB8\xAD\xE6\x96\x87";
+    std::string sanitized;
+    if (!expect(
+            godbrain_rag::sanitize_value(preserved_unicode, sanitized) &&
+                sanitized == preserved_unicode,
+            "valid Swedish, emoji, or CJK UTF-8 was not preserved") ||
+        !expect(
+            godbrain_rag::sanitize_value(
+                std::string("before") + "\xC2\x85" + "after",
+                sanitized) &&
+                sanitized == "before\\u0085after",
+            "U+0085 was not escaped by code point") ||
+        !expect(
+            !godbrain_rag::sanitize_value(
+                std::string("invalid") + "\xC2" + "x",
+                sanitized),
+            "invalid UTF-8 was accepted by the sanitizer")) {
+        return 1;
+    }
     const json ordinary_chat = {
         {"message", fixture.at("response").at("results").at(0).at("snippet")},
     };
@@ -95,6 +118,19 @@ int main() {
     if (!expect(
             !malformed.search("query", response, error),
             "malformed response did not fail closed")) {
+        return 1;
+    }
+    Client invalid_utf8([&](const std::string&) {
+        std::string body = valid_body;
+        body.insert(body.find("\"snippet\":\"") + 11, 1, '\xC2');
+        return HttpResult{true, 200, "application/json", body};
+    });
+    if (!expect(
+            !invalid_utf8.search(
+                fixture.at("request").at("query").get<std::string>(),
+                response,
+                error),
+            "invalid UTF-8 response did not fail closed")) {
         return 1;
     }
     Client oversized([](const std::string&) {
