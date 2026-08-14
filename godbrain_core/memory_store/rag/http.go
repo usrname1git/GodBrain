@@ -15,7 +15,10 @@ const (
 	MaxRequestBodyBytes = 32 * 1024
 	SearchTimeout       = 5 * time.Second
 	HealthTimeout       = 3 * time.Second
+	maxSearchAttempts   = 2
 )
+
+var ErrSearchSnapshotChanged = errors.New("RAG search snapshot changed during retrieval")
 
 type API interface {
 	Search(context.Context, SearchRequest) (SearchResponse, error)
@@ -59,16 +62,9 @@ func NewHandler(api API) http.Handler {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request")
 			return
 		}
-		healthContext, healthCancel := context.WithTimeout(request.Context(), HealthTimeout)
-		health, healthErr := api.Health(healthContext)
-		healthCancel()
-		if healthErr != nil || !health.Ready {
-			writeAPIError(writer, http.StatusServiceUnavailable, "search_unavailable")
-			return
-		}
 		ctx, cancel := context.WithTimeout(request.Context(), SearchTimeout)
 		defer cancel()
-		response, err := api.Search(ctx, searchRequest)
+		response, err := searchConsistently(ctx, api, searchRequest)
 		if err != nil {
 			switch {
 			case errors.Is(err, ErrQueryRequired),
@@ -86,6 +82,59 @@ func NewHandler(api API) http.Handler {
 		writeJSON(writer, http.StatusOK, response)
 	})
 	return mux
+}
+
+func searchConsistently(ctx context.Context, api API, request SearchRequest) (SearchResponse, error) {
+	for attempt := 0; attempt < maxSearchAttempts; attempt++ {
+		before, err := api.Health(ctx)
+		if err != nil || !before.Ready {
+			if err != nil {
+				return SearchResponse{}, err
+			}
+			return SearchResponse{}, ErrSearchSnapshotChanged
+		}
+		response, err := api.Search(ctx, request)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		after, err := api.Health(ctx)
+		if err != nil {
+			return SearchResponse{}, err
+		}
+		if sameSearchSnapshot(before, after, response) {
+			return response, nil
+		}
+	}
+	return SearchResponse{}, ErrSearchSnapshotChanged
+}
+
+func sameSearchSnapshot(before, after HealthResponse, response SearchResponse) bool {
+	return before.Ready &&
+		after.Ready &&
+		before.Mongo == "ok" &&
+		after.Mongo == "ok" &&
+		before.ActiveGeneration != "" &&
+		before.ActiveGeneration == after.ActiveGeneration &&
+		before.ActiveGeneration == response.Generation &&
+		before.BuildingGeneration == after.BuildingGeneration &&
+		before.ProjectionVersion == after.ProjectionVersion &&
+		before.ProjectionVersion == response.ProjectionVersion &&
+		before.ProjectionSchema == after.ProjectionSchema &&
+		before.IndexerVersion == after.IndexerVersion &&
+		before.Counts == after.Counts &&
+		sameOptionalTime(before.LatestCommittedAt, after.LatestCommittedAt) &&
+		sameOptionalTime(before.LatestProjectedAt, after.LatestProjectedAt)
+}
+
+func sameOptionalTime(left, right *time.Time) bool {
+	switch {
+	case left == nil && right == nil:
+		return true
+	case left == nil || right == nil:
+		return false
+	default:
+		return left.Equal(*right)
+	}
 }
 
 func decodeStrictJSON(writer http.ResponseWriter, request *http.Request, destination any) error {

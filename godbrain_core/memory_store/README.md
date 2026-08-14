@@ -168,6 +168,13 @@ indexed `$text` query. Callers cannot supply MongoDB operators or regular
 expressions. A query with no searchable tokens returns an explicit empty result;
 there is no arbitrary first-N fallback.
 
+Each HTTP search is accepted only when readiness watermarks captured before and
+after the database read agree on the active/building generation, projection
+versions, committed/projected cardinalities, and latest commit/projection
+timestamps, and the response identifies that same generation and version. One
+retry is allowed inside the existing total timeout; an unstable or unready
+projection returns `503` and the attempted results are discarded.
+
 Candidates are reranked deterministically using lexical score, visible
 status/trust, confidence, optional current-schema preference, source timestamp,
 and bounded source/sector diversity. Stable semantic identity is deduplicated

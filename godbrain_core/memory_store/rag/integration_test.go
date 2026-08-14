@@ -2,7 +2,10 @@ package rag_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -18,6 +21,30 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+type hookedSearchAPI struct {
+	engine   *rag.Engine
+	hook     func(context.Context) error
+	once     sync.Once
+	hookErr  error
+	observed rag.SearchResponse
+}
+
+func (api *hookedSearchAPI) Health(ctx context.Context) (rag.HealthResponse, error) {
+	return api.engine.Health(ctx)
+}
+
+func (api *hookedSearchAPI) Search(ctx context.Context, request rag.SearchRequest) (rag.SearchResponse, error) {
+	api.once.Do(func() {
+		api.hookErr = api.hook(ctx)
+	})
+	if api.hookErr != nil {
+		return rag.SearchResponse{}, api.hookErr
+	}
+	response, err := api.engine.Search(ctx, request)
+	api.observed = response
+	return response, err
+}
 
 func setupRAGTestDB(t *testing.T) *mongo.Database {
 	t.Helper()
@@ -50,6 +77,120 @@ func setupRAGTestDB(t *testing.T) *mongo.Database {
 		}
 	})
 	return db
+}
+
+func TestHTTPSearchRejectsDocumentBeforeProvenanceInterleaving(t *testing.T) {
+	db := setupRAGTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+
+	stableSource := memorystore.Source{
+		ID: primitive.NewObjectID(), SourceHash: "stable-source", SourceType: "session",
+		Language: "en", Content: "stable evidence", CreatedAt: now,
+	}
+	partialSource := memorystore.Source{
+		ID: primitive.NewObjectID(), SourceHash: "partial-source", SourceType: "session",
+		Language: "en", Content: "interleaving evidence", CreatedAt: now,
+	}
+	stableNode := memorystore.KnowledgeNode{
+		ID: primitive.NewObjectID(), StableID: "stable-node", Version: "v1", Kind: "claim",
+		Status: "candidate", Sector: "architecture", Content: "stable lexical context",
+		Confidence: 0.9, EvidenceSpans: []string{"[0:6]"}, SchemaVersion: "s1", CreatedAt: now,
+	}
+	partialNode := memorystore.KnowledgeNode{
+		ID: primitive.NewObjectID(), StableID: "partial-node", Version: "v1", Kind: "claim",
+		Status: "candidate", Sector: "architecture", Content: "interleaving partial context",
+		Confidence: 0.9, EvidenceSpans: []string{"[0:12]"}, SchemaVersion: "s1", CreatedAt: now,
+	}
+	if _, err := db.Collection("sources").InsertMany(ctx, []any{stableSource, partialSource}); err != nil {
+		t.Fatalf("seed sources: %v", err)
+	}
+	if _, err := db.Collection("knowledge_nodes").InsertMany(ctx, []any{stableNode, partialNode}); err != nil {
+		t.Fatalf("seed nodes: %v", err)
+	}
+	stableRun := memorystore.IngestionRun{
+		RunID: "stable-run", Status: memorystore.StatusCommitted, Active: true,
+		SourceHash: stableSource.SourceHash, SourceID: stableSource.ID, ExternalSourceID: "stable-session",
+		ExtractorID: "extractor", ExtractorVer: "v1", SchemaVersion: "s1", CreatedAt: now, UpdatedAt: now,
+	}
+	partialRun := memorystore.IngestionRun{
+		RunID: "partial-run", Status: memorystore.StatusStaging, Active: true,
+		SourceHash: partialSource.SourceHash, SourceID: partialSource.ID, ExternalSourceID: "partial-session",
+		ExtractorID: "extractor", ExtractorVer: "v1", SchemaVersion: "s1", CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err := db.Collection("ingestion_runs").InsertMany(ctx, []any{stableRun, partialRun}); err != nil {
+		t.Fatalf("seed runs: %v", err)
+	}
+	if _, err := db.Collection("run_node_links").InsertMany(ctx, []any{
+		memorystore.RunNodeLink{RunID: stableRun.RunID, NodeID: stableNode.ID, StableID: stableNode.StableID, NodeVersion: "v1", EvidenceSpans: []string{"[0:6]"}, AttemptToken: "stable", CreatedAt: now},
+		memorystore.RunNodeLink{RunID: partialRun.RunID, NodeID: partialNode.ID, StableID: partialNode.StableID, NodeVersion: "v1", EvidenceSpans: []string{"[0:12]"}, AttemptToken: "partial", CreatedAt: now},
+	}); err != nil {
+		t.Fatalf("seed links: %v", err)
+	}
+
+	projector := rag.NewProjector(db)
+	if err := projector.ProjectCommittedRun(ctx, stableRun.RunID); err != nil {
+		t.Fatalf("project stable run: %v", err)
+	}
+	metadata, err := projector.Metadata(ctx)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	engine := rag.NewEngine(db, rag.Config{PreferredSchemaVersion: "s1"})
+	api := &hookedSearchAPI{
+		engine: engine,
+		hook: func(hookCtx context.Context) error {
+			committedAt := now.Add(time.Second)
+			if _, updateErr := db.Collection("ingestion_runs").UpdateOne(
+				hookCtx,
+				bson.M{"run_id": partialRun.RunID, "status": memorystore.StatusStaging},
+				bson.M{"$set": bson.M{"status": memorystore.StatusCommitted, "updated_at": committedAt}},
+			); updateErr != nil {
+				return updateErr
+			}
+			_, insertErr := db.Collection(rag.DocumentsCollection).InsertOne(hookCtx, rag.Document{
+				Generation: metadata.ActiveGeneration, NodeID: partialNode.ID, StableID: partialNode.StableID,
+				NodeVersion: partialNode.Version, Content: partialNode.Content, Kind: partialNode.Kind,
+				Sector: partialNode.Sector, Status: partialNode.Status, Confidence: partialNode.Confidence,
+				SchemaVersion: partialNode.SchemaVersion, EvidenceSpans: partialNode.EvidenceSpans,
+				NodeCreatedAt: partialNode.CreatedAt, ProjectionVersion: rag.ProjectionVersion,
+				ProjectionSchema: rag.ProjectionSchema, IndexerVersion: rag.IndexerVersion, ProjectedAt: committedAt,
+			})
+			return insertErr
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"interleaving"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	rag.NewHandler(api).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for document-before-provenance interleaving, got %d body=%s", response.Code, response.Body.String())
+	}
+	if len(api.observed.Results) != 1 || api.observed.Results[0].CitationStatus != "missing_provenance" {
+		t.Fatalf("test did not force a partial search result: %#v", api.observed.Results)
+	}
+	if strings.Contains(response.Body.String(), partialNode.Content) {
+		t.Fatal("partial context escaped into the HTTP response")
+	}
+
+	if err := projector.ProjectCommittedRun(ctx, partialRun.RunID); err != nil {
+		t.Fatalf("repair partial projection: %v", err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"interleaving"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	rag.NewHandler(engine).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected stable repaired search success, got %d body=%s", response.Code, response.Body.String())
+	}
+	var search rag.SearchResponse
+	if err := json.NewDecoder(response.Body).Decode(&search); err != nil {
+		t.Fatalf("decode repaired search: %v", err)
+	}
+	if len(search.Results) != 1 || search.Results[0].CitationStatus != "available" || len(search.Results[0].Citations) != 1 {
+		t.Fatalf("expected repaired citation-complete result, got %#v", search.Results)
+	}
 }
 
 func TestCommittedProjectionSearchRepairAndRebuild(t *testing.T) {

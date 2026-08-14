@@ -17,6 +17,53 @@ type fakeAPI struct {
 	searchCalls   int
 }
 
+type scriptedAPI struct {
+	healthResponses []HealthResponse
+	searchResponses []SearchResponse
+	healthCalls     int
+	searchCalls     int
+}
+
+func (script *scriptedAPI) Health(context.Context) (HealthResponse, error) {
+	if script.healthCalls >= len(script.healthResponses) {
+		return HealthResponse{}, errors.New("unexpected health call")
+	}
+	response := script.healthResponses[script.healthCalls]
+	script.healthCalls++
+	return response, nil
+}
+
+func (script *scriptedAPI) Search(_ context.Context, _ SearchRequest) (SearchResponse, error) {
+	if script.searchCalls >= len(script.searchResponses) {
+		return SearchResponse{}, errors.New("unexpected search call")
+	}
+	response := script.searchResponses[script.searchCalls]
+	script.searchCalls++
+	return response, nil
+}
+
+func readyHealth(generation string, counts CorpusCounts) HealthResponse {
+	return HealthResponse{
+		Ready:             true,
+		Mongo:             "ok",
+		ActiveGeneration:  generation,
+		ProjectionVersion: ProjectionVersion,
+		ProjectionSchema:  ProjectionSchema,
+		IndexerVersion:    IndexerVersion,
+		Counts:            counts,
+		ReadinessReasons:  []string{},
+	}
+}
+
+func searchRecorder(t *testing.T, api API) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"alpha"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewHandler(api).ServeHTTP(response, request)
+	return response
+}
+
 func (fake *fakeAPI) Search(_ context.Context, request SearchRequest) (SearchResponse, error) {
 	fake.searchCalls++
 	fake.searchRequest = request
@@ -116,5 +163,119 @@ func TestSearchHandlerFailsClosedWhenCorpusIsUnready(t *testing.T) {
 	}
 	if api.searchCalls != 0 {
 		t.Fatal("search ran against an unready corpus")
+	}
+}
+
+func TestSearchHandlerReturnsOnlyStableSnapshot(t *testing.T) {
+	counts := CorpusCounts{CommittedRuns: 1, CommittedNodes: 1, CommittedLinks: 1, ProjectedNodes: 1, ProjectedLinks: 1}
+	api := &scriptedAPI{
+		healthResponses: []HealthResponse{
+			readyHealth("generation-a", counts),
+			readyHealth("generation-a", counts),
+		},
+		searchResponses: []SearchResponse{{
+			Query:             "alpha",
+			Generation:        "generation-a",
+			ProjectionVersion: ProjectionVersion,
+			Results:           []SearchResult{},
+		}},
+	}
+	response := searchRecorder(t, api)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected stable search success, got %d body=%s", response.Code, response.Body.String())
+	}
+	if api.healthCalls != 2 || api.searchCalls != 1 {
+		t.Fatalf("unexpected calls: health=%d search=%d", api.healthCalls, api.searchCalls)
+	}
+}
+
+func TestSearchHandlerRejectsPartialProjectionInterleaving(t *testing.T) {
+	stableCounts := CorpusCounts{CommittedRuns: 1, CommittedNodes: 1, CommittedLinks: 1, ProjectedNodes: 1, ProjectedLinks: 1}
+	partialCounts := CorpusCounts{CommittedRuns: 2, CommittedNodes: 2, CommittedLinks: 2, ProjectedNodes: 2, ProjectedLinks: 1}
+	partialHealth := readyHealth("generation-a", partialCounts)
+	partialHealth.Ready = false
+	partialHealth.ReadinessReasons = []string{"projected_link_count_mismatch"}
+	api := &scriptedAPI{
+		healthResponses: []HealthResponse{
+			readyHealth("generation-a", stableCounts),
+			partialHealth,
+			partialHealth,
+		},
+		searchResponses: []SearchResponse{{
+			Query:             "alpha",
+			Generation:        "generation-a",
+			ProjectionVersion: ProjectionVersion,
+			Results: []SearchResult{{
+				StableID:       "partial-node",
+				Snippet:        "partial projection must not escape",
+				CitationStatus: "missing_provenance",
+			}},
+		}},
+	}
+	response := searchRecorder(t, api)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for partial projection, got %d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "partial projection must not escape") {
+		t.Fatal("partial search result escaped into the HTTP response")
+	}
+	if api.searchCalls != 1 {
+		t.Fatalf("expected the unready retry to stop before search, got %d searches", api.searchCalls)
+	}
+}
+
+func TestSearchHandlerRetriesCompletedProjectionWithoutReturningStaleResult(t *testing.T) {
+	oldCounts := CorpusCounts{CommittedRuns: 1, CommittedNodes: 1, CommittedLinks: 1, ProjectedNodes: 1, ProjectedLinks: 1}
+	newCounts := CorpusCounts{CommittedRuns: 2, CommittedNodes: 2, CommittedLinks: 2, ProjectedNodes: 2, ProjectedLinks: 2}
+	api := &scriptedAPI{
+		healthResponses: []HealthResponse{
+			readyHealth("generation-a", oldCounts),
+			readyHealth("generation-a", newCounts),
+			readyHealth("generation-a", newCounts),
+			readyHealth("generation-a", newCounts),
+		},
+		searchResponses: []SearchResponse{
+			{
+				Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion,
+				Results: []SearchResult{{StableID: "stale-result", Snippet: "discard me"}},
+			},
+			{
+				Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion,
+				Results: []SearchResult{{StableID: "fresh-result", Snippet: "return me"}},
+			},
+		},
+	}
+	response := searchRecorder(t, api)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected stable retry success, got %d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "discard me") || !strings.Contains(response.Body.String(), "return me") {
+		t.Fatalf("response did not discard the stale attempt: %s", response.Body.String())
+	}
+	if api.healthCalls != 4 || api.searchCalls != 2 {
+		t.Fatalf("unexpected retry calls: health=%d search=%d", api.healthCalls, api.searchCalls)
+	}
+}
+
+func TestSearchHandlerRejectsRepeatedRebuildActivation(t *testing.T) {
+	counts := CorpusCounts{CommittedRuns: 1, CommittedNodes: 1, CommittedLinks: 1, ProjectedNodes: 1, ProjectedLinks: 1}
+	api := &scriptedAPI{
+		healthResponses: []HealthResponse{
+			readyHealth("generation-a", counts),
+			readyHealth("generation-b", counts),
+			readyHealth("generation-b", counts),
+			readyHealth("generation-c", counts),
+		},
+		searchResponses: []SearchResponse{
+			{Query: "alpha", Generation: "generation-a", ProjectionVersion: ProjectionVersion, Results: []SearchResult{}},
+			{Query: "alpha", Generation: "generation-b", ProjectionVersion: ProjectionVersion, Results: []SearchResult{}},
+		},
+	}
+	response := searchRecorder(t, api)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 after bounded rebuild retries, got %d body=%s", response.Code, response.Body.String())
+	}
+	if api.healthCalls != 4 || api.searchCalls != maxSearchAttempts {
+		t.Fatalf("retry bound changed: health=%d search=%d", api.healthCalls, api.searchCalls)
 	}
 }
