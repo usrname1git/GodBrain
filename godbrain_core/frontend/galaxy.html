@@ -482,6 +482,12 @@
 
             appendChatMessage('user-msg', '[USER]', text);
             chatInput.value = '';
+            const waiting = text.charAt(0) === '/'
+                ? null
+                : appendChatMessage(
+                    'sys-msg',
+                    '[SYS]',
+                    'Asking Colibri (first token on this 16 GB MoE can take a while)...');
 
             fetch('/api/chat', {
                 method: 'POST',
@@ -499,6 +505,7 @@
                 });
             })
             .then(data => {
+                if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
                 if (data && typeof data.response === 'string') {
                     appendChatMessage('sys-msg', '[SYS]', data.response);
                     if (/^\/(observe|verify|reject)\b/i.test(text)) {
@@ -511,6 +518,7 @@
                 }
             })
             .catch(err => {
+                if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
                 appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'Connection lost', 'red');
             });
         }
