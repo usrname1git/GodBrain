@@ -31,13 +31,38 @@
             z-index: 10;
             background: rgba(0, 20, 0, 0.8);
             border: 1px solid #0f0;
-            padding: 15px;
+            padding: 12px;
             border-radius: 5px;
-            width: 350px;
-            height: 400px;
+            width: min(460px, calc(100vw - 40px));
+            max-height: calc(100vh - 40px);
+            height: min(520px, calc(100vh - 40px));
             display: flex;
             flex-direction: column;
+            box-sizing: border-box;
+            overflow: hidden;
             box-shadow: 0 0 10px #0f0;
+        }
+        #rag-chat .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 6px;
+            flex-shrink: 0;
+        }
+        #rag-chat .toolbar button {
+            width: auto;
+            flex: 1 1 auto;
+            min-width: 4.2em;
+            margin: 0;
+            padding: 4px 8px;
+            font-size: 0.75em;
+        }
+        #rag-chat .toolbar input {
+            flex: 1 1 8em;
+            width: auto;
+            min-width: 0;
+            margin: 0;
+            box-sizing: border-box;
         }
         
         h1, h2, h3 { margin-top: 0; text-transform: uppercase; text-shadow: 0 0 5px #0f0; }
@@ -144,21 +169,21 @@
         <div id="chat-history">
             <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /verify last &lt;why&gt; /reject last &lt;why&gt; /brief /last still work in chat.</div>
         </div>
-        <div style="display: flex; gap: 5px; margin-bottom: 5px;">
-            <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
-            <button id="status-btn" style="width: auto; padding: 5px 10px;">Status</button>
-            <button id="last-btn" style="width: auto; padding: 5px 10px;">Last</button>
-            <button id="brief-btn" style="width: auto; padding: 5px 10px;">Brief</button>
-            <button id="focus-last-btn" style="width: auto; padding: 5px 10px;">Focus last</button>
-            <button id="heal-btn" style="width: auto; padding: 5px 10px;">Heal</button>
-            <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
+        <div class="toolbar">
+            <button id="observe-btn">Observe</button>
+            <button id="status-btn">Status</button>
+            <button id="last-btn">Last</button>
+            <button id="brief-btn">Brief</button>
+            <button id="focus-last-btn">Focus last</button>
+            <button id="heal-btn">Heal</button>
+            <button id="vram-btn">VRAM</button>
         </div>
-        <div style="display: flex; gap: 5px; margin-bottom: 5px;">
-            <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)" style="flex: 1;">
-            <button id="verify-last-btn" type="button" style="width: auto; padding: 5px 10px;">Verify last</button>
-            <button id="reject-last-btn" type="button" style="width: auto; padding: 5px 10px;">Reject last</button>
+        <div class="toolbar">
+            <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)">
+            <button id="verify-last-btn" type="button">Verify last</button>
+            <button id="reject-last-btn" type="button">Reject last</button>
         </div>
-        <div style="display: flex; gap: 5px;">
+        <div class="toolbar">
             <input type="text" id="chat-input" placeholder="/remember ...  or ask GodBrain">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
         </div>
