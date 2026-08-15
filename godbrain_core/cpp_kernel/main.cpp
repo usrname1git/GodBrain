@@ -149,6 +149,7 @@ static bool write_authorized(const httplib::Request& req, httplib::Response& res
 }
 
 bool colibri_serve_up();
+static json coli_serve_status();
 
 static json host_record_from_rag() {
     try {
@@ -184,9 +185,11 @@ static json kernel_status_body() {
             tailscale["bound"] = true;
         }
     }
+    const json coli = coli_serve_status();
     return {
         {"kernel", true},
-        {"coli_serve", colibri_serve_up()},
+        {"coli_serve", coli.value("up", false)},
+        {"coli", coli},
         {"writes_need_token", !g_api_token.empty()},
         {"vram", telemetry::plan_colibri_vram()},
         {"rag", rag_health},
@@ -268,6 +271,34 @@ bool colibri_serve_up() {
     client.set_follow_location(false);
     const auto response = client.Get("/health");
     return response && response->status == 200;
+}
+
+static json coli_serve_status() {
+    json result = {
+        {"up", false},
+        {"busy", false},
+        {"active", 0},
+        {"queued", 0},
+        {"completed", 0},
+    };
+    httplib::Client client(kColibriServeHost, kColibriServePort);
+    client.set_connection_timeout(0, 200000);
+    client.set_read_timeout(1, 0);
+    client.set_follow_location(false);
+    const auto response = client.Get("/health");
+    if (!response || response->status != 200) return result;
+    result["up"] = true;
+    try {
+        const json body = json::parse(response->body);
+        const json scheduler = body.value("scheduler", json::object());
+        const int active = scheduler.value("active", 0);
+        result["busy"] = active > 0;
+        result["active"] = active;
+        result["queued"] = scheduler.value("queued", 0);
+        result["completed"] = scheduler.value("completed", 0);
+    } catch (const json::exception&) {
+    }
+    return result;
 }
 
 std::string run_colibri_serve(const std::string& system, const std::string& user) {
@@ -638,7 +669,14 @@ int main() {
                       << host.value("total_physical_ram_gb", 0) << " GB / "
                       << host.value("logical_processors", 0) << " threads\n"
                       << "host_record=" << rec.value("status", "none") << "\n"
-                      << "coli=" << (st.value("coli_serve", false) ? "serve" : "down")
+                      << "coli="
+                      << [&]() {
+                             const json coli = st.value("coli", json::object());
+                             if (!coli.value("up", st.value("coli_serve", false))) {
+                                 return "down";
+                             }
+                             return coli.value("busy", false) ? "busy" : "serve";
+                         }()
                       << " rag=" << (rag.value("ready", false) ? "ready" : "down")
                       << " writes="
                       << (st.value("writes_need_token", false) ? "need bearer"

@@ -591,7 +591,9 @@
             writesNeedToken = !!status.writes_need_token;
             const ragReady = status.rag && status.rag.ready;
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
-                ' | coli ' + (status.coli_serve ? 'serve' : 'cold') +
+                ' | coli ' + ((status.coli && status.coli.busy)
+                    ? 'busy'
+                    : (status.coli_serve ? 'serve' : 'cold')) +
                 ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
             if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
