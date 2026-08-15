@@ -134,11 +134,43 @@ $coli = Join-Path $coliDir "coli"
 if (-not (Test-Path -LiteralPath $coli)) {
     $coli = Join-Path $coliDir "coli.exe"
 }
+
+# Host pin for Heal/Watch/logon. Env wins for one-shot tests; otherwise the
+# last Switch/Start path in logs/coli-model.txt. Never default back to glm52
+# after a successful switch just because the session env was empty.
+$persistModel = Join-Path $logDir "coli-model.txt"
+function Get-PersistedModel {
+    if (-not (Test-Path -LiteralPath $persistModel)) { return $null }
+    $line = (Get-Content -LiteralPath $persistModel -TotalCount 1 -ErrorAction SilentlyContinue)
+    if ($line) { $line = $line.Trim() }
+    if ($line -and (Test-Path -LiteralPath $line)) { return $line }
+    return $null
+}
+function Set-PersistedModel([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $tmp = $persistModel + ".tmp"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($tmp, $Path.Trim() + [Environment]::NewLine, $utf8)
+    Move-Item -LiteralPath $tmp -Destination $persistModel -Force
+}
+function Test-ColiServeProcess {
+    $hit = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'coli["'']? serve' }
+    return [bool]$hit
+}
+
 $model = $env:GODBRAIN_SNAPSHOT_PATH
 if (-not $model) { $model = $env:COLI_MODEL }
+if (-not $model) { $model = Get-PersistedModel }
 if (-not $model) { $model = "C:\nvme\glm52" }
+Write-Log "coli model $model"
+if (Test-Path -LiteralPath $model) {
+    Set-PersistedModel $model
+}
 if (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip coli serve (:8000 already listening)"
+} elseif (Test-ColiServeProcess) {
+    Write-Log "skip coli serve (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
     $pythonCmd = Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     $python = if ($pythonCmd) { $pythonCmd.Source } else { $null }
