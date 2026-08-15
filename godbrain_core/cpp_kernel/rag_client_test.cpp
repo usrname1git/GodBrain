@@ -199,6 +199,107 @@ int main() {
             return 1;
         }
     }
+
+    const json graph_body = {
+        {"generation", "gen-1"},
+        {"projection_version", "hybrid-v1"},
+        {"projection_schema", "rag-document-v2"},
+        {"count", 1},
+        {"truncated", false},
+        {"links_truncated", false},
+        {"nodes",
+         json::array(
+             {json{
+                 {"node_id", "0123456789abcdef01234567"},
+                 {"stable_id", "claim:auth"},
+                 {"kind", "claim"},
+                 {"sector", "security"},
+                 {"status", "candidate"},
+                 {"confidence", 0.9},
+                 {"label", "Bearer authentication"}}})},
+        {"links",
+         json::array({json{
+             {"source", "0123456789abcdef01234567"},
+             {"target", "0123456789abcdef01234568"},
+             {"kind", "same_source"}}})}};
+    Client graph_client(
+        [](const std::string&) { return HttpResult{}; },
+        [&](const std::string& path) {
+            if (path.find("/v1/graph?limit=") != 0) return HttpResult{};
+            return HttpResult{true, 200, "application/json", graph_body.dump()};
+        });
+    json graph;
+    if (!expect(
+            graph_client.graph(250, graph, error),
+            "valid graph response was rejected")) {
+        return 1;
+    }
+    const json mapped = godbrain_rag::galaxy_graph(graph);
+    if (!expect(
+            mapped.at("nodes").at(0).at("group") == "security" &&
+                mapped.at("nodes").at(0).at("id") == "0123456789abcdef01234567" &&
+                mapped.at("links").size() == 1 &&
+                mapped.at("links").at(0).at("kind") == "same_source",
+            "graph was not mapped to the Galaxy contract")) {
+        return 1;
+    }
+    if (!expect(
+            !graph_client.graph(501, graph, error) &&
+                error == godbrain_rag::kErrGraphLimit,
+            "oversized graph limit was accepted")) {
+        return 1;
+    }
+
+    const json document_body = {
+        {"node_id", "0123456789abcdef01234567"},
+        {"stable_id", "claim:auth"},
+        {"node_version", "v1"},
+        {"kind", "claim"},
+        {"sector", "security"},
+        {"status", "candidate"},
+        {"confidence", 0.9},
+        {"schema_version", "claim-v1"},
+        {"content", "Bearer authentication protects privileged actions."},
+        {"label", "Bearer authentication protects privileged actions."}};
+    Client document_client(
+        [](const std::string&) { return HttpResult{}; },
+        [&](const std::string& path) {
+            if (path.find("/v1/document?id=") != 0) return HttpResult{};
+            if (path.find("missing") != std::string::npos) {
+                return HttpResult{
+                    true, 404, "application/json",
+                    "{\"error\":\"document not found\"}"};
+            }
+            return HttpResult{true, 200, "application/json", document_body.dump()};
+        });
+    json document;
+    if (!expect(
+            document_client.document("claim:auth", document, error),
+            "valid document response was rejected")) {
+        return 1;
+    }
+    const json node = godbrain_rag::galaxy_node(document);
+    if (!expect(
+            node.at("title") ==
+                    "Bearer authentication protects privileged actions." &&
+                node.at("type") == "claim" &&
+                node.at("tags").size() == 2,
+            "document was not mapped to the Galaxy node contract")) {
+        return 1;
+    }
+    if (!expect(
+            !document_client.document("missing", document, error) &&
+                error == godbrain_rag::kErrDocumentNotFound,
+            "missing document did not fail closed")) {
+        return 1;
+    }
+    if (!expect(
+            !document_client.document("", document, error) &&
+                error == godbrain_rag::kErrDocumentIDRequired,
+            "empty document id was accepted")) {
+        return 1;
+    }
+
     std::cout << "C++ canonical RAG contract tests passed." << std::endl;
     return 0;
 }

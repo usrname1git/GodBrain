@@ -85,3 +85,31 @@ type ErrorEnvelope struct {
 	Error   string `json:"error"`
 	Details string `json:"details,omitempty"`
 }
+
+const (
+	JudgmentCommand   = "set_status"
+	StatusCandidate   = "candidate"
+	StatusVerified    = "verified"
+	StatusRejected    = "rejected"
+	MaxJudgmentReason = 2048
+	MinJudgmentReason = 4
+)
+
+// StatusJudgment is an operator verdict on an existing knowledge node.
+// Content stays immutable; only status may change.
+type StatusJudgment struct {
+	Command   string `json:"command"`
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	Reasoning string `json:"reasoning"`
+}
+
+// JudgmentReceipt is written to stdout after a status change.
+type JudgmentReceipt struct {
+	NodeID    string    `json:"node_id"`
+	StableID  string    `json:"stable_id"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}

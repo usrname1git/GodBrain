@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <string>
 
 #pragma comment(lib, "pdh.lib")
 
@@ -40,6 +41,30 @@ namespace telemetry {
             {"system_ram_percent", mem_percent},
             {"ram_available_gb", ram_available_gb},
             {"cpu_percent", cpu_percent}
+        };
+    }
+
+    json get_host_inventory() {
+        char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
+        DWORD name_size = MAX_COMPUTERNAME_LENGTH + 1;
+        if (GetComputerNameA(name, &name_size) == 0) {
+            name[0] = '?';
+            name[1] = '\0';
+        }
+
+        MEMORYSTATUSEX memory{};
+        memory.dwLength = sizeof(memory);
+        GlobalMemoryStatusEx(&memory);
+        const int total_ram_gb = static_cast<int>(
+            memory.ullTotalPhys / (1024ull * 1024ull * 1024ull));
+
+        SYSTEM_INFO system{};
+        GetSystemInfo(&system);
+
+        return {
+            {"computer_name", std::string(name)},
+            {"total_physical_ram_gb", total_ram_gb},
+            {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
         };
     }
 }

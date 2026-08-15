@@ -54,6 +54,31 @@ func (p *Projector) Metadata(ctx context.Context) (Metadata, error) {
 	return metadata, err
 }
 
+func (p *Projector) SyncNodeStatus(ctx context.Context, nodeID primitive.ObjectID, status string) error {
+	metadata, err := p.Metadata(ctx)
+	if errors.Is(err, ErrProjectionMetadataMissing) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	generations := make([]string, 0, 2)
+	if metadata.ActiveGeneration != "" {
+		generations = append(generations, metadata.ActiveGeneration)
+	}
+	if metadata.BuildingGeneration != "" {
+		generations = append(generations, metadata.BuildingGeneration)
+	}
+	if len(generations) == 0 {
+		return nil
+	}
+	_, err = p.db.Collection(DocumentsCollection).UpdateMany(ctx, bson.M{
+		"node_id":    nodeID,
+		"generation": bson.M{"$in": generations},
+	}, bson.M{"$set": bson.M{"status": status}})
+	return err
+}
+
 func (p *Projector) ProjectCommittedRun(ctx context.Context, runID string) error {
 	run, nodes, err := p.loadCommittedRun(ctx, runID)
 	if err != nil {

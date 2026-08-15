@@ -213,3 +213,71 @@ func jsonResponse(body string) *http.Response {
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
+
+func TestGalaxyGraphMapping(t *testing.T) {
+	graph := ragGraphResponse{
+		Generation:        "gen-1",
+		ProjectionVersion: ragProjectionVersion,
+		ProjectionSchema:  ragProjectionSchema,
+		Count:             1,
+		Links:             []ragGraphLink{},
+		Nodes: []ragGraphNode{{
+			NodeID:     "0123456789abcdef01234567",
+			StableID:   "claim:auth",
+			Kind:       "claim",
+			Sector:     "security",
+			Status:     "candidate",
+			Confidence: 0.5,
+			Label:      "Bearer authentication",
+		}},
+	}
+	if err := validateRAGGraph(graph); err != nil {
+		t.Fatalf("valid graph rejected: %v", err)
+	}
+	view := mapGalaxyGraph(graph)
+	if len(view.Nodes) != 1 || view.Nodes[0].Group != "security" || view.Nodes[0].ID != graph.Nodes[0].NodeID {
+		t.Fatalf("unexpected galaxy mapping %#v", view)
+	}
+	if view.Links == nil {
+		t.Fatal("galaxy links must be an empty array, not null")
+	}
+}
+
+func TestGalaxyDocumentClient(t *testing.T) {
+	body := `{
+		"node_id":"0123456789abcdef01234567",
+		"stable_id":"claim:auth",
+		"node_version":"v1",
+		"kind":"claim",
+		"sector":"security",
+		"status":"candidate",
+		"confidence":0.9,
+		"schema_version":"claim-v1",
+		"content":"Bearer authentication protects privileged actions.",
+		"label":"Bearer authentication protects privileged actions."
+	}`
+	client := &ragClient{http: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/document" {
+			t.Fatalf("unexpected path %s", request.URL.Path)
+		}
+		if request.URL.Query().Get("id") == "missing" {
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":"document not found"}`)),
+			}, nil
+		}
+		return jsonResponse(body), nil
+	})}
+	document, err := client.document(context.Background(), "claim:auth")
+	if err != nil {
+		t.Fatalf("valid document rejected: %v", err)
+	}
+	view := mapGalaxyNode(document)
+	if view.Title == "" || view.Type != "claim" || len(view.Tags) != 2 {
+		t.Fatalf("unexpected galaxy node %#v", view)
+	}
+	if _, err = client.document(context.Background(), "missing"); !errors.Is(err, errRAGDocumentNotFound) {
+		t.Fatalf("missing document error = %v", err)
+	}
+}

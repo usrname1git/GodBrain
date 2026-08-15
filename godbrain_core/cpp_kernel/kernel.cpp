@@ -39,8 +39,12 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = memory::save_thought(payload);
         } else if (command_type == "query_recent_thoughts") {
             result = memory::get_recent(payload.value("limit", 5));
+        } else if (command_type == "set_godbrain_status") {
+            result = memory::set_status(payload);
         } else if (command_type == "get_system_telemetry") {
             result = telemetry::get_current_state();
+        } else if (command_type == "observe_godbrain_host") {
+            result = memory::observe_host();
         } else if (command_type == "propose_sovereign_architect_change") {
             result = surgery::execute_self_command(payload.value("proposal_script", ""));
         } else {

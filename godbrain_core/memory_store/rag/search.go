@@ -516,6 +516,8 @@ func documentFilter(generation string, request SearchRequest) bson.M {
 	}
 	if request.Status != "" {
 		filter["status"] = request.Status
+	} else {
+		filter["status"] = bson.M{"$ne": "rejected"}
 	}
 	if request.MinConfidence != nil {
 		filter["confidence"] = bson.M{"$gte": *request.MinConfidence}

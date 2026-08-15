@@ -42,6 +42,14 @@ func (script *scriptedAPI) Search(_ context.Context, _ SearchRequest) (SearchRes
 	return response, nil
 }
 
+func (script *scriptedAPI) Graph(context.Context, int) (GraphResponse, error) {
+	return GraphResponse{}, errors.New("unexpected graph call")
+}
+
+func (script *scriptedAPI) Document(context.Context, string) (DocumentResponse, error) {
+	return DocumentResponse{}, errors.New("unexpected document call")
+}
+
 func readyHealth(generation string, counts CorpusCounts) HealthResponse {
 	return HealthResponse{
 		Ready:             true,
@@ -80,6 +88,45 @@ func (fake *fakeAPI) Health(context.Context) (HealthResponse, error) {
 		return HealthResponse{Ready: true}, nil
 	}
 	return fake.health, nil
+}
+
+func (fake *fakeAPI) Graph(_ context.Context, limit int) (GraphResponse, error) {
+	if limit > MaxGraphLimit {
+		return GraphResponse{}, ErrInvalidGraphLimit
+	}
+	return GraphResponse{
+		Generation:        "gen-1",
+		ProjectionVersion: ProjectionVersion,
+		ProjectionSchema:  ProjectionSchema,
+		Count:             1,
+		Links:             []GraphLink{},
+		Nodes: []GraphNode{{
+			NodeID:   "0123456789abcdef01234567",
+			StableID: "claim:auth",
+			Kind:     "claim",
+			Sector:   "security",
+			Status:   "candidate",
+			Label:    "Bearer authentication",
+		}},
+	}, nil
+}
+
+func (fake *fakeAPI) Document(_ context.Context, id string) (DocumentResponse, error) {
+	if id == "" {
+		return DocumentResponse{}, ErrDocumentIDRequired
+	}
+	if id == "missing" {
+		return DocumentResponse{}, ErrDocumentNotFound
+	}
+	return DocumentResponse{
+		NodeID:   "0123456789abcdef01234567",
+		StableID: "claim:auth",
+		Kind:     "claim",
+		Sector:   "security",
+		Status:   "candidate",
+		Content:  "Bearer authentication protects privileged actions.",
+		Label:    "Bearer authentication protects privileged actions.",
+	}, nil
 }
 
 func TestSearchHandlerStrictJSON(t *testing.T) {
@@ -345,5 +392,77 @@ func TestSearchHandlerReturnsExplicitSemanticUnavailable(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable ||
 		!strings.Contains(response.Body.String(), "semantic_unavailable") {
 		t.Fatalf("expected explicit semantic unavailable error, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGraphHandlerReturnsBoundedNodes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/graph", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"stable_id":"claim:auth"`) {
+		t.Fatalf("graph response missing node: %s", response.Body.String())
+	}
+}
+
+func TestGraphHandlerRejectsOversizedLimit(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/graph?limit=501", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGraphHandlerRejectsZeroLimit(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/graph?limit=0", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGraphHandlerUnready(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/graph", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{
+		Ready:            false,
+		ReadinessReasons: []string{"projection_lag"},
+	}}).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestDocumentHandlerNotFound(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/document?id=missing", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestDocumentHandlerRequiresID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/document", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestDocumentHandlerReturnsContent(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/document?id=claim:auth", nil)
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"content":"Bearer authentication protects privileged actions."`) {
+		t.Fatalf("document response missing content: %s", response.Body.String())
 	}
 }

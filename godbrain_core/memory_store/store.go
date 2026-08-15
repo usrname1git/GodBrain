@@ -20,9 +20,13 @@ import (
 )
 
 var (
-	ErrSkillOriginNotVerified  = errors.New("skill origin node is not verified")
-	ErrSkillOriginHashMismatch = errors.New("skill origin node hash mismatch")
-	ErrKnowledgeNodeNotFound   = errors.New("knowledge node not found")
+	ErrSkillOriginNotVerified    = errors.New("skill origin node is not verified")
+	ErrSkillOriginHashMismatch   = errors.New("skill origin node hash mismatch")
+	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
+	ErrJudgmentIDRequired        = errors.New("judgment id is required")
+	ErrJudgmentReasoningRequired = errors.New("judgment reasoning is required")
+	ErrInvalidJudgmentStatus     = errors.New("judgment status must be verified or rejected")
+	ErrInvalidStatusTransition   = errors.New("status transition is not allowed")
 )
 
 var forbiddenDocumentPatterns = []*regexp.Regexp{
@@ -800,6 +804,90 @@ func (s *Store) RetrieveCommittedNodes(ctx context.Context, filter bson.M) ([]Kn
 	}
 
 	return nodes, nil
+}
+
+func ValidateStatusJudgment(judgment StatusJudgment) error {
+	if judgment.Command != JudgmentCommand {
+		return errors.New("judgment command must be set_status")
+	}
+	id := strings.TrimSpace(judgment.ID)
+	if id == "" || len(id) > 128 {
+		return ErrJudgmentIDRequired
+	}
+	if judgment.Status != StatusVerified && judgment.Status != StatusRejected {
+		return ErrInvalidJudgmentStatus
+	}
+	reason := strings.Join(strings.Fields(judgment.Reasoning), " ")
+	if len(reason) < MinJudgmentReason || len(judgment.Reasoning) > MaxJudgmentReason {
+		return ErrJudgmentReasoningRequired
+	}
+	return nil
+}
+
+func AllowedStatusTransition(from, to string) bool {
+	if from == to {
+		return true
+	}
+	switch to {
+	case StatusVerified:
+		return from == StatusCandidate
+	case StatusRejected:
+		return from == StatusCandidate || from == StatusVerified
+	default:
+		return false
+	}
+}
+
+// SetNodeStatus changes only the judgment field on an immutable knowledge node.
+func (s *Store) SetNodeStatus(ctx context.Context, id, status, reasoning string) (*KnowledgeNode, string, error) {
+	judgment := StatusJudgment{Command: JudgmentCommand, ID: id, Status: status, Reasoning: reasoning}
+	if err := ValidateStatusJudgment(judgment); err != nil {
+		return nil, "", err
+	}
+	reasoning = strings.Join(strings.Fields(reasoning), " ")
+
+	filter := bson.M{"stable_id": strings.TrimSpace(id)}
+	if objectID, err := primitive.ObjectIDFromHex(strings.TrimSpace(id)); err == nil {
+		filter = bson.M{"_id": objectID}
+	}
+
+	var node KnowledgeNode
+	if err := s.db.Collection("knowledge_nodes").FindOne(ctx, filter).Decode(&node); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, "", ErrKnowledgeNodeNotFound
+		}
+		return nil, "", err
+	}
+	if !AllowedStatusTransition(node.Status, status) {
+		return nil, "", ErrInvalidStatusTransition
+	}
+
+	from := node.Status
+	if from != status {
+		result, err := s.db.Collection("knowledge_nodes").UpdateOne(ctx,
+			bson.M{"_id": node.ID, "status": from},
+			bson.M{"$set": bson.M{"status": status}},
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		if result.MatchedCount != 1 {
+			return nil, "", ErrInvalidStatusTransition
+		}
+		node.Status = status
+	}
+
+	if _, err := s.db.Collection("node_judgments").InsertOne(ctx, bson.M{
+		"node_id":   node.ID,
+		"stable_id": node.StableID,
+		"from":      from,
+		"to":        status,
+		"reasoning": reasoning,
+		"judged_at": time.Now().UTC(),
+	}); err != nil {
+		return nil, from, err
+	}
+	return &node, from, nil
 }
 
 // Ensures that the origin node exists, is verified, and the hash matches exactly.

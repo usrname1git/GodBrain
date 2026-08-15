@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <iomanip>
 #include <initializer_list>
@@ -26,11 +27,21 @@ using json = nlohmann::json;
 
 constexpr const char* kEndpoint = "http://127.0.0.1:8084/v1/search";
 constexpr const char* kPath = "/v1/search";
+constexpr const char* kGraphPath = "/v1/graph";
+constexpr const char* kDocumentPath = "/v1/document";
 constexpr const char* kProjectionVersion = "hybrid-v1";
+constexpr const char* kProjectionSchema = "rag-document-v2";
 constexpr const char* kRetrievalMode = "auto";
 constexpr int kTopK = 3;
 constexpr int kContextBytes = 4096;
+constexpr int kDefaultGraphLimit = 250;
+constexpr int kMaxGraphLimit = 500;
+constexpr int kMaxGraphLinks = 1000;
 constexpr size_t kMaxResponseBytes = 128 * 1024;
+constexpr size_t kMaxDocumentContentBytes = 64 * 1024;
+constexpr const char* kErrGraphLimit = "graph limit is outside the allowed range";
+constexpr const char* kErrDocumentIDRequired = "document id is required";
+constexpr const char* kErrDocumentNotFound = "document not found";
 constexpr size_t kMaxRenderedContextBytes = 64 * 1024;
 constexpr const char* kUntrustedBegin = "[GODBRAIN_RAG_UNTRUSTED_V1_BEGIN]";
 constexpr const char* kUntrustedEnd = "[GODBRAIN_RAG_UNTRUSTED_V1_END]";
@@ -47,6 +58,7 @@ struct HttpResult {
 };
 
 using Transport = std::function<HttpResult(const std::string&)>;
+using GetTransport = std::function<HttpResult(const std::string&)>;
 
 inline bool validate_endpoint(const std::string& endpoint) {
     return endpoint == kEndpoint;
@@ -525,14 +537,18 @@ inline bool render_context(
     return true;
 }
 
-inline HttpResult default_transport(const std::string& request_body) {
-    httplib::Client client("127.0.0.1", 8084);
+inline void configure_loopback_rag(httplib::Client& client) {
     client.set_connection_timeout(0, 500000);
     client.set_read_timeout(2, 0);
     client.set_write_timeout(1, 0);
     client.set_max_timeout(3000);
     client.set_payload_max_length(kMaxResponseBytes);
     client.set_follow_location(false);
+}
+
+inline HttpResult default_transport(const std::string& request_body) {
+    httplib::Client client("127.0.0.1", 8084);
+    configure_loopback_rag(client);
     const httplib::Headers headers = {{"Accept", "application/json"}};
     const auto response =
         client.Post(kPath, headers, request_body, "application/json");
@@ -545,10 +561,213 @@ inline HttpResult default_transport(const std::string& request_body) {
     };
 }
 
+inline HttpResult default_get_transport(const std::string& path) {
+    httplib::Client client("127.0.0.1", 8084);
+    configure_loopback_rag(client);
+    const httplib::Headers headers = {{"Accept", "application/json"}};
+    const auto response = client.Get(path.c_str(), headers);
+    if (!response) return {};
+    return {
+        true,
+        response->status,
+        response->get_header_value("Content-Type"),
+        response->body,
+    };
+}
+
+inline std::string url_encode_query(const std::string& value) {
+    std::string encoded;
+    encoded.reserve(value.size() * 3);
+    for (unsigned char character : value) {
+        if (std::isalnum(character) != 0 || character == '-' || character == '_' ||
+            character == '.' || character == '~' || character == ':') {
+            encoded.push_back(static_cast<char>(character));
+        } else {
+            char buffer[4] = {};
+            std::snprintf(buffer, sizeof(buffer), "%%%02X", character);
+            encoded.append(buffer);
+        }
+    }
+    return encoded;
+}
+
+inline bool json_content_type(std::string content_type) {
+    std::transform(
+        content_type.begin(),
+        content_type.end(),
+        content_type.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    const size_t semicolon = content_type.find(';');
+    if (semicolon != std::string::npos) content_type.resize(semicolon);
+    while (!content_type.empty() &&
+           std::isspace(static_cast<unsigned char>(content_type.back())) != 0) {
+        content_type.pop_back();
+    }
+    return content_type == "application/json";
+}
+
+inline bool decode_json_body(
+    const HttpResult& http,
+    json& response,
+    std::string& error) {
+    if (!json_content_type(http.content_type)) {
+        error = "canonical RAG returned an invalid content type";
+        return false;
+    }
+    if (http.body.empty() || http.body.size() > kMaxResponseBytes) {
+        error = "canonical RAG response is empty or oversized";
+        return false;
+    }
+    try {
+        response = json::parse(http.body);
+    } catch (const json::exception&) {
+        error = "canonical RAG response is malformed";
+        return false;
+    }
+    return true;
+}
+
+inline bool validate_graph_link(const json& link) {
+    if (!has_exact_keys(link, {"source", "target", "kind"})) {
+        return false;
+    }
+    if (!valid_token(link.at("source"), 64) ||
+        !valid_token(link.at("target"), 64) ||
+        !string_is_one_of(link.at("kind"), {"same_source", "same_run"})) {
+        return false;
+    }
+    return link.at("source").get<std::string>() !=
+           link.at("target").get<std::string>();
+}
+
+inline bool validate_graph_node(const json& node) {
+    if (!has_exact_keys(
+            node,
+            {"node_id", "stable_id", "kind", "sector", "status", "confidence",
+             "label"})) {
+        return false;
+    }
+    return valid_token(node.at("node_id"), 64) &&
+           valid_string(node.at("stable_id"), 256, true) &&
+           valid_string(node.at("kind"), 64, true) &&
+           valid_string(node.at("sector"), 128, true) &&
+           valid_string(node.at("status"), 64, true) &&
+           valid_number(node.at("confidence"), 0, 1) &&
+           valid_string(node.at("label"), 256, true);
+}
+
+inline bool validate_graph_response(const json& response, std::string& error) {
+    if (!has_exact_keys(
+            response,
+            {"generation", "projection_version", "projection_schema", "count",
+             "truncated", "links_truncated", "nodes", "links"})) {
+        error = "canonical RAG graph has an invalid top-level schema";
+        return false;
+    }
+    if (!valid_token(response.at("generation"), 128) ||
+        !valid_string(response.at("projection_version"), 64, true) ||
+        response.at("projection_version").get<std::string>() != kProjectionVersion ||
+        !valid_string(response.at("projection_schema"), 64, true) ||
+        response.at("projection_schema").get<std::string>() != kProjectionSchema ||
+        !response.at("count").is_number_integer() ||
+        !response.at("truncated").is_boolean() ||
+        !response.at("links_truncated").is_boolean() ||
+        !response.at("nodes").is_array() ||
+        !response.at("links").is_array()) {
+        error = "canonical RAG graph metadata is invalid";
+        return false;
+    }
+    const json& nodes = response.at("nodes");
+    const json& links = response.at("links");
+    const int count = response.at("count").get<int>();
+    if (count < 0 ||
+        static_cast<size_t>(count) != nodes.size() ||
+        nodes.size() > static_cast<size_t>(kMaxGraphLimit) ||
+        !std::all_of(nodes.begin(), nodes.end(), validate_graph_node)) {
+        error = "canonical RAG graph node bounds or schema are invalid";
+        return false;
+    }
+    if (links.size() > static_cast<size_t>(kMaxGraphLinks) ||
+        !std::all_of(links.begin(), links.end(), validate_graph_link)) {
+        error = "canonical RAG graph link bounds or schema are invalid";
+        return false;
+    }
+    return true;
+}
+
+inline bool validate_document_response(const json& response, std::string& error) {
+    if (!has_exact_keys(
+            response,
+            {"node_id", "stable_id", "node_version", "kind", "sector", "status",
+             "confidence", "schema_version", "content", "label"})) {
+        error = "canonical RAG document has an invalid top-level schema";
+        return false;
+    }
+    if (!valid_token(response.at("node_id"), 64) ||
+        !valid_string(response.at("stable_id"), 256, true) ||
+        !valid_string(response.at("node_version"), 128, true) ||
+        !valid_string(response.at("kind"), 64, true) ||
+        !valid_string(response.at("sector"), 128, true) ||
+        !valid_string(response.at("status"), 64, true) ||
+        !valid_number(response.at("confidence"), 0, 1) ||
+        !valid_string(response.at("schema_version"), 128, true) ||
+        !valid_string(response.at("content"), kMaxDocumentContentBytes, false) ||
+        !valid_string(response.at("label"), 256, true)) {
+        error = "canonical RAG document fields are invalid";
+        return false;
+    }
+    return true;
+}
+
+inline json galaxy_graph(const json& rag_graph) {
+    json nodes = json::array();
+    for (const auto& node : rag_graph.at("nodes")) {
+        const std::string label = node.at("label").get<std::string>();
+        nodes.push_back({
+            {"id", node.at("node_id")},
+            {"label", label},
+            {"title", label},
+            {"group", node.at("sector")},
+            {"type", node.at("kind")},
+            {"val", 1.0 + node.at("confidence").get<double>() * 4.0},
+        });
+    }
+    json links = json::array();
+    for (const auto& link : rag_graph.at("links")) {
+        links.push_back({
+            {"source", link.at("source")},
+            {"target", link.at("target")},
+            {"kind", link.at("kind")},
+        });
+    }
+    return {
+        {"nodes", nodes},
+        {"links", links},
+        {"generation", rag_graph.at("generation")},
+        {"count", rag_graph.at("count")},
+        {"truncated", rag_graph.at("truncated")},
+        {"links_truncated", rag_graph.at("links_truncated")},
+    };
+}
+
+inline json galaxy_node(const json& document) {
+    return {
+        {"title", document.at("label")},
+        {"type", document.at("kind")},
+        {"tags", json::array({document.at("sector"), document.at("status")})},
+        {"content", document.at("content")},
+    };
+}
+
 class Client {
 public:
-    explicit Client(Transport transport = default_transport)
-        : transport_(std::move(transport)) {}
+    explicit Client(
+        Transport transport = default_transport,
+        GetTransport get_transport = default_get_transport)
+        : transport_(std::move(transport)),
+          get_transport_(std::move(get_transport)) {}
 
     bool search(
         const std::string& query,
@@ -608,8 +827,65 @@ public:
         return validate_response(response, query, error);
     }
 
+    bool graph(int limit, json& response, std::string& error) const {
+        if (limit <= 0) limit = kDefaultGraphLimit;
+        if (limit > kMaxGraphLimit) {
+            error = kErrGraphLimit;
+            return false;
+        }
+        const std::string path =
+            std::string(kGraphPath) + "?limit=" + std::to_string(limit);
+        const HttpResult http = get_transport_(path);
+        if (!http.available) {
+            error = "canonical RAG service is unavailable";
+            return false;
+        }
+        if (http.status == 400) {
+            error = kErrGraphLimit;
+            return false;
+        }
+        if (http.status != 200) {
+            error = "canonical RAG graph returned a non-success status";
+            return false;
+        }
+        if (!decode_json_body(http, response, error)) return false;
+        return validate_graph_response(response, error);
+    }
+
+    bool document(
+        const std::string& id,
+        json& response,
+        std::string& error) const {
+        if (id.empty() || id.size() > 128) {
+            error = kErrDocumentIDRequired;
+            return false;
+        }
+        const std::string path =
+            std::string(kDocumentPath) + "?id=" + url_encode_query(id);
+        const HttpResult http = get_transport_(path);
+        if (!http.available) {
+            error = "canonical RAG service is unavailable";
+            return false;
+        }
+        if (http.status == 400) {
+            error = kErrDocumentIDRequired;
+            return false;
+        }
+        if (http.status == 404) {
+            error = kErrDocumentNotFound;
+            return false;
+        }
+        if (http.status != 200) {
+            error = "canonical RAG document returned a non-success status";
+            return false;
+        }
+        if (!decode_json_body(http, response, error)) return false;
+        return validate_document_response(response, error);
+    }
+
 private:
     Transport transport_;
+    GetTransport get_transport_;
 };
 
 }  // namespace godbrain_rag

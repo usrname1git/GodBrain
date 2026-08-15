@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,11 +159,41 @@ func main() {
 	})
 
 	r.GET("/api/graph", func(c *gin.Context) {
-		c.JSON(http.StatusGone, gin.H{"error": "Legacy graph enumeration is disabled; use canonical bounded RAG search."})
+		limit := ragDefaultGraphLimit
+		if raw := c.Query("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errRAGGraphLimit.Error()})
+				return
+			}
+			limit = parsed
+		}
+		graph, err := rag.graph(c.Request.Context(), limit)
+		if err != nil {
+			status := http.StatusServiceUnavailable
+			if errors.Is(err, errRAGGraphLimit) {
+				status = http.StatusBadRequest
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, mapGalaxyGraph(graph))
 	})
 
 	r.GET("/api/node", func(c *gin.Context) {
-		c.JSON(http.StatusGone, gin.H{"error": "Legacy node lookup is disabled; use canonical bounded RAG search."})
+		document, err := rag.document(c.Request.Context(), c.Query("id"))
+		if err != nil {
+			status := http.StatusServiceUnavailable
+			switch {
+			case errors.Is(err, errRAGDocumentNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, errRAGDocumentIDRequired):
+				status = http.StatusBadRequest
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, mapGalaxyNode(document))
 	})
 
 	r.POST("/api/chat", func(c *gin.Context) {

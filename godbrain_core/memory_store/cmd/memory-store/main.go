@@ -128,6 +128,16 @@ func run() error {
 		}
 	}
 
+	var route struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(inputData, &route); err != nil {
+		return failWithEnvelope("Failed to parse JSON payload", err)
+	}
+	if route.Command == memorystore.JudgmentCommand {
+		return runJudgment(ctx, db, inputData)
+	}
+
 	var payload memorystore.DistillationPayload
 	decoder := json.NewDecoder(bytes.NewReader(inputData))
 	decoder.DisallowUnknownFields() // Strict schema matching
@@ -220,6 +230,41 @@ func run() error {
 		return failWithEnvelope("Failed to write receipt to stdout", err)
 	}
 
+	return nil
+}
+
+func runJudgment(ctx context.Context, db *mongo.Database, inputData []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(inputData))
+	decoder.DisallowUnknownFields()
+	var judgment memorystore.StatusJudgment
+	if err := decoder.Decode(&judgment); err != nil {
+		return failWithEnvelope("Failed to parse judgment payload", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return failWithEnvelope("Multiple JSON documents or trailing garbage found in input", nil)
+	}
+	store := memorystore.NewStore(db)
+	node, from, err := store.SetNodeStatus(ctx, judgment.ID, judgment.Status, judgment.Reasoning)
+	if err != nil {
+		return failWithEnvelope("SetNodeStatus failed", err)
+	}
+	if err = rag.NewProjector(db).SyncNodeStatus(ctx, node.ID, node.Status); err != nil {
+		return failWithEnvelope("RAG status sync failed", err)
+	}
+	receipt := memorystore.JudgmentReceipt{
+		NodeID:    node.ID.Hex(),
+		StableID:  node.StableID,
+		From:      from,
+		To:        node.Status,
+		Status:    "judged",
+		Timestamp: time.Now().UTC(),
+	}
+	if from == node.Status {
+		receipt.Status = "idempotent_noop"
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
+		return failWithEnvelope("Failed to write judgment receipt", err)
+	}
 	return nil
 }
 
