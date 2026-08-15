@@ -178,16 +178,20 @@ while (-not (Test-Port "127.0.0.1" 8083)) {
     Start-Sleep -Milliseconds 400
 }
 if (Test-Port "127.0.0.1" 8083) {
-    try {
-        $headers = @{ "Content-Type" = "application/json" }
-        if ($env:GODBRAIN_API_TOKEN) {
-            $headers["Authorization"] = "Bearer $($env:GODBRAIN_API_TOKEN)"
+    if (-not $env:GODBRAIN_API_TOKEN) {
+        Write-Log "skip observe (no GODBRAIN_API_TOKEN in this process)"
+    } else {
+        try {
+            $headers = @{
+                "Content-Type"  = "application/json"
+                "Authorization" = "Bearer $($env:GODBRAIN_API_TOKEN)"
+            }
+            $observe = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/observe" `
+                -Method POST -Headers $headers -Body "{}"
+            Write-Log ("observe {0} stable_id={1}" -f $observe.store_status, $observe.stable_id)
+        } catch {
+            Write-Log "observe failed: $_"
         }
-        $observe = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/observe" `
-            -Method POST -Headers $headers -Body "{}"
-        Write-Log ("observe {0} stable_id={1}" -f $observe.store_status, $observe.stable_id)
-    } catch {
-        Write-Log "observe failed: $_"
     }
 }
 

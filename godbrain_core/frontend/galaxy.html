@@ -149,6 +149,7 @@
             <button id="status-btn" style="width: auto; padding: 5px 10px;">Status</button>
             <button id="last-btn" style="width: auto; padding: 5px 10px;">Last</button>
             <button id="brief-btn" style="width: auto; padding: 5px 10px;">Brief</button>
+            <button id="focus-last-btn" style="width: auto; padding: 5px 10px;">Focus last</button>
             <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
         <div style="display: flex; gap: 5px; margin-bottom: 5px;">
@@ -434,23 +435,28 @@
             }
         }
         
+        function focusGraphNode(query) {
+            if (!graph || !query) return false;
+            const nodes = graph.graphData().nodes || [];
+            const target = nodes.find(n =>
+                n.id === query ||
+                n.stable_id === query ||
+                n.label === query ||
+                n.title === query);
+            if (!target) return false;
+            const distance = 40;
+            const distRatio = 1 + distance / Math.hypot(target.x, target.y, target.z);
+            graph.cameraPosition(
+                { x: target.x * distRatio, y: target.y * distRatio, z: target.z * distRatio },
+                target,
+                3000
+            );
+            return true;
+        }
+
         try {
             document.getElementById('focus-btn').addEventListener('click', () => {
-                const query = document.getElementById('node-search').value;
-                if (!graph) return;
-                const target = graph.graphData().nodes.find(n =>
-                    n.id === query || n.label === query || n.title === query);
-                
-                if (target) {
-                    const distance = 40;
-                    const distRatio = 1 + distance/Math.hypot(target.x, target.y, target.z);
-                    
-                    graph.cameraPosition(
-                        { x: target.x * distRatio, y: target.y * distRatio, z: target.z * distRatio },
-                        target,
-                        3000
-                    );
-                }
+                focusGraphNode(document.getElementById('node-search').value);
             });
         } catch(e) {}
         
@@ -749,6 +755,25 @@
         document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
         document.getElementById('brief-btn').addEventListener('click', () => runSlash('/brief'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
+        document.getElementById('focus-last-btn').addEventListener('click', () => {
+            fetch('/api/last')
+                .then(res => res.json())
+                .then(data => {
+                    const last = data.last_oracle || {};
+                    const id = last.stable_id || '';
+                    if (id && focusGraphNode(id)) return;
+                    if (last.question && focusGraphNode(last.question)) return;
+                    appendChatMessage(
+                        'sys-msg',
+                        '[SYS]',
+                        'Last Oracle turn is not in the current graph projection yet. /recall or wait for RAG.');
+                })
+                .catch(err => {
+                    appendChatMessage(
+                        'sys-msg', '[ERR]',
+                        (err && err.message) || 'Focus last failed', 'red');
+                });
+        });
         function judgeLast(verb) {
             const reason = (document.getElementById('last-reason').value || '').trim();
             runSlash('/' + verb + ' last ' + reason);
@@ -837,6 +862,12 @@
                     'Coli: ' + painted.label +
                         ' done=' + ((status.coli && status.coli.completed) || 0),
                 ];
+                const lastCard = status.last_oracle || {};
+                if (lastCard.question) {
+                    lines.push(
+                        'Last: ' + (lastCard.status || 'candidate') +
+                        (lastCard.stable_id ? (' ' + String(lastCard.stable_id).slice(0, 12)) : ''));
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(
