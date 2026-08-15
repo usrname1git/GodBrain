@@ -94,9 +94,14 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 
 ### Inference boundary: Colibri
 
-Colibri is a child process, not an in-process library. Routers pass the prompt and
-runtime configuration using stdin and/or environment variables, capture stdout
-and stderr, enforce a timeout, and terminate only the child they started.
+Colibri is a child process, not an in-process library. Galaxy chat prefers a
+already-running `coli serve` on `127.0.0.1:8000` (`POST /v1/chat/completions`)
+so the model stays resident in VRAM. If serve is down the kernel still
+cold-spawns `colibri.exe` for one shot — that is the slow 16 GB path.
+
+The Colibri React web UI (Chat/Brain/Profiling) is an engine workshop. It is
+not the GodBrain operator UI and must not be used for RAG, `/observe`, or
+judgment. Keep `coli serve` for inference; keep Galaxy for GodBrain.
 
 The repository contains CPU, CUDA, and Metal-related implementation paths. Which
 model can run is determined by the model snapshot and available hardware; the
@@ -159,7 +164,8 @@ The current dispatcher supports:
 Ordinary Galaxy chat also accepts `/observe`, `/remember`, `/verify`, `/reject`, and
 `/recall` without a bearer token. These are loopback teach/judgment, not
 privileged host execution. `/observe` writes a stable host inventory (computer name, total RAM, logical
-CPU count) as `candidate` and shows a live CPU/RAM sample that is not stored.
+CPU count, fixed volumes with letter/label/total GB) as `candidate`. Live
+CPU/RAM and free disk space are shown and not stored.
 `/remember` writes only `candidate`. `/verify` and
 `/reject` require a short reason (why it works, or why it is junk). Rejected
 nodes stay in source collections but are hidden from default search and the
@@ -184,6 +190,9 @@ does not provide kernel-mode access.
 | `GET` | `/api/test` | None | Liveness response |
 | `GET` | `/api/graph` | None | Bounded Golden Record graph for Galaxy (`rag_documents`, max 500 nodes) |
 | `GET` | `/api/node` | None | Single Golden Record document by `node_id` or `stable_id` |
+| `GET` | `/api/status` | None | Kernel, `coli serve`, VRAM plan, RAG health |
+| `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave) |
+| `POST` | `/api/observe` | Bearer if `GODBRAIN_API_TOKEN` is set | Store host inventory as a candidate |
 | `POST` | `/api/chat` | None for ordinary chat | RAG plus Colibri inference |
 | `POST` | `/api/chat` with `command_type` | Bearer token; reasoning for high-risk commands | Direct privileged kernel dispatch |
 
@@ -233,8 +242,9 @@ sequenceDiagram
     M-->>R: Bounded results
     R-->>K: Schema-valid untrusted context
     K->>K: Build augmented prompt
-    K->>C: Spawn child with prompt/config
-    C-->>K: stdout/stderr
+    K->>C: POST /v1/chat/completions if coli serve is up
+    C-->>K: completion text
+    Note over K,C: Cold-spawns colibri.exe only when :8000 is down
     K->>K: Parse response and reap child
     K-->>U: {"response": "..."}
 ```
@@ -373,9 +383,13 @@ Data never becomes executable merely because it came from a model or database.
 | Variable | Used by | Purpose |
 |---|---|---|
 | `GODBRAIN_API_TOKEN` | C++ Kernel | Bearer token for privileged `command_type` requests |
-| `GODBRAIN_COLIBRI_PATH` | C++/Go/Rust routers and SRE tools | Override the Colibri executable path |
+| `GODBRAIN_COLIBRI_PATH` | C++/Go/Rust routers and SRE tools | Override the Colibri executable path for cold spawn |
+| `GODBRAIN_COLIBRI_MODEL` | C++ Kernel | Model id sent to `coli serve` (default `glm-5.2-colibri`) |
+| `GODBRAIN_COLIBRI_KEY` | C++ Kernel | Bearer token for `coli serve` if `COLI_API_KEY` is set |
 | `GODBRAIN_FRONTEND_DIR` | C++ and Go routers | Override the Galaxy static-file directory |
 | `GODBRAIN_SNAPSHOT_PATH` | Routers and SRE tools | Override the model snapshot directory |
+| `GODBRAIN_CUDA_EXPERT_GB` | C++ Kernel | Override Colibri VRAM expert budget; default is dedicated VRAM minus 4 GB on ≤16 GB cards |
+| `GODBRAIN_COLI_OVERCOMMIT` | C++ Kernel | `1` allows Colibri to spill experts into system RAM (the slow path). Default off |
 | `GODBRAIN_LIBRARIAN_PATH` | `trigger_librarian.ps1` | Override `librarian.exe` |
 | `LLM_RUNNER_PATH` | Native Librarian | Override the Colibri executable used for framed inference |
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
@@ -393,6 +407,18 @@ Secrets must not be committed, logged, inserted into prompts, or stored in graph
 records.
 
 ## Deployment topology
+
+After a Windows reboot, Mongo should come back as its own service. GodBrain
+itself is **not** an SCM service (CUDA/Colibri cannot run as LocalSystem).
+Register a current-user logon task instead:
+
+```powershell
+.\Install-GodBrainLogon.ps1
+```
+
+That runs `Start-GodBrain.ps1` when you sign in and starts whichever of
+`rag-service.exe`, `coli serve`, and `godbrain-kernel.exe` actually exist.
+Missing binaries are skipped and logged under `logs\`.
 
 ### Minimal C++ path
 

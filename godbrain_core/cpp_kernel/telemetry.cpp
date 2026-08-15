@@ -1,15 +1,96 @@
 #include "telemetry.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dxgi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <cwchar>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "pdh.lib")
+#pragma comment(lib, "dxgi.lib")
 
 namespace telemetry {
     static PDH_HQUERY cpuQuery = nullptr;
     static PDH_HCOUNTER cpuTotal = nullptr;
+
+    constexpr size_t kMaxFixedVolumes = 16;
+
+    std::string utf8_from_wide(const std::wstring& raw) {
+        if (raw.empty()) return {};
+        const int needed = WideCharToMultiByte(
+            CP_UTF8, 0, raw.c_str(), static_cast<int>(raw.size()),
+            nullptr, 0, nullptr, nullptr);
+        if (needed <= 0) return {};
+        std::string utf8(static_cast<size_t>(needed), '\0');
+        WideCharToMultiByte(
+            CP_UTF8, 0, raw.c_str(), static_cast<int>(raw.size()),
+            utf8.data(), needed, nullptr, nullptr);
+        return utf8;
+    }
+
+    std::string sanitize_volume_label(const wchar_t* raw) {
+        std::wstring cleaned;
+        for (const wchar_t* cursor = raw; cursor && *cursor != L'\0' &&
+             cleaned.size() < 32; ++cursor) {
+            if (*cursor >= 32 && *cursor != L'=' && *cursor != L'\n' &&
+                *cursor != L'\r') {
+                cleaned.push_back(*cursor);
+            }
+        }
+        return utf8_from_wide(cleaned);
+    }
+
+    void scan_fixed_volumes(json& inventory, json& live) {
+        inventory = json::array();
+        live = json::array();
+        wchar_t drives[512] = {};
+        const DWORD written = GetLogicalDriveStringsW(511, drives);
+        if (written == 0 || written >= 511) return;
+
+        std::vector<std::wstring> roots;
+        for (wchar_t* cursor = drives; *cursor != L'\0';
+             cursor += std::wcslen(cursor) + 1) {
+            roots.emplace_back(cursor);
+        }
+        std::sort(roots.begin(), roots.end());
+
+        for (const auto& root : roots) {
+            if (inventory.size() >= kMaxFixedVolumes) break;
+            if (GetDriveTypeW(root.c_str()) != DRIVE_FIXED) continue;
+
+            ULARGE_INTEGER free_bytes{};
+            ULARGE_INTEGER total_bytes{};
+            if (GetDiskFreeSpaceExW(root.c_str(), &free_bytes, &total_bytes, nullptr) == 0) {
+                continue;
+            }
+
+            wchar_t label[33] = {};
+            GetVolumeInformationW(
+                root.c_str(), label, 33, nullptr, nullptr, nullptr, nullptr, 0);
+
+            const char letter = root.empty() ? '?' : static_cast<char>(root[0]);
+            const int total_gb = static_cast<int>(
+                total_bytes.QuadPart / (1024ull * 1024ull * 1024ull));
+            const double free_gb =
+                static_cast<double>(free_bytes.QuadPart) / (1024.0 * 1024.0 * 1024.0);
+
+            inventory.push_back({
+                {"letter", std::string(1, letter)},
+                {"type", "fixed"},
+                {"label", sanitize_volume_label(label)},
+                {"total_gb", total_gb},
+            });
+            live.push_back({
+                {"letter", std::string(1, letter)},
+                {"free_gb", free_gb},
+            });
+        }
+    }
 
     void init_cpu_monitoring() {
         if (!cpuQuery) {
@@ -36,11 +117,16 @@ namespace telemetry {
         PdhGetFormattedCounterValue(cpuTotal, PDH_FMT_DOUBLE, NULL, &counterVal);
         double cpu_percent = counterVal.doubleValue;
 
+        json volume_inventory = json::array();
+        json volume_live = json::array();
+        scan_fixed_volumes(volume_inventory, volume_live);
+
         return {
             {"status", "Telemetry retrieved"},
             {"system_ram_percent", mem_percent},
             {"ram_available_gb", ram_available_gb},
-            {"cpu_percent", cpu_percent}
+            {"cpu_percent", cpu_percent},
+            {"volume_free_gb", volume_live}
         };
     }
 
@@ -61,10 +147,102 @@ namespace telemetry {
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
 
+        json volumes = json::array();
+        json volume_live = json::array();
+        scan_fixed_volumes(volumes, volume_live);
+
         return {
             {"computer_name", std::string(name)},
             {"total_physical_ram_gb", total_ram_gb},
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
+            {"volumes", volumes},
+        };
+    }
+
+    json get_gpu_memory() {
+        json adapters = json::array();
+        IDXGIFactory* factory = nullptr;
+        if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&factory))) ||
+            factory == nullptr) {
+            return {{"adapters", adapters}, {"dedicated_gb", 0}};
+        }
+
+        int best_gb = 0;
+        std::string best_name;
+        for (UINT index = 0;; ++index) {
+            IDXGIAdapter* adapter = nullptr;
+            if (factory->EnumAdapters(index, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+            if (adapter == nullptr) continue;
+            DXGI_ADAPTER_DESC description{};
+            if (SUCCEEDED(adapter->GetDesc(&description)) &&
+                description.DedicatedVideoMemory > 0) {
+                char name[128] = {};
+                WideCharToMultiByte(
+                    CP_UTF8, 0, description.Description, -1, name, sizeof(name),
+                    nullptr, nullptr);
+                const int dedicated_gb = static_cast<int>(
+                    (description.DedicatedVideoMemory + 512ull * 1024ull * 1024ull) /
+                    (1024ull * 1024ull * 1024ull));
+                adapters.push_back({
+                    {"name", std::string(name)},
+                    {"dedicated_gb", dedicated_gb},
+                });
+                if (dedicated_gb > best_gb &&
+                    std::string(name).find("Microsoft") == std::string::npos) {
+                    best_gb = dedicated_gb;
+                    best_name = name;
+                }
+            }
+            adapter->Release();
+        }
+        factory->Release();
+        return {
+            {"adapters", adapters},
+            {"name", best_name},
+            {"dedicated_gb", best_gb},
+        };
+    }
+
+    json plan_colibri_vram() {
+        const json gpu = get_gpu_memory();
+        int dedicated_gb = gpu.value("dedicated_gb", 0);
+        if (dedicated_gb < 0) dedicated_gb = 0;
+
+        char* override_expert = nullptr;
+        size_t override_len = 0;
+        int expert_gb = 0;
+        bool expert_overridden = false;
+        if (_dupenv_s(&override_expert, &override_len, "GODBRAIN_CUDA_EXPERT_GB") == 0 &&
+            override_expert != nullptr) {
+            expert_gb = std::atoi(override_expert);
+            expert_overridden = expert_gb > 0;
+            std::free(override_expert);
+        }
+
+        // 16 GB cards need ~4 GB for KV, CUDA workspace, and the desktop.
+        // Bigger cards can spare more for experts and still leave a buffer.
+        const int reserve_gb = dedicated_gb <= 16 ? 4 : 6;
+        if (!expert_overridden) {
+            expert_gb = dedicated_gb > reserve_gb ? dedicated_gb - reserve_gb : 2;
+            if (expert_gb < 2) expert_gb = 2;
+        }
+
+        char* overcommit_env = nullptr;
+        size_t overcommit_len = 0;
+        bool overcommit = false;
+        if (_dupenv_s(&overcommit_env, &overcommit_len, "GODBRAIN_COLI_OVERCOMMIT") == 0 &&
+            overcommit_env != nullptr) {
+            overcommit = std::string(overcommit_env) == "1";
+            std::free(overcommit_env);
+        }
+
+        return {
+            {"name", gpu.value("name", "")},
+            {"dedicated_gb", dedicated_gb},
+            {"reserve_gb", reserve_gb},
+            {"expert_gb", expert_gb},
+            {"overcommit", overcommit},
+            {"adapters", gpu.value("adapters", json::array())},
         };
     }
 }

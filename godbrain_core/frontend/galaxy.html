@@ -140,7 +140,11 @@
     <div id="rag-chat">
         <h2>Colibri RAG Uplink</h2>
         <div id="chat-history">
-            <div class="sys-msg">[SYS] /observe stores this PC's inventory as a candidate. /verify &lt;id&gt; &lt;why it is true&gt;. /reject hides junk. /remember /recall also work.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] /observe inventory. /vram shows the 16 GB Colibri plan. /verify /reject /remember /recall as before.</div>
+        </div>
+        <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+            <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
+            <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
         <div style="display: flex; gap: 5px;">
             <input type="text" id="chat-input" placeholder="/remember ...  or ask GodBrain">
@@ -308,7 +312,7 @@
             )).sort();
             if (sectors.length === 0) {
                 container.appendChild(document.createTextNode(
-                    'No sectors in the active Golden Record projection.'
+                    'No Golden Records in this generation. The old macOS/Linux/Rust harvest stays in Mongo collection nodes and is not mixed in. /observe adds this PC as a candidate.'
                 ));
                 return;
             }
@@ -342,7 +346,7 @@
             
             const renderData = { nodes: filteredNodes, links: filteredLinks };
 
-            let stats = 'Nodes: ' + filteredNodes.length + ' | Edges: ' + filteredLinks.length;
+            let stats = 'Golden Records: ' + filteredNodes.length + ' | Edges: ' + filteredLinks.length;
             if (fullData.generation) stats += ' | ' + fullData.generation;
             if (fullData.truncated) stats += ' | truncated';
             if (fullData.links_truncated) stats += ' | links truncated';
@@ -454,6 +458,31 @@
         chatInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMsg();
         });
+
+        function runSlash(command) {
+            chatInput.value = command;
+            sendMsg();
+        }
+        document.getElementById('observe-btn').addEventListener('click', () => runSlash('/observe'));
+        document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
+
+        fetch('/api/status').then(r => r.json()).then(status => {
+            const ragReady = status.rag && status.rag.ready;
+            const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
+                ' | coli ' + (status.coli_serve ? 'serve' : 'cold') +
+                ' | writes ' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
+            const stats = document.getElementById('stats');
+            if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
+                stats.innerText += extra;
+            }
+            const boot = document.getElementById('sys-boot');
+            if (boot && !status.writes_need_token) {
+                boot.appendChild(document.createElement('br'));
+                boot.appendChild(document.createTextNode(
+                    '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
+                ));
+            }
+        }).catch(() => {});
     </script>
 </body>
 </html>
