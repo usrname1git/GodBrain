@@ -181,6 +181,14 @@ if (Test-Port "127.0.0.1" 8000) {
             -Environment @{
                 COLI_CUDA = "1"
                 CUDA_EXPERT_GB = "12"
+                # Auto RAM_GB is ~88% of free at boot. On 48 GB that became a
+                # 32 GB working set, 0.8 GB commit left, and decode hung after
+                # prefill until the kernel 720s cap. Leave room for Windows.
+                RAM_GB = "28"
+                CAP_RAISE = "0"
+                RSS_GUARD_GB = "26"
+                PIN = "C:\nvme\glm52-uncensored\.coli_usage"
+                PIN_GB = "8"
             }
     } else {
         Write-Log "skip coli serve (python not on PATH)"
