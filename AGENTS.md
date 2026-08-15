@@ -28,7 +28,8 @@
   `memory-store.exe`. `set_godbrain_status` is the only way a node becomes
   `verified` or `rejected`. `query_recent_thoughts` reads the active RAG graph.
   Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
-  `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/last` and `GET /api/last`
+  `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
+  and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
   host + coli + last-turn line. The Galaxy node panel and `POST /api/judge` are
   the same judgment path. `/observe` persists only stable host inventory, not

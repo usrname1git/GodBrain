@@ -46,6 +46,7 @@ static std::atomic<DWORD> g_coli_job_started_ms{0};
 struct LastOracleTurn {
     std::string question;
     std::string answer;
+    std::string stable_id;
     DWORD elapsed_ms = 0;
     bool ok = false;
     bool stored = false;
@@ -100,6 +101,7 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
         {"ok", turn.ok},
         {"stored", turn.stored},
         {"complete", turn.complete},
+        {"stable_id", turn.stable_id},
     };
 }
 
@@ -174,6 +176,7 @@ static void load_oracle_turns() {
             turn.ok = item.value("ok", false);
             turn.stored = item.value("stored", false);
             turn.complete = item.value("complete", true);
+            turn.stable_id = item.value("stable_id", "");
             if (turn.question.empty() && turn.answer.empty()) continue;
             g_oracle_turns.push_back(std::move(turn));
         }
@@ -191,31 +194,59 @@ static void load_oracle_turns() {
     }
 }
 
+static std::string oracle_turn_body(
+    const std::string& question, const std::string& answer) {
+    std::string body = "Oracle turn (candidate, not verified)\nQ: " + question +
+                       "\nA: " + answer;
+    if (body.size() > 2000) body.resize(2000);
+    return body;
+}
+
+static void mark_oracle_stored(
+    const std::string& question,
+    const std::string& answer,
+    const std::string& stable_id) {
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend(); ++it) {
+        if (it->question == question && it->answer == answer) {
+            it->stored = true;
+            if (!stable_id.empty()) it->stable_id = stable_id;
+            break;
+        }
+    }
+    persist_oracle_turns_locked();
+}
+
 static void store_oracle_turn_async(
     const std::string& question, const std::string& answer) {
     std::thread([question, answer]() {
-        bool stored = false;
         try {
-            std::string body = "Oracle turn (candidate, not verified)\nQ: " +
-                               question + "\nA: " + answer;
-            if (body.size() > 2000) body.resize(2000);
-            memory::save_thought({{"content", body}, {"sector", "oracle"}});
-            stored = true;
+            const json receipt = memory::save_thought(
+                {{"content", oracle_turn_body(question, answer)},
+                 {"sector", "oracle"}});
+            mark_oracle_stored(question, answer, receipt.value("stable_id", ""));
         } catch (const std::exception& error) {
             std::cerr << "[MEMORY] oracle turn not stored: " << error.what()
                       << std::endl;
         }
-        if (!stored) return;
-        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-        for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend();
-             ++it) {
-            if (it->question == question && it->answer == answer) {
-                it->stored = true;
-                break;
-            }
-        }
-        persist_oracle_turns_locked();
     }).detach();
+}
+
+static std::string ensure_last_oracle_id() {
+    LastOracleTurn turn;
+    {
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        if (g_oracle_turns.empty()) return "";
+        turn = g_oracle_turns.back();
+        if (!turn.stable_id.empty()) return turn.stable_id;
+    }
+    if (!turn.ok || turn.answer.empty()) return "";
+    const json receipt = memory::save_thought(
+        {{"content", oracle_turn_body(turn.question, turn.answer)},
+         {"sector", "oracle"}});
+    const std::string stable_id = receipt.value("stable_id", "");
+    mark_oracle_stored(turn.question, turn.answer, stable_id);
+    return stable_id;
 }
 
 static void note_oracle_partial(
@@ -1275,14 +1306,40 @@ int main() {
             auto handle_judgment = [&](const char* verb, const char* status, const std::string& rest) {
                 const std::string trimmed = trim_view(rest);
                 const size_t split = trimmed.find_first_of(" \t");
-                const std::string id =
+                std::string id =
                     split == std::string::npos ? trimmed : trimmed.substr(0, split);
                 const std::string reasoning =
                     split == std::string::npos ? "" : trim_view(trimmed.substr(split + 1));
+                if (id.size() == 4 &&
+                    (id[0] == 'l' || id[0] == 'L') &&
+                    (id[1] == 'a' || id[1] == 'A') &&
+                    (id[2] == 's' || id[2] == 'S') &&
+                    (id[3] == 't' || id[3] == 'T')) {
+                    try {
+                        id = ensure_last_oracle_id();
+                    } catch (const std::exception& error) {
+                        res.status = 503;
+                        res.set_content(
+                            json({{"response",
+                                   std::string("Could not resolve last Oracle turn: ") +
+                                       error.what()}}).dump(),
+                            "application/json");
+                        return;
+                    }
+                    if (id.empty()) {
+                        res.set_content(
+                            json({{"response",
+                                   "No complete Oracle turn on disk to " +
+                                       std::string(verb) + "."}}).dump(),
+                            "application/json");
+                        return;
+                    }
+                }
                 if (id.empty() || reasoning.size() < 4) {
                     res.set_content(
                         json({{"response",
                                std::string("Usage: /") + verb +
+                                   " last <why>   or   /" + verb +
                                    " <id> <why it works or why it is junk>"}}).dump(),
                         "application/json");
                     return;
