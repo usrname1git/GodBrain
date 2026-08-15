@@ -817,6 +817,27 @@ int main() {
         std::cout << "[MEMORY] Session hydrate skipped: " << error.what()
                   << std::endl;
     }
+    {
+        const json turns = last_oracle_turns_json();
+        int noted = 0;
+        for (const auto& turn : turns) {
+            if (!turn.value("ok", false)) continue;
+            const std::string q = turn.value("question", "");
+            const std::string a = turn.value("answer", "");
+            if (a.empty()) continue;
+            const std::string body = "Q: " + q + " A: " + a;
+            memory::note_session(
+                "oracle-disk:" + q.substr(0, 24),
+                "oracle-disk:" + q.substr(0, 24),
+                body,
+                "candidate");
+            ++noted;
+        }
+        if (noted > 0) {
+            std::cout << "[MEMORY] Session noted " << noted
+                      << " oracle turns from disk" << std::endl;
+        }
+    }
 
     httplib::Server svr;
 
