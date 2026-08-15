@@ -322,7 +322,7 @@ std::string run_colibri_serve(const std::string& system, const std::string& user
     const json body = {
         {"model", model},
         {"stream", false},
-        {"max_tokens", 256},
+        {"max_tokens", 80},
         {"messages",
          json::array(
              {json{{"role", "system"}, {"content", system}},
