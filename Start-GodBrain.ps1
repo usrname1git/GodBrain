@@ -57,20 +57,18 @@ function Start-LoggedProcess {
         "cd /d `"$WorkingDirectory`""
     )
     foreach ($key in $Environment.Keys) {
-        $lines += "set $key=$($Environment[$key])"
+        if ($key -eq "MONGODB_URI" -or $key -eq "GODBRAIN_API_TOKEN") { continue }
+        $lines += "set `"$key=$($Environment[$key])`""
     }
-    if (-not $Environment.ContainsKey("MONGODB_URI") -and $env:MONGODB_URI) {
-        $lines += "set MONGODB_URI=$env:MONGODB_URI"
-    }
-    if (-not $Environment.ContainsKey("GODBRAIN_API_TOKEN") -and $env:GODBRAIN_API_TOKEN) {
-        $lines += "set GODBRAIN_API_TOKEN=$env:GODBRAIN_API_TOKEN"
-    }
+    # Do not persist MONGODB_URI or GODBRAIN_API_TOKEN. The kernel defaults
+    # the URI; the token must come from the user/task environment.
     if ($Arguments) {
         $lines += "`"$FilePath`" $Arguments >> `"$stdout`" 2>> `"$stderr`""
     } else {
         $lines += "`"$FilePath`" >> `"$stdout`" 2>> `"$stderr`""
     }
-    Set-Content -LiteralPath $wrap -Value $lines -Encoding ASCII
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
     # WMI Create is owned by the SCM host, not this console/job. Start-Process
     # children die when the starter window or agent job exits — that is the
     # "kernel window popped and Galaxy died" failure.

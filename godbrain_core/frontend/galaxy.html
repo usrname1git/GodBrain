@@ -184,6 +184,24 @@
         let fullData = { nodes: [], links: [], truncated: false, links_truncated: false, generation: '' };
         let graph = null;
         let openNode = { id: '', stableId: '', status: '' };
+        let writesNeedToken = false;
+
+        function writeHeaders() {
+            const headers = {'Content-Type': 'application/json'};
+            const token = sessionStorage.getItem('godbrain_write_token') || '';
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            return headers;
+        }
+
+        function ensureWriteToken() {
+            if (!writesNeedToken) return true;
+            if (sessionStorage.getItem('godbrain_write_token')) return true;
+            const entered = window.prompt(
+                'GODBRAIN_API_TOKEN is set. Paste it once to Verify/Reject from this page.');
+            if (!entered || !entered.trim()) return false;
+            sessionStorage.setItem('godbrain_write_token', entered.trim());
+            return true;
+        }
 
         function statusColor(status) {
             if (status === 'verified') return 0xffd24a;
@@ -518,13 +536,21 @@
                 result.innerText = 'Say why this is verified (it works) or rejected (junk).';
                 return;
             }
+            if (!ensureWriteToken()) {
+                result.innerText = 'Bearer required. Set GODBRAIN_API_TOKEN in the prompt, or use /verify in chat.';
+                return;
+            }
             result.innerText = 'Judging...';
             fetch('/api/judge', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: writeHeaders(),
                 body: JSON.stringify({id: id, status: status, reasoning: reason})
             })
             .then(res => res.json().catch(() => ({})).then(data => {
+                if (res.status === 401 || res.status === 403) {
+                    sessionStorage.removeItem('godbrain_write_token');
+                    throw new Error((data && data.error) || 'bearer token required for this write');
+                }
                 if (!res.ok) {
                     throw new Error((data && data.error) || ('API returned ' + res.status));
                 }
@@ -550,19 +576,22 @@
         document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
 
         fetch('/api/status').then(r => r.json()).then(status => {
+            writesNeedToken = !!status.writes_need_token;
             const ragReady = status.rag && status.rag.ready;
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
                 ' | coli ' + (status.coli_serve ? 'serve' : 'cold') +
-                ' | writes ' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
+                ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
             if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
                 stats.innerText += extra;
             }
             const boot = document.getElementById('sys-boot');
-            if (boot && !status.writes_need_token) {
+            if (boot) {
                 boot.appendChild(document.createElement('br'));
                 boot.appendChild(document.createTextNode(
-                    '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
+                    writesNeedToken
+                        ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
+                        : '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
                 ));
             }
         }).catch(() => {});

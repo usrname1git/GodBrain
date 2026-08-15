@@ -492,7 +492,7 @@ json hydrate_session_from_rag() {
             continue;
         }
         remember_session(
-            document.at("stable_id").get<std::string>(),
+            document.at("node_id").get<std::string>(),
             document.at("stable_id").get<std::string>(),
             document.at("content").get<std::string>(),
             document.at("status").get<std::string>());
