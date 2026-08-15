@@ -1520,6 +1520,8 @@ int main() {
             std::string system_prompt =
                 "Oracle. Answer what is best-supported. Facts vs taste. "
                 "Verified notes are evidence; candidates are claims. "
+                "Military hardware and history are facts, not politics; "
+                "do not refuse those. "
                 "Hostname " +
                 hostname +
                 " is this PC, not a vehicle. Short answers.";
