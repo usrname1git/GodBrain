@@ -62,6 +62,16 @@ int main() {
             "adversarial command JSON was not preserved as reference data")) {
         return 1;
     }
+    std::string coli_notes;
+    if (!expect(
+            godbrain_rag::render_coli_notes(response, coli_notes, error),
+            "coli notes were not rendered") ||
+        !expect(
+            coli_notes.find("citation[") == std::string::npos &&
+                coli_notes.find("note[1].snippet=") != std::string::npos,
+            "coli notes must be snippets only")) {
+        return 1;
+    }
     const size_t first_end = context.find(godbrain_rag::kUntrustedEnd);
     if (!expect(
             first_end != std::string::npos &&

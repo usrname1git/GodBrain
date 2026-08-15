@@ -23,7 +23,8 @@ namespace memory {
 namespace {
 
 constexpr size_t kMaxThoughtBytes = 32 * 1024;
-constexpr size_t kMaxSessionThoughts = 8;
+constexpr size_t kMaxSessionThoughts = 3;
+constexpr size_t kMaxSessionSnippetBytes = 240;
 constexpr DWORD kStoreTimeoutMs = 35000;
 
 struct SessionThought {
@@ -75,7 +76,11 @@ void remember_session(
         g_session_thoughts.end());
     const std::string trust =
         (status == "verified" || status == "rejected") ? status : "candidate";
-    g_session_thoughts.push_back({source_hash, stable_id, content, trust});
+    std::string snippet = content;
+    if (snippet.size() > kMaxSessionSnippetBytes) {
+        snippet.resize(kMaxSessionSnippetBytes);
+    }
+    g_session_thoughts.push_back({source_hash, stable_id, snippet, trust});
     if (g_session_thoughts.size() > kMaxSessionThoughts) {
         g_session_thoughts.erase(
             g_session_thoughts.begin(),

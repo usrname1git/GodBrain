@@ -106,7 +106,16 @@ if (Test-Port "127.0.0.1" 8084) {
         -WorkingDirectory (Split-Path $rag -Parent)
 }
 
-$coliDir = Join-Path $RepoRoot "LLM\colibri_LLM\c"
+$coliDir = $env:GODBRAIN_COLIBRI_DIR
+if (-not $coliDir) {
+    $sibling = Join-Path (Split-Path $RepoRoot -Parent) "colibri\c"
+    if (Test-Path -LiteralPath (Join-Path $sibling "coli")) {
+        $coliDir = $sibling
+    } else {
+        $coliDir = Join-Path $RepoRoot "LLM\colibri_LLM\c"
+    }
+}
+Write-Log "coli dir $coliDir"
 $coli = Join-Path $coliDir "coli"
 if (-not (Test-Path -LiteralPath $coli)) {
     $coli = Join-Path $coliDir "coli.exe"
@@ -125,7 +134,7 @@ if (Test-Port "127.0.0.1" 8000) {
             -WorkingDirectory $coliDir `
             -Environment @{
                 COLI_CUDA = "1"
-                COLI_GPU = "0"
+                CUDA_EXPERT_GB = "12"
             }
     } else {
         Write-Log "skip coli serve (python not on PATH)"
