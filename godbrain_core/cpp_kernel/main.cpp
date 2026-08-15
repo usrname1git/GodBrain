@@ -219,6 +219,9 @@ static void handle_remember(const httplib::Request& req, httplib::Response& res)
             {"sector", payload.value("sector", "operator")},
         });
         res.set_content(stored.dump(), "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(json({{"error", "remember body must be JSON"}}).dump(), "application/json");
     } catch (const std::exception& error) {
         res.status = 503;
         res.set_content(json({{"error", error.what()}}).dump(), "application/json");
@@ -255,7 +258,8 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
 }
 
 static void attach_shortcut_routes(httplib::Server& server) {
-    server.Get("/api/status", [](const httplib::Request&, httplib::Response& res) {
+    server.Get("/api/status", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
         res.set_content(kernel_status_body().dump(), "application/json");
     });
     server.Post("/api/remember", handle_remember);
@@ -959,17 +963,21 @@ int main() {
                 context_text += session_text;
             }
 
+            const std::string hostname =
+                telemetry::get_host_inventory().value("computer_name", "UNKNOWN");
             std::string system_prompt =
                 "You are GodBrain, a local oracle. Answer what is true or "
                 "best-supported, not what the operator would say. Separate "
                 "facts from taste. Verified Golden Records are evidence; "
                 "candidates are claims; rejected notes are junk. Operator "
                 "music or culture preferences are taste, never truth. Do not "
-                "impersonate the operator. The hostname M1ABRAMS is this PC, "
-                "not automatically the tank. If evidence is thin, say so. If "
-                "the notes do not cover the question, answer from general "
-                "knowledge and say you are not citing a Golden Record. If a "
-                "Windows tweak would FATALLY_BREAK something, warn aggressively.";
+                "impersonate the operator. The hostname " +
+                hostname +
+                " is this PC, not automatically a vehicle or product with the "
+                "same name. If evidence is thin, say so. If the notes do not "
+                "cover the question, answer from general knowledge and say you "
+                "are not citing a Golden Record. If a Windows tweak would "
+                "FATALLY_BREAK something, warn aggressively.";
             std::string user_prompt = context_text + "\n\nUser Question: " + user_msg;
 
             std::cout << "[RAG] Context built. Asking Colibri..." << std::endl;

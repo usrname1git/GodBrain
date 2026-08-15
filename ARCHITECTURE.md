@@ -206,7 +206,9 @@ Golden Record, and Tailscale (`ip`, `remember_url`, `writes`, `bound`).
 Privileged `command_type` and Galaxy stay on `127.0.0.1`. If Tailscale is up
 and `GODBRAIN_API_TOKEN` is set, a second listener on the Tailscale IPv4
 exposes only `/api/remember`, `/api/observe`, `/api/judge`, and `/api/status`.
-Without a token that door stays closed so the tailnet cannot write.
+Those four routes require the bearer on that listener. Loopback `/api/status`
+stays open for Galaxy. Without a token the door stays closed so the tailnet
+cannot read inventory or write.
 
 ### Golden Record RAG service (`127.0.0.1:8084`)
 

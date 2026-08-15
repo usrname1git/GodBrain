@@ -193,9 +193,14 @@ namespace telemetry {
              adapter = adapter->Next) {
             const std::string name = utf8_from_wide(
                 adapter->FriendlyName ? adapter->FriendlyName : L"");
+            const std::string description = utf8_from_wide(
+                adapter->Description ? adapter->Description : L"");
             const bool named =
                 name.find("Tailscale") != std::string::npos ||
-                name.find("tailscale") != std::string::npos;
+                name.find("tailscale") != std::string::npos ||
+                description.find("Tailscale") != std::string::npos ||
+                description.find("tailscale") != std::string::npos;
+            if (!named) continue;
             for (IP_ADAPTER_UNICAST_ADDRESS* address = adapter->FirstUnicastAddress;
                  address != nullptr; address = address->Next) {
                 if (address->Address.lpSockaddr == nullptr ||
@@ -206,7 +211,7 @@ namespace telemetry {
                     address->Address.lpSockaddr);
                 const unsigned long host = ntohl(ipv4->sin_addr.S_un.S_addr);
                 const bool cgnat = (host & 0xFFC00000ul) == 0x64400000ul;
-                if (!named && !cgnat) continue;
+                if (!cgnat) continue;
                 char ip[16] = {};
                 std::snprintf(
                     ip, sizeof(ip), "%lu.%lu.%lu.%lu",
