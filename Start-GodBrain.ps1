@@ -8,6 +8,20 @@ param(
     [int]$MongoWaitSeconds = 30
 )
 
+# Nested powershell -File can leave $PSScriptRoot empty. Never start with
+# an empty root: that is how a "cleanup" path becomes a wipe of cwd.
+if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
+    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    throw "Start-GodBrain: RepoRoot is empty. Pass -RepoRoot explicitly."
+}
+$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+$marker = Join-Path $RepoRoot "Start-GodBrain.ps1"
+if (-not (Test-Path -LiteralPath $marker)) {
+    throw "Start-GodBrain: $RepoRoot is not the GodBrain repo (missing Start-GodBrain.ps1)."
+}
+
 $ErrorActionPreference = "Continue"
 $logDir = Join-Path $RepoRoot "logs"
 if (-not (Test-Path -LiteralPath $logDir)) {
