@@ -146,6 +146,7 @@
         </div>
         <div style="display: flex; gap: 5px; margin-bottom: 5px;">
             <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
+            <button id="status-btn" style="width: auto; padding: 5px 10px;">Status</button>
             <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
         <div style="display: flex; gap: 5px;">
@@ -524,6 +525,7 @@
             sendMsg();
         }
         document.getElementById('observe-btn').addEventListener('click', () => runSlash('/observe'));
+        document.getElementById('status-btn').addEventListener('click', () => runSlash('/status'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
 
         function judgeOpenNode(status) {

@@ -428,10 +428,11 @@ std::string run_colibri(const std::string& system, const std::string& user) {
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
         return run_colibri_serve(system, user);
     }
-    std::cout << "[COLIBRI] Serve is down; cold-spawning the engine (slow on 16 GB)"
+    std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
-    return run_colibri_spawn(
-        system + "\n\n" + user + "\nAnswer:");
+    return "Error: coli serve is down on 127.0.0.1:8000. "
+           "Run schtasks /Run /TN GodBrainLogon and wait until /status shows coli serve. "
+           "Cold-spawn of this snapshot on 16 GB is disabled.";
 }
 
 #pragma comment(lib, "user32.lib")
@@ -623,6 +624,40 @@ int main() {
                 value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
                 return value;
             };
+
+            if (starts_with_ignore_case(user_msg, "/status") &&
+                (user_msg.size() == 7 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[7])) != 0)) {
+                const json st = kernel_status_body();
+                const json host = st.value("host", json::object());
+                const json rec = st.value("host_record", json::object());
+                const json tail = st.value("tailscale", json::object());
+                const json rag = st.value("rag", json::object());
+                std::ostringstream reply;
+                reply << (host.value("computer_name", "?")) << " / "
+                      << host.value("total_physical_ram_gb", 0) << " GB / "
+                      << host.value("logical_processors", 0) << " threads\n"
+                      << "host_record=" << rec.value("status", "none") << "\n"
+                      << "coli=" << (st.value("coli_serve", false) ? "serve" : "down")
+                      << " rag=" << (rag.value("ready", false) ? "ready" : "down")
+                      << " writes="
+                      << (st.value("writes_need_token", false) ? "need bearer"
+                                                              : "open on loopback")
+                      << "\n";
+                if (tail.value("up", false)) {
+                    reply << "tailscale " << tail.value("ip", "") << " "
+                          << tail.value("writes", "") << "\n";
+                } else {
+                    reply << "tailscale down\n";
+                }
+                for (const auto& volume : host.value("volumes", json::array())) {
+                    reply << "  " << volume.value("letter", "?") << ": "
+                          << volume.value("label", "") << " "
+                          << volume.value("total_gb", 0) << " GB\n";
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+                return;
+            }
 
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||

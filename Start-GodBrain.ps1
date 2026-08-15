@@ -125,7 +125,7 @@ if (Test-Port "127.0.0.1" 8000) {
             -WorkingDirectory $coliDir `
             -Environment @{
                 COLI_CUDA = "1"
-                COLI_GPU = "0"
+                CUDA_EXPERT_GB = "12"
             }
     } else {
         Write-Log "skip coli serve (python not on PATH)"
