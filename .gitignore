@@ -1,4 +1,7 @@
 *.exe
+logs/
+godbrain_core/cpp_kernel/last_oracle.json
+godbrain_core/cpp_kernel/last_oracle.json.tmp
 godbrain_core/rust_router/target/
 **/*.pdb
 **/*.rlib

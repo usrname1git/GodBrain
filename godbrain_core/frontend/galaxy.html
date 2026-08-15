@@ -142,11 +142,12 @@
     <div id="rag-chat">
         <h2>Colibri RAG Uplink</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /vram /remember /recall still work in chat.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /last /vram /remember /recall still work in chat.</div>
         </div>
         <div style="display: flex; gap: 5px; margin-bottom: 5px;">
             <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
             <button id="status-btn" style="width: auto; padding: 5px 10px;">Status</button>
+            <button id="last-btn" style="width: auto; padding: 5px 10px;">Last</button>
             <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
         <div style="display: flex; gap: 5px;">
@@ -451,6 +452,131 @@
         const chatInput = document.getElementById('chat-input');
         const chatHistory = document.getElementById('chat-history');
         const sendBtn = document.getElementById('send-btn');
+        let coliBusySince = 0;
+        let lastReplayedKey = '';
+        let coliBusy = false;
+
+        function oracleKey(last) {
+            if (!last) return '';
+            return String(last.question || '') + '\0' + String(last.answer || '');
+        }
+
+        function replayLastOracle(status) {
+            const boot = document.getElementById('sys-boot');
+            if (boot && boot.dataset.replayed) return;
+            const raw = (status && Array.isArray(status.last_oracle_turns) &&
+                status.last_oracle_turns.length)
+                ? status.last_oracle_turns
+                : ((status && status.last_oracle && status.last_oracle.answer)
+                    ? [status.last_oracle]
+                    : []);
+            const slice = raw.filter(function(turn) {
+                return turn && turn.answer;
+            }).slice(-3);
+            if (!slice.length) return;
+            if (boot) boot.dataset.replayed = '1';
+            lastReplayedKey = slice.map(oracleKey).join('\n');
+            slice.forEach(function(turn) {
+                if (turn.question) {
+                    appendChatMessage('user-msg', '[USER]', turn.question);
+                }
+                const prefix = turn.complete === false ? '[PARTIAL]' : '[SYS]';
+                appendChatMessage(
+                    'sys-msg',
+                    prefix,
+                    turn.complete === false
+                        ? ('Interrupted: ' + turn.answer)
+                        : turn.answer);
+            });
+            appendChatMessage(
+                'sys-msg',
+                '[SYS]',
+                'Replayed last ' + slice.length +
+                    ' Oracle turn(s) from disk. Candidate, not verified.');
+        }
+
+        function formatColiStatus(status) {
+            const coli = (status && status.coli) || {};
+            const host = (status && status.host) || {};
+            const rec = (status && status.host_record) || {};
+            const tail = (status && status.tailscale) || {};
+            const rag = (status && status.rag) || {};
+            const busy = !!coli.busy;
+            if (busy) {
+                if (!coliBusySince) coliBusySince = Date.now();
+            } else {
+                coliBusySince = 0;
+            }
+            const elapsed = (typeof coli.elapsed_s === 'number')
+                ? coli.elapsed_s
+                : (coliBusySince ? Math.floor((Date.now() - coliBusySince) / 1000) : null);
+            const lines = [];
+            lines.push(
+                (host.computer_name || '?') + ' / ' +
+                (host.total_physical_ram_gb || '?') + ' GB / ' +
+                (host.logical_processors || '?') + ' threads');
+            lines.push('host_record=' + (rec.status || 'none'));
+            let coliLine;
+            if (!coli.up && !status.coli_serve) {
+                coliLine = 'coli=down';
+            } else if (busy) {
+                coliLine = 'coli=busy' +
+                    (elapsed !== null ? (' ' + elapsed + 's') : '') +
+                    ' — generating, do not ask again';
+            } else {
+                coliLine = 'coli=serve';
+            }
+            coliLine += ' active=' + (coli.active || 0) +
+                ' done=' + (coli.completed || 0) +
+                ' queued=' + (coli.queued || 0) +
+                ' rag=' + (rag.ready ? 'ready' : 'down') +
+                ' writes=' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
+            lines.push(coliLine);
+            if (coli.experts_disk != null) {
+                lines.push(
+                    'experts vram=' + (coli.experts_vram || 0) +
+                    ' ram=' + (coli.experts_ram || 0) +
+                    ' disk=' + coli.experts_disk);
+            }
+            const ramFree = (typeof host.ram_available_gb === 'number')
+                ? host.ram_available_gb
+                : coli.ram_avail_gb;
+            if (typeof ramFree === 'number') {
+                lines.push(
+                    'RAM free ' + ramFree.toFixed(1) + ' GB' +
+                    (ramFree < 4 ? ' — paging, wait' : ''));
+            }
+            const last = (status && status.last_oracle) || {};
+            if (last.answer) {
+                const q = String(last.question || '').slice(0, 80);
+                const a = String(last.answer || '').slice(0, 120);
+                lines.push(
+                    'last ' + Math.round((last.elapsed_ms || 0) / 1000) + 's ' +
+                    (last.complete === false ? 'partial' : (last.ok ? 'ok' : 'fail')) +
+                    (last.stored ? ' stored' : ''));
+                if (q) lines.push('  Q: ' + q);
+                lines.push('  A: ' + a);
+            }
+            if (tail.up) {
+                lines.push('tailscale ' + (tail.ip || '') + ' ' + (tail.writes || ''));
+            } else {
+                lines.push('tailscale down');
+            }
+            const volumes = Array.isArray(host.volumes) ? host.volumes : [];
+            volumes.forEach(volume => {
+                lines.push(
+                    '  ' + (volume.letter || '?') + ': ' +
+                    (volume.label || '') + ' ' +
+                    (volume.total_gb || 0) + ' GB');
+            });
+            return {
+                text: lines.join('\n'),
+                busy: busy,
+                label: busy
+                    ? ('busy' + (elapsed !== null ? (' ' + elapsed + 's') : ''))
+                    : ((coli.up || status.coli_serve) ? 'serve' : 'cold')
+            };
+        }
 
         // Builds a chat message element without ever parsing untrusted text
         // as HTML. Preserves deliberate line breaks by inserting <br>
@@ -482,43 +608,122 @@
 
             appendChatMessage('user-msg', '[USER]', text);
             chatInput.value = '';
-            const waiting = text.charAt(0) === '/'
+            if (text.charAt(0) !== '/' && coliBusy) {
+                appendChatMessage(
+                    'sys-msg',
+                    '[SYS]',
+                    'Colibri is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
+                return;
+            }
+            if (/^\/status\b/i.test(text)) {
+                fetch('/api/status')
+                    .then(res => res.json())
+                    .then(status => {
+                        writesNeedToken = !!status.writes_need_token;
+                        appendChatMessage('sys-msg', '[SYS]', formatColiStatus(status).text);
+                    })
+                    .catch(err => {
+                        appendChatMessage(
+                            'sys-msg', '[ERR]',
+                            (err && err.message) || 'Status failed', 'red');
+                    });
+                return;
+            }
+            function setMessageText(el, prefix, text, color) {
+                while (el.firstChild) el.removeChild(el.firstChild);
+                el.appendChild(document.createTextNode(prefix + ' '));
+                const lines = String(text).split('\n');
+                lines.forEach((line, index) => {
+                    if (index > 0) el.appendChild(document.createElement('br'));
+                    el.appendChild(document.createTextNode(line));
+                });
+                if (color) el.style.color = color;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+
+            const isSlash = text.charAt(0) === '/';
+            const waiting = isSlash
                 ? null
                 : appendChatMessage(
                     'sys-msg',
                     '[SYS]',
-                    'Asking Colibri (one GPU slot; 16 GB MoE can take several minutes)...');
+                    'Prefill then decode. One GPU slot. /status ticks while this runs.');
 
+            const headers = {'Content-Type': 'application/json'};
+            if (!isSlash) headers['Accept'] = 'text/event-stream';
             fetch('/api/chat', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message: text})
+                headers: headers,
+                body: JSON.stringify({message: text, stream: !isSlash})
             })
-            .then(res => {
+            .then(async res => {
+                const ctype = (res.headers.get('content-type') || '').toLowerCase();
+                if (!isSlash && ctype.indexOf('event-stream') !== -1 && res.body) {
+                    const reader = res.body.getReader();
+                    const dec = new TextDecoder();
+                    let buf = '';
+                    let assembled = '';
+                    while (true) {
+                        const chunk = await reader.read();
+                        if (chunk.done) break;
+                        buf += dec.decode(chunk.value, {stream: true});
+                        for (;;) {
+                            const split = buf.indexOf('\n\n');
+                            if (split < 0) break;
+                            const block = buf.slice(0, split);
+                            buf = buf.slice(split + 2);
+                            const dataLine = block.split('\n').find(function(line) {
+                                return line.indexOf('data: ') === 0;
+                            });
+                            if (!dataLine) continue;
+                            let ev;
+                            try { ev = JSON.parse(dataLine.slice(6)); }
+                            catch (e) { continue; }
+                            if (ev.type === 'token' && ev.text) {
+                                assembled += ev.text;
+                                if (waiting) setMessageText(waiting, '[SYS]', assembled);
+                            } else if (ev.type === 'ping' && waiting && !assembled) {
+                                setMessageText(
+                                    waiting, '[SYS]',
+                                    'Still prefilling / paging (' + (ev.elapsed_s || 0) + 's)...');
+                            } else if (ev.type === 'status' && ev.text && waiting && !assembled) {
+                                setMessageText(waiting, '[SYS]', ev.text);
+                            } else if (ev.type === 'done') {
+                                const finalText = ev.response || assembled || 'No response.';
+                                lastReplayedKey = oracleKey({question: text, answer: finalText});
+                                const boot = document.getElementById('sys-boot');
+                                if (boot) boot.dataset.replayed = '1';
+                                if (waiting) setMessageText(waiting, '[SYS]', finalText);
+                            } else if (ev.type === 'error') {
+                                if (waiting) setMessageText(waiting, '[ERR]', ev.text || 'Colibri error', 'red');
+                            }
+                        }
+                    }
+                    return;
+                }
                 return res.json().catch(() => {
                     throw new Error('Server returned invalid JSON (HTTP ' + res.status + ')');
                 }).then(data => {
                     if (!res.ok) {
                         throw new Error((data && data.error) || ('API returned ' + res.status));
                     }
-                    return data;
+                    if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
+                    if (data && typeof data.response === 'string') {
+                        appendChatMessage('sys-msg', '[SYS]', data.response);
+                        if (/^\/(observe|verify|reject)\b/i.test(text)) {
+                            loadGalaxy();
+                        }
+                    } else if (data && typeof data.error === 'string') {
+                        appendChatMessage('sys-msg', '[ERR]', data.error, 'red');
+                    } else {
+                        appendChatMessage('sys-msg', '[ERR]', 'Malformed server response.', 'red');
+                    }
                 });
             })
-            .then(data => {
-                if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
-                if (data && typeof data.response === 'string') {
-                    appendChatMessage('sys-msg', '[SYS]', data.response);
-                    if (/^\/(observe|verify|reject)\b/i.test(text)) {
-                        loadGalaxy();
-                    }
-                } else if (data && typeof data.error === 'string') {
-                    appendChatMessage('sys-msg', '[ERR]', data.error, 'red');
-                } else {
-                    appendChatMessage('sys-msg', '[ERR]', 'Malformed server response.', 'red');
-                }
-            })
             .catch(err => {
-                if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
+                if (waiting && !waiting.textContent) {
+                    if (waiting.parentNode) waiting.parentNode.removeChild(waiting);
+                }
                 appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'Connection lost', 'red');
             });
         }
@@ -534,6 +739,7 @@
         }
         document.getElementById('observe-btn').addEventListener('click', () => runSlash('/observe'));
         document.getElementById('status-btn').addEventListener('click', () => runSlash('/status'));
+        document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
 
         function judgeOpenNode(status) {
@@ -587,17 +793,20 @@
         document.getElementById('verify-btn').addEventListener('click', () => judgeOpenNode('verified'));
         document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
 
-        fetch('/api/status').then(r => r.json()).then(status => {
+        function paintStatus(status) {
             writesNeedToken = !!status.writes_need_token;
+            const painted = formatColiStatus(status);
+            coliBusy = !!painted.busy;
             const ragReady = status.rag && status.rag.ready;
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
-                ' | coli ' + ((status.coli && status.coli.busy)
-                    ? 'busy'
-                    : (status.coli_serve ? 'serve' : 'cold')) +
+                ' | coli ' + painted.label +
                 ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
-            if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
-                stats.innerText += extra;
+            if (stats) {
+                const base = (stats.dataset.baseText || stats.innerText || '')
+                    .replace(/\s*\|\s*RAG\b.*$/, '');
+                stats.dataset.baseText = base;
+                stats.innerText = base + extra;
             }
             const hostCard = document.getElementById('host-card');
             if (hostCard) {
@@ -611,6 +820,8 @@
                         (host.logical_processors || '?') + ' threads',
                     'Record: ' + (record.status || 'none') +
                         (record.stable_id ? ' ' + String(record.stable_id).slice(0, 12) : ''),
+                    'Coli: ' + painted.label +
+                        ' done=' + ((status.coli && status.coli.completed) || 0),
                 ];
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
@@ -632,7 +843,8 @@
                 });
             }
             const boot = document.getElementById('sys-boot');
-            if (boot) {
+            if (boot && !boot.dataset.tokenNote) {
+                boot.dataset.tokenNote = '1';
                 boot.appendChild(document.createElement('br'));
                 boot.appendChild(document.createTextNode(
                     writesNeedToken
@@ -640,7 +852,14 @@
                         : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes are open. Tailscale remember stays closed.'
                 ));
             }
-        }).catch(() => {});
+            replayLastOracle(status);
+        }
+
+        function refreshStatus() {
+            return fetch('/api/status').then(r => r.json()).then(paintStatus);
+        }
+        refreshStatus().catch(() => {});
+        setInterval(() => { refreshStatus().catch(() => {}); }, 5000);
     </script>
 </body>
 </html>

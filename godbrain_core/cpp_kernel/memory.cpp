@@ -482,6 +482,16 @@ json get_recent(int limit) {
     return {{"status", "success"}, {"thoughts", thoughts}};
 }
 
+void note_session(
+    const std::string& source_hash,
+    const std::string& stable_id,
+    const std::string& content,
+    const std::string& status) {
+    if (source_hash.empty() || content.empty()) return;
+    remember_session(source_hash, stable_id.empty() ? source_hash : stable_id,
+                     content, status);
+}
+
 json hydrate_session_from_rag() {
     json graph;
     std::string error;

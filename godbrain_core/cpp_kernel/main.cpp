@@ -9,7 +9,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstdio>
+#include <functional>
+#include <atomic>
+#include <mutex>
 #include "rag_client.h"
+#include "coli_sse.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -34,6 +39,35 @@ static std::string g_api_token;
 // GODBRAIN_FRONTEND_DIR or a portable default (see resolve_frontend_dir()).
 static std::string g_frontend_dir;
 
+// Tick when this kernel process started the in-flight serve generate.
+// /status reads it from another httplib thread so busy stops looking dead.
+static std::atomic<DWORD> g_coli_job_started_ms{0};
+
+struct LastOracleTurn {
+    std::string question;
+    std::string answer;
+    DWORD elapsed_ms = 0;
+    bool ok = false;
+    bool stored = false;
+    bool complete = true;
+};
+constexpr size_t kMaxOracleTurns = 8;
+static std::mutex g_last_oracle_mu;
+static std::vector<LastOracleTurn> g_oracle_turns;
+
+static json last_oracle_json();
+static json last_oracle_turns_json();
+static void load_oracle_turns();
+static void remember_oracle_turn(
+    const std::string& question,
+    const std::string& answer,
+    DWORD elapsed_ms);
+static void note_oracle_partial(
+    const std::string& question,
+    const std::string& partial,
+    DWORD elapsed_ms);
+static void retry_unstored_oracle_turns();
+
 static std::string read_env(const char* name) {
     char* value = nullptr;
     size_t length = 0;
@@ -56,6 +90,203 @@ static bool path_exists(const std::string& p) {
     if (p.empty()) return false;
     DWORD attrs = GetFileAttributesA(p.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+static json oracle_turn_to_json(const LastOracleTurn& turn) {
+    return {
+        {"question", turn.question},
+        {"answer", turn.answer},
+        {"elapsed_ms", turn.elapsed_ms},
+        {"ok", turn.ok},
+        {"stored", turn.stored},
+        {"complete", turn.complete},
+    };
+}
+
+static json last_oracle_json() {
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    if (g_oracle_turns.empty()) return json::object();
+    return oracle_turn_to_json(g_oracle_turns.back());
+}
+
+static json last_oracle_turns_json() {
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    json turns = json::array();
+    for (const auto& turn : g_oracle_turns) {
+        turns.push_back(oracle_turn_to_json(turn));
+    }
+    return turns;
+}
+
+static std::string last_oracle_path() {
+    const std::string dir = get_exe_dir();
+    if (dir.empty()) return "last_oracle.json";
+    return dir + "\\last_oracle.json";
+}
+
+// Replace the file in place. Never unlink the live file first — a failed
+// write must leave the previous turns readable (the Gemini-class footgun).
+static void persist_oracle_turns_locked() {
+    json body = {{"version", 1}, {"turns", json::array()}};
+    for (const auto& turn : g_oracle_turns) {
+        body["turns"].push_back(oracle_turn_to_json(turn));
+    }
+    const std::string path = last_oracle_path();
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            std::cerr << "[MEMORY] could not write " << tmp << std::endl;
+            return;
+        }
+        out << body.dump(2);
+        out.flush();
+        if (!out) {
+            std::cerr << "[MEMORY] incomplete write " << tmp << std::endl;
+            return;
+        }
+    }
+    if (MoveFileExA(
+            tmp.c_str(),
+            path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+        std::cerr << "[MEMORY] could not replace " << path
+                  << " (win32=" << GetLastError() << "); previous file kept"
+                  << std::endl;
+    }
+}
+
+static void load_oracle_turns() {
+    const std::string path = last_oracle_path();
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return;
+    try {
+        const json body = json::parse(in);
+        const json turns = body.value("turns", json::array());
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        g_oracle_turns.clear();
+        for (const auto& item : turns) {
+            if (!item.is_object()) continue;
+            LastOracleTurn turn;
+            turn.question = item.value("question", "");
+            turn.answer = item.value("answer", "");
+            turn.elapsed_ms = item.value("elapsed_ms", 0);
+            turn.ok = item.value("ok", false);
+            turn.stored = item.value("stored", false);
+            turn.complete = item.value("complete", true);
+            if (turn.question.empty() && turn.answer.empty()) continue;
+            g_oracle_turns.push_back(std::move(turn));
+        }
+        if (g_oracle_turns.size() > kMaxOracleTurns) {
+            g_oracle_turns.erase(
+                g_oracle_turns.begin(),
+                g_oracle_turns.begin() + static_cast<std::ptrdiff_t>(
+                    g_oracle_turns.size() - kMaxOracleTurns));
+        }
+        std::cout << "[MEMORY] Loaded " << g_oracle_turns.size()
+                  << " oracle turns from " << path << std::endl;
+    } catch (const json::exception& error) {
+        std::cerr << "[MEMORY] last_oracle.json ignored: " << error.what()
+                  << std::endl;
+    }
+}
+
+static void store_oracle_turn_async(
+    const std::string& question, const std::string& answer) {
+    std::thread([question, answer]() {
+        bool stored = false;
+        try {
+            std::string body = "Oracle turn (candidate, not verified)\nQ: " +
+                               question + "\nA: " + answer;
+            if (body.size() > 2000) body.resize(2000);
+            memory::save_thought({{"content", body}, {"sector", "oracle"}});
+            stored = true;
+        } catch (const std::exception& error) {
+            std::cerr << "[MEMORY] oracle turn not stored: " << error.what()
+                      << std::endl;
+        }
+        if (!stored) return;
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend();
+             ++it) {
+            if (it->question == question && it->answer == answer) {
+                it->stored = true;
+                break;
+            }
+        }
+        persist_oracle_turns_locked();
+    }).detach();
+}
+
+static void note_oracle_partial(
+    const std::string& question,
+    const std::string& partial,
+    DWORD elapsed_ms) {
+    if (question.empty() || partial.empty()) return;
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
+        g_oracle_turns.back().question == question) {
+        g_oracle_turns.back().answer = partial;
+        g_oracle_turns.back().elapsed_ms = elapsed_ms;
+    } else {
+        LastOracleTurn turn;
+        turn.question = question;
+        turn.answer = partial;
+        turn.elapsed_ms = elapsed_ms;
+        turn.ok = false;
+        turn.stored = false;
+        turn.complete = false;
+        g_oracle_turns.push_back(std::move(turn));
+        if (g_oracle_turns.size() > kMaxOracleTurns) {
+            g_oracle_turns.erase(g_oracle_turns.begin());
+        }
+    }
+    persist_oracle_turns_locked();
+}
+
+static void retry_unstored_oracle_turns() {
+    std::vector<std::pair<std::string, std::string>> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        for (const auto& turn : g_oracle_turns) {
+            if (turn.ok && turn.complete && !turn.stored &&
+                !turn.question.empty() && !turn.answer.empty()) {
+                pending.emplace_back(turn.question, turn.answer);
+            }
+        }
+    }
+    for (const auto& item : pending) {
+        std::cout << "[MEMORY] Retrying unstored oracle turn" << std::endl;
+        store_oracle_turn_async(item.first, item.second);
+    }
+}
+
+static void remember_oracle_turn(
+    const std::string& question,
+    const std::string& answer,
+    DWORD elapsed_ms) {
+    LastOracleTurn turn;
+    turn.question = question;
+    turn.answer = answer;
+    turn.elapsed_ms = elapsed_ms;
+    turn.ok = answer.compare(0, 6, "Error:") != 0;
+    turn.stored = false;
+    turn.complete = true;
+    {
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
+            g_oracle_turns.back().question == question) {
+            g_oracle_turns.back() = turn;
+        } else {
+            g_oracle_turns.push_back(turn);
+            if (g_oracle_turns.size() > kMaxOracleTurns) {
+                g_oracle_turns.erase(g_oracle_turns.begin());
+            }
+        }
+        persist_oracle_turns_locked();
+    }
+    if (!turn.ok) return;
+    store_oracle_turn_async(question, answer);
 }
 
 // Resolves the Colibri C-Engine executable path. Order of preference:
@@ -188,6 +419,10 @@ static json kernel_status_body() {
         }
     }
     const json coli = coli_serve_status();
+    json host = telemetry::get_host_inventory();
+    const json live = telemetry::get_current_state();
+    host["ram_available_gb"] = live.value("ram_available_gb", 0.0);
+    host["ram_used_percent"] = live.value("system_ram_percent", 0);
     return {
         {"kernel", true},
         {"coli_serve", coli.value("up", false)},
@@ -195,9 +430,11 @@ static json kernel_status_body() {
         {"writes_need_token", !g_api_token.empty()},
         {"vram", telemetry::plan_colibri_vram()},
         {"rag", rag_health},
-        {"host", telemetry::get_host_inventory()},
+        {"host", host},
         {"host_record", host_record_from_rag()},
         {"tailscale", tailscale},
+        {"last_oracle", last_oracle_json()},
+        {"last_oracle_turns", last_oracle_turns_json()},
     };
 }
 
@@ -238,6 +475,14 @@ static void handle_observe(const httplib::Request& req, httplib::Response& res) 
     }
 }
 
+static void handle_last(const httplib::Request&, httplib::Response& res) {
+    res.set_content(
+        json({{"last_oracle", last_oracle_json()},
+              {"turns", last_oracle_turns_json()}})
+            .dump(),
+        "application/json");
+}
+
 static void handle_judge(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -261,6 +506,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
     server.Get("/api/status", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
         res.set_content(kernel_status_body().dump(), "application/json");
+    });
+    server.Get("/api/last", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_last(req, res);
     });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/observe", handle_observe);
@@ -302,15 +551,79 @@ static json coli_serve_status() {
         result["active"] = active;
         result["queued"] = scheduler.value("queued", 0);
         result["completed"] = scheduler.value("completed", 0);
+        result["admitted"] = scheduler.value("admitted", 0);
+        const json hwinfo = body.value("hwinfo", json::object());
+        if (hwinfo.contains("ram_avail_gb")) {
+            result["ram_avail_gb"] = hwinfo.value("ram_avail_gb", 0.0);
+        }
+        const json tiers = body.value("tiers", json::object());
+        if (!tiers.empty()) {
+            result["experts_vram"] = tiers.value("vram", 0);
+            result["experts_ram"] = tiers.value("ram", 0);
+            result["experts_disk"] = tiers.value("disk", 0);
+        }
+        const DWORD started = g_coli_job_started_ms.load(std::memory_order_relaxed);
+        if (active > 0 && started != 0) {
+            result["elapsed_s"] = static_cast<int>((GetTickCount() - started) / 1000);
+        }
+        if (active <= 0) {
+            g_coli_job_started_ms.store(0, std::memory_order_relaxed);
+        }
     } catch (const json::exception&) {
     }
     return result;
 }
 
-std::string run_colibri_serve(const std::string& system, const std::string& user) {
+using ColiTokenFn = std::function<void(const std::string&)>;
+using ColiPingFn = std::function<void()>;
+
+static std::string strip_coli_reply(std::string combined) {
+    if (combined.compare(0, 6, "Error:") == 0) return combined;
+    std::string final_answer = combined;
+    const size_t ans_idx = combined.rfind("Answer:");
+    const size_t prof_idx = combined.rfind("PROFILO");
+    const size_t prof_en_idx = combined.rfind("PROFILE");
+    if (ans_idx != std::string::npos) {
+        final_answer = combined.substr(ans_idx + 7);
+        size_t end_idx = final_answer.find("PROFILE");
+        if (end_idx == std::string::npos) end_idx = final_answer.find("PROFILO");
+        if (end_idx != std::string::npos) {
+            final_answer = final_answer.substr(0, end_idx);
+        }
+    } else {
+        const size_t marker = prof_idx != std::string::npos ? prof_idx : prof_en_idx;
+        if (marker != std::string::npos) {
+            const size_t start = combined.rfind('\n', marker);
+            if (start != std::string::npos) {
+                const size_t prev = combined.rfind('\n', start - 1);
+                if (prev != std::string::npos) {
+                    final_answer = combined.substr(prev + 1, start - prev - 1);
+                } else {
+                    final_answer = combined.substr(0, start);
+                }
+            }
+        } else if (final_answer.length() > 500) {
+            final_answer = final_answer.substr(final_answer.length() - 500);
+        }
+    }
+    const auto first = final_answer.find_first_not_of(" \n\r\t");
+    if (first == std::string::npos) return "No response.";
+    final_answer.erase(0, first);
+    const auto last = final_answer.find_last_not_of(" \n\r\t");
+    if (last != std::string::npos) final_answer.erase(last + 1);
+    return final_answer.empty() ? "No response." : final_answer;
+}
+
+std::string run_colibri_serve(
+    const std::string& system,
+    const std::string& user,
+    ColiTokenFn on_token = {},
+    ColiPingFn on_ping = {}) {
     httplib::Client client(kColibriServeHost, kColibriServePort);
     client.set_connection_timeout(0, 500000);
-    client.set_read_timeout(420, 0);
+    // Colibri pings empty deltas every ~10s during prefill. A 60s read
+    // timeout then means the engine died, not that we are still paging.
+    client.set_read_timeout(60, 0);
     client.set_write_timeout(5, 0);
     client.set_max_timeout(430000);
     client.set_follow_location(false);
@@ -321,7 +634,7 @@ std::string run_colibri_serve(const std::string& system, const std::string& user
     }();
     const json body = {
         {"model", model},
-        {"stream", false},
+        {"stream", true},
         {"max_tokens", 80},
         {"messages",
          json::array(
@@ -329,23 +642,34 @@ std::string run_colibri_serve(const std::string& system, const std::string& user
               json{{"role", "user"}, {"content", user}}})},
     };
 
-    httplib::Headers headers = {{"Accept", "application/json"}};
+    httplib::Headers headers = {{"Accept", "text/event-stream"}};
     const std::string key = read_env("GODBRAIN_COLIBRI_KEY");
     const std::string coli_key = key.empty() ? read_env("COLI_API_KEY") : key;
     if (!coli_key.empty()) {
         headers.emplace("Authorization", "Bearer " + coli_key);
     }
 
+    std::string assembled;
+    std::string sse_buf;
+    g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
     const auto response = client.Post(
-        "/v1/chat/completions", headers, body.dump(), "application/json");
+        "/v1/chat/completions", headers, body.dump(), "application/json",
+        [&](const char* data, size_t len) {
+            godbrain_coli::feed_sse(
+                sse_buf, data, len, assembled, on_token, on_ping);
+            return true;
+        });
+    g_coli_job_started_ms.store(0, std::memory_order_relaxed);
     if (!response) {
         return "Error: Colibri serve did not finish in 420s. "
                "GLM-5.2 is paging experts off disk on 16 GB. "
                "Wait until /status shows coli=serve (not busy) and ask again.";
     }
     if (response->status != 200) {
-        return "Error: Colibri serve returned HTTP " + std::to_string(response->status);
+        return "Error: Colibri serve returned HTTP " +
+               std::to_string(response->status);
     }
+    if (!assembled.empty()) return assembled;
     try {
         const json parsed = json::parse(response->body);
         return parsed.at("choices").at(0).at("message").at("content").get<std::string>();
@@ -465,7 +789,11 @@ std::string run_colibri_spawn(const std::string& prompt) {
     return output;
 }
 
-std::string run_colibri(const std::string& system, const std::string& user) {
+std::string run_colibri(
+    const std::string& system,
+    const std::string& user,
+    ColiTokenFn on_token = {},
+    ColiPingFn on_ping = {}) {
     const json coli = coli_serve_status();
     if (coli.value("up", false)) {
         if (coli.value("busy", false)) {
@@ -475,7 +803,7 @@ std::string run_colibri(const std::string& system, const std::string& user) {
                    "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
         }
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
-        return run_colibri_serve(system, user);
+        return run_colibri_serve(system, user, on_token, on_ping);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
@@ -511,6 +839,8 @@ int main() {
     }
 
     g_frontend_dir = resolve_frontend_dir();
+    load_oracle_turns();
+    retry_unstored_oracle_turns();
     godbrain_rag::Client rag_client;
     try {
         const json hydrated = memory::hydrate_session_from_rag();
@@ -521,6 +851,27 @@ int main() {
     } catch (const std::exception& error) {
         std::cout << "[MEMORY] Session hydrate skipped: " << error.what()
                   << std::endl;
+    }
+    {
+        const json turns = last_oracle_turns_json();
+        int noted = 0;
+        for (const auto& turn : turns) {
+            if (!turn.value("ok", false)) continue;
+            const std::string q = turn.value("question", "");
+            const std::string a = turn.value("answer", "");
+            if (a.empty()) continue;
+            const std::string body = "Q: " + q + " A: " + a;
+            memory::note_session(
+                "oracle-disk:" + q.substr(0, 24),
+                "oracle-disk:" + q.substr(0, 24),
+                body,
+                "candidate");
+            ++noted;
+        }
+        if (noted > 0) {
+            std::cout << "[MEMORY] Session noted " << noted
+                      << " oracle turns from disk" << std::endl;
+        }
     }
 
     httplib::Server svr;
@@ -634,6 +985,11 @@ int main() {
         res.set_content(kernel_status_body().dump(), "application/json");
     });
 
+    svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_last(req, res);
+    });
+
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_remember(req, res);
@@ -683,23 +1039,62 @@ int main() {
                 const json tail = st.value("tailscale", json::object());
                 const json rag = st.value("rag", json::object());
                 std::ostringstream reply;
+                const json coli = st.value("coli", json::object());
                 reply << (host.value("computer_name", "?")) << " / "
                       << host.value("total_physical_ram_gb", 0) << " GB / "
                       << host.value("logical_processors", 0) << " threads\n"
-                      << "host_record=" << rec.value("status", "none") << "\n"
-                      << "coli="
-                      << [&]() {
-                             const json coli = st.value("coli", json::object());
-                             if (!coli.value("up", st.value("coli_serve", false))) {
-                                 return "down";
-                             }
-                             return coli.value("busy", false) ? "busy" : "serve";
-                         }()
+                      << "host_record=" << rec.value("status", "none") << "\n";
+                if (!coli.value("up", st.value("coli_serve", false))) {
+                    reply << "coli=down";
+                } else if (coli.value("busy", false)) {
+                    reply << "coli=busy";
+                    if (coli.contains("elapsed_s")) {
+                        reply << " " << coli.value("elapsed_s", 0) << "s";
+                    }
+                    reply << " — generating, do not ask again";
+                } else {
+                    reply << "coli=serve";
+                }
+                reply << " active=" << coli.value("active", 0)
+                      << " done=" << coli.value("completed", 0)
+                      << " queued=" << coli.value("queued", 0)
                       << " rag=" << (rag.value("ready", false) ? "ready" : "down")
                       << " writes="
                       << (st.value("writes_need_token", false) ? "need bearer"
                                                               : "open on loopback")
                       << "\n";
+                if (coli.contains("experts_disk")) {
+                    reply << "experts vram=" << coli.value("experts_vram", 0)
+                          << " ram=" << coli.value("experts_ram", 0)
+                          << " disk=" << coli.value("experts_disk", 0) << "\n";
+                }
+                const double ram_free = host.value(
+                    "ram_available_gb", coli.value("ram_avail_gb", -1.0));
+                if (ram_free >= 0.0) {
+                    char ram_buf[32];
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram_free);
+                    reply << "RAM free " << ram_buf << " GB";
+                    if (ram_free < 4.0) {
+                        reply << " — paging, wait";
+                    }
+                    reply << "\n";
+                }
+                const json last = st.value("last_oracle", json::object());
+                if (!last.empty() && last.contains("answer")) {
+                    auto clip = [](std::string text, size_t max) {
+                        if (text.size() > max) {
+                            text.resize(max);
+                            text += "...";
+                        }
+                        return text;
+                    };
+                    reply << "last " << (last.value("elapsed_ms", 0) / 1000) << "s "
+                          << (last.value("ok", false) ? "ok" : "fail")
+                          << (last.value("stored", false) ? " stored" : "")
+                          << "\n  Q: " << clip(last.value("question", ""), 120)
+                          << "\n  A: " << clip(last.value("answer", ""), 160)
+                          << "\n";
+                }
                 if (tail.value("up", false)) {
                     reply << "tailscale " << tail.value("ip", "") << " "
                           << tail.value("writes", "") << "\n";
@@ -712,6 +1107,33 @@ int main() {
                           << volume.value("total_gb", 0) << " GB\n";
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/last") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                const json turns = last_oracle_turns_json();
+                std::ostringstream reply;
+                if (turns.empty()) {
+                    reply << "No Oracle turns on disk yet.";
+                } else {
+                    reply << turns.size() << " Oracle turn(s) on disk "
+                             "(candidate, not verified):\n";
+                    int index = 0;
+                    for (const auto& turn : turns) {
+                        ++index;
+                        reply << index << ". "
+                              << (turn.value("ok", false) ? "ok" : "fail")
+                              << (turn.value("complete", true) ? "" : " partial")
+                              << " " << (turn.value("elapsed_ms", 0) / 1000)
+                              << "s\n  Q: "
+                              << turn.value("question", "") << "\n  A: "
+                              << turn.value("answer", "") << "\n";
+                    }
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(),
+                                "application/json");
                 return;
             }
 
@@ -981,50 +1403,76 @@ int main() {
 
             std::cout << "[RAG] Context built (" << context_text.size()
                       << " bytes). Asking Colibri..." << std::endl;
+            const bool want_stream =
+                payload.value("stream", false) ||
+                req.get_header_value("Accept").find("text/event-stream") !=
+                    std::string::npos;
+            if (want_stream) {
+                const std::string sys = system_prompt;
+                const std::string usr = user_prompt;
+                const std::string asked = user_msg;
+                res.set_header("Cache-Control", "no-cache");
+                res.set_header("X-Accel-Buffering", "no");
+                res.set_chunked_content_provider(
+                    "text/event-stream",
+                    [sys, usr, asked](size_t, httplib::DataSink& sink) {
+                        auto emit = [&](const json& ev) {
+                            const std::string line = "data: " + ev.dump() + "\n\n";
+                            return sink.write(line.data(), line.size());
+                        };
+                        emit({{"type", "status"},
+                              {"text",
+                               "Prefill then decode. One GPU slot. "
+                               "/status ticks while this runs."}});
+                        const DWORD coli_started = GetTickCount();
+                        std::string streamed;
+                        DWORD last_partial = 0;
+                        const std::string combined = run_colibri(
+                            sys,
+                            usr,
+                            [&](const std::string& token) {
+                                streamed += token;
+                                emit({{"type", "token"}, {"text", token}});
+                                const DWORD now = GetTickCount();
+                                if (now - last_partial >= 5000) {
+                                    last_partial = now;
+                                    note_oracle_partial(
+                                        asked,
+                                        streamed,
+                                        now - coli_started);
+                                }
+                            },
+                            [&]() {
+                                emit({{"type", "ping"},
+                                      {"elapsed_s",
+                                       static_cast<int>(
+                                           (GetTickCount() - coli_started) /
+                                           1000)}});
+                            });
+                        const std::string final_answer = strip_coli_reply(combined);
+                        const DWORD elapsed = GetTickCount() - coli_started;
+                        remember_oracle_turn(asked, final_answer, elapsed);
+                        std::cout << "[COLIBRI] Reply in " << elapsed << " ms ("
+                                  << combined.size() << " bytes)" << std::endl;
+                        if (combined.compare(0, 6, "Error:") == 0) {
+                            emit({{"type", "error"}, {"text", combined}});
+                        } else {
+                            emit({{"type", "done"}, {"response", final_answer}});
+                        }
+                        sink.done();
+                        return true;
+                    });
+                return;
+            }
             const DWORD coli_started = GetTickCount();
-            std::string combined = run_colibri(system_prompt, user_prompt);
+            const std::string combined = run_colibri(system_prompt, user_prompt);
+            const std::string final_answer = strip_coli_reply(combined);
+            remember_oracle_turn(
+                user_msg, final_answer, GetTickCount() - coli_started);
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)
                       << " ms (" << combined.size() << " bytes)" << std::endl;
-            
-            std::string final_answer = combined;
-            size_t ans_idx = combined.rfind("Answer:");
-            size_t prof_idx = combined.rfind("PROFILO");
-            size_t prof_en_idx = combined.rfind("PROFILE");
-    
-            if (ans_idx != std::string::npos) {
-                final_answer = combined.substr(ans_idx + 7);
-                // Strip out profiling data if present after Answer
-                size_t end_idx = final_answer.find("PROFILE");
-                if (end_idx == std::string::npos) end_idx = final_answer.find("PROFILO");
-                if (end_idx != std::string::npos) {
-                    final_answer = final_answer.substr(0, end_idx);
-                }
-            } else {
-                // Find the last real text generated before PROFILE dumps
-                size_t marker = prof_idx != std::string::npos ? prof_idx : prof_en_idx;
-                if (marker != std::string::npos) {
-                    // Find the last newline before the marker
-                    size_t start = combined.rfind('\n', marker);
-                    if (start != std::string::npos) {
-                        // Now find the newline before that one to get the actual generated text line
-                        size_t prev = combined.rfind('\n', start - 1);
-                        if (prev != std::string::npos) {
-                            final_answer = combined.substr(prev + 1, start - prev - 1);
-                        } else {
-                            final_answer = combined.substr(0, start);
-                        }
-                    }
-                } else {
-                    // Just grab the last few lines
-                    if(final_answer.length() > 500) final_answer = final_answer.substr(final_answer.length() - 500);
-                }
-            }
-    
-            final_answer.erase(0, final_answer.find_first_not_of(" \n\r\t"));
-            final_answer.erase(final_answer.find_last_not_of(" \n\r\t") + 1);
-            
             json resp;
-            resp["response"] = final_answer.empty() ? "No response." : final_answer;
+            resp["response"] = final_answer;
             res.set_content(resp.dump(), "application/json");
         } catch (...) {
             res.status = 400;
@@ -1039,7 +1487,7 @@ int main() {
             httplib::Server door;
             attach_shortcut_routes(door);
             std::cout << "[SYS] Tailscale shortcuts door http://" << ip
-                      << ":8083 (remember/observe/judge/status only)" << std::endl;
+                      << ":8083 (remember/observe/judge/status/last only)" << std::endl;
             if (!door.listen(ip, 8083)) {
                 std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
                           << std::endl;
