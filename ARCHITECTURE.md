@@ -201,6 +201,13 @@ The Kernel accepts CORS only from exact trusted loopback/Tauri origins. CORS
 controls browser access; non-browser callers still require authentication for
 privileged commands.
 
+`GET /api/status` also reports live host inventory, the newest `windows-sre`
+Golden Record, and Tailscale (`ip`, `remember_url`, `writes`, `bound`).
+Privileged `command_type` and Galaxy stay on `127.0.0.1`. If Tailscale is up
+and `GODBRAIN_API_TOKEN` is set, a second listener on the Tailscale IPv4
+exposes only `/api/remember`, `/api/observe`, `/api/judge`, and `/api/status`.
+Without a token that door stays closed so the tailnet cannot write.
+
 ### Golden Record RAG service (`127.0.0.1:8084`)
 
 | Method | Route | Authentication | Purpose |

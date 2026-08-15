@@ -125,6 +125,8 @@
     <div id="overlay">
         <h2>Sovereign Node</h2>
         <div id="stats">Initializing Galaxy...</div>
+        <h3 style="margin-top: 15px;">This host</h3>
+        <div id="host-card" style="font-size: 0.85em; line-height: 1.4;">Loading inventory...</div>
         
         <h3 style="margin-top: 15px;">Sector Filtering</h3>
         <div id="sector-filters" style="display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; max-height: 200px; overflow-y: auto;">
@@ -585,13 +587,45 @@
             if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
                 stats.innerText += extra;
             }
+            const hostCard = document.getElementById('host-card');
+            if (hostCard) {
+                while (hostCard.firstChild) hostCard.removeChild(hostCard.firstChild);
+                const host = status.host || {};
+                const record = status.host_record || {};
+                const tail = status.tailscale || {};
+                const lines = [
+                    (host.computer_name || '?') + ' / ' +
+                        (host.total_physical_ram_gb || '?') + ' GB / ' +
+                        (host.logical_processors || '?') + ' threads',
+                    'Record: ' + (record.status || 'none') +
+                        (record.stable_id ? ' ' + String(record.stable_id).slice(0, 12) : ''),
+                ];
+                const volumes = Array.isArray(host.volumes) ? host.volumes : [];
+                volumes.forEach(volume => {
+                    lines.push(
+                        (volume.letter || '?') + ': ' +
+                        (volume.label || '') + ' ' +
+                        (volume.total_gb || 0) + ' GB');
+                });
+                if (tail.up) {
+                    lines.push(
+                        'Tailscale ' + (tail.ip || '') +
+                        (tail.bound ? ' door open' : ' door closed (need token)'));
+                } else {
+                    lines.push('Tailscale down');
+                }
+                lines.forEach((line, index) => {
+                    if (index > 0) hostCard.appendChild(document.createElement('br'));
+                    hostCard.appendChild(document.createTextNode(line));
+                });
+            }
             const boot = document.getElementById('sys-boot');
             if (boot) {
                 boot.appendChild(document.createElement('br'));
                 boot.appendChild(document.createTextNode(
                     writesNeedToken
                         ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
-                        : '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
+                        : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes are open. Tailscale remember stays closed.'
                 ));
             }
         }).catch(() => {});

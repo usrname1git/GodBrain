@@ -148,6 +148,116 @@ static bool write_authorized(const httplib::Request& req, httplib::Response& res
     return false;
 }
 
+bool colibri_serve_up();
+
+static json host_record_from_rag() {
+    try {
+        const json recent = memory::get_recent(8);
+        for (const auto& thought : recent.value("thoughts", json::array())) {
+            if (thought.value("sector", "") == "windows-sre") {
+                return thought;
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    return json::object();
+}
+
+static json kernel_status_body() {
+    json rag_health = json::object();
+    httplib::Client health("127.0.0.1", 8084);
+    health.set_connection_timeout(0, 200000);
+    health.set_read_timeout(1, 0);
+    if (const auto probe = health.Get("/health")) {
+        try {
+            rag_health = json::parse(probe->body);
+        } catch (const json::exception&) {
+        }
+    }
+    json tailscale = telemetry::get_tailscale();
+    if (tailscale.value("up", false)) {
+        if (g_api_token.empty()) {
+            tailscale["writes"] = "disabled_no_token";
+            tailscale["bound"] = false;
+        } else {
+            tailscale["writes"] = "token_required";
+            tailscale["bound"] = true;
+        }
+    }
+    return {
+        {"kernel", true},
+        {"coli_serve", colibri_serve_up()},
+        {"writes_need_token", !g_api_token.empty()},
+        {"vram", telemetry::plan_colibri_vram()},
+        {"rag", rag_health},
+        {"host", telemetry::get_host_inventory()},
+        {"host_record", host_record_from_rag()},
+        {"tailscale", tailscale},
+    };
+}
+
+static void handle_remember(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        std::string text = payload.value(
+            "text", payload.value("message", payload.value("idea", "")));
+        if (payload.contains("title") || payload.contains("url")) {
+            std::ostringstream composed;
+            if (payload.contains("title")) composed << payload["title"].get<std::string>() << '\n';
+            if (payload.contains("url")) composed << payload["url"].get<std::string>() << '\n';
+            if (!text.empty()) composed << text;
+            text = composed.str();
+        }
+        json stored = memory::save_thought({
+            {"content", text},
+            {"sector", payload.value("sector", "operator")},
+        });
+        res.set_content(stored.dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void handle_observe(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        res.set_content(memory::observe_host().dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void handle_judge(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        json judged = memory::set_status({
+            {"id", payload.value("id", payload.value("stable_id", ""))},
+            {"status", payload.value("status", "")},
+            {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
+        });
+        res.set_content(judged.dump(), "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(json({{"error", "judge body must be JSON"}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void attach_shortcut_routes(httplib::Server& server) {
+    server.Get("/api/status", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(kernel_status_body().dump(), "application/json");
+    });
+    server.Post("/api/remember", handle_remember);
+    server.Post("/api/observe", handle_observe);
+    server.Post("/api/judge", handle_judge);
+}
+
 constexpr const char* kColibriServeHost = "127.0.0.1";
 constexpr int kColibriServePort = 8000;
 
@@ -466,81 +576,22 @@ int main() {
 
     svr.Post("/api/judge", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        if (!write_authorized(req, res)) return;
-        try {
-            json payload = req.body.empty() ? json::object() : json::parse(req.body);
-            json judged = memory::set_status({
-                {"id", payload.value("id", payload.value("stable_id", ""))},
-                {"status", payload.value("status", "")},
-                {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
-            });
-            res.set_content(judged.dump(), "application/json");
-        } catch (const json::exception&) {
-            res.status = 400;
-            res.set_content(json({{"error", "judge body must be JSON"}}).dump(), "application/json");
-        } catch (const std::exception& error) {
-            res.status = 503;
-            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
-        }
+        handle_judge(req, res);
     });
 
     svr.Get("/api/status", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        json rag_health = json::object();
-        httplib::Client health("127.0.0.1", 8084);
-        health.set_connection_timeout(0, 200000);
-        health.set_read_timeout(1, 0);
-        if (const auto probe = health.Get("/health")) {
-            try {
-                rag_health = json::parse(probe->body);
-            } catch (const json::exception&) {
-            }
-        }
-        res.set_content(
-            json({
-                     {"kernel", true},
-                     {"coli_serve", colibri_serve_up()},
-                     {"writes_need_token", !g_api_token.empty()},
-                     {"vram", telemetry::plan_colibri_vram()},
-                     {"rag", rag_health},
-                 })
-                .dump(),
-            "application/json");
+        res.set_content(kernel_status_body().dump(), "application/json");
     });
 
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        if (!write_authorized(req, res)) return;
-        try {
-            json payload = req.body.empty() ? json::object() : json::parse(req.body);
-            std::string text = payload.value("text", payload.value("message", payload.value("idea", "")));
-            if (payload.contains("title") || payload.contains("url")) {
-                std::ostringstream composed;
-                if (payload.contains("title")) composed << payload["title"].get<std::string>() << '\n';
-                if (payload.contains("url")) composed << payload["url"].get<std::string>() << '\n';
-                if (!text.empty()) composed << text;
-                text = composed.str();
-            }
-            json stored = memory::save_thought({
-                {"content", text},
-                {"sector", payload.value("sector", "operator")},
-            });
-            res.set_content(stored.dump(), "application/json");
-        } catch (const std::exception& error) {
-            res.status = 503;
-            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
-        }
+        handle_remember(req, res);
     });
 
     svr.Post("/api/observe", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        if (!write_authorized(req, res)) return;
-        try {
-            res.set_content(memory::observe_host().dump(), "application/json");
-        } catch (const std::exception& error) {
-            res.status = 503;
-            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
-        }
+        handle_observe(req, res);
     });
 
     svr.Post("/api/chat", [&](const httplib::Request& req, httplib::Response& res) {
@@ -873,6 +924,25 @@ int main() {
             res.set_content("{\"response\":\"Parse error\"}", "application/json");
         }
     });
+
+    const json tailscale = telemetry::get_tailscale();
+    if (tailscale.value("up", false) && !g_api_token.empty()) {
+        const std::string ip = tailscale.value("ip", "");
+        std::thread([ip]() {
+            httplib::Server door;
+            attach_shortcut_routes(door);
+            std::cout << "[SYS] Tailscale shortcuts door http://" << ip
+                      << ":8083 (remember/observe/judge/status only)" << std::endl;
+            if (!door.listen(ip, 8083)) {
+                std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
+                          << std::endl;
+            }
+        }).detach();
+    } else if (tailscale.value("up", false)) {
+        std::cout << "[SYS] Tailscale " << tailscale.value("ip", "")
+                  << " is up; shortcuts door stays closed until GODBRAIN_API_TOKEN is set"
+                  << std::endl;
+    }
 
     std::cout << "[SYS] Listening on http://127.0.0.1:8083 (loopback only)" << std::endl;
     if (!svr.listen("127.0.0.1", 8083)) {

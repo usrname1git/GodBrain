@@ -1,10 +1,16 @@
 #include "telemetry.h"
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <dxgi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
@@ -13,6 +19,8 @@
 
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 namespace telemetry {
     static PDH_HQUERY cpuQuery = nullptr;
@@ -157,6 +165,62 @@ namespace telemetry {
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
             {"volumes", volumes},
         };
+    }
+
+    json get_tailscale() {
+        json result = {
+            {"up", false},
+            {"ip", ""},
+            {"adapter", ""},
+            {"remember_url", ""},
+            {"writes", "loopback_only"},
+            {"bound", false},
+        };
+        ULONG size = 16384;
+        std::vector<unsigned char> buffer(size);
+        auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+        const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                            GAA_FLAG_SKIP_DNS_SERVER;
+        DWORD error = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters, &size);
+        if (error == ERROR_BUFFER_OVERFLOW) {
+            buffer.assign(size, 0);
+            adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+            error = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters, &size);
+        }
+        if (error != NO_ERROR || adapters == nullptr) return result;
+
+        for (IP_ADAPTER_ADDRESSES* adapter = adapters; adapter != nullptr;
+             adapter = adapter->Next) {
+            const std::string name = utf8_from_wide(
+                adapter->FriendlyName ? adapter->FriendlyName : L"");
+            const bool named =
+                name.find("Tailscale") != std::string::npos ||
+                name.find("tailscale") != std::string::npos;
+            for (IP_ADAPTER_UNICAST_ADDRESS* address = adapter->FirstUnicastAddress;
+                 address != nullptr; address = address->Next) {
+                if (address->Address.lpSockaddr == nullptr ||
+                    address->Address.lpSockaddr->sa_family != AF_INET) {
+                    continue;
+                }
+                const auto* ipv4 = reinterpret_cast<sockaddr_in*>(
+                    address->Address.lpSockaddr);
+                const unsigned long host = ntohl(ipv4->sin_addr.S_un.S_addr);
+                const bool cgnat = (host & 0xFFC00000ul) == 0x64400000ul;
+                if (!named && !cgnat) continue;
+                char ip[16] = {};
+                std::snprintf(
+                    ip, sizeof(ip), "%lu.%lu.%lu.%lu",
+                    (host >> 24) & 255ul, (host >> 16) & 255ul,
+                    (host >> 8) & 255ul, host & 255ul);
+                result["up"] = true;
+                result["ip"] = std::string(ip);
+                result["adapter"] = name;
+                result["remember_url"] =
+                    std::string("http://") + ip + ":8083/api/remember";
+                return result;
+            }
+        }
+        return result;
     }
 
     json get_gpu_memory() {

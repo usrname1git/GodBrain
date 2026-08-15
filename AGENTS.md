@@ -33,7 +33,9 @@
   live load. Logon (`Start-GodBrain.ps1`) posts `/api/observe` once the kernel
   is listening; unchanged inventory is an idempotent no-op. Kernel boot loads
   the newest Golden Records into the process session buffer so chat still knows
-  the host after a restart. Colibri VRAM budget
+  the host after a restart. `/api/status` reports the host card and Tailscale
+  remember URL. The Tailscale shortcuts door binds only when
+  `GODBRAIN_API_TOKEN` is set. Colibri VRAM budget
   is derived from DXGI dedicated memory and
   does not overcommit into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`.
 - Root `main.go` and `godbrain_core/rust_router/` are experimental,

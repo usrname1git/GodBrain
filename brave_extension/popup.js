@@ -107,6 +107,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') sendMessage();
     });
 
+    const tokenInput = document.getElementById('token-input');
+    if (tokenInput && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.get(['godbrain_api_token'], stored => {
+            if (stored && stored.godbrain_api_token) {
+                tokenInput.value = stored.godbrain_api_token;
+            }
+        });
+        tokenInput.addEventListener('change', () => {
+            chrome.storage.local.set({ godbrain_api_token: tokenInput.value.trim() });
+        });
+    }
+
     const rememberBtn = document.getElementById('remember-page-btn');
     if (rememberBtn) {
         rememberBtn.addEventListener('click', async () => {
@@ -116,9 +128,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     appendMessage('err-msg', '[ERR]', 'No active page.');
                     return;
                 }
+                const headers = { 'Content-Type': 'application/json' };
+                const token = tokenInput ? tokenInput.value.trim() : '';
+                if (token) headers['Authorization'] = 'Bearer ' + token;
                 const response = await fetch('http://127.0.0.1:8083/api/remember', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({
                         title: tab.title || 'untitled',
                         url: tab.url,
