@@ -99,6 +99,7 @@ func (fake *fakeAPI) Graph(_ context.Context, limit int) (GraphResponse, error) 
 		ProjectionVersion: ProjectionVersion,
 		ProjectionSchema:  ProjectionSchema,
 		Count:             1,
+		Links:             []GraphLink{},
 		Nodes: []GraphNode{{
 			NodeID:   "0123456789abcdef01234567",
 			StableID: "claim:auth",

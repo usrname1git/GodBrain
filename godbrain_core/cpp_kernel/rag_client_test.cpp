@@ -206,6 +206,7 @@ int main() {
         {"projection_schema", "rag-document-v2"},
         {"count", 1},
         {"truncated", false},
+        {"links_truncated", false},
         {"nodes",
          json::array(
              {json{
@@ -215,7 +216,12 @@ int main() {
                  {"sector", "security"},
                  {"status", "candidate"},
                  {"confidence", 0.9},
-                 {"label", "Bearer authentication"}}})}};
+                 {"label", "Bearer authentication"}}})},
+        {"links",
+         json::array({json{
+             {"source", "0123456789abcdef01234567"},
+             {"target", "0123456789abcdef01234568"},
+             {"kind", "same_source"}}})}};
     Client graph_client(
         [](const std::string&) { return HttpResult{}; },
         [&](const std::string& path) {
@@ -232,7 +238,8 @@ int main() {
     if (!expect(
             mapped.at("nodes").at(0).at("group") == "security" &&
                 mapped.at("nodes").at(0).at("id") == "0123456789abcdef01234567" &&
-                mapped.at("links").is_array() && mapped.at("links").empty(),
+                mapped.at("links").size() == 1 &&
+                mapped.at("links").at(0).at("kind") == "same_source",
             "graph was not mapped to the Galaxy contract")) {
         return 1;
     }

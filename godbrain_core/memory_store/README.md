@@ -3,7 +3,8 @@
 This Go module contains two boundaries:
 
 - `cmd/memory-store` validates one Librarian JSON document from stdin and writes
-  immutable Alexandria source-of-truth records.
+  immutable Alexandria source-of-truth records. It also accepts a
+  `set_status` judgment that changes only `candidate`/`verified`/`rejected`.
 - `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.
@@ -257,7 +258,8 @@ Returns the newest active-generation `rag_documents` rows as a bounded node
 list. `limit` defaults to 250 and is rejected above 500. Labels are NFKC
 whitespace-collapsed content, truncated to 80 runes, with `stable_id` as
 fallback. The response includes generation, projection version/schema, count,
-and a `truncated` flag. There are no edges in this contract.
+a node `truncated` flag, provenance-derived `links` (star per shared
+`source_hash`, else `run_id`, max 1000), and `links_truncated`.
 
 ### `GET /v1/document`
 

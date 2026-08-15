@@ -220,6 +220,7 @@ func TestGalaxyGraphMapping(t *testing.T) {
 		ProjectionVersion: ragProjectionVersion,
 		ProjectionSchema:  ragProjectionSchema,
 		Count:             1,
+		Links:             []ragGraphLink{},
 		Nodes: []ragGraphNode{{
 			NodeID:     "0123456789abcdef01234567",
 			StableID:   "claim:auth",

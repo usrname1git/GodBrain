@@ -36,6 +36,7 @@ constexpr int kTopK = 3;
 constexpr int kContextBytes = 4096;
 constexpr int kDefaultGraphLimit = 250;
 constexpr int kMaxGraphLimit = 500;
+constexpr int kMaxGraphLinks = 1000;
 constexpr size_t kMaxResponseBytes = 128 * 1024;
 constexpr size_t kMaxDocumentContentBytes = 64 * 1024;
 constexpr const char* kErrGraphLimit = "graph limit is outside the allowed range";
@@ -628,6 +629,19 @@ inline bool decode_json_body(
     return true;
 }
 
+inline bool validate_graph_link(const json& link) {
+    if (!has_exact_keys(link, {"source", "target", "kind"})) {
+        return false;
+    }
+    if (!valid_token(link.at("source"), 64) ||
+        !valid_token(link.at("target"), 64) ||
+        !string_is_one_of(link.at("kind"), {"same_source", "same_run"})) {
+        return false;
+    }
+    return link.at("source").get<std::string>() !=
+           link.at("target").get<std::string>();
+}
+
 inline bool validate_graph_node(const json& node) {
     if (!has_exact_keys(
             node,
@@ -648,7 +662,7 @@ inline bool validate_graph_response(const json& response, std::string& error) {
     if (!has_exact_keys(
             response,
             {"generation", "projection_version", "projection_schema", "count",
-             "truncated", "nodes"})) {
+             "truncated", "links_truncated", "nodes", "links"})) {
         error = "canonical RAG graph has an invalid top-level schema";
         return false;
     }
@@ -659,17 +673,25 @@ inline bool validate_graph_response(const json& response, std::string& error) {
         response.at("projection_schema").get<std::string>() != kProjectionSchema ||
         !response.at("count").is_number_integer() ||
         !response.at("truncated").is_boolean() ||
-        !response.at("nodes").is_array()) {
+        !response.at("links_truncated").is_boolean() ||
+        !response.at("nodes").is_array() ||
+        !response.at("links").is_array()) {
         error = "canonical RAG graph metadata is invalid";
         return false;
     }
     const json& nodes = response.at("nodes");
+    const json& links = response.at("links");
     const int count = response.at("count").get<int>();
     if (count < 0 ||
         static_cast<size_t>(count) != nodes.size() ||
         nodes.size() > static_cast<size_t>(kMaxGraphLimit) ||
         !std::all_of(nodes.begin(), nodes.end(), validate_graph_node)) {
         error = "canonical RAG graph node bounds or schema are invalid";
+        return false;
+    }
+    if (links.size() > static_cast<size_t>(kMaxGraphLinks) ||
+        !std::all_of(links.begin(), links.end(), validate_graph_link)) {
+        error = "canonical RAG graph link bounds or schema are invalid";
         return false;
     }
     return true;
@@ -712,12 +734,21 @@ inline json galaxy_graph(const json& rag_graph) {
             {"val", 1.0 + node.at("confidence").get<double>() * 4.0},
         });
     }
+    json links = json::array();
+    for (const auto& link : rag_graph.at("links")) {
+        links.push_back({
+            {"source", link.at("source")},
+            {"target", link.at("target")},
+            {"kind", link.at("kind")},
+        });
+    }
     return {
         {"nodes", nodes},
-        {"links", json::array()},
+        {"links", links},
         {"generation", rag_graph.at("generation")},
         {"count", rag_graph.at("count")},
         {"truncated", rag_graph.at("truncated")},
+        {"links_truncated", rag_graph.at("links_truncated")},
     };
 }
 

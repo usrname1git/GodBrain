@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -28,6 +29,18 @@ func TestNormalizeQueryBoundsAndSanitizesOperators(t *testing.T) {
 
 	if _, _, err = NormalizeQuery(strings.Repeat("x", MaxQueryBytes+1)); !errors.Is(err, ErrQueryTooLarge) {
 		t.Fatalf("expected ErrQueryTooLarge, got %v", err)
+	}
+}
+
+func TestDocumentFilterHidesRejectedByDefault(t *testing.T) {
+	filter := documentFilter("gen-1", SearchRequest{})
+	hidden, ok := filter["status"].(bson.M)
+	if !ok || hidden["$ne"] != "rejected" {
+		t.Fatalf("default filter must hide rejected, got %#v", filter["status"])
+	}
+	explicit := documentFilter("gen-1", SearchRequest{Status: "rejected"})
+	if explicit["status"] != "rejected" {
+		t.Fatalf("explicit rejected filter lost: %#v", explicit["status"])
 	}
 }
 

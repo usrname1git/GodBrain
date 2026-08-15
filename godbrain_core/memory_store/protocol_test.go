@@ -3,11 +3,34 @@ package memorystore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/sha3"
 )
+
+func TestValidateStatusJudgmentAndTransitions(t *testing.T) {
+	valid := StatusJudgment{
+		Command: JudgmentCommand, ID: "claim:auth", Status: StatusVerified,
+		Reasoning: "clicking the button actually saves the file",
+	}
+	if err := ValidateStatusJudgment(valid); err != nil {
+		t.Fatalf("valid judgment rejected: %v", err)
+	}
+	tooShort := valid
+	tooShort.Reasoning = "ok"
+	if err := ValidateStatusJudgment(tooShort); !errors.Is(err, ErrJudgmentReasoningRequired) {
+		t.Fatalf("short reasoning = %v", err)
+	}
+	if AllowedStatusTransition("rejected", "verified") {
+		t.Fatal("rejected must be terminal")
+	}
+	if !AllowedStatusTransition("candidate", "verified") ||
+		!AllowedStatusTransition("verified", "rejected") {
+		t.Fatal("expected candidate->verified and verified->rejected")
+	}
+}
 
 func TestValidateDocumentPayload(t *testing.T) {
 	raw := "hello \u00e5"

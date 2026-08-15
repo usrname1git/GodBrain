@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -16,8 +17,12 @@ import (
 const (
 	DefaultGraphLimit = 250
 	MaxGraphLimit     = 500
+	MaxGraphLinks     = 1000
 	MaxGraphLabel     = 80
 	MaxDocumentID     = 128
+
+	LinkKindSameSource = "same_source"
+	LinkKindSameRun    = "same_run"
 )
 
 var (
@@ -36,13 +41,21 @@ type GraphNode struct {
 	Label      string  `json:"label"`
 }
 
+type GraphLink struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Kind   string `json:"kind"`
+}
+
 type GraphResponse struct {
 	Generation        string      `json:"generation"`
 	ProjectionVersion string      `json:"projection_version"`
 	ProjectionSchema  string      `json:"projection_schema"`
 	Count             int         `json:"count"`
 	Truncated         bool        `json:"truncated"`
+	LinksTruncated    bool        `json:"links_truncated"`
 	Nodes             []GraphNode `json:"nodes"`
+	Links             []GraphLink `json:"links"`
 }
 
 type DocumentResponse struct {
@@ -73,7 +86,10 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 		return GraphResponse{}, ErrProjectionMetadataMissing
 	}
 
-	filter := bson.M{"generation": metadata.ActiveGeneration}
+	filter := bson.M{
+		"generation": metadata.ActiveGeneration,
+		"status":     bson.M{"$ne": "rejected"},
+	}
 	opts := options.Find().
 		SetSort(bson.D{{Key: "node_created_at", Value: -1}, {Key: "stable_id", Value: 1}}).
 		SetLimit(int64(limit + 1)).
@@ -101,6 +117,7 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 		documents = documents[:limit]
 	}
 	nodes := make([]GraphNode, 0, len(documents))
+	nodeIDs := make([]primitive.ObjectID, 0, len(documents))
 	for _, document := range documents {
 		nodes = append(nodes, GraphNode{
 			NodeID:     document.NodeID.Hex(),
@@ -111,6 +128,11 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 			Confidence: document.Confidence,
 			Label:      graphLabel(document.Content, document.StableID),
 		})
+		nodeIDs = append(nodeIDs, document.NodeID)
+	}
+	links, linksTruncated, err := e.graphProvenanceLinks(ctx, metadata.ActiveGeneration, nodeIDs)
+	if err != nil {
+		return GraphResponse{}, err
 	}
 	return GraphResponse{
 		Generation:        metadata.ActiveGeneration,
@@ -118,7 +140,9 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 		ProjectionSchema:  ProjectionSchema,
 		Count:             len(nodes),
 		Truncated:         truncated,
+		LinksTruncated:    linksTruncated,
 		Nodes:             nodes,
+		Links:             links,
 	}, nil
 }
 
@@ -162,6 +186,105 @@ func (e *Engine) Document(ctx context.Context, id string) (DocumentResponse, err
 		Content:       document.Content,
 		Label:         graphLabel(document.Content, document.StableID),
 	}, nil
+}
+
+func (e *Engine) graphProvenanceLinks(ctx context.Context, generation string, nodeIDs []primitive.ObjectID) ([]GraphLink, bool, error) {
+	if len(nodeIDs) < 2 {
+		return []GraphLink{}, false, nil
+	}
+	cursor, err := e.db.Collection(ProvenanceCollection).Find(ctx, bson.M{
+		"generation": generation,
+		"node_id":    bson.M{"$in": nodeIDs},
+	}, options.Find().SetProjection(bson.M{
+		"node_id":     1,
+		"source_hash": 1,
+		"run_id":      1,
+	}))
+	if err != nil {
+		return nil, false, err
+	}
+	defer cursor.Close(ctx)
+
+	var rows []Provenance
+	if err = cursor.All(ctx, &rows); err != nil {
+		return nil, false, err
+	}
+	sourceGroups := map[string][]string{}
+	runGroups := map[string][]string{}
+	seenSource := map[string]map[string]struct{}{}
+	seenRun := map[string]map[string]struct{}{}
+	for _, row := range rows {
+		id := row.NodeID.Hex()
+		if row.SourceHash != "" {
+			if seenSource[row.SourceHash] == nil {
+				seenSource[row.SourceHash] = map[string]struct{}{}
+			}
+			if _, exists := seenSource[row.SourceHash][id]; exists {
+				continue
+			}
+			seenSource[row.SourceHash][id] = struct{}{}
+			sourceGroups[row.SourceHash] = append(sourceGroups[row.SourceHash], id)
+			continue
+		}
+		if row.RunID == "" {
+			continue
+		}
+		if seenRun[row.RunID] == nil {
+			seenRun[row.RunID] = map[string]struct{}{}
+		}
+		if _, exists := seenRun[row.RunID][id]; exists {
+			continue
+		}
+		seenRun[row.RunID][id] = struct{}{}
+		runGroups[row.RunID] = append(runGroups[row.RunID], id)
+	}
+	links, truncated := starLinks(sourceGroups, LinkKindSameSource, MaxGraphLinks)
+	if truncated {
+		return links, true, nil
+	}
+	more, moreTruncated := starLinks(runGroups, LinkKindSameRun, MaxGraphLinks-len(links))
+	return append(links, more...), moreTruncated, nil
+}
+
+func starLinks(groups map[string][]string, kind string, budget int) ([]GraphLink, bool) {
+	if budget <= 0 {
+		if hasMultiMemberGroup(groups) {
+			return []GraphLink{}, true
+		}
+		return []GraphLink{}, false
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	links := make([]GraphLink, 0)
+	truncated := false
+	for _, key := range keys {
+		members := append([]string(nil), groups[key]...)
+		sort.Strings(members)
+		if len(members) < 2 {
+			continue
+		}
+		hub := members[0]
+		for _, member := range members[1:] {
+			if len(links) >= budget {
+				truncated = true
+				return links, truncated
+			}
+			links = append(links, GraphLink{Source: hub, Target: member, Kind: kind})
+		}
+	}
+	return links, truncated
+}
+
+func hasMultiMemberGroup(groups map[string][]string) bool {
+	for _, members := range groups {
+		if len(members) >= 2 {
+			return true
+		}
+	}
+	return false
 }
 
 func graphLabel(content, fallback string) string {

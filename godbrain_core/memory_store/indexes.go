@@ -101,7 +101,16 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	// 5. Knowledge Edges
+	// 5. Append-only operator judgments. Content stays immutable.
+	_, err = db.Collection("node_judgments").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "node_id", Value: 1}, {Key: "judged_at", Value: -1}}},
+		{Keys: bson.D{{Key: "stable_id", Value: 1}, {Key: "judged_at", Value: -1}}},
+	})
+	if err != nil {
+		return err
+	}
+
+	// 6. Knowledge Edges
 	_, err = db.Collection("knowledge_edges").Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys:    bson.D{{Key: "stable_id", Value: 1}}, // Unique edge key (Hash of From+To+Type)
@@ -118,7 +127,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	// 6. Ingestion Runs: Unique idempotency key (excluding failed runs)
+	// 7. Ingestion Runs: Unique idempotency key (excluding failed runs)
 	_, err = db.Collection("ingestion_runs").Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys: bson.D{
@@ -144,7 +153,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	// 7. Skills: Enforce uniqueness by Name
+	// 8. Skills: Enforce uniqueness by Name
 	_, err = db.Collection("skills").Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys:    bson.D{{Key: "name", Value: 1}},
 		Options: options.Index().SetUnique(true),

@@ -45,29 +45,33 @@ flowchart LR
     GoRouter[Go RAG Router :8082]
     RustRouter[Rust RAG Router :8082]
     Mongo[(MongoDB :27017)]
-    Colibri[Colibri inference process]
+    Colibri[Colibri inference]
     Librarian[Native Librarian]
     Memory[Go Memory Store]
-    RAG[Golden Record RAG Service :8084]
-    Factory[Agent Factory control plane]
+    RAG[Golden Record RAG :8084]
+    Factory[Agent Factory]
 
     Operator --> UI
     UI --> Kernel
-    Kernel --> RAG
+    Kernel -->|search / graph / node| RAG
+    Kernel -->|observe / remember / verify| Memory
     Kernel --> Colibri
-    GoRouter --> RAG
+    GoRouter -->|search / graph| RAG
     GoRouter --> Colibri
-    RustRouter --> RAG
+    RustRouter -->|chat search only| RAG
     RustRouter --> Colibri
     Librarian --> Memory
     Memory --> Mongo
     RAG --> Mongo
-    Factory -. planned .-> Kernel
-    Factory -. planned .-> Librarian
+    Factory -.->|planned| Kernel
+    Factory -.->|planned| Librarian
 ```
 
-The three routers are alternatives, not a load-balanced cluster. The Go and Rust
-routers both use port `8082`, so only one can bind that port at a time.
+Nothing privileged talks to Mongo except the Memory Store and the RAG service.
+The C++ kernel and the Go router do not query `nodes` and do not use `mongosh`.
+The Rust router can chat through `:8084` but still returns `410` for graph/node.
+The three routers are alternatives, not a cluster. Go and Rust share port
+`8082`, so only one of those two can bind at a time.
 
 ## Component inventory
 
@@ -75,8 +79,8 @@ routers both use port `8082`, so only one can bind that port at a time.
 |---|---|---|---|---|
 | Colibri C engine | Implemented | `LLM/colibri_LLM/c/` | Child process and environment | Local model inference and memory-tiered model loading |
 | C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, Colibri invocation, privileged command dispatch |
-| Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and Colibri invocation |
-| Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | MongoDB-backed RAG and asynchronous Colibri invocation |
+| Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and Colibri invocation |
+| Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
 | Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
 | Golden Record RAG service | Implemented retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search, graph, and document reads with source-resolved citations |
@@ -146,9 +150,20 @@ The current dispatcher supports:
 
 - `execute_godbrain_script`
 - `propose_sovereign_architect_change`
-- `save_godbrain_thought`
-- `query_recent_thoughts`
+- `save_godbrain_thought` (candidate Golden Record via `memory-store.exe`)
+- `query_recent_thoughts` (newest active-generation `rag_documents`)
+- `set_godbrain_status` (`verified` or `rejected` with reasoning)
 - `get_system_telemetry`
+- `observe_godbrain_host` (candidate Windows inventory via Memory Store)
+
+Ordinary Galaxy chat also accepts `/observe`, `/remember`, `/verify`, `/reject`, and
+`/recall` without a bearer token. These are loopback teach/judgment, not
+privileged host execution. `/observe` writes a stable host inventory (computer name, total RAM, logical
+CPU count) as `candidate` and shows a live CPU/RAM sample that is not stored.
+`/remember` writes only `candidate`. `/verify` and
+`/reject` require a short reason (why it works, or why it is junk). Rejected
+nodes stay in source collections but are hidden from default search and the
+Galaxy graph. `rejected` is terminal. Content never changes; only status does.
 
 The first two can execute arbitrary PowerShell after authorization. This is an
 intentional high-risk capability, not a sandbox. The planned Agent Factory must
@@ -186,8 +201,9 @@ privileged commands.
 | `GET` | `/v1/document` | None | One active-generation document by `id` (`node_id` hex or `stable_id`) |
 
 Graph and document reads require a ready corpus and fail closed with `503` when
-the projection is unready. They return nodes only; Galaxy currently renders an
-empty `links` array.
+the projection is unready. Graph links are a bounded star of nodes that share a
+`source_hash` (or, if that is empty, a `run_id`) in `rag_provenance`. They are
+not semantic knowledge-graph edges.
 
 ### Go and Rust alternatives (`127.0.0.1:8082`)
 
@@ -211,6 +227,7 @@ sequenceDiagram
     participant C as Colibri
 
     U->>K: POST /api/chat {"message": "..."}
+    K->>K: Attach session-remembered notes if any
     K->>R: POST /v1/search
     R->>M: Active-generation rag_documents
     M-->>R: Bounded results
@@ -222,12 +239,34 @@ sequenceDiagram
     K-->>U: {"response": "..."}
 ```
 
-Failure to reach the RAG service, spawn Colibri, parse output, or finish before
-the timeout is reported as an error. A timed-out request must not kill unrelated
-Colibri processes.
+If RAG is down but the kernel process has session notes from `/remember` or
+`/observe`, chat still answers from that buffer. If both are empty, the request
+fails closed. A timed-out Colibri child must not kill unrelated processes.
 
 Galaxy `GET /api/graph` and `GET /api/node` use the same RAG service
 (`/v1/graph`, `/v1/document`) and the same fail-closed rule.
+
+### Observe, remember, and judge
+
+```mermaid
+sequenceDiagram
+    participant U as Galaxy
+    participant K as C++ Kernel
+    participant G as memory-store.exe
+    participant M as MongoDB
+    participant R as RAG service
+
+    U->>K: /observe or /remember
+    K->>G: candidate Golden Record on stdin
+    G->>M: commit plus rag_documents projection
+    G-->>K: receipt
+    K->>K: keep note in process session buffer
+    U->>K: /verify or /reject plus reasoning
+    K->>G: set_status
+    G->>M: status only on knowledge_nodes
+    G->>R: sync rag_documents status
+    G-->>K: judgment receipt
+```
 
 ### Privileged command
 
@@ -322,8 +361,8 @@ Data never becomes executable merely because it came from a model or database.
   a native MongoDB driver in C++.
 - Default Golden Record retrieval is lexical MongoDB text search. Hybrid
   retrieval is opt-in behind a pinned loopback embedding provider.
-- Galaxy graph is a bounded node list from `rag_documents`. It does not yet
-  render provenance or knowledge-graph edges.
+- Galaxy graph links are provenance co-occurrence (`same_source` / `same_run`),
+  not typed `knowledge_edges`. Those edges are indexed but not written yet.
 - The experimental Rust router still returns `410` for `/api/graph` and
   `/api/node`.
 - Structured audit events, approval records, and automated rollback belong to
@@ -434,7 +473,7 @@ risk classes, lifecycle, and implementation phases.
 2. Define versioned HTTP, job, result, and evidence JSON Schemas.
 3. Define retention and supersession policy for immutable MongoDB source and
    Golden Record collections.
-4. Decide whether Galaxy should render provenance or knowledge-graph edges from
-   `rag_provenance` in addition to the current node list.
+4. Decide whether typed `knowledge_edges` should be written by the Librarian
+   and replace the current provenance co-occurrence stars in Galaxy.
 5. Add structured audit storage and recovery semantics before enabling autonomous
    privileged execution.

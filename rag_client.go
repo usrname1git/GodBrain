@@ -27,6 +27,7 @@ const (
 	ragContextBytes          = 4096
 	ragDefaultGraphLimit     = 250
 	ragMaxGraphLimit         = 500
+	ragMaxGraphLinks         = 1000
 	maxRAGResponseBytes      = 128 * 1024
 	maxDocumentContentBytes  = 64 * 1024
 	maxRenderedContextBytes  = 64 * 1024
@@ -61,13 +62,21 @@ type ragGraphNode struct {
 	Label      string  `json:"label"`
 }
 
+type ragGraphLink struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Kind   string `json:"kind"`
+}
+
 type ragGraphResponse struct {
 	Generation        string         `json:"generation"`
 	ProjectionVersion string         `json:"projection_version"`
 	ProjectionSchema  string         `json:"projection_schema"`
 	Count             int            `json:"count"`
 	Truncated         bool           `json:"truncated"`
+	LinksTruncated    bool           `json:"links_truncated"`
 	Nodes             []ragGraphNode `json:"nodes"`
+	Links             []ragGraphLink `json:"links"`
 }
 
 type ragDocumentResponse struct {
@@ -92,12 +101,19 @@ type galaxyGraphNode struct {
 	Val   float64 `json:"val"`
 }
 
+type galaxyGraphLink struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Kind   string `json:"kind"`
+}
+
 type galaxyGraphView struct {
-	Nodes      []galaxyGraphNode `json:"nodes"`
-	Links      []struct{}        `json:"links"`
-	Generation string            `json:"generation"`
-	Count      int               `json:"count"`
-	Truncated  bool              `json:"truncated"`
+	Nodes          []galaxyGraphNode `json:"nodes"`
+	Links          []galaxyGraphLink `json:"links"`
+	Generation     string            `json:"generation"`
+	Count          int               `json:"count"`
+	Truncated      bool              `json:"truncated"`
+	LinksTruncated bool              `json:"links_truncated"`
 }
 
 type galaxyNodeView struct {
@@ -390,7 +406,7 @@ func validateRAGGraph(response ragGraphResponse) error {
 		len(response.Nodes) > ragMaxGraphLimit {
 		return errors.New("canonical RAG graph metadata is invalid")
 	}
-	if response.Nodes == nil {
+	if response.Nodes == nil || response.Links == nil || len(response.Links) > ragMaxGraphLinks {
 		return errors.New("canonical RAG graph node bounds or schema are invalid")
 	}
 	for _, node := range response.Nodes {
@@ -402,6 +418,14 @@ func validateRAGGraph(response ragGraphResponse) error {
 			!validRAGConfidence(node.Confidence) ||
 			!validRAGString(node.Label, 256, true) {
 			return errors.New("canonical RAG graph node bounds or schema are invalid")
+		}
+	}
+	for _, link := range response.Links {
+		if !validRAGToken(link.Source, 64) ||
+			!validRAGToken(link.Target, 64) ||
+			link.Source == link.Target ||
+			!oneOf(link.Kind, "same_source", "same_run") {
+			return errors.New("canonical RAG graph link bounds or schema are invalid")
 		}
 	}
 	return nil
@@ -439,12 +463,21 @@ func mapGalaxyGraph(response ragGraphResponse) galaxyGraphView {
 			Val:   1 + node.Confidence*4,
 		})
 	}
+	links := make([]galaxyGraphLink, 0, len(response.Links))
+	for _, link := range response.Links {
+		links = append(links, galaxyGraphLink{
+			Source: link.Source,
+			Target: link.Target,
+			Kind:   link.Kind,
+		})
+	}
 	return galaxyGraphView{
-		Nodes:      nodes,
-		Links:      []struct{}{},
-		Generation: response.Generation,
-		Count:      response.Count,
-		Truncated:  response.Truncated,
+		Nodes:          nodes,
+		Links:          links,
+		Generation:     response.Generation,
+		Count:          response.Count,
+		Truncated:      response.Truncated,
+		LinksTruncated: response.LinksTruncated,
 	}
 }
 

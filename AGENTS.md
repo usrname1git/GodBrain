@@ -24,8 +24,11 @@
 - `godbrain_core/cpp_kernel/kernel.cpp` is the command dispatcher. It requires a
   non-blank `reasoning` string for `execute_godbrain_script` and
   `propose_sovereign_architect_change`; `surgery.cpp` executes their PowerShell.
-  The memory commands in `memory.cpp` are currently stubs, not the Alexandria
-  persistence path.
+  `save_godbrain_thought` writes a candidate Golden Record through
+  `memory-store.exe`. `set_godbrain_status` is the only way a node becomes
+  `verified` or `rejected`. `query_recent_thoughts` reads the active RAG graph.
+  Ordinary Galaxy chat exposes `/observe`, `/remember`, `/verify`, `/reject`,
+  and `/recall`. `/observe` persists only stable host inventory, not live load.
 - Root `main.go` and `godbrain_core/rust_router/` are experimental,
   non-privileged RAG router alternatives on loopback port 8082. They cannot run
   together because they use the same port. Both use the canonical loopback RAG
