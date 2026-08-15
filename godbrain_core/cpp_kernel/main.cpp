@@ -964,7 +964,7 @@ int main() {
             }
             // 16 GB MoE prefill is ~13s/layer. A 3000-token note dump is a
             // 20 minute tax. Keep the oracle prompt small.
-            constexpr size_t kMaxColiContextBytes = 1800;
+            constexpr size_t kMaxColiContextBytes = 500;
             if (context_text.size() > kMaxColiContextBytes) {
                 context_text.resize(kMaxColiContextBytes);
             }
@@ -972,18 +972,11 @@ int main() {
             const std::string hostname =
                 telemetry::get_host_inventory().value("computer_name", "UNKNOWN");
             std::string system_prompt =
-                "You are GodBrain, a local oracle. Answer what is true or "
-                "best-supported, not what the operator would say. Separate "
-                "facts from taste. Verified Golden Records are evidence; "
-                "candidates are claims; rejected notes are junk. Operator "
-                "music or culture preferences are taste, never truth. Do not "
-                "impersonate the operator. The hostname " +
+                "Oracle. Answer what is best-supported. Facts vs taste. "
+                "Verified notes are evidence; candidates are claims. "
+                "Hostname " +
                 hostname +
-                " is this PC, not automatically a vehicle or product with the "
-                "same name. If evidence is thin, say so. If the notes do not "
-                "cover the question, answer from general knowledge and say you "
-                "are not citing a Golden Record. If a Windows tweak would "
-                "FATALLY_BREAK something, warn aggressively.";
+                " is this PC, not a vehicle. Short answers.";
             std::string user_prompt = context_text + "\n\nUser Question: " + user_msg;
 
             std::cout << "[RAG] Context built (" << context_text.size()
