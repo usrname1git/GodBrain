@@ -471,7 +471,7 @@
                     ? [status.last_oracle]
                     : []);
             const slice = raw.filter(function(turn) {
-                return turn && turn.ok && turn.answer;
+                return turn && turn.answer;
             }).slice(-3);
             if (!slice.length) return;
             if (boot) boot.dataset.replayed = '1';
@@ -480,7 +480,13 @@
                 if (turn.question) {
                     appendChatMessage('user-msg', '[USER]', turn.question);
                 }
-                appendChatMessage('sys-msg', '[SYS]', turn.answer);
+                const prefix = turn.complete === false ? '[PARTIAL]' : '[SYS]';
+                appendChatMessage(
+                    'sys-msg',
+                    prefix,
+                    turn.complete === false
+                        ? ('Interrupted: ' + turn.answer)
+                        : turn.answer);
             });
             appendChatMessage(
                 'sys-msg',
@@ -546,7 +552,7 @@
                 const a = String(last.answer || '').slice(0, 120);
                 lines.push(
                     'last ' + Math.round((last.elapsed_ms || 0) / 1000) + 's ' +
-                    (last.ok ? 'ok' : 'fail') +
+                    (last.complete === false ? 'partial' : (last.ok ? 'ok' : 'fail')) +
                     (last.stored ? ' stored' : ''));
                 if (q) lines.push('  Q: ' + q);
                 lines.push('  A: ' + a);
