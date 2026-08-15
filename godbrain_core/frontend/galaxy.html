@@ -698,7 +698,9 @@
                             } else if (ev.type === 'ping' && waiting && !assembled) {
                                 setMessageText(
                                     waiting, '[SYS]',
-                                    'Still prefilling / paging (' + (ev.elapsed_s || 0) + 's)...');
+                                    'Still prefilling / paging (' +
+                                    (typeof ev.elapsed_s === 'number' ? ev.elapsed_s : 1) +
+                                    's). Do not ask again.');
                             } else if (ev.type === 'status' && ev.text && waiting && !assembled) {
                                 setMessageText(waiting, '[SYS]', ev.text);
                             } else if (ev.type === 'done') {

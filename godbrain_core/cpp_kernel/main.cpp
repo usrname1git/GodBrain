@@ -652,7 +652,9 @@ std::string run_colibri_serve(
     const std::string& system,
     const std::string& user,
     ColiTokenFn on_token = {},
-    ColiPingFn on_ping = {}) {
+    ColiPingFn on_ping = {},
+    const std::string& prior_user = {},
+    const std::string& prior_assistant = {}) {
     httplib::Client client(kColibriServeHost, kColibriServePort);
     client.set_connection_timeout(0, 500000);
     // Colibri pings empty deltas every ~10s during prefill. A 60s read
@@ -666,14 +668,18 @@ std::string run_colibri_serve(
         const std::string override_model = read_env("GODBRAIN_COLIBRI_MODEL");
         return override_model.empty() ? "glm-5.2-colibri" : override_model;
     }();
+    json messages = json::array({json{{"role", "system"}, {"content", system}}});
+    if (!prior_user.empty() && !prior_assistant.empty()) {
+        messages.push_back(json{{"role", "user"}, {"content", prior_user}});
+        messages.push_back(
+            json{{"role", "assistant"}, {"content", prior_assistant}});
+    }
+    messages.push_back(json{{"role", "user"}, {"content", user}});
     const json body = {
         {"model", model},
         {"stream", true},
         {"max_tokens", 80},
-        {"messages",
-         json::array(
-             {json{{"role", "system"}, {"content", system}},
-              json{{"role", "user"}, {"content", user}}})},
+        {"messages", messages},
     };
 
     httplib::Headers headers = {{"Accept", "text/event-stream"}};
@@ -827,7 +833,9 @@ std::string run_colibri(
     const std::string& system,
     const std::string& user,
     ColiTokenFn on_token = {},
-    ColiPingFn on_ping = {}) {
+    ColiPingFn on_ping = {},
+    const std::string& prior_user = {},
+    const std::string& prior_assistant = {}) {
     const json coli = coli_serve_status();
     if (coli.value("up", false)) {
         if (coli.value("busy", false)) {
@@ -837,7 +845,8 @@ std::string run_colibri(
                    "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
         }
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
-        return run_colibri_serve(system, user, on_token, on_ping);
+        return run_colibri_serve(
+            system, user, on_token, on_ping, prior_user, prior_assistant);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
@@ -1501,7 +1510,7 @@ int main() {
             }
             // 16 GB MoE prefill is ~13s/layer. A 3000-token note dump is a
             // 20 minute tax. Keep the oracle prompt small.
-            constexpr size_t kMaxColiContextBytes = 500;
+            constexpr size_t kMaxColiContextBytes = 160;
             if (context_text.size() > kMaxColiContextBytes) {
                 context_text.resize(kMaxColiContextBytes);
             }
@@ -1514,10 +1523,24 @@ int main() {
                 "Hostname " +
                 hostname +
                 " is this PC, not a vehicle. Short answers.";
-            std::string user_prompt = context_text + "\n\nUser Question: " + user_msg;
+            const json prior = last_oracle_json();
+            const std::string prior_q = prior.value("question", "");
+            const std::string prior_a = prior.value("answer", "");
+            const bool follow_up =
+                prior.value("ok", false) && prior.value("complete", false) &&
+                !prior_q.empty() && !prior_a.empty() && prior_q != user_msg &&
+                prior_a.find("I cannot fulfill") == std::string::npos;
+            // Follow-ups send the previous turn as chat history so Colibri
+            // reuses the KV prefix instead of a 78-layer re-prefill.
+            std::string user_prompt =
+                follow_up ? user_msg
+                          : (context_text.empty()
+                                 ? user_msg
+                                 : (context_text + "\n\n" + user_msg));
 
             std::cout << "[RAG] Context built (" << context_text.size()
-                      << " bytes). Asking Colibri..." << std::endl;
+                      << " bytes) follow_up=" << (follow_up ? "1" : "0")
+                      << ". Asking Colibri..." << std::endl;
             const bool want_stream =
                 payload.value("stream", false) ||
                 req.get_header_value("Accept").find("text/event-stream") !=
@@ -1526,11 +1549,13 @@ int main() {
                 const std::string sys = system_prompt;
                 const std::string usr = user_prompt;
                 const std::string asked = user_msg;
+                const std::string hist_q = follow_up ? prior_q : std::string();
+                const std::string hist_a = follow_up ? prior_a : std::string();
                 res.set_header("Cache-Control", "no-cache");
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked](size_t, httplib::DataSink& sink) {
+                    [sys, usr, asked, hist_q, hist_a](size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
                             return sink.write(line.data(), line.size());
@@ -1558,12 +1583,14 @@ int main() {
                                 }
                             },
                             [&]() {
+                                const int elapsed_s = static_cast<int>(
+                                    (GetTickCount() - coli_started) / 1000);
                                 emit({{"type", "ping"},
                                       {"elapsed_s",
-                                       static_cast<int>(
-                                           (GetTickCount() - coli_started) /
-                                           1000)}});
-                            });
+                                       elapsed_s < 1 ? 1 : elapsed_s}});
+                            },
+                            hist_q,
+                            hist_a);
                         const std::string final_answer = strip_coli_reply(combined);
                         const DWORD elapsed = GetTickCount() - coli_started;
                         remember_oracle_turn(asked, final_answer, elapsed);
@@ -1580,7 +1607,13 @@ int main() {
                 return;
             }
             const DWORD coli_started = GetTickCount();
-            const std::string combined = run_colibri(system_prompt, user_prompt);
+            const std::string combined = run_colibri(
+                system_prompt,
+                user_prompt,
+                {},
+                {},
+                follow_up ? prior_q : std::string(),
+                follow_up ? prior_a : std::string());
             const std::string final_answer = strip_coli_reply(combined);
             remember_oracle_turn(
                 user_msg, final_answer, GetTickCount() - coli_started);
