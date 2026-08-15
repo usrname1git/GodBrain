@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -19,46 +20,60 @@ namespace telemetry {
 
     constexpr size_t kMaxFixedVolumes = 16;
 
-    std::string sanitize_volume_label(const char* raw) {
-        std::string label;
-        for (const char* cursor = raw; *cursor != '\0' && label.size() < 32; ++cursor) {
-            const unsigned char character = static_cast<unsigned char>(*cursor);
-            if (character >= 32 && character != '=' && character != '\n' &&
-                character != '\r') {
-                label.push_back(static_cast<char>(character));
+    std::string utf8_from_wide(const std::wstring& raw) {
+        if (raw.empty()) return {};
+        const int needed = WideCharToMultiByte(
+            CP_UTF8, 0, raw.c_str(), static_cast<int>(raw.size()),
+            nullptr, 0, nullptr, nullptr);
+        if (needed <= 0) return {};
+        std::string utf8(static_cast<size_t>(needed), '\0');
+        WideCharToMultiByte(
+            CP_UTF8, 0, raw.c_str(), static_cast<int>(raw.size()),
+            utf8.data(), needed, nullptr, nullptr);
+        return utf8;
+    }
+
+    std::string sanitize_volume_label(const wchar_t* raw) {
+        std::wstring cleaned;
+        for (const wchar_t* cursor = raw; cursor && *cursor != L'\0' &&
+             cleaned.size() < 32; ++cursor) {
+            if (*cursor >= 32 && *cursor != L'=' && *cursor != L'\n' &&
+                *cursor != L'\r') {
+                cleaned.push_back(*cursor);
             }
         }
-        return label;
+        return utf8_from_wide(cleaned);
     }
 
     void scan_fixed_volumes(json& inventory, json& live) {
         inventory = json::array();
         live = json::array();
-        char drives[512] = {};
-        const DWORD written = GetLogicalDriveStringsA(sizeof(drives) - 1, drives);
-        if (written == 0 || written >= sizeof(drives)) return;
+        wchar_t drives[512] = {};
+        const DWORD written = GetLogicalDriveStringsW(511, drives);
+        if (written == 0 || written >= 511) return;
 
-        std::vector<std::string> roots;
-        for (char* cursor = drives; *cursor != '\0'; cursor += std::strlen(cursor) + 1) {
+        std::vector<std::wstring> roots;
+        for (wchar_t* cursor = drives; *cursor != L'\0';
+             cursor += std::wcslen(cursor) + 1) {
             roots.emplace_back(cursor);
         }
         std::sort(roots.begin(), roots.end());
 
         for (const auto& root : roots) {
             if (inventory.size() >= kMaxFixedVolumes) break;
-            if (GetDriveTypeA(root.c_str()) != DRIVE_FIXED) continue;
+            if (GetDriveTypeW(root.c_str()) != DRIVE_FIXED) continue;
 
             ULARGE_INTEGER free_bytes{};
             ULARGE_INTEGER total_bytes{};
-            if (GetDiskFreeSpaceExA(root.c_str(), &free_bytes, &total_bytes, nullptr) == 0) {
+            if (GetDiskFreeSpaceExW(root.c_str(), &free_bytes, &total_bytes, nullptr) == 0) {
                 continue;
             }
 
-            char label[MAX_PATH] = {};
-            GetVolumeInformationA(
-                root.c_str(), label, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0);
+            wchar_t label[33] = {};
+            GetVolumeInformationW(
+                root.c_str(), label, 33, nullptr, nullptr, nullptr, nullptr, 0);
 
-            const char letter = root.empty() ? '?' : root[0];
+            const char letter = root.empty() ? '?' : static_cast<char>(root[0]);
             const int total_gb = static_cast<int>(
                 total_bytes.QuadPart / (1024ull * 1024ull * 1024ull));
             const double free_gb =
