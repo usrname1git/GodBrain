@@ -1070,6 +1070,32 @@ int main() {
                 return;
             }
 
+            if (starts_with_ignore_case(user_msg, "/last") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                const json turns = last_oracle_turns_json();
+                std::ostringstream reply;
+                if (turns.empty()) {
+                    reply << "No Oracle turns on disk yet.";
+                } else {
+                    reply << turns.size() << " Oracle turn(s) on disk "
+                             "(candidate, not verified):\n";
+                    int index = 0;
+                    for (const auto& turn : turns) {
+                        ++index;
+                        reply << index << ". "
+                              << (turn.value("ok", false) ? "ok" : "fail")
+                              << " " << (turn.value("elapsed_ms", 0) / 1000)
+                              << "s\n  Q: "
+                              << turn.value("question", "") << "\n  A: "
+                              << turn.value("answer", "") << "\n";
+                    }
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(),
+                                "application/json");
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
