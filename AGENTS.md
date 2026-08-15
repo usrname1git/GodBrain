@@ -31,7 +31,9 @@
   `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
-  host + coli + last-turn line. The Galaxy node panel and `POST /api/judge` are
+  host + coli + last-turn line. `/heal` reports the host-listener closed loop
+  (detect → start missing rag/coli/kernel → verify). Watch-GodBrain runs
+  Heal-GodBrain.ps1; it never kills a process. The Galaxy node panel and `POST /api/judge` are
   the same judgment path. `/observe` persists only stable host inventory, not
   live load. Logon (`Start-GodBrain.ps1`) posts `/api/observe` once the kernel
   is listening; unchanged inventory is an idempotent no-op. Kernel boot loads
