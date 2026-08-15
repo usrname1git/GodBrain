@@ -142,12 +142,13 @@
     <div id="rag-chat">
         <h2>Colibri RAG Uplink</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /last /vram /remember /recall still work in chat.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /verify last &lt;why&gt; /reject last &lt;why&gt; /brief /last still work in chat.</div>
         </div>
         <div style="display: flex; gap: 5px; margin-bottom: 5px;">
             <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
             <button id="status-btn" style="width: auto; padding: 5px 10px;">Status</button>
             <button id="last-btn" style="width: auto; padding: 5px 10px;">Last</button>
+            <button id="brief-btn" style="width: auto; padding: 5px 10px;">Brief</button>
             <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
         <div style="display: flex; gap: 5px;">
@@ -740,6 +741,7 @@
         document.getElementById('observe-btn').addEventListener('click', () => runSlash('/observe'));
         document.getElementById('status-btn').addEventListener('click', () => runSlash('/status'));
         document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
+        document.getElementById('brief-btn').addEventListener('click', () => runSlash('/brief'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
 
         function judgeOpenNode(status) {
@@ -850,6 +852,20 @@
                     writesNeedToken
                         ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
                         : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes are open. Tailscale remember stays closed.'
+                ));
+                const last = status.last_oracle || {};
+                const ram = status.host && typeof status.host.ram_available_gb === 'number'
+                    ? status.host.ram_available_gb.toFixed(1)
+                    : '?';
+                boot.appendChild(document.createElement('br'));
+                boot.appendChild(document.createTextNode(
+                    '[SYS] Brief: coli ' + painted.label +
+                    ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
+                    ' | RAM ' + ram + ' GB free' +
+                    (last.question
+                        ? (' | last ' + (last.complete === false ? 'partial ' : '') +
+                            String(last.question).slice(0, 60))
+                        : ' | no Oracle turn yet')
                 ));
             }
             replayLastOracle(status);
