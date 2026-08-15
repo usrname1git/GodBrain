@@ -11,5 +11,6 @@ namespace memory {
     json get_recent(int limit);
     json set_status(const json& payload);
     json session_snapshot(int limit);
+    json hydrate_session_from_rag();
     bool render_session_context(std::string& context, std::string& error);
 }

@@ -238,6 +238,8 @@ int main() {
     if (!expect(
             mapped.at("nodes").at(0).at("group") == "security" &&
                 mapped.at("nodes").at(0).at("id") == "0123456789abcdef01234567" &&
+                mapped.at("nodes").at(0).at("stable_id") == "claim:auth" &&
+                mapped.at("nodes").at(0).at("status") == "candidate" &&
                 mapped.at("links").size() == 1 &&
                 mapped.at("links").at(0).at("kind") == "same_source",
             "graph was not mapped to the Galaxy contract")) {
@@ -283,6 +285,10 @@ int main() {
             node.at("title") ==
                     "Bearer authentication protects privileged actions." &&
                 node.at("type") == "claim" &&
+                node.at("id") == "0123456789abcdef01234567" &&
+                node.at("stable_id") == "claim:auth" &&
+                node.at("status") == "candidate" &&
+                node.at("sector") == "security" &&
                 node.at("tags").size() == 2,
             "document was not mapped to the Galaxy node contract")) {
         return 1;

@@ -727,10 +727,12 @@ inline json galaxy_graph(const json& rag_graph) {
         const std::string label = node.at("label").get<std::string>();
         nodes.push_back({
             {"id", node.at("node_id")},
+            {"stable_id", node.at("stable_id")},
             {"label", label},
             {"title", label},
             {"group", node.at("sector")},
             {"type", node.at("kind")},
+            {"status", node.at("status")},
             {"val", 1.0 + node.at("confidence").get<double>() * 4.0},
         });
     }
@@ -754,8 +756,12 @@ inline json galaxy_graph(const json& rag_graph) {
 
 inline json galaxy_node(const json& document) {
     return {
+        {"id", document.at("node_id")},
+        {"stable_id", document.at("stable_id")},
         {"title", document.at("label")},
         {"type", document.at("kind")},
+        {"sector", document.at("sector")},
+        {"status", document.at("status")},
         {"tags", json::array({document.at("sector"), document.at("status")})},
         {"content", document.at("content")},
     };

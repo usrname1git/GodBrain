@@ -61,7 +61,8 @@ std::string claim_stable_id(const std::string& type, const std::string& content)
 void remember_session(
     const std::string& source_hash,
     const std::string& stable_id,
-    const std::string& content) {
+    const std::string& content,
+    const std::string& status = "candidate") {
     std::lock_guard<std::mutex> lock(g_session_mutex);
     g_session_thoughts.erase(
         std::remove_if(
@@ -72,7 +73,9 @@ void remember_session(
                        thought.stable_id == stable_id;
             }),
         g_session_thoughts.end());
-    g_session_thoughts.push_back({source_hash, stable_id, content, "candidate"});
+    const std::string trust =
+        (status == "verified" || status == "rejected") ? status : "candidate";
+    g_session_thoughts.push_back({source_hash, stable_id, content, trust});
     if (g_session_thoughts.size() > kMaxSessionThoughts) {
         g_session_thoughts.erase(
             g_session_thoughts.begin(),
@@ -464,12 +467,38 @@ json get_recent(int limit) {
     for (const auto& node : graph.at("nodes")) {
         thoughts.push_back({
             {"id", node.at("node_id")},
+            {"stable_id", node.at("stable_id")},
             {"label", node.at("label")},
             {"kind", node.at("kind")},
             {"sector", node.at("sector")},
+            {"status", node.at("status")},
         });
     }
     return {{"status", "success"}, {"thoughts", thoughts}};
+}
+
+json hydrate_session_from_rag() {
+    json graph;
+    std::string error;
+    if (!godbrain_rag::Client{}.graph(static_cast<int>(kMaxSessionThoughts), graph, error)) {
+        return {{"status", "skipped"}, {"error", error}, {"loaded", 0}};
+    }
+    int loaded = 0;
+    godbrain_rag::Client client;
+    for (const auto& node : graph.at("nodes")) {
+        json document;
+        std::string doc_error;
+        if (!client.document(node.at("node_id").get<std::string>(), document, doc_error)) {
+            continue;
+        }
+        remember_session(
+            document.at("stable_id").get<std::string>(),
+            document.at("stable_id").get<std::string>(),
+            document.at("content").get<std::string>(),
+            document.at("status").get<std::string>());
+        ++loaded;
+    }
+    return {{"status", loaded > 0 ? "success" : "empty"}, {"loaded", loaded}};
 }
 
 json session_snapshot(int limit) {
