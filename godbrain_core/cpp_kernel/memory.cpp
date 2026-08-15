@@ -333,6 +333,13 @@ json observe_host() {
          << inventory.at("total_physical_ram_gb").get<int>() << '\n'
          << "logical_processors="
          << inventory.at("logical_processors").get<int>() << '\n';
+    const json volumes = inventory.value("volumes", json::array());
+    for (const auto& volume : volumes) {
+        body << "volume=" << volume.value("letter", "?")
+             << " type=" << volume.value("type", "fixed")
+             << " label=" << volume.value("label", "")
+             << " total_gb=" << volume.value("total_gb", 0) << '\n';
+    }
     json stored = save_thought({
         {"content", body.str()},
         {"sector", "windows-sre"},

@@ -380,16 +380,25 @@ int main() {
                           << inventory.at("computer_name").get<std::string>()
                           << " / " << inventory.at("total_physical_ram_gb").get<int>()
                           << " GB / " << inventory.at("logical_processors").get<int>()
-                          << " logical CPUs\n"
-                          << "Live sample (not stored): CPU "
+                          << " logical CPUs\n";
+                    for (const auto& volume : inventory.value("volumes", json::array())) {
+                        reply << "  " << volume.value("letter", "?") << ": "
+                              << volume.value("label", "") << " "
+                              << volume.value("total_gb", 0) << " GB fixed\n";
+                    }
+                    reply << "Live sample (not stored): CPU "
                           << live.value("cpu_percent", 0.0) << "%, RAM "
                           << live.value("system_ram_percent", 0)
                           << "% used, "
                           << live.value("ram_available_gb", 0.0)
-                          << " GB free\n"
-                          << "Verify if Task Manager matches the inventory, e.g.\n"
+                          << " GB free";
+                    for (const auto& volume : live.value("volume_free_gb", json::array())) {
+                        reply << ", " << volume.value("letter", "?") << ": "
+                              << volume.value("free_gb", 0.0) << " GB free";
+                    }
+                    reply << "\nVerify if Explorer matches the fixed disks, e.g.\n"
                           << "/verify " << stored.value("stable_id", "ID")
-                          << " Task Manager shows the same RAM and CPU count";
+                          << " Explorer shows the same fixed volumes and sizes";
                     res.set_content(
                         json({{"response", reply.str()}}).dump(),
                         "application/json");

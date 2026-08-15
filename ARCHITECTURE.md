@@ -159,7 +159,8 @@ The current dispatcher supports:
 Ordinary Galaxy chat also accepts `/observe`, `/remember`, `/verify`, `/reject`, and
 `/recall` without a bearer token. These are loopback teach/judgment, not
 privileged host execution. `/observe` writes a stable host inventory (computer name, total RAM, logical
-CPU count) as `candidate` and shows a live CPU/RAM sample that is not stored.
+CPU count, fixed volumes with letter/label/total GB) as `candidate`. Live
+CPU/RAM and free disk space are shown and not stored.
 `/remember` writes only `candidate`. `/verify` and
 `/reject` require a short reason (why it works, or why it is junk). Rejected
 nodes stay in source collections but are hidden from default search and the
