@@ -49,6 +49,7 @@ struct LastOracleTurn {
     DWORD elapsed_ms = 0;
     bool ok = false;
     bool stored = false;
+    bool complete = true;
 };
 constexpr size_t kMaxOracleTurns = 8;
 static std::mutex g_last_oracle_mu;
@@ -61,6 +62,11 @@ static void remember_oracle_turn(
     const std::string& question,
     const std::string& answer,
     DWORD elapsed_ms);
+static void note_oracle_partial(
+    const std::string& question,
+    const std::string& partial,
+    DWORD elapsed_ms);
+static void retry_unstored_oracle_turns();
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -93,6 +99,7 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
         {"elapsed_ms", turn.elapsed_ms},
         {"ok", turn.ok},
         {"stored", turn.stored},
+        {"complete", turn.complete},
     };
 }
 
@@ -166,6 +173,7 @@ static void load_oracle_turns() {
             turn.elapsed_ms = item.value("elapsed_ms", 0);
             turn.ok = item.value("ok", false);
             turn.stored = item.value("stored", false);
+            turn.complete = item.value("complete", true);
             if (turn.question.empty() && turn.answer.empty()) continue;
             g_oracle_turns.push_back(std::move(turn));
         }
@@ -183,26 +191,8 @@ static void load_oracle_turns() {
     }
 }
 
-static void remember_oracle_turn(
-    const std::string& question,
-    const std::string& answer,
-    DWORD elapsed_ms) {
-    LastOracleTurn turn;
-    turn.question = question;
-    turn.answer = answer;
-    turn.elapsed_ms = elapsed_ms;
-    turn.ok = answer.compare(0, 6, "Error:") != 0;
-    turn.stored = false;
-    {
-        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-        g_oracle_turns.push_back(turn);
-        if (g_oracle_turns.size() > kMaxOracleTurns) {
-            g_oracle_turns.erase(g_oracle_turns.begin());
-        }
-        persist_oracle_turns_locked();
-    }
-    if (!turn.ok) return;
-    // Mongo commit can take tens of seconds. Do not stall the last SSE token.
+static void store_oracle_turn_async(
+    const std::string& question, const std::string& answer) {
     std::thread([question, answer]() {
         bool stored = false;
         try {
@@ -226,6 +216,77 @@ static void remember_oracle_turn(
         }
         persist_oracle_turns_locked();
     }).detach();
+}
+
+static void note_oracle_partial(
+    const std::string& question,
+    const std::string& partial,
+    DWORD elapsed_ms) {
+    if (question.empty() || partial.empty()) return;
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
+        g_oracle_turns.back().question == question) {
+        g_oracle_turns.back().answer = partial;
+        g_oracle_turns.back().elapsed_ms = elapsed_ms;
+    } else {
+        LastOracleTurn turn;
+        turn.question = question;
+        turn.answer = partial;
+        turn.elapsed_ms = elapsed_ms;
+        turn.ok = false;
+        turn.stored = false;
+        turn.complete = false;
+        g_oracle_turns.push_back(std::move(turn));
+        if (g_oracle_turns.size() > kMaxOracleTurns) {
+            g_oracle_turns.erase(g_oracle_turns.begin());
+        }
+    }
+    persist_oracle_turns_locked();
+}
+
+static void retry_unstored_oracle_turns() {
+    std::vector<std::pair<std::string, std::string>> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        for (const auto& turn : g_oracle_turns) {
+            if (turn.ok && turn.complete && !turn.stored &&
+                !turn.question.empty() && !turn.answer.empty()) {
+                pending.emplace_back(turn.question, turn.answer);
+            }
+        }
+    }
+    for (const auto& item : pending) {
+        std::cout << "[MEMORY] Retrying unstored oracle turn" << std::endl;
+        store_oracle_turn_async(item.first, item.second);
+    }
+}
+
+static void remember_oracle_turn(
+    const std::string& question,
+    const std::string& answer,
+    DWORD elapsed_ms) {
+    LastOracleTurn turn;
+    turn.question = question;
+    turn.answer = answer;
+    turn.elapsed_ms = elapsed_ms;
+    turn.ok = answer.compare(0, 6, "Error:") != 0;
+    turn.stored = false;
+    turn.complete = true;
+    {
+        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+        if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
+            g_oracle_turns.back().question == question) {
+            g_oracle_turns.back() = turn;
+        } else {
+            g_oracle_turns.push_back(turn);
+            if (g_oracle_turns.size() > kMaxOracleTurns) {
+                g_oracle_turns.erase(g_oracle_turns.begin());
+            }
+        }
+        persist_oracle_turns_locked();
+    }
+    if (!turn.ok) return;
+    store_oracle_turn_async(question, answer);
 }
 
 // Resolves the Colibri C-Engine executable path. Order of preference:
@@ -779,6 +840,7 @@ int main() {
 
     g_frontend_dir = resolve_frontend_dir();
     load_oracle_turns();
+    retry_unstored_oracle_turns();
     godbrain_rag::Client rag_client;
     try {
         const json hydrated = memory::hydrate_session_from_rag();
@@ -1063,6 +1125,7 @@ int main() {
                         ++index;
                         reply << index << ". "
                               << (turn.value("ok", false) ? "ok" : "fail")
+                              << (turn.value("complete", true) ? "" : " partial")
                               << " " << (turn.value("elapsed_ms", 0) / 1000)
                               << "s\n  Q: "
                               << turn.value("question", "") << "\n  A: "
@@ -1362,11 +1425,22 @@ int main() {
                                "Prefill then decode. One GPU slot. "
                                "/status ticks while this runs."}});
                         const DWORD coli_started = GetTickCount();
+                        std::string streamed;
+                        DWORD last_partial = 0;
                         const std::string combined = run_colibri(
                             sys,
                             usr,
                             [&](const std::string& token) {
+                                streamed += token;
                                 emit({{"type", "token"}, {"text", token}});
+                                const DWORD now = GetTickCount();
+                                if (now - last_partial >= 5000) {
+                                    last_partial = now;
+                                    note_oracle_partial(
+                                        asked,
+                                        streamed,
+                                        now - coli_started);
+                                }
                             },
                             [&]() {
                                 emit({{"type", "ping"},
