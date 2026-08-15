@@ -1,14 +1,17 @@
 #include "telemetry.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dxgi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #pragma comment(lib, "pdh.lib")
+#pragma comment(lib, "dxgi.lib")
 
 namespace telemetry {
     static PDH_HQUERY cpuQuery = nullptr;
@@ -138,6 +141,93 @@ namespace telemetry {
             {"total_physical_ram_gb", total_ram_gb},
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
             {"volumes", volumes},
+        };
+    }
+
+    json get_gpu_memory() {
+        json adapters = json::array();
+        IDXGIFactory* factory = nullptr;
+        if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&factory))) ||
+            factory == nullptr) {
+            return {{"adapters", adapters}, {"dedicated_gb", 0}};
+        }
+
+        int best_gb = 0;
+        std::string best_name;
+        for (UINT index = 0;; ++index) {
+            IDXGIAdapter* adapter = nullptr;
+            if (factory->EnumAdapters(index, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+            if (adapter == nullptr) continue;
+            DXGI_ADAPTER_DESC description{};
+            if (SUCCEEDED(adapter->GetDesc(&description)) &&
+                description.DedicatedVideoMemory > 0) {
+                char name[128] = {};
+                WideCharToMultiByte(
+                    CP_UTF8, 0, description.Description, -1, name, sizeof(name),
+                    nullptr, nullptr);
+                const int dedicated_gb = static_cast<int>(
+                    (description.DedicatedVideoMemory + 512ull * 1024ull * 1024ull) /
+                    (1024ull * 1024ull * 1024ull));
+                adapters.push_back({
+                    {"name", std::string(name)},
+                    {"dedicated_gb", dedicated_gb},
+                });
+                if (dedicated_gb > best_gb &&
+                    std::string(name).find("Microsoft") == std::string::npos) {
+                    best_gb = dedicated_gb;
+                    best_name = name;
+                }
+            }
+            adapter->Release();
+        }
+        factory->Release();
+        return {
+            {"adapters", adapters},
+            {"name", best_name},
+            {"dedicated_gb", best_gb},
+        };
+    }
+
+    json plan_colibri_vram() {
+        const json gpu = get_gpu_memory();
+        int dedicated_gb = gpu.value("dedicated_gb", 0);
+        if (dedicated_gb < 0) dedicated_gb = 0;
+
+        char* override_expert = nullptr;
+        size_t override_len = 0;
+        int expert_gb = 0;
+        bool expert_overridden = false;
+        if (_dupenv_s(&override_expert, &override_len, "GODBRAIN_CUDA_EXPERT_GB") == 0 &&
+            override_expert != nullptr) {
+            expert_gb = std::atoi(override_expert);
+            expert_overridden = expert_gb > 0;
+            std::free(override_expert);
+        }
+
+        // 16 GB cards need ~4 GB for KV, CUDA workspace, and the desktop.
+        // Bigger cards can spare more for experts and still leave a buffer.
+        const int reserve_gb = dedicated_gb <= 16 ? 4 : 6;
+        if (!expert_overridden) {
+            expert_gb = dedicated_gb > reserve_gb ? dedicated_gb - reserve_gb : 2;
+            if (expert_gb < 2) expert_gb = 2;
+        }
+
+        char* overcommit_env = nullptr;
+        size_t overcommit_len = 0;
+        bool overcommit = false;
+        if (_dupenv_s(&overcommit_env, &overcommit_len, "GODBRAIN_COLI_OVERCOMMIT") == 0 &&
+            overcommit_env != nullptr) {
+            overcommit = std::string(overcommit_env) == "1";
+            std::free(overcommit_env);
+        }
+
+        return {
+            {"name", gpu.value("name", "")},
+            {"dedicated_gb", dedicated_gb},
+            {"reserve_gb", reserve_gb},
+            {"expert_gb", expert_gb},
+            {"overcommit", overcommit},
+            {"adapters", gpu.value("adapters", json::array())},
         };
     }
 }

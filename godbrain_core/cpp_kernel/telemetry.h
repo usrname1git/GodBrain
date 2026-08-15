@@ -7,4 +7,6 @@ using json = nlohmann::json;
 namespace telemetry {
     json get_current_state();
     json get_host_inventory();
+    json get_gpu_memory();
+    json plan_colibri_vram();
 }

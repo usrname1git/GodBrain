@@ -49,22 +49,16 @@ document.addEventListener('DOMContentLoaded', () => {
         appendMessage('user-msg', '[USER]', text);
         input.value = '';
 
-        // Get context from active tab
-        let pageContext = "";
+        let pageHint = "";
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            const injection = await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                func: () => document.body.innerText.substring(0, 1500) // Grab first 1500 chars for context
-            });
-            if (injection && injection[0] && injection[0].result) {
-                pageContext = injection[0].result;
+            if (tab && tab.title && tab.url && !tab.url.startsWith("chrome") && !tab.url.startsWith("brave")) {
+                pageHint = "Active tab: " + tab.title + " <" + tab.url + ">\n\n";
             }
         } catch (e) {
-            console.log("Could not extract page context:", e);
+            console.log("Could not read tab:", e);
         }
-
-        const fullQuery = pageContext ? `Context from current webpage:\n${pageContext}\n\nUser Question:\n${text}` : text;
+        const fullQuery = pageHint + text;
 
         appendMessage('sys-msg', '[SYS]', 'Transmitting to Colibri...', 'loading');
 
@@ -112,4 +106,35 @@ document.addEventListener('DOMContentLoaded', () => {
     input.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
     });
+
+    const rememberBtn = document.getElementById('remember-page-btn');
+    if (rememberBtn) {
+        rememberBtn.addEventListener('click', async () => {
+            try {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (!tab || !tab.url) {
+                    appendMessage('err-msg', '[ERR]', 'No active page.');
+                    return;
+                }
+                const response = await fetch('http://127.0.0.1:8083/api/remember', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: tab.title || 'untitled',
+                        url: tab.url,
+                        text: 'Saved from Brave uplink.',
+                        sector: 'web'
+                    })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    appendMessage('err-msg', '[ERR]', data.error || ('HTTP ' + response.status));
+                    return;
+                }
+                appendMessage('sys-msg', '[SYS]', 'Remembered as candidate ' + (data.stable_id || ''));
+            } catch (err) {
+                appendMessage('err-msg', '[ERR]', 'Kernel offline or remember failed.');
+            }
+        });
+    }
 });

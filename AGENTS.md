@@ -27,8 +27,10 @@
   `save_godbrain_thought` writes a candidate Golden Record through
   `memory-store.exe`. `set_godbrain_status` is the only way a node becomes
   `verified` or `rejected`. `query_recent_thoughts` reads the active RAG graph.
-  Ordinary Galaxy chat exposes `/observe`, `/remember`, `/verify`, `/reject`,
-  and `/recall`. `/observe` persists only stable host inventory, not live load.
+  Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
+  `/reject`, and `/recall`. `/observe` persists only stable host inventory, not
+  live load. Colibri VRAM budget is derived from DXGI dedicated memory and
+  does not overcommit into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`.
 - Root `main.go` and `godbrain_core/rust_router/` are experimental,
   non-privileged RAG router alternatives on loopback port 8082. They cannot run
   together because they use the same port. Both use the canonical loopback RAG
@@ -110,7 +112,7 @@ The kernel has no committed CMake project. From
 `godbrain_core\cpp_kernel` in a Visual Studio x64 Developer shell:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp /link pdh.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp /link pdh.lib dxgi.lib
 ```
 
 Starting the kernel is an integration action: it may invoke local `mongosh`,

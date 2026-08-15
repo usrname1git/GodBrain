@@ -115,6 +115,66 @@ bool file_exists(const std::string& path) {
            (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
+std::string resolve_memory_store();
+
+bool rag_projection_ready() {
+    httplib::Client client("127.0.0.1", 8084);
+    client.set_connection_timeout(0, 200000);
+    client.set_read_timeout(2, 0);
+    const auto response = client.Get("/health");
+    if (!response || response->body.empty()) return false;
+    try {
+        return json::parse(response->body).value("ready", false);
+    } catch (const json::exception&) {
+        return false;
+    }
+}
+
+void ensure_rag_ready() {
+    if (rag_projection_ready()) return;
+    std::string rebuild = resolve_memory_store();
+    const auto slash = rebuild.find_last_of("\\/");
+    if (slash == std::string::npos) return;
+    rebuild = rebuild.substr(0, slash + 1) + "rag-rebuild.exe";
+    if (!file_exists(rebuild)) {
+        std::cout << "[MEMORY] rag-rebuild.exe not found; projection may stay unready"
+                  << std::endl;
+        return;
+    }
+    if (read_env("MONGODB_URI").empty()) {
+        SetEnvironmentVariableA("MONGODB_URI", "mongodb://127.0.0.1:27017");
+    }
+    std::cout << "[MEMORY] RAG projection unready; running rag-rebuild.exe" << std::endl;
+    STARTUPINFOA startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    std::string command = "\"" + rebuild + "\"";
+    std::vector<char> cmdline(command.begin(), command.end());
+    cmdline.push_back('\0');
+    if (CreateProcessA(
+            nullptr,
+            cmdline.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            nullptr,
+            &startup,
+            &process) == 0) {
+        std::cout << "[MEMORY] failed to start rag-rebuild.exe" << std::endl;
+        return;
+    }
+    WaitForSingleObject(process.hProcess, 60000);
+    CloseHandle(process.hProcess);
+    CloseHandle(process.hThread);
+    if (rag_projection_ready()) {
+        std::cout << "[MEMORY] RAG projection is ready again" << std::endl;
+    } else {
+        std::cout << "[MEMORY] RAG projection still unready after rebuild" << std::endl;
+    }
+}
+
 std::string resolve_memory_store() {
     const std::string override_path = read_env("MONGO_STORE_PATH");
     if (!override_path.empty()) return override_path;
@@ -312,6 +372,7 @@ json save_thought(const json& payload) {
     }
     const std::string stable_id = claim_stable_id(claim_type, content);
     remember_session(source_hash, stable_id, content);
+    ensure_rag_ready();
     return {
         {"status", "success"},
         {"run_id", receipt.value("run_id", "")},
@@ -367,6 +428,7 @@ json set_status(const json& payload) {
         {"reasoning", reasoning},
     };
     const json receipt = run_memory_store(document);
+    ensure_rag_ready();
     {
         std::lock_guard<std::mutex> lock(g_session_mutex);
         if (status == "rejected") {
