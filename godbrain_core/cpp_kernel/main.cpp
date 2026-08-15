@@ -944,7 +944,7 @@ int main() {
             std::string rag_text;
             const bool have_rag =
                 rag_client.search(user_msg, search_response, rag_error) &&
-                godbrain_rag::render_context(search_response, rag_text, rag_error);
+                godbrain_rag::render_coli_notes(search_response, rag_text, rag_error);
             if (!have_rag) {
                 std::cerr << "[RAG] Canonical search failed closed: " << rag_error
                           << std::endl;

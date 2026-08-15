@@ -537,6 +537,34 @@ inline bool render_context(
     return true;
 }
 
+// Short notes for Colibri. The full canonical dump is for tests and
+// debugging; 16 GB MoE cannot prefill score tables and citation trees.
+inline bool render_coli_notes(
+    const json& response,
+    std::string& context,
+    std::string& error) {
+    std::ostringstream output;
+    output << kUntrustedBegin << '\n';
+    append_line(output, "NOTICE", kRouterNotice);
+    const json& results = response.at("results");
+    const size_t limit = std::min<size_t>(results.size(), 2);
+    for (size_t index = 0; index < limit; ++index) {
+        const json& result = results.at(index);
+        const std::string prefix = "note[" + std::to_string(index + 1) + "].";
+        append_line(output, prefix + "status", result.at("status").get<std::string>());
+        append_line(output, prefix + "sector", result.at("sector").get<std::string>());
+        append_line(output, prefix + "snippet", result.at("snippet").get<std::string>());
+    }
+    output << kUntrustedEnd << '\n';
+    if (output.fail()) {
+        error = "coli RAG notes contain invalid UTF-8";
+        context.clear();
+        return false;
+    }
+    context = output.str();
+    return true;
+}
+
 inline void configure_loopback_rag(httplib::Client& client) {
     client.set_connection_timeout(0, 500000);
     client.set_read_timeout(2, 0);
