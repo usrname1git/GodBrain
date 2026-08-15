@@ -140,7 +140,7 @@
     <div id="rag-chat">
         <h2>Colibri RAG Uplink</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] /observe inventory. /vram shows the 16 GB Colibri plan. /verify /reject /remember /recall as before.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /vram /remember /recall still work in chat.</div>
         </div>
         <div style="display: flex; gap: 5px; margin-bottom: 5px;">
             <button id="observe-btn" style="width: auto; padding: 5px 10px;">Observe</button>
@@ -157,6 +157,14 @@
         <h2 id="node-manual-title">Node Title</h2>
         <div style="font-size: 0.8em; color: #0a0;" id="node-manual-meta">Type: note | Tags: []</div>
         <div id="node-manual-content">Loading...</div>
+        <div id="node-judge" style="display: none; margin-top: 12px;">
+            <input type="text" id="judge-reason" placeholder="Why it works, or why it is junk (min 4 chars)">
+            <div style="display: flex; gap: 5px;">
+                <button id="verify-btn" type="button">Verify</button>
+                <button id="reject-btn" type="button">Reject</button>
+            </div>
+            <div id="judge-result" class="sys-msg"></div>
+        </div>
     </div>
 
     <script>
@@ -175,6 +183,31 @@
         };
         let fullData = { nodes: [], links: [], truncated: false, links_truncated: false, generation: '' };
         let graph = null;
+        let openNode = { id: '', stableId: '', status: '' };
+        let writesNeedToken = false;
+
+        function writeHeaders() {
+            const headers = {'Content-Type': 'application/json'};
+            const token = sessionStorage.getItem('godbrain_write_token') || '';
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            return headers;
+        }
+
+        function ensureWriteToken() {
+            if (!writesNeedToken) return true;
+            if (sessionStorage.getItem('godbrain_write_token')) return true;
+            const entered = window.prompt(
+                'GODBRAIN_API_TOKEN is set. Paste it once to Verify/Reject from this page.');
+            if (!entered || !entered.trim()) return false;
+            sessionStorage.setItem('godbrain_write_token', entered.trim());
+            return true;
+        }
+
+        function statusColor(status) {
+            if (status === 'verified') return 0xffd24a;
+            if (status === 'candidate') return 0x33ff66;
+            return 0x226622;
+        }
         
         // Initialize basic empty graph
         // Create a reusable glowing star texture for extreme GPU efficiency
@@ -205,7 +238,7 @@
                 .nodeThreeObject(node => {
                     const material = new THREE.SpriteMaterial({ 
                         map: starTexture, 
-                        color: Math.round(Math.random() * Math.pow(2, 24)),
+                        color: statusColor(node.status),
                         blending: THREE.AdditiveBlending,
                         depthWrite: false,
                         transparent: true
@@ -223,6 +256,14 @@
                     document.getElementById('node-manual').style.display = 'flex';
                     document.getElementById('node-manual-title').innerText = node.title || node.label || node.id;
                     document.getElementById('node-manual-content').innerText = 'Loading...';
+                    document.getElementById('judge-result').innerText = '';
+                    document.getElementById('judge-reason').value = '';
+                    openNode = {
+                        id: node.id || '',
+                        stableId: node.stable_id || node.id || '',
+                        status: node.status || ''
+                    };
+                    document.getElementById('node-judge').style.display = 'block';
                     
                     fetch('/api/node?id=' + encodeURIComponent(node.id))
                         .then(res => res.json())
@@ -232,8 +273,17 @@
                                 return;
                             }
                             document.getElementById('node-manual-title').innerText = data.title;
-                            document.getElementById('node-manual-meta').innerText = 'Type: ' + data.type + ' | Tags: ' + (data.tags ? data.tags.join(', ') : 'none');
+                            document.getElementById('node-manual-meta').innerText =
+                                'Type: ' + data.type +
+                                ' | Sector: ' + (data.sector || 'none') +
+                                ' | Status: ' + (data.status || 'unknown') +
+                                ' | ' + (data.stable_id || data.id || '');
                             document.getElementById('node-manual-content').innerText = data.content;
+                            openNode = {
+                                id: data.id || node.id || '',
+                                stableId: data.stable_id || data.id || node.id || '',
+                                status: data.status || ''
+                            };
                         })
                         .catch(err => {
                             document.getElementById('node-manual-content').innerText = 'Error loading content: ' + err;
@@ -255,6 +305,8 @@
         // Close manual
         document.getElementById('node-manual-close').addEventListener('click', () => {
             document.getElementById('node-manual').style.display = 'none';
+            document.getElementById('node-judge').style.display = 'none';
+            openNode = { id: '', stableId: '', status: '' };
         });
 
         // Optimize physics for huge 45k node galaxy
@@ -270,34 +322,37 @@
             }
         } catch(e) { console.log(e); }
 
-        fetch('/api/graph')
-            .then(res => {
-                return res.json().catch(() => ({})).then(data => {
-                    if (!res.ok) {
-                        throw new Error((data && data.error) || ('API returned ' + res.status));
-                    }
-                    return data;
+        function loadGalaxy() {
+            return fetch('/api/graph')
+                .then(res => {
+                    return res.json().catch(() => ({})).then(data => {
+                        if (!res.ok) {
+                            throw new Error((data && data.error) || ('API returned ' + res.status));
+                        }
+                        return data;
+                    });
+                })
+                .then(data => {
+                    fullData = {
+                        nodes: Array.isArray(data.nodes) ? data.nodes : [],
+                        links: Array.isArray(data.links) ? data.links : [],
+                        truncated: !!data.truncated,
+                        links_truncated: !!data.links_truncated,
+                        generation: data.generation || ''
+                    };
+                    rebuildSectorFilters(fullData.nodes);
+                    applyFilter();
+                })
+                .catch(err => {
+                    console.error(err);
+                    document.getElementById('stats').innerText =
+                        'ERROR LOADING GALAXY: ' + ((err && err.message) || err);
+                    const filters = document.getElementById('sector-filters');
+                    while (filters.firstChild) filters.removeChild(filters.firstChild);
+                    filters.appendChild(document.createTextNode('Golden Record graph is unavailable.'));
                 });
-            })
-            .then(data => {
-                fullData = {
-                    nodes: Array.isArray(data.nodes) ? data.nodes : [],
-                    links: Array.isArray(data.links) ? data.links : [],
-                    truncated: !!data.truncated,
-                    links_truncated: !!data.links_truncated,
-                    generation: data.generation || ''
-                };
-                rebuildSectorFilters(fullData.nodes);
-                applyFilter();
-            })
-            .catch(err => {
-                console.error(err);
-                document.getElementById('stats').innerText =
-                    'ERROR LOADING GALAXY: ' + ((err && err.message) || err);
-                const filters = document.getElementById('sector-filters');
-                while (filters.firstChild) filters.removeChild(filters.firstChild);
-                filters.appendChild(document.createTextNode('Golden Record graph is unavailable.'));
-            });
+        }
+        loadGalaxy();
 
         function rebuildSectorFilters(nodes) {
             const container = document.getElementById('sector-filters');
@@ -443,6 +498,9 @@
             .then(data => {
                 if (data && typeof data.response === 'string') {
                     appendChatMessage('sys-msg', '[SYS]', data.response);
+                    if (/^\/(observe|verify|reject)\b/i.test(text)) {
+                        loadGalaxy();
+                    }
                 } else if (data && typeof data.error === 'string') {
                     appendChatMessage('sys-msg', '[ERR]', data.error, 'red');
                 } else {
@@ -466,20 +524,74 @@
         document.getElementById('observe-btn').addEventListener('click', () => runSlash('/observe'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
 
+        function judgeOpenNode(status) {
+            const reason = document.getElementById('judge-reason').value.trim();
+            const result = document.getElementById('judge-result');
+            const id = openNode.stableId || openNode.id;
+            if (!id) {
+                result.innerText = 'No node id to judge.';
+                return;
+            }
+            if (reason.length < 4) {
+                result.innerText = 'Say why this is verified (it works) or rejected (junk).';
+                return;
+            }
+            if (!ensureWriteToken()) {
+                result.innerText = 'Bearer required. Set GODBRAIN_API_TOKEN in the prompt, or use /verify in chat.';
+                return;
+            }
+            result.innerText = 'Judging...';
+            fetch('/api/judge', {
+                method: 'POST',
+                headers: writeHeaders(),
+                body: JSON.stringify({id: id, status: status, reasoning: reason})
+            })
+            .then(res => res.json().catch(() => ({})).then(data => {
+                if (res.status === 401 || res.status === 403) {
+                    sessionStorage.removeItem('godbrain_write_token');
+                    throw new Error((data && data.error) || 'bearer token required for this write');
+                }
+                if (!res.ok) {
+                    throw new Error((data && data.error) || ('API returned ' + res.status));
+                }
+                return data;
+            }))
+            .then(data => {
+                const to = data.to || status;
+                result.innerText = to + ' ' + (data.stable_id || id);
+                openNode.status = to;
+                if (to === 'rejected') {
+                    document.getElementById('node-manual').style.display = 'none';
+                } else {
+                    const meta = document.getElementById('node-manual-meta');
+                    meta.innerText = meta.innerText.replace(/Status: \w+/, 'Status: ' + to);
+                }
+                return loadGalaxy();
+            })
+            .catch(err => {
+                result.innerText = (err && err.message) || 'Judge failed';
+            });
+        }
+        document.getElementById('verify-btn').addEventListener('click', () => judgeOpenNode('verified'));
+        document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
+
         fetch('/api/status').then(r => r.json()).then(status => {
+            writesNeedToken = !!status.writes_need_token;
             const ragReady = status.rag && status.rag.ready;
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
                 ' | coli ' + (status.coli_serve ? 'serve' : 'cold') +
-                ' | writes ' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
+                ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
             if (stats && stats.innerText && stats.innerText.indexOf('RAG') === -1) {
                 stats.innerText += extra;
             }
             const boot = document.getElementById('sys-boot');
-            if (boot && !status.writes_need_token) {
+            if (boot) {
                 boot.appendChild(document.createElement('br'));
                 boot.appendChild(document.createTextNode(
-                    '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
+                    writesNeedToken
+                        ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
+                        : '[SYS] GODBRAIN_API_TOKEN is not set. /remember and Shortcuts need no bearer tonight.'
                 ));
             }
         }).catch(() => {});

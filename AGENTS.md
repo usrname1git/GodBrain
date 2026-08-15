@@ -28,8 +28,13 @@
   `memory-store.exe`. `set_godbrain_status` is the only way a node becomes
   `verified` or `rejected`. `query_recent_thoughts` reads the active RAG graph.
   Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
-  `/reject`, and `/recall`. `/observe` persists only stable host inventory, not
-  live load. Colibri VRAM budget is derived from DXGI dedicated memory and
+  `/reject`, and `/recall`. The Galaxy node panel and `POST /api/judge` are
+  the same judgment path. `/observe` persists only stable host inventory, not
+  live load. Logon (`Start-GodBrain.ps1`) posts `/api/observe` once the kernel
+  is listening; unchanged inventory is an idempotent no-op. Kernel boot loads
+  the newest Golden Records into the process session buffer so chat still knows
+  the host after a restart. Colibri VRAM budget
+  is derived from DXGI dedicated memory and
   does not overcommit into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`.
 - Root `main.go` and `godbrain_core/rust_router/` are experimental,
   non-privileged RAG router alternatives on loopback port 8082. They cannot run

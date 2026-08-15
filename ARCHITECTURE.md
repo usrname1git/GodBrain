@@ -193,6 +193,7 @@ does not provide kernel-mode access.
 | `GET` | `/api/status` | None | Kernel, `coli serve`, VRAM plan, RAG health |
 | `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave) |
 | `POST` | `/api/observe` | Bearer if `GODBRAIN_API_TOKEN` is set | Store host inventory as a candidate |
+| `POST` | `/api/judge` | Bearer if `GODBRAIN_API_TOKEN` is set | Set a node `verified` or `rejected` with reasoning |
 | `POST` | `/api/chat` | None for ordinary chat | RAG plus Colibri inference |
 | `POST` | `/api/chat` with `command_type` | Bearer token; reasoning for high-risk commands | Direct privileged kernel dispatch |
 
@@ -250,8 +251,10 @@ sequenceDiagram
 ```
 
 If RAG is down but the kernel process has session notes from `/remember` or
-`/observe`, chat still answers from that buffer. If both are empty, the request
-fails closed. A timed-out Colibri child must not kill unrelated processes.
+`/observe`, chat still answers from that buffer. Kernel boot hydrates that
+buffer from the newest Golden Records so a restart does not forget the host.
+If both are empty, the request fails closed. A timed-out Colibri child must not
+kill unrelated processes.
 
 Galaxy `GET /api/graph` and `GET /api/node` use the same RAG service
 (`/v1/graph`, `/v1/document`) and the same fail-closed rule.
@@ -271,7 +274,7 @@ sequenceDiagram
     G->>M: commit plus rag_documents projection
     G-->>K: receipt
     K->>K: keep note in process session buffer
-    U->>K: /verify or /reject plus reasoning
+    U->>K: /verify, /reject, or POST /api/judge plus reasoning
     K->>G: set_status
     G->>M: status only on knowledge_nodes
     G->>R: sync rag_documents status

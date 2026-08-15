@@ -51,10 +51,36 @@ function Start-LoggedProcess {
     }
     $stdout = Join-Path $logDir "$Name.out.log"
     $stderr = Join-Path $logDir "$Name.err.log"
-    $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments `
-        -WorkingDirectory $WorkingDirectory -WindowStyle Minimized `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-    Write-Log "started $Name pid=$($proc.Id) $FilePath $Arguments"
+    $wrap = Join-Path $logDir "$Name.launch.cmd"
+    $lines = @(
+        "@echo off"
+        "cd /d `"$WorkingDirectory`""
+    )
+    foreach ($key in $Environment.Keys) {
+        if ($key -eq "MONGODB_URI" -or $key -eq "GODBRAIN_API_TOKEN") { continue }
+        $lines += "set `"$key=$($Environment[$key])`""
+    }
+    # Do not persist MONGODB_URI or GODBRAIN_API_TOKEN. The kernel defaults
+    # the URI; the token must come from the user/task environment.
+    if ($Arguments) {
+        $lines += "`"$FilePath`" $Arguments >> `"$stdout`" 2>> `"$stderr`""
+    } else {
+        $lines += "`"$FilePath`" >> `"$stdout`" 2>> `"$stderr`""
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
+    # WMI Create is owned by the SCM host, not this console/job. Start-Process
+    # children die when the starter window or agent job exits — that is the
+    # "kernel window popped and Galaxy died" failure.
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine      = "cmd.exe /c `"$wrap`""
+        CurrentDirectory = $WorkingDirectory
+    }
+    if ($created.ReturnValue -ne 0) {
+        Write-Log "failed $Name Win32_Process.Create=$($created.ReturnValue)"
+        return
+    }
+    Write-Log "started $Name pid=$($created.ProcessId) $FilePath $Arguments"
 }
 
 Write-Log "GodBrain logon start from $RepoRoot"
@@ -112,10 +138,37 @@ $kernel = Join-Path $RepoRoot "godbrain_core\cpp_kernel\godbrain-kernel.exe"
 if (Test-Port "127.0.0.1" 8083) {
     Write-Log "skip kernel (:8083 already listening)"
 } else {
+    $kernelEnv = @{}
+    if ($env:MONGODB_URI) { $kernelEnv["MONGODB_URI"] = $env:MONGODB_URI }
+    if ($env:GODBRAIN_API_TOKEN) { $kernelEnv["GODBRAIN_API_TOKEN"] = $env:GODBRAIN_API_TOKEN }
     Start-LoggedProcess -Name "kernel" -FilePath $kernel `
-        -WorkingDirectory (Split-Path $kernel -Parent)
+        -WorkingDirectory (Split-Path $kernel -Parent) `
+        -Environment $kernelEnv
+}
+
+$kernelDeadline = (Get-Date).AddSeconds(20)
+while (-not (Test-Port "127.0.0.1" 8083)) {
+    if ((Get-Date) -gt $kernelDeadline) {
+        Write-Log "kernel :8083 not up after 20s; skip observe"
+        break
+    }
+    Start-Sleep -Milliseconds 400
+}
+if (Test-Port "127.0.0.1" 8083) {
+    try {
+        $headers = @{ "Content-Type" = "application/json" }
+        if ($env:GODBRAIN_API_TOKEN) {
+            $headers["Authorization"] = "Bearer $($env:GODBRAIN_API_TOKEN)"
+        }
+        $observe = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/observe" `
+            -Method POST -Headers $headers -Body "{}"
+        Write-Log ("observe {0} stable_id={1}" -f $observe.store_status, $observe.stable_id)
+    } catch {
+        Write-Log "observe failed: $_"
+    }
 }
 
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
+Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"

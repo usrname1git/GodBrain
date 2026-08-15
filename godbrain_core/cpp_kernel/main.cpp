@@ -324,8 +324,22 @@ std::string run_colibri(const std::string& system, const std::string& user) {
         system + "\n\n" + user + "\nAnswer:");
 }
 
+#pragma comment(lib, "user32.lib")
+
 int main() {
+    if (read_env("GODBRAIN_SHOW_CONSOLE") != "1") {
+        if (HWND console = GetConsoleWindow()) {
+            ShowWindow(console, SW_HIDE);
+        }
+    }
+
     std::cout << "[SYS] Booting GodBrain C++ Core Router..." << std::endl;
+
+    if (read_env("MONGODB_URI").empty()) {
+        SetEnvironmentVariableA("MONGODB_URI", "mongodb://127.0.0.1:27017");
+        std::cout << "[SYS] MONGODB_URI defaulted to mongodb://127.0.0.1:27017"
+                  << std::endl;
+    }
 
     const std::string token_env = read_env("GODBRAIN_API_TOKEN");
     if (!token_env.empty()) {
@@ -338,6 +352,16 @@ int main() {
 
     g_frontend_dir = resolve_frontend_dir();
     godbrain_rag::Client rag_client;
+    try {
+        const json hydrated = memory::hydrate_session_from_rag();
+        std::cout << "[MEMORY] Session hydrate from RAG loaded="
+                  << hydrated.value("loaded", 0)
+                  << " status=" << hydrated.value("status", "skipped")
+                  << std::endl;
+    } catch (const std::exception& error) {
+        std::cout << "[MEMORY] Session hydrate skipped: " << error.what()
+                  << std::endl;
+    }
 
     httplib::Server svr;
 
@@ -438,6 +462,26 @@ int main() {
             return;
         }
         res.set_content(godbrain_rag::galaxy_node(document).dump(), "application/json");
+    });
+
+    svr.Post("/api/judge", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        if (!write_authorized(req, res)) return;
+        try {
+            json payload = req.body.empty() ? json::object() : json::parse(req.body);
+            json judged = memory::set_status({
+                {"id", payload.value("id", payload.value("stable_id", ""))},
+                {"status", payload.value("status", "")},
+                {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
+            });
+            res.set_content(judged.dump(), "application/json");
+        } catch (const json::exception&) {
+            res.status = 400;
+            res.set_content(json({{"error", "judge body must be JSON"}}).dump(), "application/json");
+        } catch (const std::exception& error) {
+            res.status = 503;
+            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        }
     });
 
     svr.Get("/api/status", [&](const httplib::Request& req, httplib::Response& res) {
@@ -694,7 +738,8 @@ int main() {
                             listing << "(none in the active projection)";
                         } else {
                             for (const auto& thought : recent) {
-                                listing << "- [" << thought.value("sector", "") << "] "
+                                listing << "- [" << thought.value("status", "candidate")
+                                        << " / " << thought.value("sector", "") << "] "
                                         << thought.value("label", thought.value("id", "")) << "\n";
                             }
                         }
@@ -830,6 +875,11 @@ int main() {
     });
 
     std::cout << "[SYS] Listening on http://127.0.0.1:8083 (loopback only)" << std::endl;
-    svr.listen("127.0.0.1", 8083);
+    if (!svr.listen("127.0.0.1", 8083)) {
+        std::cerr << "[SYS] FATAL: could not bind 127.0.0.1:8083 "
+                     "(already running or port blocked)"
+                  << std::endl;
+        return 1;
+    }
     return 0;
 }
