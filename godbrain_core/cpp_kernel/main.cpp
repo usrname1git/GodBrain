@@ -718,9 +718,9 @@ static std::string strip_coli_reply(std::string combined) {
                     final_answer = combined.substr(0, start);
                 }
             }
-        } else if (final_answer.length() > 500) {
-            final_answer = final_answer.substr(final_answer.length() - 500);
         }
+        // Serve replies have no PROFILE wrapper. Keep the full stitched
+        // answer. The old last-500 trim ate auto-continued tank text.
     }
     const auto first = final_answer.find_first_not_of(" \n\r\t");
     if (first == std::string::npos) return "No response.";
@@ -792,6 +792,7 @@ std::string run_colibri_serve(
             });
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (!response) {
+            assembled += piece;
             if (assembled.empty()) {
                 return "Error: Colibri serve did not finish in 720s. "
                        "GLM-5.2 is paging experts off disk on 16 GB. "
@@ -801,6 +802,7 @@ std::string run_colibri_serve(
             return assembled;
         }
         if (response->status != 200) {
+            assembled += piece;
             if (assembled.empty()) {
                 return "Error: Colibri serve returned HTTP " +
                        std::to_string(response->status);
