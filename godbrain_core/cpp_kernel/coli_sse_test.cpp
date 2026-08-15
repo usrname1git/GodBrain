@@ -33,6 +33,15 @@ int main() {
         return 1;
     }
 
+    std::string finish;
+    godbrain_coli::handle_sse_event(
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}",
+        assembled, on_token, on_ping,
+        [&](const std::string& reason) { finish = reason; });
+    if (!expect(finish == "length", "finish_reason length")) {
+        return 1;
+    }
+
     godbrain_coli::handle_sse_event("data: [DONE]", assembled, on_token, on_ping);
     if (!expect(assembled == "Hi" && pings == 1, "[DONE] is a no-op")) {
         return 1;
