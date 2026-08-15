@@ -1137,6 +1137,48 @@ int main() {
                 return;
             }
 
+            if (starts_with_ignore_case(user_msg, "/brief") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                const json st = kernel_status_body();
+                const json host = st.value("host", json::object());
+                const json coli = st.value("coli", json::object());
+                const json rag = st.value("rag", json::object());
+                const json last = st.value("last_oracle", json::object());
+                std::ostringstream reply;
+                reply << host.value("computer_name", "?") << " | coli="
+                      << (!coli.value("up", false)
+                              ? "down"
+                              : (coli.value("busy", false) ? "busy" : "serve"))
+                      << " rag="
+                      << (rag.value("ready", false) ? "ready" : "down");
+                const double ram = host.value("ram_available_gb", -1.0);
+                if (ram >= 0.0) {
+                    char ram_buf[32];
+                    std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram);
+                    reply << " RAM " << ram_buf << " GB free";
+                }
+                reply << "\n";
+                if (!last.empty() && last.contains("answer")) {
+                    auto clip = [](std::string text, size_t max) {
+                        if (text.size() > max) {
+                            text.resize(max);
+                            text += "...";
+                        }
+                        return text;
+                    };
+                    reply << "last "
+                          << (last.value("complete", true) ? "" : "partial ")
+                          << clip(last.value("question", ""), 80) << "\n  "
+                          << clip(last.value("answer", ""), 160);
+                } else {
+                    reply << "No Oracle turn on disk yet.";
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(),
+                                "application/json");
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
