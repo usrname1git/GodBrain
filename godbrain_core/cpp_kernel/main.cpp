@@ -962,6 +962,12 @@ int main() {
                 if (!context_text.empty()) context_text += '\n';
                 context_text += session_text;
             }
+            // 16 GB MoE prefill is ~13s/layer. A 3000-token note dump is a
+            // 20 minute tax. Keep the oracle prompt small.
+            constexpr size_t kMaxColiContextBytes = 1800;
+            if (context_text.size() > kMaxColiContextBytes) {
+                context_text.resize(kMaxColiContextBytes);
+            }
 
             const std::string hostname =
                 telemetry::get_host_inventory().value("computer_name", "UNKNOWN");
@@ -980,7 +986,8 @@ int main() {
                 "FATALLY_BREAK something, warn aggressively.";
             std::string user_prompt = context_text + "\n\nUser Question: " + user_msg;
 
-            std::cout << "[RAG] Context built. Asking Colibri..." << std::endl;
+            std::cout << "[RAG] Context built (" << context_text.size()
+                      << " bytes). Asking Colibri..." << std::endl;
             const DWORD coli_started = GetTickCount();
             std::string combined = run_colibri(system_prompt, user_prompt);
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)
