@@ -608,6 +608,35 @@ static json coli_serve_status() {
     return result;
 }
 
+static json load_heal_last() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
+static json heal_status_body() {
+    json rag = json::object();
+    httplib::Client rag_client("127.0.0.1", 8084);
+    rag_client.set_connection_timeout(0, 200000);
+    rag_client.set_read_timeout(1, 0);
+    const bool rag_up = static_cast<bool>(rag_client.Get("/health"));
+    const json coli = coli_serve_status();
+    return {
+        {"playbook", "host-listeners"},
+        {"live",
+         {{"kernel", true},
+          {"rag", rag_up},
+          {"coli", coli.value("up", false)},
+          {"coli_busy", coli.value("busy", false)}}},
+        {"last", load_heal_last()},
+    };
+}
+
 using ColiTokenFn = std::function<void(const std::string&)>;
 using ColiPingFn = std::function<void()>;
 
@@ -1033,6 +1062,11 @@ int main() {
         handle_last(req, res);
     });
 
+    svr.Get("/api/heal", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        res.set_content(heal_status_body().dump(), "application/json");
+    });
+
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_remember(req, res);
@@ -1217,6 +1251,44 @@ int main() {
                           << clip(last.value("answer", ""), 160);
                 } else {
                     reply << "No Oracle turn on disk yet.";
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(),
+                                "application/json");
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/heal") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                const json heal = heal_status_body();
+                const json live = heal.value("live", json::object());
+                const json last = heal.value("last", json::object());
+                std::ostringstream reply;
+                reply << "playbook=host-listeners (never kills)\n"
+                      << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
+                      << " rag=" << (live.value("rag", false) ? "up" : "down")
+                      << " coli="
+                      << (live.value("coli", false)
+                              ? (live.value("coli_busy", false) ? "busy" : "serve")
+                              : "down")
+                      << "\n";
+                if (last.empty()) {
+                    reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
+                } else {
+                    reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
+                          << " at=" << last.value("at", "") << "\n";
+                    const json needed = last.value("needed", json::array());
+                    reply << "needed=";
+                    if (needed.empty()) {
+                        reply << "(none)";
+                    } else {
+                        bool first = true;
+                        for (const auto& item : needed) {
+                            if (!first) reply << ",";
+                            first = false;
+                            if (item.is_string()) reply << item.get<std::string>();
+                        }
+                    }
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(),
                                 "application/json");

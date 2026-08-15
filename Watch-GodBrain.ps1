@@ -14,9 +14,11 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     throw "Watch-GodBrain: RepoRoot is empty."
 }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
-$starter = Join-Path $RepoRoot "Start-GodBrain.ps1"
-if (-not (Test-Path -LiteralPath $starter)) {
-    throw "Watch-GodBrain: missing $starter"
+$heal = Join-Path $RepoRoot "Heal-GodBrain.ps1"
+if (-not (Test-Path -LiteralPath $heal)) {
+    throw "Watch-GodBrain: missing $heal"
 }
 
-& $starter -RepoRoot $RepoRoot -MongoWaitSeconds 5
+# Closed loop: detect → start missing allowlist → verify → remember.
+# Never kills Colibri or anything else.
+& $heal -RepoRoot $RepoRoot
