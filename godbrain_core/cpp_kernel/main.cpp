@@ -26,6 +26,8 @@ static const DWORD COLIBRI_TIMEOUT_MS = 180000;
 // up to 4 chunks so a normal answer finishes without the user babysitting.
 static const int kColiChunkTokens = 160;
 static const int kColiMaxChunks = 4;
+// 160 tokens at ~3s plus a 78-layer prefill misses 720s on this 16 GB box.
+static const int kColiChunkTimeoutMs = 1200000;
 
 #include "kernel.h"
 
@@ -359,6 +361,68 @@ static std::string strip_cut_marker(std::string answer) {
         answer.resize(pos);
     }
     return trim_copy(std::move(answer));
+}
+
+static std::string sanitize_oracle_body(std::string answer) {
+    answer = strip_cut_marker(std::move(answer));
+    for (;;) {
+        const size_t begin = answer.find("*(");
+        if (begin == std::string::npos) break;
+        const size_t end = answer.find(")*", begin);
+        if (end == std::string::npos) break;
+        answer.erase(begin, end + 2 - begin);
+    }
+    const char* kills[] = {
+        "Wait, I made a mistake",
+        "I made a mistake in the prompt",
+        "**Correction",
+        "Correction:",
+        "I apologize for the confusion",
+        "I need to finish the previous sentence",
+    };
+    for (const char* kill : kills) {
+        const size_t pos = answer.find(kill);
+        if (pos != std::string::npos) answer.resize(pos);
+    }
+    return trim_copy(std::move(answer));
+}
+
+static std::string last_anchor(const std::string& text, size_t n = 90) {
+    const std::string t = trim_copy(text);
+    if (t.size() <= n) return t;
+    return t.substr(t.size() - n);
+}
+
+static std::string make_continue_prompt(const std::string& prior) {
+    return std::string(
+               "Resume immediately after these exact characters. "
+               "Write only new words. Do not repeat any earlier sentence. "
+               "Do not mention the prompt, corrections, mistakes, or "
+               "Oracle Database. No parenthetical stage directions.\n\n"
+               "END>>") +
+           last_anchor(prior);
+}
+
+static std::string strip_replayed_prefix(
+    const std::string& prior, std::string next) {
+    next = trim_copy(std::move(next));
+    if (prior.empty() || next.empty()) return next;
+    const size_t probe = prior.size() < 48 ? prior.size() : 48;
+    if (next.compare(0, probe, prior, 0, probe) == 0) {
+        size_t i = 0;
+        const size_t n =
+            prior.size() < next.size() ? prior.size() : next.size();
+        while (i < n && prior[i] == next[i]) ++i;
+        return trim_copy(next.substr(i));
+    }
+    const size_t max_ol =
+        prior.size() < next.size() ? prior.size() : next.size();
+    for (size_t len = max_ol; len >= 24; --len) {
+        if (next.compare(0, len, prior, prior.size() - len, len) == 0) {
+            return trim_copy(next.substr(len));
+        }
+    }
+    return next;
 }
 
 // Last turn that is a real Q/A. Skip CONTINUE, serve-down errors, and refuses
@@ -743,7 +807,7 @@ std::string run_colibri_serve(
     // timeout then means the engine died, not that we are still paging.
     client.set_read_timeout(60, 0);
     client.set_write_timeout(5, 0);
-    client.set_max_timeout(720000);
+    client.set_max_timeout(kColiChunkTimeoutMs);
     client.set_follow_location(false);
 
     const std::string model = []() {
@@ -763,11 +827,6 @@ std::string run_colibri_serve(
     if (!coli_key.empty()) {
         headers.emplace("Authorization", "Bearer " + coli_key);
     }
-
-    const std::string continue_user =
-        "Continue the previous answer from where it stopped. "
-        "Same question and topic only. Do not change subject. "
-        "Do not write about Oracle Database, SQL, or table partitions.";
 
     std::string assembled;
     std::string last_reason;
@@ -792,9 +851,9 @@ std::string run_colibri_serve(
             });
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (!response) {
-            assembled += piece;
+            assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
             if (assembled.empty()) {
-                return "Error: Colibri serve did not finish in 720s. "
+                return "Error: Colibri serve did not finish in 1200s. "
                        "GLM-5.2 is paging experts off disk on 16 GB. "
                        "Wait until /status shows coli=serve (not busy) and ask again.";
             }
@@ -827,12 +886,15 @@ std::string run_colibri_serve(
                 return assembled;
             }
         }
+        piece = sanitize_oracle_body(piece);
+        piece = strip_replayed_prefix(assembled, piece);
         assembled += piece;
         last_reason = finish_reason;
         if (finish_reason != "length") break;
         if (chunk + 1 >= kColiMaxChunks) break;
         messages.push_back(json{{"role", "assistant"}, {"content", piece}});
-        messages.push_back(json{{"role", "user"}, {"content", continue_user}});
+        messages.push_back(
+            json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
     if (last_reason == "length") {
         assembled +=
@@ -1697,12 +1759,13 @@ int main() {
                 "Hostname " +
                 hostname +
                 " is this PC, not a vehicle. "
-                "Finish complete sentences. Do not stop mid-clause.";
+                "Finish complete sentences. Do not stop mid-clause. "
+                "Never narrate the prompt or apologize mid-answer.";
             LastOracleTurn prior_turn;
             const bool have_prior = find_last_real_oracle_turn(prior_turn);
             const std::string prior_q = have_prior ? prior_turn.question : std::string();
             const std::string prior_a =
-                have_prior ? strip_cut_marker(prior_turn.answer) : std::string();
+                have_prior ? sanitize_oracle_body(prior_turn.answer) : std::string();
             if (continue_cmd && !have_prior) {
                 res.set_content(
                     json({{"response",
@@ -1723,10 +1786,7 @@ int main() {
             std::string asked = user_msg;
             if (continue_cmd) {
                 asked = prior_q;
-                user_prompt =
-                    "Continue the previous answer from where it stopped. "
-                    "Same question and topic only. Do not change subject. "
-                    "Do not write about Oracle Database, SQL, or table partitions.";
+                user_prompt = make_continue_prompt(prior_a);
                 context_text.clear();
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
@@ -1743,7 +1803,10 @@ int main() {
             auto stitch_continue = [continue_cmd, prior_a](const std::string& next) {
                 if (!continue_cmd || prior_a.empty()) return next;
                 if (next.compare(0, 6, "Error:") == 0) return next;
-                return prior_a + "\n" + next;
+                const std::string added =
+                    strip_replayed_prefix(prior_a, sanitize_oracle_body(next));
+                if (added.empty()) return prior_a;
+                return prior_a + added;
             };
             if (want_stream) {
                 const std::string sys = system_prompt;
