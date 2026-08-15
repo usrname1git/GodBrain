@@ -454,6 +454,7 @@
         const sendBtn = document.getElementById('send-btn');
         let coliBusySince = 0;
         let lastReplayedKey = '';
+        let coliBusy = false;
 
         function oracleKey(last) {
             if (!last) return '';
@@ -601,6 +602,13 @@
 
             appendChatMessage('user-msg', '[USER]', text);
             chatInput.value = '';
+            if (text.charAt(0) !== '/' && coliBusy) {
+                appendChatMessage(
+                    'sys-msg',
+                    '[SYS]',
+                    'Colibri is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
+                return;
+            }
             if (/^\/status\b/i.test(text)) {
                 fetch('/api/status')
                     .then(res => res.json())
@@ -782,6 +790,7 @@
         function paintStatus(status) {
             writesNeedToken = !!status.writes_need_token;
             const painted = formatColiStatus(status);
+            coliBusy = !!painted.busy;
             const ragReady = status.rag && status.rag.ready;
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
                 ' | coli ' + painted.label +
