@@ -22,6 +22,10 @@
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
 static const DWORD COLIBRI_TIMEOUT_MS = 180000;
+// One GPU slot. 160 tokens is one paging-safe decode. The kernel auto-continues
+// up to 4 chunks so a normal answer finishes without the user babysitting.
+static const int kColiChunkTokens = 160;
+static const int kColiMaxChunks = 4;
 
 #include "kernel.h"
 
@@ -305,7 +309,7 @@ static void remember_oracle_turn(
     turn.elapsed_ms = elapsed_ms;
     turn.ok = answer.compare(0, 6, "Error:") != 0;
     turn.stored = false;
-    turn.complete = turn.ok && answer.find("[cut at 160 tokens") == std::string::npos;
+    turn.complete = turn.ok && answer.find("[cut") == std::string::npos;
     {
         std::lock_guard<std::mutex> lock(g_last_oracle_mu);
         if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
@@ -349,7 +353,7 @@ static bool is_refuse_answer(const std::string& answer) {
 }
 
 static std::string strip_cut_marker(std::string answer) {
-    const std::string marker = "[cut at 160 tokens";
+    const std::string marker = "[cut";
     const size_t pos = answer.find(marker);
     if (pos != std::string::npos) {
         answer.resize(pos);
@@ -753,13 +757,6 @@ std::string run_colibri_serve(
             json{{"role", "assistant"}, {"content", prior_assistant}});
     }
     messages.push_back(json{{"role", "user"}, {"content", user}});
-    const json body = {
-        {"model", model},
-        {"stream", true},
-        {"max_tokens", 160},
-        {"messages", messages},
-    };
-
     httplib::Headers headers = {{"Accept", "text/event-stream"}};
     const std::string key = read_env("GODBRAIN_COLIBRI_KEY");
     const std::string coli_key = key.empty() ? read_env("COLI_API_KEY") : key;
@@ -767,40 +764,79 @@ std::string run_colibri_serve(
         headers.emplace("Authorization", "Bearer " + coli_key);
     }
 
+    const std::string continue_user =
+        "Continue the previous answer from where it stopped. "
+        "Same question and topic only. Do not change subject. "
+        "Do not write about Oracle Database, SQL, or table partitions.";
+
     std::string assembled;
-    std::string sse_buf;
-    std::string finish_reason;
-    g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
-    const auto response = client.Post(
-        "/v1/chat/completions", headers, body.dump(), "application/json",
-        [&](const char* data, size_t len) {
-            godbrain_coli::feed_sse(
-                sse_buf, data, len, assembled, on_token, on_ping,
-                [&](const std::string& reason) { finish_reason = reason; });
-            return true;
-        });
-    g_coli_job_started_ms.store(0, std::memory_order_relaxed);
-    if (!response) {
-        return "Error: Colibri serve did not finish in 720s. "
-               "GLM-5.2 is paging experts off disk on 16 GB. "
-               "Wait until /status shows coli=serve (not busy) and ask again.";
-    }
-    if (response->status != 200) {
-        return "Error: Colibri serve returned HTTP " +
-               std::to_string(response->status);
-    }
-    if (!assembled.empty()) {
-        if (finish_reason == "length") {
-            assembled += "\n[cut at 160 tokens — say continue]";
+    std::string last_reason;
+    for (int chunk = 0; chunk < kColiMaxChunks; ++chunk) {
+        const json body = {
+            {"model", model},
+            {"stream", true},
+            {"max_tokens", kColiChunkTokens},
+            {"messages", messages},
+        };
+        std::string piece;
+        std::string sse_buf;
+        std::string finish_reason;
+        g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
+        const auto response = client.Post(
+            "/v1/chat/completions", headers, body.dump(), "application/json",
+            [&](const char* data, size_t len) {
+                godbrain_coli::feed_sse(
+                    sse_buf, data, len, piece, on_token, on_ping,
+                    [&](const std::string& reason) { finish_reason = reason; });
+                return true;
+            });
+        g_coli_job_started_ms.store(0, std::memory_order_relaxed);
+        if (!response) {
+            if (assembled.empty()) {
+                return "Error: Colibri serve did not finish in 720s. "
+                       "GLM-5.2 is paging experts off disk on 16 GB. "
+                       "Wait until /status shows coli=serve (not busy) and ask again.";
+            }
+            assembled += "\n[cut — serve timed out, say continue]";
+            return assembled;
         }
-        return assembled;
+        if (response->status != 200) {
+            if (assembled.empty()) {
+                return "Error: Colibri serve returned HTTP " +
+                       std::to_string(response->status);
+            }
+            assembled += "\n[cut — serve HTTP " +
+                         std::to_string(response->status) + ", say continue]";
+            return assembled;
+        }
+        if (piece.empty()) {
+            try {
+                const json parsed = json::parse(response->body);
+                piece = parsed.at("choices")
+                            .at(0)
+                            .at("message")
+                            .at("content")
+                            .get<std::string>();
+            } catch (const json::exception&) {
+                if (assembled.empty()) {
+                    return "Error: Colibri serve returned a malformed completion.";
+                }
+                assembled += "\n[cut — malformed chunk, say continue]";
+                return assembled;
+            }
+        }
+        assembled += piece;
+        last_reason = finish_reason;
+        if (finish_reason != "length") break;
+        if (chunk + 1 >= kColiMaxChunks) break;
+        messages.push_back(json{{"role", "assistant"}, {"content", piece}});
+        messages.push_back(json{{"role", "user"}, {"content", continue_user}});
     }
-    try {
-        const json parsed = json::parse(response->body);
-        return parsed.at("choices").at(0).at("message").at("content").get<std::string>();
-    } catch (const json::exception&) {
-        return "Error: Colibri serve returned a malformed completion.";
+    if (last_reason == "length") {
+        assembled +=
+            "\n[cut at 640 tokens — say continue]";
     }
+    return assembled;
 }
 
 std::string run_colibri_spawn(const std::string& prompt) {

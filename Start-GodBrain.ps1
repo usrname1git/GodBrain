@@ -189,6 +189,9 @@ if (Test-Port "127.0.0.1" 8000) {
                 RSS_GUARD_GB = "26"
                 PIN = "C:\nvme\glm52-uncensored\.coli_usage"
                 PIN_GB = "8"
+                # Next CONTINUE/auto-chunk reuses the KV prefix instead of a
+                # 78-layer re-prefill. Takes effect on the next coli start.
+                COLI_KV_SHARE = "1"
             }
     } else {
         Write-Log "skip coli serve (python not on PATH)"
