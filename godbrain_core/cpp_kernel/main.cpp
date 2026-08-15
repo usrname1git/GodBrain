@@ -47,6 +47,7 @@ struct LastOracleTurn {
     std::string question;
     std::string answer;
     std::string stable_id;
+    std::string status = "candidate";
     DWORD elapsed_ms = 0;
     bool ok = false;
     bool stored = false;
@@ -102,6 +103,7 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
         {"stored", turn.stored},
         {"complete", turn.complete},
         {"stable_id", turn.stable_id},
+        {"status", turn.status},
     };
 }
 
@@ -177,6 +179,7 @@ static void load_oracle_turns() {
             turn.stored = item.value("stored", false);
             turn.complete = item.value("complete", true);
             turn.stable_id = item.value("stable_id", "");
+            turn.status = item.value("status", "candidate");
             if (turn.question.empty() && turn.answer.empty()) continue;
             g_oracle_turns.push_back(std::move(turn));
         }
@@ -1155,6 +1158,7 @@ int main() {
                     for (const auto& turn : turns) {
                         ++index;
                         reply << index << ". "
+                              << turn.value("status", "candidate") << " "
                               << (turn.value("ok", false) ? "ok" : "fail")
                               << (turn.value("complete", true) ? "" : " partial")
                               << " " << (turn.value("elapsed_ms", 0) / 1000)
@@ -1350,6 +1354,18 @@ int main() {
                         {"status", status},
                         {"reasoning", reasoning},
                     });
+                    {
+                        const std::string judged_id =
+                            judged.value("stable_id", id);
+                        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+                        for (auto& turn : g_oracle_turns) {
+                            if (turn.stable_id == judged_id ||
+                                turn.stable_id == id) {
+                                turn.status = judged.value("to", status);
+                            }
+                        }
+                        persist_oracle_turns_locked();
+                    }
                     res.set_content(
                         json({{"response",
                                std::string(status) + " " + judged.value("stable_id", id) +

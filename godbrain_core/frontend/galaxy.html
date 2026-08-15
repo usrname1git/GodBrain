@@ -151,6 +151,11 @@
             <button id="brief-btn" style="width: auto; padding: 5px 10px;">Brief</button>
             <button id="vram-btn" style="width: auto; padding: 5px 10px;">VRAM</button>
         </div>
+        <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+            <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)" style="flex: 1;">
+            <button id="verify-last-btn" type="button" style="width: auto; padding: 5px 10px;">Verify last</button>
+            <button id="reject-last-btn" type="button" style="width: auto; padding: 5px 10px;">Reject last</button>
+        </div>
         <div style="display: flex; gap: 5px;">
             <input type="text" id="chat-input" placeholder="/remember ...  or ask GodBrain">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
@@ -554,6 +559,7 @@
                 lines.push(
                     'last ' + Math.round((last.elapsed_ms || 0) / 1000) + 's ' +
                     (last.complete === false ? 'partial' : (last.ok ? 'ok' : 'fail')) +
+                    ' ' + (last.status || 'candidate') +
                     (last.stored ? ' stored' : ''));
                 if (q) lines.push('  Q: ' + q);
                 lines.push('  A: ' + a);
@@ -743,6 +749,12 @@
         document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
         document.getElementById('brief-btn').addEventListener('click', () => runSlash('/brief'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
+        function judgeLast(verb) {
+            const reason = (document.getElementById('last-reason').value || '').trim();
+            runSlash('/' + verb + ' last ' + reason);
+        }
+        document.getElementById('verify-last-btn').addEventListener('click', () => judgeLast('verify'));
+        document.getElementById('reject-last-btn').addEventListener('click', () => judgeLast('reject'));
 
         function judgeOpenNode(status) {
             const reason = document.getElementById('judge-reason').value.trim();
