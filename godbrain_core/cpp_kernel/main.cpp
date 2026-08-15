@@ -14,6 +14,7 @@
 #include <atomic>
 #include <mutex>
 #include "rag_client.h"
+#include "coli_sse.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -413,6 +414,14 @@ static void handle_observe(const httplib::Request& req, httplib::Response& res) 
     }
 }
 
+static void handle_last(const httplib::Request&, httplib::Response& res) {
+    res.set_content(
+        json({{"last_oracle", last_oracle_json()},
+              {"turns", last_oracle_turns_json()}})
+            .dump(),
+        "application/json");
+}
+
 static void handle_judge(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -436,6 +445,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
     server.Get("/api/status", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
         res.set_content(kernel_status_body().dump(), "application/json");
+    });
+    server.Get("/api/last", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_last(req, res);
     });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/observe", handle_observe);
@@ -502,40 +515,6 @@ static json coli_serve_status() {
 
 using ColiTokenFn = std::function<void(const std::string&)>;
 using ColiPingFn = std::function<void()>;
-
-static void handle_coli_sse_event(
-    const std::string& event,
-    std::string& assembled,
-    const ColiTokenFn& on_token,
-    const ColiPingFn& on_ping) {
-    std::istringstream lines(event);
-    std::string line;
-    while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.compare(0, 6, "data: ") != 0) continue;
-        const std::string payload = line.substr(6);
-        if (payload == "[DONE]") return;
-        try {
-            const json parsed = json::parse(payload);
-            if (!parsed.contains("choices") || !parsed["choices"].is_array() ||
-                parsed["choices"].empty()) {
-                continue;
-            }
-            const json delta = parsed["choices"].at(0).value("delta", json::object());
-            if (!delta.contains("content") || !delta["content"].is_string()) {
-                continue;
-            }
-            const std::string token = delta["content"].get<std::string>();
-            if (token.empty()) {
-                if (on_ping) on_ping();
-            } else {
-                assembled += token;
-                if (on_token) on_token(token);
-            }
-        } catch (const json::exception&) {
-        }
-    }
-}
 
 static std::string strip_coli_reply(std::string combined) {
     if (combined.compare(0, 6, "Error:") == 0) return combined;
@@ -615,14 +594,8 @@ std::string run_colibri_serve(
     const auto response = client.Post(
         "/v1/chat/completions", headers, body.dump(), "application/json",
         [&](const char* data, size_t len) {
-            sse_buf.append(data, len);
-            for (;;) {
-                const auto pos = sse_buf.find("\n\n");
-                if (pos == std::string::npos) break;
-                const std::string event = sse_buf.substr(0, pos);
-                sse_buf.erase(0, pos + 2);
-                handle_coli_sse_event(event, assembled, on_token, on_ping);
-            }
+            godbrain_coli::feed_sse(
+                sse_buf, data, len, assembled, on_token, on_ping);
             return true;
         });
     g_coli_job_started_ms.store(0, std::memory_order_relaxed);
@@ -948,6 +921,11 @@ int main() {
     svr.Get("/api/status", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         res.set_content(kernel_status_body().dump(), "application/json");
+    });
+
+    svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_last(req, res);
     });
 
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
@@ -1435,7 +1413,7 @@ int main() {
             httplib::Server door;
             attach_shortcut_routes(door);
             std::cout << "[SYS] Tailscale shortcuts door http://" << ip
-                      << ":8083 (remember/observe/judge/status only)" << std::endl;
+                      << ":8083 (remember/observe/judge/status/last only)" << std::endl;
             if (!door.listen(ip, 8083)) {
                 std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
                           << std::endl;
