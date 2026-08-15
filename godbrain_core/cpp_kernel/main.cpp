@@ -70,6 +70,8 @@ static std::string resolve_colibri_path() {
     if (!env.empty()) return env;
 
     static const char* candidates[] = {
+        "\\..\\..\\..\\colibri\\c\\colibri.exe",
+        "\\..\\..\\colibri\\c\\colibri.exe",
         "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
         "\\..\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
         "\\LLM\\colibri_LLM\\c\\colibri.exe",

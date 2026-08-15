@@ -35,8 +35,10 @@
   the newest Golden Records into the process session buffer so chat still knows
   the host after a restart. `/api/status` reports the host card and Tailscale
   remember URL. The Tailscale shortcuts door binds only when
-  `GODBRAIN_API_TOKEN` is set. Chat requires `coli serve` on `:8000`;
-  cold-spawn of the GLM snapshot on 16 GB is disabled. Do not set both
+  `GODBRAIN_API_TOKEN` is set. Chat requires `coli serve` on `:8000` from
+  Colibri 1.6.2 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`). Prefer that over
+  the vendored 1.1.1 tree under `LLM/colibri_LLM`.
+  Cold-spawn of the GLM snapshot on 16 GB is disabled. Do not set both
   `COLI_GPU` and `COLI_GPUS`. Colibri VRAM budget
   is derived from DXGI dedicated memory and
   does not overcommit into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`.
