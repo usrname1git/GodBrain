@@ -12,7 +12,8 @@ inline void handle_sse_event(
     const std::string& event,
     std::string& assembled,
     const std::function<void(const std::string&)>& on_token,
-    const std::function<void()>& on_ping) {
+    const std::function<void()>& on_ping,
+    const std::function<void(const std::string&)>& on_finish = {}) {
     std::istringstream lines(event);
     std::string line;
     while (std::getline(lines, line)) {
@@ -26,8 +27,15 @@ inline void handle_sse_event(
                 parsed["choices"].empty()) {
                 continue;
             }
+            const auto& choice = parsed["choices"].at(0);
+            if (choice.contains("finish_reason") &&
+                choice["finish_reason"].is_string()) {
+                const std::string reason =
+                    choice["finish_reason"].get<std::string>();
+                if (!reason.empty() && on_finish) on_finish(reason);
+            }
             const nlohmann::json delta =
-                parsed["choices"].at(0).value("delta", nlohmann::json::object());
+                choice.value("delta", nlohmann::json::object());
             if (!delta.contains("content") || !delta["content"].is_string()) {
                 continue;
             }
@@ -49,14 +57,15 @@ inline void feed_sse(
     size_t len,
     std::string& assembled,
     const std::function<void(const std::string&)>& on_token,
-    const std::function<void()>& on_ping) {
+    const std::function<void()>& on_ping,
+    const std::function<void(const std::string&)>& on_finish = {}) {
     buf.append(data, len);
     for (;;) {
         const auto pos = buf.find("\n\n");
         if (pos == std::string::npos) break;
         const std::string event = buf.substr(0, pos);
         buf.erase(0, pos + 2);
-        handle_sse_event(event, assembled, on_token, on_ping);
+        handle_sse_event(event, assembled, on_token, on_ping, on_finish);
     }
 }
 

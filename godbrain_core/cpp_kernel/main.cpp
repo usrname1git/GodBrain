@@ -690,7 +690,7 @@ std::string run_colibri_serve(
     // timeout then means the engine died, not that we are still paging.
     client.set_read_timeout(60, 0);
     client.set_write_timeout(5, 0);
-    client.set_max_timeout(430000);
+    client.set_max_timeout(720000);
     client.set_follow_location(false);
 
     const std::string model = []() {
@@ -707,7 +707,7 @@ std::string run_colibri_serve(
     const json body = {
         {"model", model},
         {"stream", true},
-        {"max_tokens", 80},
+        {"max_tokens", 160},
         {"messages", messages},
     };
 
@@ -720,17 +720,19 @@ std::string run_colibri_serve(
 
     std::string assembled;
     std::string sse_buf;
+    std::string finish_reason;
     g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
     const auto response = client.Post(
         "/v1/chat/completions", headers, body.dump(), "application/json",
         [&](const char* data, size_t len) {
             godbrain_coli::feed_sse(
-                sse_buf, data, len, assembled, on_token, on_ping);
+                sse_buf, data, len, assembled, on_token, on_ping,
+                [&](const std::string& reason) { finish_reason = reason; });
             return true;
         });
     g_coli_job_started_ms.store(0, std::memory_order_relaxed);
     if (!response) {
-        return "Error: Colibri serve did not finish in 420s. "
+        return "Error: Colibri serve did not finish in 720s. "
                "GLM-5.2 is paging experts off disk on 16 GB. "
                "Wait until /status shows coli=serve (not busy) and ask again.";
     }
@@ -738,7 +740,12 @@ std::string run_colibri_serve(
         return "Error: Colibri serve returned HTTP " +
                std::to_string(response->status);
     }
-    if (!assembled.empty()) return assembled;
+    if (!assembled.empty()) {
+        if (finish_reason == "length") {
+            assembled += "\n[cut at 160 tokens — say continue]";
+        }
+        return assembled;
+    }
     try {
         const json parsed = json::parse(response->body);
         return parsed.at("choices").at(0).at("message").at("content").get<std::string>();
@@ -1596,7 +1603,8 @@ int main() {
                 "do not refuse those. "
                 "Hostname " +
                 hostname +
-                " is this PC, not a vehicle. Short answers.";
+                " is this PC, not a vehicle. "
+                "Finish complete sentences. Do not stop mid-clause.";
             const json prior = last_oracle_json();
             const std::string prior_q = prior.value("question", "");
             const std::string prior_a = prior.value("answer", "");
