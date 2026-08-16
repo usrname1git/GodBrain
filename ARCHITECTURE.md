@@ -42,7 +42,7 @@ Implemented loops:
 |---|---|---|---|
 | Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` | `Start-GodBrain.ps1` allowlist only | Ports up; remember as **candidate** |
 | Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
-| Librarian | Transcript | Distill one JSON | Schema/provenance; status stays **candidate** |
+| Librarian | Transcript | Distill claims (not a recap) | Schema/provenance; contradiction and open_question stay **candidate** |
 | Judgment | Last displayable Oracle turn | `set_godbrain_status` | Why string ≥ 4 chars; only path to verified/rejected |
 
 Do not introduce LangGraph, multi-agent meshes, or a second coli serve to
@@ -142,6 +142,18 @@ MongoDB is the source of truth for both runtime retrieval documents and
 Alexandria Golden Records. These use separate collections and validated schemas.
 
 ### Teaching boundary: MongoDB
+
+Map the research vault onto collections, not onto Obsidian folders:
+
+| Vault idea | GodBrain |
+|---|---|
+| `/raw` (never edit) | Immutable sources in Memory Store |
+| `/wiki` (processed, trustworthy) | Committed Golden Records / `rag_documents` |
+| `/questions` | `open_question` candidates; Oracle must not guess |
+| Contradiction flag | `contradiction` candidate; both sides stay until `/verify` or `/reject` |
+| Weekly digest | Pointer over **processed** records only (not implemented as a scheduler) |
+
+Librarian extracts claims. It does not overwrite raw and it does not crown truth.
 
 The Go Memory Store is the validated Golden Record write boundary:
 

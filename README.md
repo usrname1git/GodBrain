@@ -51,6 +51,14 @@ signal pays for it (Architect vs Surgeon, a second inference runner behind
 the same kernel door, or a future candidate-vs-verified conflict queue).
 Colibri and a rebuilt `llama-server` are interchangeable mouths, not a mesh.
 
+Ingest is the same loop with a stricter write rule: **raw sources stay
+immutable**; Librarian extracts *new claims*, not a recap; contradictions
+are flagged on both sides and never silently overwritten; open questions
+stay questions. Chat and any digest read the processed Golden Record
+layer, not the raw transcript pile. Routine extract uses the cheap local
+runner; a heavier model is only for a flagged fight or a high-stakes
+synthesis.
+
 ### Golden Record RAG status
 
 Layer 3 is implemented. The production C++ kernel and the experimental Go and

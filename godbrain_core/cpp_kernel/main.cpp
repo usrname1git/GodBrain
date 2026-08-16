@@ -2003,7 +2003,10 @@ int main() {
                 hostname +
                 " is this PC, not a vehicle. "
                 "Finish complete sentences. Do not stop mid-clause. "
-                "Never narrate the prompt or apologize mid-answer.";
+                "Never narrate the prompt or apologize mid-answer. "
+                "Prefer verified notes over candidates. "
+                "If notes disagree, say so; do not pick a silent winner. "
+                "Do not guess an open question. Cite the note if you use one.";
             LastOracleTurn prior_turn;
             const bool have_prior = find_last_real_oracle_turn(prior_turn);
             const std::string prior_q = have_prior ? prior_turn.question : std::string();

@@ -44,6 +44,41 @@ to count how many nodes the problem actually has. Usually one.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
   implement this. The loop is Heal + judge + this file.
 
+## Ingestion protocol (raw vs processed)
+
+This is the research loop. Mongo is the vault. Do not stand up Obsidian or a
+cloud model to get it.
+
+- **Raw is immutable.** Sources (transcripts, observe blobs, session files)
+  are never edited after ingest. Librarian and chat must not rewrite the
+  source to match a later opinion.
+- **Wiki is processed Golden Records.** Chat, digests, and "what have we
+  learned" queries pull from committed `rag_documents`, not from raw
+  transcripts. Raw may contain claims later rejected; that is why judge
+  exists.
+- **Extract claims, not a summary of the whole document.** Librarian writes
+  specific new findings with evidence spans. Do not dump a paraphrase of the
+  entire source into one node.
+- **Extend, do not duplicate.** If a topic already has a Golden Record,
+  add a new candidate that points at it. Do not mint a near-copy.
+- **Contradictions are flagged, never silently overwritten.** If a new claim
+  fights a verified or earlier candidate, both stay. Write a
+  `contradiction` / `open-question` candidate and wait for `/verify` or
+  `/reject`. Automating the winner defeats the starter pack.
+- **Do not guess.** If the source raises a real question the wiki cannot
+  answer, store it as an open-question candidate. The Oracle must say it
+  does not know rather than invent.
+- **Sectors keep topics from contaminating each other.** Abrams hardware
+  and Windows SRE do not share a digest unless the operator asks to
+  synthesize across sectors.
+- **Volume vs depth.** Routine extract/cross-ref uses the cheap local
+  runner (Colibri on this host). Reserve a heavier runner (future
+  llama-server / a larger model) for a flagged contradiction or a
+  high-stakes synthesis the loop itself marked as worth extra scrutiny.
+- **A digest, if anyone writes one, is a pointer.** Only what changed in
+  the processed layer, plus new conflicts and open questions. Under 500
+  words. Never re-summarize the entire wiki. Never pull from raw.
+
 ## Architecture that exists in source
 
 - `godbrain_core/cpp_kernel/` is the canonical privileged runtime. `main.cpp`
