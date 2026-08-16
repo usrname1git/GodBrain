@@ -169,8 +169,9 @@ function Set-PersistedModel([string]$Path) {
     Move-Item -LiteralPath $tmp -Destination $persistModel -Force
 }
 function Test-ColiServeProcess {
+    if (Get-Process -Name "coli" -ErrorAction SilentlyContinue) { return $true }
     $hit = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match 'coli["'']? serve' }
+        Where-Object { $_.CommandLine -match '(?i)coli(\.exe)?["'']?\s+serve' }
     return [bool]$hit
 }
 

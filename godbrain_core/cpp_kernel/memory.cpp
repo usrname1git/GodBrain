@@ -260,6 +260,22 @@ bool fetch_ms_doc(const std::string& url, std::string& body, std::string& error)
         error = "Learn/support fetch failed";
         return false;
     }
+    DWORD statusCode = 0;
+    DWORD statusSize = sizeof(statusCode);
+    if (!WinHttpQueryHeaders(
+            request,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &statusCode,
+            &statusSize,
+            WINHTTP_NO_HEADER_INDEX) ||
+        statusCode < 200 || statusCode > 299) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        error = "Learn/support HTTP " + std::to_string(statusCode);
+        return false;
+    }
     constexpr size_t kMax = 1500 * 1024;
     std::string raw;
     raw.reserve(64 * 1024);

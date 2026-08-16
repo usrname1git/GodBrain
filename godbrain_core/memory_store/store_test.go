@@ -601,3 +601,71 @@ func TestEnsureIndexesMigratesLegacyNodeOwnership(t *testing.T) {
 		t.Fatal("Legacy source session identity was not removed")
 	}
 }
+
+func TestStaleMismatchedPinsSelectsAndIsIdempotent(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+	nodes := db.Collection("knowledge_nodes")
+	live := "IoTEnterpriseS/26100.8037"
+	reason := "os pin moved on this host"
+
+	matchID := primitive.NewObjectID()
+	mismatchID := primitive.NewObjectID()
+	alreadyStaleID := primitive.NewObjectID()
+	learnID := primitive.NewObjectID()
+	otherSectorID := primitive.NewObjectID()
+
+	seeds := []memorystore.KnowledgeNode{
+		{ID: matchID, StableID: "pin-match", Status: memorystore.StatusVerified, Sector: "windows-sre",
+			Content: "card\nos_pin=" + live + "\n", CreatedAt: time.Now().UTC()},
+		{ID: mismatchID, StableID: "pin-mismatch", Status: memorystore.StatusVerified, Sector: "windows-sre",
+			Content: "card\nos_pin=IoTEnterpriseS/26100.1\n", CreatedAt: time.Now().UTC()},
+		{ID: alreadyStaleID, StableID: "pin-stale", Status: memorystore.StatusStale, Sector: "windows-sre",
+			Content: "card\nos_pin=IoTEnterpriseS/26100.1\n", CreatedAt: time.Now().UTC()},
+		{ID: learnID, StableID: "learn", Status: memorystore.StatusVerified, Sector: "windows-sre",
+			Content: "Learn quote, no pin", CreatedAt: time.Now().UTC()},
+		{ID: otherSectorID, StableID: "tanks", Status: memorystore.StatusVerified, Sector: "armor",
+			Content: "card\nos_pin=IoTEnterpriseS/26100.1\n", CreatedAt: time.Now().UTC()},
+	}
+	for _, node := range seeds {
+		if _, err := nodes.InsertOne(ctx, node); err != nil {
+			t.Fatalf("seed %s: %v", node.StableID, err)
+		}
+	}
+
+	ids, err := store.StaleMismatchedPins(ctx, "windows-sre", live, reason)
+	if err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	got := map[primitive.ObjectID]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got[mismatchID] || !got[alreadyStaleID] {
+		t.Fatalf("expected mismatch + already-stale ids, got %v", ids)
+	}
+	if got[matchID] || got[learnID] || got[otherSectorID] {
+		t.Fatalf("sweep selected a card it must leave alone: %v", ids)
+	}
+
+	var mismatch memorystore.KnowledgeNode
+	if err := nodes.FindOne(ctx, bson.M{"_id": mismatchID}).Decode(&mismatch); err != nil {
+		t.Fatal(err)
+	}
+	if mismatch.Status != memorystore.StatusStale {
+		t.Fatalf("verified mismatch status=%s", mismatch.Status)
+	}
+
+	again, err := store.StaleMismatchedPins(ctx, "windows-sre", live, reason)
+	if err != nil {
+		t.Fatalf("retry sweep: %v", err)
+	}
+	if len(again) != len(ids) {
+		t.Fatalf("retry should return the same mismatched set: first=%d retry=%d", len(ids), len(again))
+	}
+
+	if _, err := store.StaleMismatchedPins(ctx, "windows-sre", "bad pin!!", reason); !errors.Is(err, memorystore.ErrInvalidStalePin) {
+		t.Fatalf("invalid pin: %v", err)
+	}
+}

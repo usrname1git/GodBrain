@@ -910,8 +910,19 @@ func validOSPin(pin string) bool {
 	return true
 }
 
+// hasMismatchedOSPin is true when content carries os_pin= but not this live pin.
+// Cards with no os_pin= (Learn-class) are not pin-scoped.
+func hasMismatchedOSPin(content, pin string) bool {
+	if !strings.Contains(content, "os_pin=") {
+		return false
+	}
+	return !strings.Contains(content, "os_pin="+pin)
+}
+
 // StaleMismatchedPins marks verified windows-sre nodes whose content has os_pin=
-// but not the live pin. Cards without os_pin= (Learn-class) stay verified.
+// but not the live pin. Already-stale mismatches are returned too so a retry
+// can resync the RAG projection without writing another judgment. Cards
+// without os_pin= (Learn-class) stay verified.
 func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning string) ([]primitive.ObjectID, error) {
 	sector = strings.TrimSpace(sector)
 	pin = strings.TrimSpace(pin)
@@ -921,7 +932,7 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 	}
 	cursor, err := s.db.Collection("knowledge_nodes").Find(ctx, bson.M{
 		"sector":  sector,
-		"status":  StatusVerified,
+		"status":  bson.M{"$in": []string{StatusVerified, StatusStale}},
 		"content": bson.M{"$regex": "os_pin="},
 	}, options.Find().SetLimit(500))
 	if err != nil {
@@ -929,18 +940,19 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 	}
 	defer cursor.Close(ctx)
 
-	needle := "os_pin=" + pin
 	var ids []primitive.ObjectID
 	for cursor.Next(ctx) {
 		var node KnowledgeNode
 		if err := cursor.Decode(&node); err != nil {
 			return ids, err
 		}
-		if strings.Contains(node.Content, needle) {
+		if !hasMismatchedOSPin(node.Content, pin) {
 			continue
 		}
-		if _, _, err := s.SetNodeStatus(ctx, node.ID.Hex(), StatusStale, reasoning); err != nil {
-			return ids, err
+		if node.Status == StatusVerified {
+			if _, _, err := s.SetNodeStatus(ctx, node.ID.Hex(), StatusStale, reasoning); err != nil {
+				return ids, err
+			}
 		}
 		ids = append(ids, node.ID)
 	}

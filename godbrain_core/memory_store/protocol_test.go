@@ -39,6 +39,19 @@ func TestValidateStatusJudgmentAndTransitions(t *testing.T) {
 	}
 }
 
+func TestHasMismatchedOSPin(t *testing.T) {
+	const live = "IoTEnterpriseS/26100.8037"
+	if hasMismatchedOSPin("no pin here", live) {
+		t.Fatal("Learn-class cards without os_pin= must stay out of the sweep")
+	}
+	if hasMismatchedOSPin("host card\nos_pin="+live+"\n", live) {
+		t.Fatal("matching live pin is not a mismatch")
+	}
+	if !hasMismatchedOSPin("host card\nos_pin=IoTEnterpriseS/26100.1\n", live) {
+		t.Fatal("different os_pin= must mismatch")
+	}
+}
+
 func TestValidateDocumentPayload(t *testing.T) {
 	raw := "hello \u00e5"
 	contentHash := sha256.Sum256([]byte(raw))
