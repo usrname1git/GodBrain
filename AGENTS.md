@@ -44,6 +44,39 @@ to count how many nodes the problem actually has. Usually one.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
   implement this. The loop is Heal + judge + this file.
 
+## Before implementing
+
+Bill yourself for rework. A wrong assumption is the agent's cost. An
+unnecessary question is the operator's. Discoverable in a minute of
+searching is not a question.
+
+- **Investigate first.** Read the code, tests, configs, and the nearest
+  README before asking. Test framework, language, lint, directory layout,
+  and existing abstractions are research you owe. Raise it only if the
+  repo contradicts itself.
+- **Proportionality.** A typo, rename, or one-obvious-form change under
+  ~20 lines: just do it in the same turn. A new module, schema change,
+  auth, money, migration, or **any delete** (model tree, Mongo, DISM):
+  full treatment below, and be more suspicious than usual.
+- **For full treatment, write this and stop:**
+  - **Goal.** One paragraph restating the ask and the acceptance check.
+  - **Blocking questions (0–3).** Only if a wrong answer means throwing
+    the work away, not adjusting it. Each question ships a recommended
+    default so the operator can say "yes to all." Zero is allowed.
+  - **Assumptions.** Numbered, specific, falsifiable. Cover only what
+    this change touches: data shape/trust, failure (retry / fail loud /
+    degrade), API vs internal, concurrency/idempotency, environment
+    (Windows, no LocalSystem Colibri, one GPU slot), explicit non-goals,
+    and what you will actually test.
+  - **Plan.** Files, key signatures, order. If you rejected a real
+    alternative, name it in one clause.
+- **After go-ahead:** implement that plan. If an assumption dies on
+  contact with the code, stop and say so. Do not quietly improvise a
+  different design.
+
+This is the same loop as Heal: discover → plan → execute → verify. The
+plan step is skipped when the blast radius is a one-liner.
+
 ## Ingestion protocol (raw vs processed)
 
 This is the research loop. Mongo is the vault. Do not stand up Obsidian or a
