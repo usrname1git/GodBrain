@@ -444,6 +444,52 @@ static bool is_heading_loop(const std::string& text) {
     return verified >= 3 || headings >= 5;
 }
 
+// T-90AM/T-90AM/T-90AM... — same 6–32 char block three times in a row.
+static bool find_ngram_loop(
+    const std::string& text,
+    size_t* at,
+    size_t* unit,
+    size_t* copies) {
+    constexpr size_t kMin = 6;
+    constexpr size_t kMax = 32;
+    if (text.size() < kMin * 3) return false;
+    for (size_t n = kMin; n <= kMax; ++n) {
+        if (text.size() < n * 3) continue;
+        for (size_t i = 0; i + n * 3 <= text.size(); ++i) {
+            if (text.compare(i, n, text, i + n, n) != 0) continue;
+            if (text.compare(i, n, text, i + 2 * n, n) != 0) continue;
+            size_t k = 3;
+            while (i + (k + 1) * n <= text.size() &&
+                   text.compare(i, n, text, i + k * n, n) == 0) {
+                ++k;
+            }
+            if (at) *at = i;
+            if (unit) *unit = n;
+            if (copies) *copies = k;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is_ngram_loop(const std::string& text) {
+    const std::string t =
+        text.size() > 480 ? text.substr(text.size() - 480) : text;
+    return find_ngram_loop(t, nullptr, nullptr, nullptr);
+}
+
+static bool is_generation_loop(const std::string& text) {
+    return is_heading_loop(text) || is_ngram_loop(text);
+}
+
+static std::string trim_ngram_loop(std::string text) {
+    size_t at = 0;
+    size_t unit = 0;
+    size_t copies = 0;
+    if (!find_ngram_loop(text, &at, &unit, &copies)) return text;
+    return trim_copy(text.substr(0, at + unit));
+}
+
 static std::string sanitize_oracle_body(std::string answer) {
     answer = strip_cut_marker(std::move(answer));
     for (;;) {
@@ -465,7 +511,7 @@ static std::string sanitize_oracle_body(std::string answer) {
         const size_t pos = answer.find(kill);
         if (pos != std::string::npos) answer.resize(pos);
     }
-    return trim_repetition_loop(trim_copy(std::move(answer)));
+    return trim_ngram_loop(trim_repetition_loop(trim_copy(std::move(answer))));
 }
 
 static std::string last_anchor(const std::string& text, size_t n = 90) {
@@ -478,7 +524,8 @@ static std::string make_continue_prompt(const std::string& prior) {
     return std::string(
                "Resume immediately after these exact characters. "
                "Write only new words. Do not repeat any earlier sentence "
-               "or heading. Do not start a new ### heading. "
+               "or heading. Do not repeat a tank designation. "
+               "Do not start a new ### heading. "
                "Next output must be a bullet or a finished sentence. "
                "Do not mention the prompt, corrections, mistakes, or "
                "Oracle Database. No parenthetical stage directions.\n\n"
@@ -517,12 +564,12 @@ static bool find_last_real_oracle_turn(LastOracleTurn& out) {
         if (is_continue_command(it->question)) continue;
         if (it->answer.compare(0, 6, "Error:") == 0) continue;
         if (is_refuse_answer(it->answer)) continue;
-        if (is_heading_loop(it->answer) &&
+        if (is_generation_loop(it->answer) &&
             sanitize_oracle_body(it->answer).size() < 80) {
             continue;
         }
         out = *it;
-        if (is_heading_loop(it->answer)) {
+        if (is_generation_loop(it->answer)) {
             out.answer = sanitize_oracle_body(it->answer);
         }
         return true;
@@ -938,7 +985,7 @@ std::string run_colibri_serve(
                 godbrain_coli::feed_sse(
                     sse_buf, data, len, piece, on_token, on_ping,
                     [&](const std::string& reason) { finish_reason = reason; });
-                if (is_heading_loop(piece)) {
+                if (is_generation_loop(piece)) {
                     heading_loop = true;
                     return false;
                 }
