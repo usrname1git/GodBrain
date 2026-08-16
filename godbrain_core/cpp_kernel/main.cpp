@@ -520,11 +520,57 @@ static std::string last_anchor(const std::string& text, size_t n = 90) {
     return t.substr(t.size() - n);
 }
 
+static std::string continue_history_tail(const std::string& text, size_t n = 450) {
+    const std::string t = trim_copy(text);
+    if (t.size() <= n) return t;
+    std::string tail = t.substr(t.size() - n);
+    const size_t nl = tail.find('\n');
+    if (nl != std::string::npos && nl + 1 < tail.size()) {
+        tail = tail.substr(nl + 1);
+    }
+    return tail;
+}
+
+static bool looks_like_restart(const std::string& text) {
+    const std::string t = ascii_lower_copy(trim_copy(text));
+    if (t.compare(0, 14, "to determine if") == 0) return true;
+    if (t.compare(0, 16, "this evaluation") == 0) return true;
+    if (t.compare(0, 12, "analyze why") == 0) return true;
+    if (t.compare(0, 15, "whether the m1") == 0) return true;
+    if (t.find("### firepower") != std::string::npos &&
+        t.find("analyze why") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
+static std::string last_coherent_essay(std::string text) {
+    text = sanitize_oracle_body(std::move(text));
+    const char* marks[] = {
+        "To determine if",
+        "This evaluation assesses",
+        "### Firepower",
+    };
+    size_t last = std::string::npos;
+    for (const char* mark : marks) {
+        const size_t pos = text.rfind(mark);
+        if (pos != std::string::npos &&
+            (last == std::string::npos || pos > last)) {
+            last = pos;
+        }
+    }
+    if (last != std::string::npos && last > 80) {
+        return trim_copy(text.substr(last));
+    }
+    return text;
+}
+
 static std::string make_continue_prompt(const std::string& prior) {
     return std::string(
                "Resume immediately after these exact characters. "
-               "Write only new words. Do not repeat any earlier sentence "
-               "or heading. Do not repeat a tank designation. "
+               "Write only new words. Do not restart the essay. "
+               "Do not repeat the question. Do not repeat any earlier "
+               "sentence, heading, or tank designation. "
                "Do not start a new ### heading. "
                "Next output must be a bullet or a finished sentence. "
                "Do not mention the prompt, corrections, mistakes, or "
@@ -1914,7 +1960,7 @@ int main() {
             const bool have_prior = find_last_real_oracle_turn(prior_turn);
             const std::string prior_q = have_prior ? prior_turn.question : std::string();
             const std::string prior_a =
-                have_prior ? sanitize_oracle_body(prior_turn.answer) : std::string();
+                have_prior ? last_coherent_essay(prior_turn.answer) : std::string();
             if (continue_cmd && !have_prior) {
                 res.set_content(
                     json({{"response",
@@ -1955,6 +2001,9 @@ int main() {
                 const std::string added =
                     strip_replayed_prefix(prior_a, sanitize_oracle_body(next));
                 if (added.empty()) return prior_a;
+                // A full restart is a new draft, not a suffix. Gluing it
+                // reprints the whole Abrams essay in Galaxy.
+                if (looks_like_restart(added)) return added;
                 return prior_a + added;
             };
             if (want_stream) {
@@ -1962,7 +2011,11 @@ int main() {
                 const std::string usr = user_prompt;
                 const std::string asked_q = asked;
                 const std::string hist_q = follow_up ? prior_q : std::string();
-                const std::string hist_a = follow_up ? prior_a : std::string();
+                const std::string hist_a =
+                    follow_up
+                        ? (continue_cmd ? continue_history_tail(prior_a)
+                                        : prior_a)
+                        : std::string();
                 res.set_header("Cache-Control", "no-cache");
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
@@ -2013,7 +2066,9 @@ int main() {
                         if (combined.compare(0, 6, "Error:") == 0) {
                             emit({{"type", "error"}, {"text", combined}});
                         } else {
-                            emit({{"type", "done"}, {"response", final_answer}});
+                            // Stream already showed new tokens. Do not replace
+                            // the bubble with the stitched prior+new dump.
+                            emit({{"type", "done"}, {"response", chunk}});
                         }
                         sink.done();
                         return true;
@@ -2027,15 +2082,17 @@ int main() {
                 {},
                 {},
                 follow_up ? prior_q : std::string(),
-                follow_up ? prior_a : std::string());
-            const std::string final_answer =
-                stitch_continue(strip_coli_reply(combined));
+                follow_up ? (continue_cmd ? continue_history_tail(prior_a)
+                                          : prior_a)
+                          : std::string());
+            const std::string chunk = strip_coli_reply(combined);
+            const std::string final_answer = stitch_continue(chunk);
             remember_oracle_turn(
                 asked, final_answer, GetTickCount() - coli_started);
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)
                       << " ms (" << combined.size() << " bytes)" << std::endl;
             json resp;
-            resp["response"] = final_answer;
+            resp["response"] = continue_cmd ? chunk : final_answer;
             res.set_content(resp.dump(), "application/json");
         } catch (...) {
             res.status = 400;
