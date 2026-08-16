@@ -506,6 +506,7 @@ static std::string sanitize_oracle_body(std::string answer) {
         "Correction:",
         "I apologize for the confusion",
         "I need to finish the previous sentence",
+        "This conversation is finished",
     };
     for (const char* kill : kills) {
         const size_t pos = answer.find(kill);
@@ -1065,20 +1066,24 @@ std::string run_colibri_serve(
             return assembled;
         }
         if (piece.empty()) {
-            try {
-                const json parsed = json::parse(response->body);
-                piece = parsed.at("choices")
-                            .at(0)
-                            .at("message")
-                            .at("content")
-                            .get<std::string>();
-            } catch (const json::exception&) {
-                if (assembled.empty()) {
-                    return "Error: Colibri serve returned a malformed completion.";
+            // Streaming already drained the body. Empty tokens on a later
+            // auto-continue chunk means the model stopped, not a parse error.
+            if (!response->body.empty()) {
+                try {
+                    const json parsed = json::parse(response->body);
+                    piece = parsed.at("choices")
+                                .at(0)
+                                .at("message")
+                                .at("content")
+                                .get<std::string>();
+                } catch (const json::exception&) {
+                    if (assembled.empty()) {
+                        return "Error: Colibri serve returned a malformed completion.";
+                    }
+                    break;
                 }
-                assembled += "\n[cut — malformed chunk, say continue]";
-                return assembled;
             }
+            if (piece.empty()) break;
         }
         piece = sanitize_oracle_body(piece);
         piece = strip_replayed_prefix(assembled, piece);
