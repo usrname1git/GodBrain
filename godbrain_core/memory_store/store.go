@@ -25,7 +25,8 @@ var (
 	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
 	ErrJudgmentIDRequired        = errors.New("judgment id is required")
 	ErrJudgmentReasoningRequired = errors.New("judgment reasoning is required")
-	ErrInvalidJudgmentStatus     = errors.New("judgment status must be verified or rejected")
+	ErrInvalidJudgmentStatus     = errors.New("judgment status must be verified, rejected, or stale")
+	ErrInvalidStalePin           = errors.New("stale_pins requires windows-sre sector and a pin")
 	ErrInvalidStatusTransition   = errors.New("status transition is not allowed")
 )
 
@@ -814,7 +815,7 @@ func ValidateStatusJudgment(judgment StatusJudgment) error {
 	if id == "" || len(id) > 128 {
 		return ErrJudgmentIDRequired
 	}
-	if judgment.Status != StatusVerified && judgment.Status != StatusRejected {
+	if judgment.Status != StatusVerified && judgment.Status != StatusRejected && judgment.Status != StatusStale {
 		return ErrInvalidJudgmentStatus
 	}
 	reason := strings.Join(strings.Fields(judgment.Reasoning), " ")
@@ -830,9 +831,13 @@ func AllowedStatusTransition(from, to string) bool {
 	}
 	switch to {
 	case StatusVerified:
-		return from == StatusCandidate
+		return from == StatusCandidate || from == StatusStale
 	case StatusRejected:
+		return from == StatusCandidate || from == StatusVerified || from == StatusStale
+	case StatusStale:
 		return from == StatusCandidate || from == StatusVerified
+	case StatusCandidate:
+		return from == StatusStale
 	default:
 		return false
 	}
@@ -888,6 +893,58 @@ func (s *Store) SetNodeStatus(ctx context.Context, id, status, reasoning string)
 		return nil, from, err
 	}
 	return &node, from, nil
+}
+
+func validOSPin(pin string) bool {
+	if pin == "" || len(pin) > 80 {
+		return false
+	}
+	for _, ch := range pin {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '.' || ch == '/' ||
+			ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// StaleMismatchedPins marks verified windows-sre nodes whose content has os_pin=
+// but not the live pin. Cards without os_pin= (Learn-class) stay verified.
+func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning string) ([]primitive.ObjectID, error) {
+	sector = strings.TrimSpace(sector)
+	pin = strings.TrimSpace(pin)
+	reasoning = strings.Join(strings.Fields(reasoning), " ")
+	if sector != "windows-sre" || !validOSPin(pin) || len(reasoning) < MinJudgmentReason {
+		return nil, ErrInvalidStalePin
+	}
+	cursor, err := s.db.Collection("knowledge_nodes").Find(ctx, bson.M{
+		"sector":  sector,
+		"status":  StatusVerified,
+		"content": bson.M{"$regex": "os_pin="},
+	}, options.Find().SetLimit(500))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	needle := "os_pin=" + pin
+	var ids []primitive.ObjectID
+	for cursor.Next(ctx) {
+		var node KnowledgeNode
+		if err := cursor.Decode(&node); err != nil {
+			return ids, err
+		}
+		if strings.Contains(node.Content, needle) {
+			continue
+		}
+		if _, _, err := s.SetNodeStatus(ctx, node.ID.Hex(), StatusStale, reasoning); err != nil {
+			return ids, err
+		}
+		ids = append(ids, node.ID)
+	}
+	return ids, cursor.Err()
 }
 
 // Ensures that the origin node exists, is verified, and the hash matches exactly.

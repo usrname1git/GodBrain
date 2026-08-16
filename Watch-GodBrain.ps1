@@ -20,6 +20,6 @@ if (-not (Test-Path -LiteralPath $heal)) {
     throw "Watch-GodBrain: missing $heal"
 }
 
-# Closed loop: detect → start missing allowlist → verify → remember.
-# Never kills Colibri or anything else.
+# Closed loop: detect → start missing allowlist → diagnose → maybe
+# flushdns → verify → remember. Never kills Colibri or anything else.
 & $heal -RepoRoot $RepoRoot

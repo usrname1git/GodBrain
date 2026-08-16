@@ -30,6 +30,13 @@ func TestValidateStatusJudgmentAndTransitions(t *testing.T) {
 		!AllowedStatusTransition("verified", "rejected") {
 		t.Fatal("expected candidate->verified and verified->rejected")
 	}
+	if !AllowedStatusTransition("verified", "stale") ||
+		!AllowedStatusTransition("stale", "verified") {
+		t.Fatal("expected verified<->stale for pin refresh")
+	}
+	if AllowedStatusTransition("rejected", "stale") {
+		t.Fatal("rejected must stay terminal")
+	}
 }
 
 func TestValidateDocumentPayload(t *testing.T) {

@@ -4,7 +4,9 @@ This Go module contains two boundaries:
 
 - `cmd/memory-store` validates one Librarian JSON document from stdin and writes
   immutable Alexandria source-of-truth records. It also accepts a
-  `set_status` judgment that changes only `candidate`/`verified`/`rejected`.
+  `set_status` judgment that changes only `candidate`/`verified`/`rejected`/`stale`.
+  `stale_pins` marks verified `windows-sre` nodes whose `os_pin=` no longer
+  matches the live Windows build.
 - `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.

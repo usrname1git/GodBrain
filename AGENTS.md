@@ -86,6 +86,12 @@ plan step is skipped when the blast radius is a one-liner.
 - **Verify on the running host.** Ports, `/status`, Galaxy click-path, or
   a failing test — not only a diff. For UI, screenshot or exercise the
   route. For Colibri, `/health` and `coli=serve` (not busy).
+- **Voice I/O is local and CPU-first.** STT: `faster-whisper` `large-v3`
+  at `C:\nvme\faster-whisper-large-v3` via `C:\nvme\stt\Transcribe-Clip.ps1`
+  (20 threads, no CUDA while coli holds VRAM). TTS: `python -m piper` with
+  voices in `C:\nvme\piper-voices` via `C:\nvme\stt\Speak-Text.ps1`.
+  FFmpeg is `C:\Tools\ffmpeg\ffmpeg.exe`. Do not use cloud STT/TTS. Do
+  not load Whisper or Piper on the 4080 while `coli serve` is pinned.
 - **Next loop starts from persisted state.** `last_oracle.json`, Heal
   last, git, Golden Records. Do not treat chat history as the source of
   truth. If the plan died, say so; do not continue from a hallucinated
@@ -117,7 +123,36 @@ cloud model to get it.
   does not know rather than invent.
 - **Sectors keep topics from contaminating each other.** Abrams hardware
   and Windows SRE do not share a digest unless the operator asks to
-  synthesize across sectors.
+  synthesize across sectors. Tanks / military hardware are **not** the
+  current ingest sector. B-line is closed-loop OS/network on this host
+  (detect → reason → allowlist patch → verify). Do not seed tank cards.
+  SRE first step is diagnose: ping, nslookup, tracert (and Heal
+  icmp_loopback), then NIC-to-Tcpip binding (Get-NetAdapter /
+  Get-NetAdapterBinding ms_tcpip, Class NetCfgInstanceId vs
+  Tcpip\Parameters\Interfaces). Repair tools come only after that
+  split. Know them all; run none of them first. None of these are
+  forbidden: `ipconfig /flushdns`, `/release` `/renew`, `netsh winsock
+  reset`, `netsh int ip reset`, DeviceCleanupCmd, reboot. Heal may run
+  `ipconfig /flushdns` once after diagnose (dns_self fail, Dnscache
+  up, icmp_loopback up). The rest require an explicit operator GO in
+  this chat, one named tool per GO, never the full cocktail.
+  DeviceCleanupCmd is `C:\Tools\DeviceCleanupCmd\DeviceCleanupCmd.exe`
+  (Uwe Sieber 1.5.1). It creates an SRP before the first real remove
+  unless `-s`. The operator runs `*` from time to time to clear dead
+  PnP entries; do not treat `*` as the default option and do not run
+  it without GO. It cannot uninstall leftover NDIS names on a
+  still-present PCI NIC.
+  SysInternals on this host is `C:\Tools\SysInternals`. After ping /
+  nslookup / tracert, use the 64-bit network extras: `psping64` (ICMP,
+  TCP connect, latency, bandwidth; `psping64 -? i|t|l|b`), `tcpvcon64
+  -a -n` or `tcpview64` (who owns the socket), `whois64` (who owns the
+  name or IP). Deeper only: `procmon64` with a Network filter,
+  `shareenum64` / `psfile64` for SMB. Heal never launches them.
+  Heal auto-starts services, then diagnoses icmp_loopback / dns_self /
+  nic_tcpip. nic_tcpip is detect-only. Heal does not reboot.
+  The SRE surgeon kit is `godbrain_core/sre_agent/sre_surgeon.exe
+  --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
+  Do not `--ask` while `coli serve` holds the GPU slot.
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   runner (Colibri on this host). Reserve a heavier runner (future
   llama-server / a larger model) for a flagged contradiction or a
@@ -137,18 +172,26 @@ cloud model to get it.
   non-blank `reasoning` string for `execute_godbrain_script` and
   `propose_sovereign_architect_change`; `surgery.cpp` executes their PowerShell.
   `save_godbrain_thought` writes a candidate Golden Record through
-  `memory-store.exe`. `set_godbrain_status` is the only way a node becomes
-  `verified` or `rejected`. `query_recent_thoughts` reads the active RAG graph.
+  `memory-store.exe`. `set_godbrain_status` is the only status door
+  (`verified` / `rejected` / `stale`). Humans still `/verify` playbooks and
+  fights. Host inventory and `/api/truth` host_fact/doc_fact call that door
+  themselves when a live probe or a Learn/support quote actually matches.
+  `query_recent_thoughts` reads the active RAG graph. Oracle search is
+  verified-only.
   Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
   `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
   host + coli + last-turn line. `/heal` reports the host-listener closed loop
-  (detect → start missing rag/coli/kernel → verify). Watch-GodBrain runs
+  (detect → start missing allowlist → diagnose → maybe flushdns → verify). Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. The Galaxy node panel and `POST /api/judge` are
-  the same judgment path. `/observe` persists only stable host inventory, not
-  live load. Logon (`Start-GodBrain.ps1`) posts `/api/observe` once the kernel
-  is listening; unchanged inventory is an idempotent no-op. Kernel boot loads
+  the same judgment path. `/observe` persists stable host inventory including
+  `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
+  If the pin moved, verified `windows-sre` cards that carry a different
+  `os_pin=` become `stale` (not deleted). Logon (`Start-GodBrain.ps1`) posts
+  `/api/observe` once the kernel is listening; unchanged inventory is an
+  idempotent no-op. `POST /api/truth` writes host_fact / doc_fact / playbook
+  claims: host probes and Learn quotes can promote; playbooks stay candidate. Kernel boot loads
   the newest Golden Records into the process session buffer so chat still knows
   the host after a restart. `/api/status` reports the host card and Tailscale
   remember URL. The Tailscale shortcuts door binds only when
@@ -240,7 +283,7 @@ The kernel has no committed CMake project. From
 `godbrain_core\cpp_kernel` in a Visual Studio x64 Developer shell:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp /link pdh.lib dxgi.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp /link pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action: it may invoke local `mongosh`,

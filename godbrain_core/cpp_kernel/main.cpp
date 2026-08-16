@@ -853,6 +853,20 @@ static void handle_observe(const httplib::Request& req, httplib::Response& res) 
     }
 }
 
+static void handle_truth(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        res.set_content(memory::promote_claim(payload).dump(), "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(json({{"error", "truth body must be JSON"}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
 static void handle_last(const httplib::Request&, httplib::Response& res) {
     res.set_content(
         json({{"last_oracle", last_oracle_json()},
@@ -891,6 +905,7 @@ static void attach_shortcut_routes(httplib::Server& server) {
     });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/observe", handle_observe);
+    server.Post("/api/truth", handle_truth);
     server.Post("/api/judge", handle_judge);
 }
 
@@ -1187,7 +1202,7 @@ std::string run_colibri_spawn(const std::string& prompt) {
               << " GB, overcommit="
               << (vram.value("overcommit", false) ? "on" : "off") << std::endl;
 
-    SetEnvironmentVariableA("SNAP", snap_env.empty() ? "C:\\nvme\\glm52" : snap_env.c_str());
+    SetEnvironmentVariableA("SNAP", snap_env.empty() ? "C:\\nvme\\glm52-uncensored" : snap_env.c_str());
     SetEnvironmentVariableA("NGEN", "64");
     SetEnvironmentVariableA(
         "COLI_RAM_OVERCOMMIT", vram.value("overcommit", false) ? "1" : "0");
@@ -1471,6 +1486,11 @@ int main() {
         handle_remember(req, res);
     });
 
+    svr.Post("/api/truth", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_truth(req, res);
+    });
+
     svr.Post("/api/observe", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_observe(req, res);
@@ -1688,6 +1708,28 @@ int main() {
                             if (item.is_string()) reply << item.get<std::string>();
                         }
                     }
+                    const json acted = last.value("acted", json::array());
+                    reply << "\nacted=";
+                    if (acted.empty()) {
+                        reply << "(none)";
+                    } else {
+                        bool first = true;
+                        for (const auto& item : acted) {
+                            if (!first) reply << ",";
+                            first = false;
+                            if (item.is_string()) reply << item.get<std::string>();
+                        }
+                    }
+                    const json diagnose = last.value("diagnose", json::object());
+                    if (!diagnose.empty()) {
+                        reply << "\nlayer=" << diagnose.value("layer", "?")
+                              << " icmp="
+                              << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
+                              << " dns_self="
+                              << (diagnose.value("dns_self", false) ? "ok" : "fail")
+                              << " nic_tcpip="
+                              << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
+                    }
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(),
                                 "application/json");
@@ -1720,8 +1762,11 @@ int main() {
                     const json live = stored.value("live", json::object());
                     const json inventory = stored.value("inventory", json::object());
                     std::ostringstream reply;
-                    reply << "Stored host inventory as a candidate Golden Record.\n"
+                    reply << "Stored host inventory as a "
+                          << stored.value("trust", "candidate")
+                          << " Golden Record (live pin, no manual confirm).\n"
                           << "stable_id=" << stored.value("stable_id", "") << "\n"
+                          << "os_pin=" << inventory.value("os_pin", "") << "\n"
                           << inventory.at("computer_name").get<std::string>()
                           << " / " << inventory.at("total_physical_ram_gb").get<int>()
                           << " GB / " << inventory.at("logical_processors").get<int>()
@@ -1744,9 +1789,10 @@ int main() {
                         reply << ", " << volume.value("letter", "?") << ": "
                               << volume.value("free_gb", 0.0) << " GB free";
                     }
-                    reply << "\nVerify if Explorer matches the fixed disks, e.g.\n"
-                          << "/verify " << stored.value("stable_id", "ID")
-                          << " Explorer shows the same fixed volumes and sizes";
+                    const json stale = stored.value("stale", json::object());
+                    if (stale.contains("stale")) {
+                        reply << "\nstale_pins=" << stale.value("stale", 0);
+                    }
                     res.set_content(
                         json({{"response", reply.str()}}).dump(),
                         "application/json");

@@ -6,7 +6,6 @@
 param(
     [string]$RepoRoot = $PSScriptRoot,
     [string]$NewModel = "C:\nvme\glm52-uncensored",
-    [string]$OldModel = "C:\nvme\glm52",
     [switch]$RemoveOld
 )
 
@@ -103,6 +102,5 @@ if (-not $up) { throw "coli :8000 did not come back after switch to $NewModel" }
 Write-Host "coli serve up on $NewModel"
 
 if ($RemoveOld) {
-    Write-Host "Refusing to delete $OldModel from this script."
-    Write-Host "After a good uncensored tank answer, delete it by hand."
+    Write-Host "RemoveOld is ignored. This host has a single snapshot: $NewModel"
 }

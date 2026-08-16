@@ -75,7 +75,7 @@ type KnowledgeNode struct {
 	StableID      string             `bson:"stable_id" json:"stable_id"` // Hash of normalized content/kind
 	Version       string             `bson:"version" json:"version"`     // Versioning for immutability when verified
 	Kind          string             `bson:"kind" json:"kind"`           // e.g., "concept", "claim", "opsec_candidate"
-	Status        string             `bson:"status" json:"status"`       // "candidate", "verified", "rejected"
+	Status        string             `bson:"status" json:"status"`       // candidate, verified, rejected, stale
 	Sector        string             `bson:"sector" json:"sector"`       // To scope queries (e.g. "architecture", "security")
 	Content       string             `bson:"content" json:"content"`
 	Confidence    float64            `bson:"confidence" json:"confidence"`

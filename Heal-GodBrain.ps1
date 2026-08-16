@@ -1,6 +1,12 @@
-# One loop for THIS host: discover (probe) → execute (start missing allowlist)
-# → verify (ports) → remember (candidate). Not a multi-agent graph.
-# Allowlist: rag :8084, coli :8000, kernel :8083. Never kills, never deletes, never DISM.
+# One loop for THIS host: discover (probe) → start allowlist → diagnose
+# (icmp / dns_self / nic_tcpip) → at most one flushdns if DNS missed after
+# that split → verify → remember (candidate). Not a multi-agent graph.
+# Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
+# Allowlist repair: ipconfig /flushdns only when dns_self fails, Dnscache is
+# up, and icmp_loopback is up. release, winsock reset, int ip reset,
+# DeviceCleanup, and reboot are legal tools but need an operator GO in
+# chat — Heal must not run them unattended.
+# nic_tcpip is detect-only. Do not start NICs or firewall from here.
 # The verifier is the probe, not the model. Do not add extra nodes here.
 
 [CmdletBinding()]
@@ -39,33 +45,160 @@ function Test-Port([string]$HostName, [int]$Port) {
     }
 }
 
+function Test-IcmpLoopback {
+    try {
+        return [bool](Test-Connection -ComputerName "127.0.0.1" -Count 1 -Quiet -ErrorAction SilentlyContinue)
+    } catch {
+        return $false
+    }
+}
+
+function Test-DnsSelf {
+    try {
+        $null = [System.Net.Dns]::GetHostEntry("localhost")
+        $null = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-UplinkAdapter {
+    $all = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
+    if ($all.Count -eq 0) { return $null }
+    $pref = $all | Where-Object { $_.InterfaceDescription -match "I226-V" } | Select-Object -First 1
+    if ($pref) { return $pref }
+    return $all | Where-Object {
+        $_.Status -eq "Up" -and
+        $_.InterfaceDescription -notmatch "Wi-Fi|Wireless|Bluetooth|Virtual|Hyper-V|VMware|Tailscale"
+    } | Select-Object -First 1
+}
+
+function Test-NicTcpip {
+    try {
+        $nic = Get-UplinkAdapter
+        if (-not $nic) { return $false }
+        if ($nic.Status -ne "Up") { return $false }
+        $bind = Get-NetAdapterBinding -Name $nic.Name -ComponentID ms_tcpip -ErrorAction SilentlyContinue
+        return [bool]($bind -and $bind.Enabled)
+    } catch {
+        return $false
+    }
+}
+
+function Test-ServiceUp([string]$Name) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    return [bool]($svc -and $svc.Status -eq "Running")
+}
+
+function Start-AllowlistedService([string]$Name) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        Write-Host "heal: Windows service $Name is not installed"
+        return
+    }
+    if ($svc.Status -eq "Running") { return }
+    try {
+        Start-Service -Name $Name -ErrorAction Stop
+        Write-Host "heal: started Windows service $Name"
+    } catch {
+        Write-Host "heal: could not start ${Name}: $_"
+    }
+}
+
+function Invoke-AllowlistedFlushDns {
+    Write-Host "heal: ipconfig /flushdns (dns_self failed, Dnscache up, icmp ok)"
+    & ipconfig.exe /flushdns | Out-Null
+}
+
 function Get-Probe {
     return [ordered]@{
-        mongo  = Test-Port "127.0.0.1" 27017
-        rag    = Test-Port "127.0.0.1" 8084
-        coli   = Test-Port "127.0.0.1" 8000
-        kernel = Test-Port "127.0.0.1" 8083
+        mongo         = Test-Port "127.0.0.1" 27017
+        rag           = Test-Port "127.0.0.1" 8084
+        coli          = Test-Port "127.0.0.1" 8000
+        kernel        = Test-Port "127.0.0.1" 8083
+        dns           = Test-ServiceUp "Dnscache"
+        iphlp         = Test-ServiceUp "iphlpsvc"
+        nsi           = Test-ServiceUp "nsi"
+        icmp_loopback = Test-IcmpLoopback
+        dns_self      = Test-DnsSelf
+        nic_tcpip     = Test-NicTcpip
     }
+}
+
+function Get-DiagnoseLayer($probe) {
+    if (-not $probe.icmp_loopback) { return "icmp" }
+    if (-not $probe.dns -or -not $probe.dns_self) { return "dns" }
+    if (-not $probe.nic_tcpip) { return "nic" }
+    if (-not ($probe.mongo -and $probe.rag -and $probe.coli -and $probe.kernel)) {
+        return "listeners"
+    }
+    return "ok"
+}
+
+$ServiceAllowlist = [ordered]@{
+    mongo = "MongoDB"
+    dns   = "Dnscache"
+    iphlp = "iphlpsvc"
+    nsi   = "nsi"
 }
 
 $before = Get-Probe
 $needed = @()
+$acted = @()
+if (-not $before.mongo) { $needed += "mongo" }
+if (-not $before.dns) { $needed += "dns" }
+if (-not $before.iphlp) { $needed += "iphlp" }
+if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag) { $needed += "rag" }
 if (-not $before.coli) { $needed += "coli" }
 if (-not $before.kernel) { $needed += "kernel" }
 
-if ($needed.Count -gt 0) {
-    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 5
+foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
+    if ($needed -contains $key) {
+        Start-AllowlistedService $ServiceAllowlist[$key]
+        $acted += ("start:" + $ServiceAllowlist[$key])
+    }
+}
+
+$processNeeded = @($needed | Where-Object { $_ -notin @("mongo", "dns", "iphlp", "nsi") })
+if ($processNeeded.Count -gt 0) {
+    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15
     Start-Sleep -Seconds 2
+    $acted += "start:listeners"
+} elseif ($needed -contains "mongo") {
+    $deadline = (Get-Date).AddSeconds(15)
+    while (-not (Test-Port "127.0.0.1" 27017)) {
+        if ((Get-Date) -gt $deadline) { break }
+        Start-Sleep -Milliseconds 400
+    }
+}
+
+$mid = Get-Probe
+if (-not $mid.dns_self -and $mid.dns -and $mid.icmp_loopback) {
+    Invoke-AllowlistedFlushDns
+    $acted += "flushdns"
+    Start-Sleep -Milliseconds 200
 }
 
 $after = Get-Probe
-$ok = [bool]($after.rag -and $after.coli -and $after.kernel)
+$ok = [bool](
+    $after.mongo -and $after.rag -and $after.coli -and $after.kernel -and
+    $after.dns -and $after.iphlp -and $after.nsi
+)
+$diagnose = [ordered]@{
+    icmp_loopback = [bool]$after.icmp_loopback
+    dns_self      = [bool]$after.dns_self
+    nic_tcpip     = [bool]$after.nic_tcpip
+    layer         = Get-DiagnoseLayer $after
+}
 $result = [ordered]@{
-    version     = 1
+    version     = 2
     at          = (Get-Date).ToUniversalTime().ToString("o")
     playbook    = "host-listeners"
     needed      = @($needed)
+    acted       = @($acted)
+    diagnose    = $diagnose
     before      = $before
     after       = $after
     ok          = $ok
@@ -80,16 +213,20 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 Move-Item -LiteralPath $tmp -Destination $last -Force
 Add-Content -LiteralPath (Join-Path $logDir "heal.jsonl") -Value (($json -replace "`r?`n", " "))
 
-Write-Host ("heal needed=[{0}] ok={1}" -f ($needed -join ","), $ok)
+Write-Host ("heal needed=[{0}] acted=[{1}] layer={2} ok={3}" -f `
+    ($needed -join ","), ($acted -join ","), $diagnose.layer, $ok)
 
-if ($env:GODBRAIN_API_TOKEN -and $after.kernel) {
+# Remember only a failed or acted loop. Success-every-5-min is wiki noise.
+$shouldRemember = $needed.Count -gt 0 -or $acted.Count -gt 0 -or -not $ok `
+    -or -not $after.icmp_loopback -or -not $after.dns_self -or -not $after.nic_tcpip
+if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
     try {
         $headers = @{
             "Content-Type"  = "application/json"
             "Authorization" = "Bearer $($env:GODBRAIN_API_TOKEN)"
         }
         $body = @{
-            text   = "Heal loop (candidate)`nneeded=$($needed -join ',')`nok=$ok`nbefore=$($before | ConvertTo-Json -Compress)`nafter=$($after | ConvertTo-Json -Compress)"
+            text   = "Heal loop (candidate)`nneeded=$($needed -join ',')`nacted=$($acted -join ',')`nlayer=$($diagnose.layer)`nok=$ok`nicmp_loopback=$($after.icmp_loopback)`ndns_self=$($after.dns_self)`nnic_tcpip=$($after.nic_tcpip)`nbefore=$($before | ConvertTo-Json -Compress)`nafter=$($after | ConvertTo-Json -Compress)"
             sector = "windows-sre"
         } | ConvertTo-Json
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/remember" `

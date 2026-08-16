@@ -1,6 +1,7 @@
 # Start GodBrain as the logged-in user after Windows logon.
 # Not a LocalSystem service: Colibri/CUDA must see an interactive session.
-# MongoDB is assumed to already run as its own Windows service.
+# MongoDB is the Windows service named MongoDB. Heal/Start may start it if
+# :27017 is down. Never kill it.
 
 [CmdletBinding()]
 param(
@@ -99,6 +100,20 @@ function Start-LoggedProcess {
 
 Write-Log "GodBrain logon start from $RepoRoot"
 
+if (-not (Test-Port "127.0.0.1" 27017)) {
+    $svc = Get-Service -Name "MongoDB" -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne "Running") {
+        try {
+            Start-Service -Name "MongoDB" -ErrorAction Stop
+            Write-Log "started Windows service MongoDB"
+        } catch {
+            Write-Log "could not start MongoDB: $_"
+        }
+    } elseif (-not $svc) {
+        Write-Log "Windows service MongoDB is not installed"
+    }
+}
+
 $mongoDeadline = (Get-Date).AddSeconds($MongoWaitSeconds)
 while (-not (Test-Port "127.0.0.1" 27017)) {
     if ((Get-Date) -gt $mongoDeadline) {
@@ -136,8 +151,8 @@ if (-not (Test-Path -LiteralPath $coli)) {
 }
 
 # Host pin for Heal/Watch/logon. Env wins for one-shot tests; otherwise the
-# last Switch/Start path in logs/coli-model.txt. Never default back to glm52
-# after a successful switch just because the session env was empty.
+# last Switch/Start path in logs/coli-model.txt. Default is the uncensored
+# snapshot; never invent a second tree if persist/env is empty.
 $persistModel = Join-Path $logDir "coli-model.txt"
 function Get-PersistedModel {
     if (-not (Test-Path -LiteralPath $persistModel)) { return $null }
@@ -161,8 +176,12 @@ function Test-ColiServeProcess {
 
 $model = $env:GODBRAIN_SNAPSHOT_PATH
 if (-not $model) { $model = $env:COLI_MODEL }
+if ($model -and -not (Test-Path -LiteralPath $model)) {
+    Write-Log "coli model $model is gone; fall through to persist/default"
+    $model = $null
+}
 if (-not $model) { $model = Get-PersistedModel }
-if (-not $model) { $model = "C:\nvme\glm52" }
+if (-not $model) { $model = "C:\nvme\glm52-uncensored" }
 Write-Log "coli model $model"
 if (Test-Path -LiteralPath $model) {
     Set-PersistedModel $model

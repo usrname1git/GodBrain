@@ -40,10 +40,11 @@ Implemented loops:
 
 | Loop | Discover | Execute | Verify |
 |---|---|---|---|
-| Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` | `Start-GodBrain.ps1` allowlist only | Ports up; remember as **candidate** |
+| Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` + ICMP loopback | Start `MongoDB` service and `Start-GodBrain.ps1` allowlist | Ports up; remember only on act/fail |
 | Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
 | Librarian | Transcript | Distill claims (not a recap) | Schema/provenance; contradiction and open_question stay **candidate** |
-| Judgment | Last displayable Oracle turn | `set_godbrain_status` | Why string ≥ 4 chars; only path to verified/rejected |
+| Judgment | Last displayable Oracle turn | `set_godbrain_status` | Why string ≥ 4 chars; humans use this for playbooks and fights |
+| Truth loop | Host pin / Learn quote / allowlisted probe | `observe` + `POST /api/truth` | Live read or quote match auto-`verified`; pin mismatch → `stale` |
 
 Do not introduce LangGraph, multi-agent meshes, or a second coli serve to
 "orchestrate." The smallest honest extra node later is a **conflict queue**
@@ -134,8 +135,8 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 | Native Librarian | Implemented, deterministic local distillation | `godbrain_core/cpp_tools/librarian.cpp` | CLI and child process | Derive a bounded Golden Record from a transcript and invoke the Memory Store |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
-| Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Data ingestion, diagnostics, and bounded native automation prototypes |
-| Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, verify ports, remember candidate. Never kills. |
+| Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. |
+| Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, verify, remember on act/fail. Never kills. release / winsock / ip reset / DeviceCleanup / reboot need an operator GO; Heal does not run them. |
 | Agent Factory control plane | Planned | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Policy, scheduling, capability grants, verification, audit, and recovery |
 
 ## Runtime boundaries
@@ -217,17 +218,23 @@ The current dispatcher supports:
 - `propose_sovereign_architect_change`
 - `save_godbrain_thought` (candidate Golden Record via `memory-store.exe`)
 - `query_recent_thoughts` (newest active-generation `rag_documents`)
-- `set_godbrain_status` (`verified` or `rejected` with reasoning)
+- `set_godbrain_status` (`verified`, `rejected`, or `stale` with reasoning)
 - `get_system_telemetry`
-- `observe_godbrain_host` (candidate Windows inventory via Memory Store)
+- `observe_godbrain_host` (Windows inventory + `os_pin`; auto-verified sensor)
+- `promote_godbrain_claim` (`POST /api/truth`: host_fact / doc_fact / playbook)
 
 Ordinary Galaxy chat also accepts `/observe`, `/remember`, `/verify`, `/reject`, and
 `/recall` without a bearer token. These are loopback teach/judgment, not
 privileged host execution. `/observe` writes a stable host inventory (computer name, total RAM, logical
 CPU count, fixed volumes with letter/label/total GB) as `candidate`. Live
 CPU/RAM and free disk space are shown and not stored.
-`/remember` writes only `candidate`. `/verify` and
-`/reject` require a short reason (why it works, or why it is junk). Rejected
+`/remember` writes only `candidate`. `/observe` auto-verifies the live pin
+(`EditionID/CurrentBuild.UBR`). `POST /api/truth` auto-verifies a `host_fact`
+when an allowlisted probe matches, or a `doc_fact` when a Learn/support
+quote is actually on the page. Playbooks stay `candidate`. When `os_pin`
+changes, verified `windows-sre` cards that embed a different `os_pin=` become
+`stale`. Oracle RAG search is `verified` only. `/verify` and
+`/reject` remain the human door for playbooks and contradictions. Rejected
 nodes stay in source collections but are hidden from default search and the
 Galaxy graph. `rejected` is terminal. Content never changes; only status does.
 
@@ -254,6 +261,7 @@ does not provide kernel-mode access.
 | `GET` | `/api/last` | None on loopback | On-disk Oracle turns (no Colibri call) |
 | `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave) |
 | `POST` | `/api/observe` | Bearer if `GODBRAIN_API_TOKEN` is set | Store host inventory as a candidate |
+| `POST` | `/api/truth` | Bearer if `GODBRAIN_API_TOKEN` is set | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
 | `POST` | `/api/judge` | Bearer if `GODBRAIN_API_TOKEN` is set | Set a node `verified` or `rejected` with reasoning |
 | `POST` | `/api/chat` | None for ordinary chat | RAG plus streamed Colibri inference |
 | `POST` | `/api/chat` with `command_type` | Bearer token; reasoning for high-risk commands | Direct privileged kernel dispatch |
