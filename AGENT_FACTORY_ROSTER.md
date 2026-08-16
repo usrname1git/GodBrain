@@ -26,6 +26,12 @@ verified before a job is considered complete.
    cleanup transition a job to a failed or rollback state, never success.
 8. **High-risk domains are isolated.** OS administration, build automation, and
    financial execution use separate credentials and trust boundaries.
+9. **Default is one loop.** Discover → plan → execute → verify until done. A
+   factory node is a hire: add it only for a named signal (distinct specialty,
+   real parallelism, different runner/tool, auditable branch, or an overloaded
+   verifier). The verifier is the bottleneck, not the model. If deleting a node
+   leaves the same result, the node was costume. Do not start from an org-chart
+   graph.
 
 ## Control-plane architecture
 

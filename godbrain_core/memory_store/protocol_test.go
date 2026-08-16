@@ -30,6 +30,26 @@ func TestValidateStatusJudgmentAndTransitions(t *testing.T) {
 		!AllowedStatusTransition("verified", "rejected") {
 		t.Fatal("expected candidate->verified and verified->rejected")
 	}
+	if !AllowedStatusTransition("verified", "stale") ||
+		!AllowedStatusTransition("stale", "verified") {
+		t.Fatal("expected verified<->stale for pin refresh")
+	}
+	if AllowedStatusTransition("rejected", "stale") {
+		t.Fatal("rejected must stay terminal")
+	}
+}
+
+func TestHasMismatchedOSPin(t *testing.T) {
+	const live = "IoTEnterpriseS/26100.8037"
+	if hasMismatchedOSPin("no pin here", live) {
+		t.Fatal("Learn-class cards without os_pin= must stay out of the sweep")
+	}
+	if hasMismatchedOSPin("host card\nos_pin="+live+"\n", live) {
+		t.Fatal("matching live pin is not a mismatch")
+	}
+	if !hasMismatchedOSPin("host card\nos_pin=IoTEnterpriseS/26100.1\n", live) {
+		t.Fatal("different os_pin= must mismatch")
+	}
 }
 
 func TestValidateDocumentPayload(t *testing.T) {

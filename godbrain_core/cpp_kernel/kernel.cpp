@@ -45,6 +45,8 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = telemetry::get_current_state();
         } else if (command_type == "observe_godbrain_host") {
             result = memory::observe_host();
+        } else if (command_type == "promote_godbrain_claim") {
+            result = memory::promote_claim(payload);
         } else if (command_type == "propose_sovereign_architect_change") {
             result = surgery::execute_self_command(payload.value("proposal_script", ""));
         } else {

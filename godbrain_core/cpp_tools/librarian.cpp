@@ -259,9 +259,10 @@ public:
             try {
                 // 2. Build the exact prompt structure using JSON escaping (no string concat for user data!)
                 json llm_input = {
-                    {"system", prompt_config.value("system_prompt", "") + "\n\n" + 
-                               prompt_config.value("source_hygiene", "") + "\n\n" + 
-                               prompt_config.value("authoring_standards", "") + "\n\n" + 
+                    {"system", prompt_config.value("system_prompt", "") + "\n\n" +
+                               prompt_config.value("source_hygiene", "") + "\n\n" +
+                               prompt_config.value("research_protocol", "") + "\n\n" +
+                               prompt_config.value("authoring_standards", "") + "\n\n" +
                                prompt_config.value("knowledge_skill_standards", "")},
                     {"user_transcript", envelope.content},
                     {"temperature", config.llm_temperature}

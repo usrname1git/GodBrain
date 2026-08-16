@@ -42,6 +42,30 @@ GodBrain routes every model's tool calls through a native C++ kernel instead of 
 - **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
 
+The runtime default is **one loop**, not an agent graph: discover → plan →
+execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up. Oracle chat
+generates; `/verify last` / `/reject last` is the check for playbooks and
+fights. Host inventory and Learn-backed facts promote themselves when a
+probe or a quote match is real. Librarian distills transcripts to
+**candidates**. The bottleneck is the verifier, not the model. A second node is allowed only when a named
+signal pays for it (Architect vs Surgeon, a second inference runner behind
+the same kernel door, or a future candidate-vs-verified conflict queue).
+Colibri and a rebuilt `llama-server` are interchangeable mouths, not a mesh.
+
+Large changes follow a contractor gate: investigate the repo, state a
+Goal and falsifiable assumptions, ask at most three blocking questions
+(each with a default), then implement. One-liners skip the ceremony.
+Verify on the live ports, then persist. The next loop starts from git and
+Golden Records, not from chat history.
+
+Ingest is the same loop with a stricter write rule: **raw sources stay
+immutable**; Librarian extracts *new claims*, not a recap; contradictions
+are flagged on both sides and never silently overwritten; open questions
+stay questions. Chat and any digest read the processed Golden Record
+layer, not the raw transcript pile. Routine extract uses the cheap local
+runner; a heavier model is only for a flagged fight or a high-stakes
+synthesis.
+
 ### Golden Record RAG status
 
 Layer 3 is implemented. The production C++ kernel and the experimental Go and
@@ -114,7 +138,13 @@ Cloud models can do the heavy context lifting; your local sovereign models pull 
 - [x] MongoDB query / index / update
 - [x] Full local filesystem read/write
 - [x] Privileged execution (`wsudo`, Visual Studio)
+- [x] Host-listener loop (Heal/Watch: detect → start allowlist → verify → remember)
+- [x] Oracle judge loop (`/verify last` / `/reject last` — verifier, not the model)
+- [x] Truth loop (host probe / Learn quote auto-verify; playbooks stay candidate)
+- [ ] Candidate-vs-verified conflict queue (smallest extra node: overloaded verifier)
 - [ ] Autonomous CVE ingestion (scan + understand latest threats)
 - [ ] Cross-fleet patch orchestration (Devuan / macOS / Windows)
 - [ ] Self-directed DISM/registry repair beyond stock tooling
 - [ ] Closed-loop: detect → reason → patch → verify, zero hand-holding
+
+Current b-line is **this host’s OS/network stack** (services, TCP/IP, ICMP, SCM), not tanks or AppX eviction. Heal starts MongoDB, Dnscache, iphlpsvc, nsi, plus rag/coli/kernel. ICMP loopback is detect-only. Patch grows only from a named, verified signal.

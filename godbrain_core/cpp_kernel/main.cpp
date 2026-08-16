@@ -13,6 +13,7 @@
 #include <functional>
 #include <atomic>
 #include <mutex>
+#include <set>
 #include "rag_client.h"
 #include "coli_sse.h"
 #include "kernel_request.h"
@@ -22,6 +23,12 @@
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
 static const DWORD COLIBRI_TIMEOUT_MS = 180000;
+// One GPU slot. 160 tokens is one paging-safe decode. The kernel auto-continues
+// up to 4 chunks so a normal answer finishes without the user babysitting.
+static const int kColiChunkTokens = 160;
+static const int kColiMaxChunks = 4;
+// 160 tokens at ~3s plus a 78-layer prefill misses 720s on this 16 GB box.
+static const int kColiChunkTimeoutMs = 1200000;
 
 #include "kernel.h"
 
@@ -59,6 +66,9 @@ static std::vector<LastOracleTurn> g_oracle_turns;
 
 static json last_oracle_json();
 static json last_oracle_turns_json();
+static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
+static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
+static std::string sanitize_oracle_body(std::string answer);
 static void load_oracle_turns();
 static void remember_oracle_turn(
     const std::string& question,
@@ -109,15 +119,20 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
 
 static json last_oracle_json() {
     std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-    if (g_oracle_turns.empty()) return json::object();
-    return oracle_turn_to_json(g_oracle_turns.back());
+    for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend(); ++it) {
+        if (is_displayable_oracle_turn(*it)) {
+            return oracle_turn_to_json(display_oracle_turn(*it));
+        }
+    }
+    return json::object();
 }
 
 static json last_oracle_turns_json() {
     std::lock_guard<std::mutex> lock(g_last_oracle_mu);
     json turns = json::array();
     for (const auto& turn : g_oracle_turns) {
-        turns.push_back(oracle_turn_to_json(turn));
+        if (!is_displayable_oracle_turn(turn)) continue;
+        turns.push_back(oracle_turn_to_json(display_oracle_turn(turn)));
     }
     return turns;
 }
@@ -189,6 +204,16 @@ static void load_oracle_turns() {
                 g_oracle_turns.begin() + static_cast<std::ptrdiff_t>(
                     g_oracle_turns.size() - kMaxOracleTurns));
         }
+        bool cleaned = false;
+        for (auto& turn : g_oracle_turns) {
+            if (!turn.ok || turn.answer.empty()) continue;
+            const std::string cleaned_a = sanitize_oracle_body(turn.answer);
+            if (cleaned_a != turn.answer && !cleaned_a.empty()) {
+                turn.answer = cleaned_a;
+                cleaned = true;
+            }
+        }
+        if (cleaned) persist_oracle_turns_locked();
         std::cout << "[MEMORY] Loaded " << g_oracle_turns.size()
                   << " oracle turns from " << path << std::endl;
     } catch (const json::exception& error) {
@@ -239,8 +264,13 @@ static std::string ensure_last_oracle_id() {
     LastOracleTurn turn;
     {
         std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-        if (g_oracle_turns.empty()) return "";
-        turn = g_oracle_turns.back();
+        for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend();
+             ++it) {
+            if (!is_displayable_oracle_turn(*it)) continue;
+            turn = *it;
+            break;
+        }
+        if (turn.question.empty() && turn.answer.empty()) return "";
         if (!turn.stable_id.empty()) return turn.stable_id;
     }
     if (!turn.ok || turn.answer.empty()) return "";
@@ -301,11 +331,13 @@ static void remember_oracle_turn(
     DWORD elapsed_ms) {
     LastOracleTurn turn;
     turn.question = question;
-    turn.answer = answer;
+    turn.answer = answer.compare(0, 6, "Error:") == 0
+                      ? answer
+                      : sanitize_oracle_body(answer);
     turn.elapsed_ms = elapsed_ms;
     turn.ok = answer.compare(0, 6, "Error:") != 0;
     turn.stored = false;
-    turn.complete = true;
+    turn.complete = turn.ok && answer.find("[cut") == std::string::npos;
     {
         std::lock_guard<std::mutex> lock(g_last_oracle_mu);
         if (!g_oracle_turns.empty() && !g_oracle_turns.back().complete &&
@@ -321,6 +353,318 @@ static void remember_oracle_turn(
     }
     if (!turn.ok) return;
     store_oracle_turn_async(question, answer);
+}
+
+static std::string trim_copy(std::string value) {
+    const auto not_space = [](unsigned char character) {
+        return std::isspace(character) == 0;
+    };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
+    return value;
+}
+
+static bool is_continue_command(const std::string& text) {
+    std::string t = trim_copy(text);
+    if (t.empty()) return false;
+    if (t[0] == '/') t.erase(0, 1);
+    for (char& ch : t) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return t == "continue" || t == "cont";
+}
+
+static bool is_refuse_answer(const std::string& answer) {
+    return answer.find("I cannot fulfill") != std::string::npos ||
+           answer.find("I cannot help with that") != std::string::npos ||
+           answer.find("I cannot help with this") != std::string::npos;
+}
+
+static std::string strip_cut_marker(std::string answer) {
+    const std::string marker = "[cut";
+    const size_t pos = answer.find(marker);
+    if (pos != std::string::npos) {
+        answer.resize(pos);
+    }
+    return trim_copy(std::move(answer));
+}
+
+static std::string ascii_lower_copy(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+static std::string normalize_heading_key(std::string line) {
+    line = trim_copy(std::move(line));
+    while (!line.empty() && (line[0] == '#' || line[0] == '*' ||
+                             line[0] == ' ')) {
+        line.erase(0, 1);
+    }
+    return ascii_lower_copy(trim_copy(std::move(line)));
+}
+
+// GLM got stuck repeating "### Verified Facts: Combat Record & Capabilities".
+// Cut at the second copy of any heading, and split a ### glued onto a sentence.
+static std::string trim_repetition_loop(std::string text) {
+    const std::string glued = "### ";
+    size_t glue = text.find(glued, 1);
+    while (glue != std::string::npos) {
+        if (text[glue - 1] != '\n') {
+            text.insert(glue, "\n");
+            glue += 1;
+        }
+        glue = text.find(glued, glue + 4);
+    }
+
+    std::istringstream in(text);
+    std::string line;
+    std::string kept;
+    std::set<std::string> seen_headings;
+    while (std::getline(in, line)) {
+        std::string t = trim_copy(line);
+        const bool heading =
+            t.size() >= 3 && t[0] == '#' && t[1] == '#';
+        if (heading) {
+            const std::string key = normalize_heading_key(t);
+            if (!key.empty() && seen_headings.count(key)) {
+                return trim_copy(kept);
+            }
+            if (!key.empty()) seen_headings.insert(key);
+        }
+        kept += line;
+        kept += '\n';
+    }
+    // Do not leave a bare ### heading as the continue anchor.
+    for (;;) {
+        kept = trim_copy(kept);
+        if (kept.empty()) break;
+        const size_t nl = kept.find_last_of('\n');
+        const std::string last_line =
+            nl == std::string::npos ? kept : trim_copy(kept.substr(nl + 1));
+        if (last_line.size() >= 3 && last_line[0] == '#' && last_line[1] == '#') {
+            kept = nl == std::string::npos ? std::string() : kept.substr(0, nl);
+            continue;
+        }
+        break;
+    }
+    return trim_copy(std::move(kept));
+}
+
+static bool is_heading_loop(const std::string& text) {
+    int verified = 0;
+    int headings = 0;
+    const std::string lower = ascii_lower_copy(text);
+    for (size_t pos = 0;
+         (pos = lower.find("verified facts", pos)) != std::string::npos;
+         pos += 8) {
+        ++verified;
+    }
+    for (size_t pos = 0;
+         (pos = text.find("### ", pos)) != std::string::npos;
+         pos += 4) {
+        ++headings;
+    }
+    return verified >= 3 || headings >= 5;
+}
+
+// T-90AM/T-90AM/T-90AM... — same 6–32 char block three times in a row.
+static bool find_ngram_loop(
+    const std::string& text,
+    size_t* at,
+    size_t* unit,
+    size_t* copies) {
+    constexpr size_t kMin = 6;
+    constexpr size_t kMax = 32;
+    if (text.size() < kMin * 3) return false;
+    for (size_t n = kMin; n <= kMax; ++n) {
+        if (text.size() < n * 3) continue;
+        for (size_t i = 0; i + n * 3 <= text.size(); ++i) {
+            if (text.compare(i, n, text, i + n, n) != 0) continue;
+            if (text.compare(i, n, text, i + 2 * n, n) != 0) continue;
+            size_t k = 3;
+            while (i + (k + 1) * n <= text.size() &&
+                   text.compare(i, n, text, i + k * n, n) == 0) {
+                ++k;
+            }
+            if (at) *at = i;
+            if (unit) *unit = n;
+            if (copies) *copies = k;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is_ngram_loop(const std::string& text) {
+    const std::string t =
+        text.size() > 480 ? text.substr(text.size() - 480) : text;
+    return find_ngram_loop(t, nullptr, nullptr, nullptr);
+}
+
+static bool is_generation_loop(const std::string& text) {
+    return is_heading_loop(text) || is_ngram_loop(text);
+}
+
+static std::string trim_ngram_loop(std::string text) {
+    size_t at = 0;
+    size_t unit = 0;
+    size_t copies = 0;
+    if (!find_ngram_loop(text, &at, &unit, &copies)) return text;
+    return trim_copy(text.substr(0, at + unit));
+}
+
+static std::string sanitize_oracle_body(std::string answer) {
+    answer = strip_cut_marker(std::move(answer));
+    for (;;) {
+        const size_t begin = answer.find("*(");
+        if (begin == std::string::npos) break;
+        const size_t end = answer.find(")*", begin);
+        if (end == std::string::npos) break;
+        answer.erase(begin, end + 2 - begin);
+    }
+    const char* kills[] = {
+        "Wait, I made a mistake",
+        "I made a mistake in the prompt",
+        "**Correction",
+        "Correction:",
+        "I apologize for the confusion",
+        "I need to finish the previous sentence",
+        "This conversation is finished",
+    };
+    for (const char* kill : kills) {
+        const size_t pos = answer.find(kill);
+        if (pos != std::string::npos) answer.resize(pos);
+    }
+    return trim_ngram_loop(trim_repetition_loop(trim_copy(std::move(answer))));
+}
+
+static bool is_displayable_oracle_turn(const LastOracleTurn& turn) {
+    if (!turn.ok || turn.answer.empty()) return false;
+    if (is_continue_command(turn.question)) return false;
+    if (turn.answer.compare(0, 6, "Error:") == 0) return false;
+    if (is_refuse_answer(turn.answer)) return false;
+    if (turn.answer.find("TABLESPACE") != std::string::npos) return false;
+    if (turn.answer.find("Oracle Partition") != std::string::npos) return false;
+    if (turn.answer.find("Understanding Oracle") != std::string::npos) {
+        return false;
+    }
+    return sanitize_oracle_body(turn.answer).size() >= 40;
+}
+
+static LastOracleTurn display_oracle_turn(LastOracleTurn turn) {
+    turn.answer = sanitize_oracle_body(turn.answer);
+    return turn;
+}
+
+static std::string last_anchor(const std::string& text, size_t n = 90) {
+    const std::string t = trim_copy(text);
+    if (t.size() <= n) return t;
+    return t.substr(t.size() - n);
+}
+
+static std::string continue_history_tail(const std::string& text, size_t n = 450) {
+    const std::string t = trim_copy(text);
+    if (t.size() <= n) return t;
+    std::string tail = t.substr(t.size() - n);
+    const size_t nl = tail.find('\n');
+    if (nl != std::string::npos && nl + 1 < tail.size()) {
+        tail = tail.substr(nl + 1);
+    }
+    return tail;
+}
+
+static bool looks_like_restart(const std::string& text) {
+    const std::string t = ascii_lower_copy(trim_copy(text));
+    if (t.compare(0, 14, "to determine if") == 0) return true;
+    if (t.compare(0, 16, "this evaluation") == 0) return true;
+    if (t.compare(0, 12, "analyze why") == 0) return true;
+    if (t.compare(0, 15, "whether the m1") == 0) return true;
+    if (t.find("### firepower") != std::string::npos &&
+        t.find("analyze why") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
+static std::string last_coherent_essay(std::string text) {
+    text = sanitize_oracle_body(std::move(text));
+    const char* marks[] = {
+        "To determine if",
+        "This evaluation assesses",
+        "### Firepower",
+    };
+    size_t last = std::string::npos;
+    for (const char* mark : marks) {
+        const size_t pos = text.rfind(mark);
+        if (pos != std::string::npos &&
+            (last == std::string::npos || pos > last)) {
+            last = pos;
+        }
+    }
+    if (last != std::string::npos && last > 80) {
+        return trim_copy(text.substr(last));
+    }
+    return text;
+}
+
+static std::string make_continue_prompt(const std::string& prior) {
+    return std::string(
+               "Resume immediately after these exact characters. "
+               "Write only new words. Do not restart the essay. "
+               "Do not repeat the question. Do not repeat any earlier "
+               "sentence, heading, or tank designation. "
+               "Do not start a new ### heading. "
+               "Next output must be a bullet or a finished sentence. "
+               "Do not mention the prompt, corrections, mistakes, or "
+               "Oracle Database. No parenthetical stage directions.\n\n"
+               "END>>") +
+           last_anchor(prior);
+}
+
+static std::string strip_replayed_prefix(
+    const std::string& prior, std::string next) {
+    next = trim_copy(std::move(next));
+    if (prior.empty() || next.empty()) return next;
+    const size_t probe = prior.size() < 48 ? prior.size() : 48;
+    if (next.compare(0, probe, prior, 0, probe) == 0) {
+        size_t i = 0;
+        const size_t n =
+            prior.size() < next.size() ? prior.size() : next.size();
+        while (i < n && prior[i] == next[i]) ++i;
+        return trim_copy(next.substr(i));
+    }
+    const size_t max_ol =
+        prior.size() < next.size() ? prior.size() : next.size();
+    for (size_t len = max_ol; len >= 24; --len) {
+        if (next.compare(0, len, prior, prior.size() - len, len) == 0) {
+            return trim_copy(next.substr(len));
+        }
+    }
+    return next;
+}
+
+// Last turn that is a real Q/A. Skip CONTINUE, serve-down errors, and refuses
+// so a follow-up does not inherit Oracle-DB derails or "I cannot fulfill".
+static bool find_last_real_oracle_turn(LastOracleTurn& out) {
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend(); ++it) {
+        if (!it->ok || it->question.empty() || it->answer.empty()) continue;
+        if (is_continue_command(it->question)) continue;
+        if (it->answer.compare(0, 6, "Error:") == 0) continue;
+        if (is_refuse_answer(it->answer)) continue;
+        if (is_generation_loop(it->answer) &&
+            sanitize_oracle_body(it->answer).size() < 80) {
+            continue;
+        }
+        out = *it;
+        if (is_generation_loop(it->answer)) {
+            out.answer = sanitize_oracle_body(it->answer);
+        }
+        return true;
+    }
+    return false;
 }
 
 // Resolves the Colibri C-Engine executable path. Order of preference:
@@ -509,6 +853,20 @@ static void handle_observe(const httplib::Request& req, httplib::Response& res) 
     }
 }
 
+static void handle_truth(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        res.set_content(memory::promote_claim(payload).dump(), "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(json({{"error", "truth body must be JSON"}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
 static void handle_last(const httplib::Request&, httplib::Response& res) {
     res.set_content(
         json({{"last_oracle", last_oracle_json()},
@@ -547,6 +905,7 @@ static void attach_shortcut_routes(httplib::Server& server) {
     });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/observe", handle_observe);
+    server.Post("/api/truth", handle_truth);
     server.Post("/api/judge", handle_judge);
 }
 
@@ -665,9 +1024,9 @@ static std::string strip_coli_reply(std::string combined) {
                     final_answer = combined.substr(0, start);
                 }
             }
-        } else if (final_answer.length() > 500) {
-            final_answer = final_answer.substr(final_answer.length() - 500);
         }
+        // Serve replies have no PROFILE wrapper. Keep the full stitched
+        // answer. The old last-500 trim ate auto-continued tank text.
     }
     const auto first = final_answer.find_first_not_of(" \n\r\t");
     if (first == std::string::npos) return "No response.";
@@ -690,7 +1049,7 @@ std::string run_colibri_serve(
     // timeout then means the engine died, not that we are still paging.
     client.set_read_timeout(60, 0);
     client.set_write_timeout(5, 0);
-    client.set_max_timeout(720000);
+    client.set_max_timeout(kColiChunkTimeoutMs);
     client.set_follow_location(false);
 
     const std::string model = []() {
@@ -704,13 +1063,6 @@ std::string run_colibri_serve(
             json{{"role", "assistant"}, {"content", prior_assistant}});
     }
     messages.push_back(json{{"role", "user"}, {"content", user}});
-    const json body = {
-        {"model", model},
-        {"stream", true},
-        {"max_tokens", 160},
-        {"messages", messages},
-    };
-
     httplib::Headers headers = {{"Accept", "text/event-stream"}};
     const std::string key = read_env("GODBRAIN_COLIBRI_KEY");
     const std::string coli_key = key.empty() ? read_env("COLI_API_KEY") : key;
@@ -719,39 +1071,94 @@ std::string run_colibri_serve(
     }
 
     std::string assembled;
-    std::string sse_buf;
-    std::string finish_reason;
-    g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
-    const auto response = client.Post(
-        "/v1/chat/completions", headers, body.dump(), "application/json",
-        [&](const char* data, size_t len) {
-            godbrain_coli::feed_sse(
-                sse_buf, data, len, assembled, on_token, on_ping,
-                [&](const std::string& reason) { finish_reason = reason; });
-            return true;
-        });
-    g_coli_job_started_ms.store(0, std::memory_order_relaxed);
-    if (!response) {
-        return "Error: Colibri serve did not finish in 720s. "
-               "GLM-5.2 is paging experts off disk on 16 GB. "
-               "Wait until /status shows coli=serve (not busy) and ask again.";
-    }
-    if (response->status != 200) {
-        return "Error: Colibri serve returned HTTP " +
-               std::to_string(response->status);
-    }
-    if (!assembled.empty()) {
-        if (finish_reason == "length") {
-            assembled += "\n[cut at 160 tokens — say continue]";
+    std::string last_reason;
+    for (int chunk = 0; chunk < kColiMaxChunks; ++chunk) {
+        const json body = {
+            {"model", model},
+            {"stream", true},
+            {"max_tokens", kColiChunkTokens},
+            {"messages", messages},
+        };
+        std::string piece;
+        std::string sse_buf;
+        std::string finish_reason;
+        bool heading_loop = false;
+        g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
+        const auto response = client.Post(
+            "/v1/chat/completions", headers, body.dump(), "application/json",
+            [&](const char* data, size_t len) {
+                godbrain_coli::feed_sse(
+                    sse_buf, data, len, piece, on_token, on_ping,
+                    [&](const std::string& reason) { finish_reason = reason; });
+                if (is_generation_loop(piece)) {
+                    heading_loop = true;
+                    return false;
+                }
+                return true;
+            });
+        g_coli_job_started_ms.store(0, std::memory_order_relaxed);
+        if (heading_loop) {
+            piece = sanitize_oracle_body(piece);
+            piece = strip_replayed_prefix(assembled, piece);
+            assembled += piece;
+            break;
         }
-        return assembled;
+        if (!response) {
+            assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
+            if (assembled.empty()) {
+                return "Error: Colibri serve did not finish in 1200s. "
+                       "GLM-5.2 is paging experts off disk on 16 GB. "
+                       "Wait until /status shows coli=serve (not busy) and ask again.";
+            }
+            assembled += "\n[cut — serve timed out, say continue]";
+            return assembled;
+        }
+        if (response->status != 200) {
+            assembled += piece;
+            if (assembled.empty()) {
+                return "Error: Colibri serve returned HTTP " +
+                       std::to_string(response->status);
+            }
+            assembled += "\n[cut — serve HTTP " +
+                         std::to_string(response->status) + ", say continue]";
+            return assembled;
+        }
+        if (piece.empty()) {
+            // Streaming already drained the body. Empty tokens on a later
+            // auto-continue chunk means the model stopped, not a parse error.
+            if (!response->body.empty()) {
+                try {
+                    const json parsed = json::parse(response->body);
+                    piece = parsed.at("choices")
+                                .at(0)
+                                .at("message")
+                                .at("content")
+                                .get<std::string>();
+                } catch (const json::exception&) {
+                    if (assembled.empty()) {
+                        return "Error: Colibri serve returned a malformed completion.";
+                    }
+                    break;
+                }
+            }
+            if (piece.empty()) break;
+        }
+        piece = sanitize_oracle_body(piece);
+        piece = strip_replayed_prefix(assembled, piece);
+        assembled += piece;
+        last_reason = finish_reason;
+        if (heading_loop) break;
+        if (finish_reason != "length") break;
+        if (chunk + 1 >= kColiMaxChunks) break;
+        messages.push_back(json{{"role", "assistant"}, {"content", piece}});
+        messages.push_back(
+            json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
-    try {
-        const json parsed = json::parse(response->body);
-        return parsed.at("choices").at(0).at("message").at("content").get<std::string>();
-    } catch (const json::exception&) {
-        return "Error: Colibri serve returned a malformed completion.";
+    if (last_reason == "length") {
+        assembled +=
+            "\n[cut at 640 tokens — say continue]";
     }
+    return assembled;
 }
 
 std::string run_colibri_spawn(const std::string& prompt) {
@@ -795,7 +1202,7 @@ std::string run_colibri_spawn(const std::string& prompt) {
               << " GB, overcommit="
               << (vram.value("overcommit", false) ? "on" : "off") << std::endl;
 
-    SetEnvironmentVariableA("SNAP", snap_env.empty() ? "C:\\nvme\\glm52" : snap_env.c_str());
+    SetEnvironmentVariableA("SNAP", snap_env.empty() ? "C:\\nvme\\glm52-uncensored" : snap_env.c_str());
     SetEnvironmentVariableA("NGEN", "64");
     SetEnvironmentVariableA(
         "COLI_RAM_OVERCOMMIT", vram.value("overcommit", false) ? "1" : "0");
@@ -1079,6 +1486,11 @@ int main() {
         handle_remember(req, res);
     });
 
+    svr.Post("/api/truth", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_truth(req, res);
+    });
+
     svr.Post("/api/observe", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_observe(req, res);
@@ -1296,6 +1708,28 @@ int main() {
                             if (item.is_string()) reply << item.get<std::string>();
                         }
                     }
+                    const json acted = last.value("acted", json::array());
+                    reply << "\nacted=";
+                    if (acted.empty()) {
+                        reply << "(none)";
+                    } else {
+                        bool first = true;
+                        for (const auto& item : acted) {
+                            if (!first) reply << ",";
+                            first = false;
+                            if (item.is_string()) reply << item.get<std::string>();
+                        }
+                    }
+                    const json diagnose = last.value("diagnose", json::object());
+                    if (!diagnose.empty()) {
+                        reply << "\nlayer=" << diagnose.value("layer", "?")
+                              << " icmp="
+                              << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
+                              << " dns_self="
+                              << (diagnose.value("dns_self", false) ? "ok" : "fail")
+                              << " nic_tcpip="
+                              << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
+                    }
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(),
                                 "application/json");
@@ -1328,8 +1762,11 @@ int main() {
                     const json live = stored.value("live", json::object());
                     const json inventory = stored.value("inventory", json::object());
                     std::ostringstream reply;
-                    reply << "Stored host inventory as a candidate Golden Record.\n"
+                    reply << "Stored host inventory as a "
+                          << stored.value("trust", "candidate")
+                          << " Golden Record (live pin, no manual confirm).\n"
                           << "stable_id=" << stored.value("stable_id", "") << "\n"
+                          << "os_pin=" << inventory.value("os_pin", "") << "\n"
                           << inventory.at("computer_name").get<std::string>()
                           << " / " << inventory.at("total_physical_ram_gb").get<int>()
                           << " GB / " << inventory.at("logical_processors").get<int>()
@@ -1352,9 +1789,10 @@ int main() {
                         reply << ", " << volume.value("letter", "?") << ": "
                               << volume.value("free_gb", 0.0) << " GB free";
                     }
-                    reply << "\nVerify if Explorer matches the fixed disks, e.g.\n"
-                          << "/verify " << stored.value("stable_id", "ID")
-                          << " Explorer shows the same fixed volumes and sizes";
+                    const json stale = stored.value("stale", json::object());
+                    if (stale.contains("stale")) {
+                        reply << "\nstale_pins=" << stale.value("stale", 0);
+                    }
                     res.set_content(
                         json({{"response", reply.str()}}).dump(),
                         "application/json");
@@ -1550,35 +1988,39 @@ int main() {
                 return;
             }
 
+            const bool continue_cmd = is_continue_command(user_msg);
             std::cout << "[RAG] Canonical search requested (" << user_msg.size()
-                      << " bytes)" << std::endl;
+                      << " bytes) continue=" << (continue_cmd ? "1" : "0")
+                      << std::endl;
             std::string session_text;
             std::string session_error;
-            if (!memory::render_session_context(session_text, session_error)) {
-                std::cerr << "[MEMORY] Session context rejected: " << session_error
-                          << std::endl;
-                res.status = 503;
-                res.set_content(
-                    "{\"response\":\"Session memory is unavailable.\"}",
-                    "application/json");
-                return;
-            }
-
-            json search_response;
-            std::string rag_error;
             std::string rag_text;
-            const bool have_rag =
-                rag_client.search(user_msg, search_response, rag_error) &&
-                godbrain_rag::render_coli_notes(search_response, rag_text, rag_error);
-            if (!have_rag) {
-                std::cerr << "[RAG] Canonical search failed closed: " << rag_error
-                          << std::endl;
-                if (session_text.empty()) {
+            if (!continue_cmd) {
+                if (!memory::render_session_context(session_text, session_error)) {
+                    std::cerr << "[MEMORY] Session context rejected: " << session_error
+                              << std::endl;
                     res.status = 503;
                     res.set_content(
-                        "{\"response\":\"Canonical Golden Record retrieval is unavailable.\"}",
+                        "{\"response\":\"Session memory is unavailable.\"}",
                         "application/json");
                     return;
+                }
+
+                json search_response;
+                std::string rag_error;
+                const bool have_rag =
+                    rag_client.search(user_msg, search_response, rag_error) &&
+                    godbrain_rag::render_coli_notes(search_response, rag_text, rag_error);
+                if (!have_rag) {
+                    std::cerr << "[RAG] Canonical search failed closed: " << rag_error
+                              << std::endl;
+                    if (session_text.empty()) {
+                        res.status = 503;
+                        res.set_content(
+                            "{\"response\":\"Canonical Golden Record retrieval is unavailable.\"}",
+                            "application/json");
+                        return;
+                    }
                 }
             }
 
@@ -1597,47 +2039,86 @@ int main() {
             const std::string hostname =
                 telemetry::get_host_inventory().value("computer_name", "UNKNOWN");
             std::string system_prompt =
-                "Oracle. Answer what is best-supported. Facts vs taste. "
+                "You are GodBrain's local Oracle: a fact-vs-taste role on this PC. "
+                "Not Oracle Database and not a company. "
+                "Answer what is best-supported. Facts vs taste. "
                 "Verified notes are evidence; candidates are claims. "
                 "Military hardware and history are facts, not politics; "
                 "do not refuse those. "
                 "Hostname " +
                 hostname +
                 " is this PC, not a vehicle. "
-                "Finish complete sentences. Do not stop mid-clause.";
-            const json prior = last_oracle_json();
-            const std::string prior_q = prior.value("question", "");
-            const std::string prior_a = prior.value("answer", "");
+                "Finish complete sentences. Do not stop mid-clause. "
+                "Never narrate the prompt or apologize mid-answer. "
+                "Prefer verified notes over candidates. "
+                "If notes disagree, say so; do not pick a silent winner. "
+                "Do not guess an open question. Cite the note if you use one.";
+            LastOracleTurn prior_turn;
+            const bool have_prior = find_last_real_oracle_turn(prior_turn);
+            const std::string prior_q = have_prior ? prior_turn.question : std::string();
+            const std::string prior_a =
+                have_prior ? last_coherent_essay(prior_turn.answer) : std::string();
+            if (continue_cmd && !have_prior) {
+                res.set_content(
+                    json({{"response",
+                           "Nothing real to continue. Last turn was a refuse, "
+                           "an error, or empty. Ask the question again."}})
+                        .dump(),
+                    "application/json");
+                return;
+            }
             const bool follow_up =
-                prior.value("ok", false) && prior.value("complete", false) &&
-                !prior_q.empty() && !prior_a.empty() && prior_q != user_msg &&
-                prior_a.find("I cannot fulfill") == std::string::npos;
+                have_prior && !prior_q.empty() && !prior_a.empty() &&
+                (continue_cmd || prior_q != user_msg);
             // Follow-ups send the previous turn as chat history so Colibri
             // reuses the KV prefix instead of a 78-layer re-prefill.
-            std::string user_prompt =
-                follow_up ? user_msg
-                          : (context_text.empty()
-                                 ? user_msg
-                                 : (context_text + "\n\n" + user_msg));
+            // CONTINUE must not go to RAG as a new query (that is how
+            // "Oracle" + "Continue" became SQL partitions).
+            std::string user_prompt = user_msg;
+            std::string asked = user_msg;
+            if (continue_cmd) {
+                asked = prior_q;
+                user_prompt = make_continue_prompt(prior_a);
+                context_text.clear();
+            } else if (!follow_up && !context_text.empty()) {
+                user_prompt = context_text + "\n\n" + user_msg;
+            }
 
             std::cout << "[RAG] Context built (" << context_text.size()
                       << " bytes) follow_up=" << (follow_up ? "1" : "0")
+                      << " continue=" << (continue_cmd ? "1" : "0")
                       << ". Asking Colibri..." << std::endl;
             const bool want_stream =
                 payload.value("stream", false) ||
                 req.get_header_value("Accept").find("text/event-stream") !=
                     std::string::npos;
+            auto stitch_continue = [continue_cmd, prior_a](const std::string& next) {
+                if (!continue_cmd || prior_a.empty()) return next;
+                if (next.compare(0, 6, "Error:") == 0) return next;
+                const std::string added =
+                    strip_replayed_prefix(prior_a, sanitize_oracle_body(next));
+                if (added.empty()) return prior_a;
+                // A full restart is a new draft, not a suffix. Gluing it
+                // reprints the whole Abrams essay in Galaxy.
+                if (looks_like_restart(added)) return added;
+                return prior_a + added;
+            };
             if (want_stream) {
                 const std::string sys = system_prompt;
                 const std::string usr = user_prompt;
-                const std::string asked = user_msg;
+                const std::string asked_q = asked;
                 const std::string hist_q = follow_up ? prior_q : std::string();
-                const std::string hist_a = follow_up ? prior_a : std::string();
+                const std::string hist_a =
+                    follow_up
+                        ? (continue_cmd ? continue_history_tail(prior_a)
+                                        : prior_a)
+                        : std::string();
                 res.set_header("Cache-Control", "no-cache");
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked, hist_q, hist_a](size_t, httplib::DataSink& sink) {
+                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue](
+                        size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
                             return sink.write(line.data(), line.size());
@@ -1659,8 +2140,8 @@ int main() {
                                 if (now - last_partial >= 5000) {
                                     last_partial = now;
                                     note_oracle_partial(
-                                        asked,
-                                        streamed,
+                                        asked_q,
+                                        stitch_continue(streamed),
                                         now - coli_started);
                                 }
                             },
@@ -1673,15 +2154,18 @@ int main() {
                             },
                             hist_q,
                             hist_a);
-                        const std::string final_answer = strip_coli_reply(combined);
+                        const std::string chunk = strip_coli_reply(combined);
+                        const std::string final_answer = stitch_continue(chunk);
                         const DWORD elapsed = GetTickCount() - coli_started;
-                        remember_oracle_turn(asked, final_answer, elapsed);
+                        remember_oracle_turn(asked_q, final_answer, elapsed);
                         std::cout << "[COLIBRI] Reply in " << elapsed << " ms ("
                                   << combined.size() << " bytes)" << std::endl;
                         if (combined.compare(0, 6, "Error:") == 0) {
                             emit({{"type", "error"}, {"text", combined}});
                         } else {
-                            emit({{"type", "done"}, {"response", final_answer}});
+                            // Stream already showed new tokens. Do not replace
+                            // the bubble with the stitched prior+new dump.
+                            emit({{"type", "done"}, {"response", chunk}});
                         }
                         sink.done();
                         return true;
@@ -1695,14 +2179,17 @@ int main() {
                 {},
                 {},
                 follow_up ? prior_q : std::string(),
-                follow_up ? prior_a : std::string());
-            const std::string final_answer = strip_coli_reply(combined);
+                follow_up ? (continue_cmd ? continue_history_tail(prior_a)
+                                          : prior_a)
+                          : std::string());
+            const std::string chunk = strip_coli_reply(combined);
+            const std::string final_answer = stitch_continue(chunk);
             remember_oracle_turn(
-                user_msg, final_answer, GetTickCount() - coli_started);
+                asked, final_answer, GetTickCount() - coli_started);
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)
                       << " ms (" << combined.size() << " bytes)" << std::endl;
             json resp;
-            resp["response"] = final_answer;
+            resp["response"] = continue_cmd ? chunk : final_answer;
             res.set_content(resp.dump(), "application/json");
         } catch (...) {
             res.status = 400;

@@ -4,7 +4,8 @@
     "query": "bearer authorization boundary",
     "top_k": 3,
     "context_bytes": 4096,
-    "retrieval_mode": "auto"
+    "retrieval_mode": "auto",
+    "status": "verified"
   },
   "response": {
     "query": "bearer authorization boundary",

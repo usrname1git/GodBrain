@@ -32,6 +32,7 @@ struct SearchRequest {
     top_k: usize,
     context_bytes: usize,
     retrieval_mode: String,
+    status: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -152,6 +153,7 @@ impl RagClient {
             top_k: RAG_TOP_K,
             context_bytes: RAG_CONTEXT_BYTES,
             retrieval_mode: RAG_RETRIEVAL_MODE.to_string(),
+            status: "verified".to_string(),
         };
         let body = serde_json::to_vec(&request)
             .map_err(|error| format!("encode canonical RAG request: {error}"))?;

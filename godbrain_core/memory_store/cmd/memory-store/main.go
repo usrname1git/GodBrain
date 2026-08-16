@@ -137,6 +137,9 @@ func run() error {
 	if route.Command == memorystore.JudgmentCommand {
 		return runJudgment(ctx, db, inputData)
 	}
+	if route.Command == memorystore.StalePinsCommand {
+		return runStalePins(ctx, db, inputData)
+	}
 
 	var payload memorystore.DistillationPayload
 	decoder := json.NewDecoder(bytes.NewReader(inputData))
@@ -230,6 +233,40 @@ func run() error {
 		return failWithEnvelope("Failed to write receipt to stdout", err)
 	}
 
+	return nil
+}
+
+func runStalePins(ctx context.Context, db *mongo.Database, inputData []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(inputData))
+	decoder.DisallowUnknownFields()
+	var request memorystore.StalePinsRequest
+	if err := decoder.Decode(&request); err != nil {
+		return failWithEnvelope("Failed to parse stale_pins payload", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return failWithEnvelope("Multiple JSON documents or trailing garbage found in input", nil)
+	}
+	store := memorystore.NewStore(db)
+	ids, err := store.StaleMismatchedPins(ctx, request.Sector, request.Pin, request.Reasoning)
+	if err != nil {
+		return failWithEnvelope("StaleMismatchedPins failed", err)
+	}
+	projector := rag.NewProjector(db)
+	for _, id := range ids {
+		if err = projector.SyncNodeStatus(ctx, id, memorystore.StatusStale); err != nil {
+			return failWithEnvelope("RAG status sync failed", err)
+		}
+	}
+	receipt := memorystore.StalePinsReceipt{
+		Status:    "ok",
+		Sector:    request.Sector,
+		Pin:       request.Pin,
+		Stale:     len(ids),
+		Timestamp: time.Now().UTC(),
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
+		return failWithEnvelope("Failed to write stale_pins receipt", err)
+	}
 	return nil
 }
 

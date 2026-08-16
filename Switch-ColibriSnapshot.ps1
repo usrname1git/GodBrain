@@ -6,7 +6,6 @@
 param(
     [string]$RepoRoot = $PSScriptRoot,
     [string]$NewModel = "C:\nvme\glm52-uncensored",
-    [string]$OldModel = "C:\nvme\glm52",
     [switch]$RemoveOld
 )
 
@@ -69,10 +68,24 @@ if ($stopped) { Start-Sleep -Seconds 3 }
 
 $env:GODBRAIN_SNAPSHOT_PATH = $NewModel
 $env:COLI_MODEL = $NewModel
+# Persist for Heal/Watch/logon. User env is what schtasks inherit; the
+# file is the fallback when env is empty. Session-only env is not enough.
+$logDir = Join-Path $RepoRoot "logs"
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+$persist = Join-Path $logDir "coli-model.txt"
+$tmp = $persist + ".tmp"
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($tmp, $NewModel + [Environment]::NewLine, $utf8)
+Move-Item -LiteralPath $tmp -Destination $persist -Force
+[Environment]::SetEnvironmentVariable("GODBRAIN_SNAPSHOT_PATH", $NewModel, "User")
+Write-Host "pinned $NewModel (logs/coli-model.txt + User env)"
+
 $starter = Join-Path $RepoRoot "Start-GodBrain.ps1"
 & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 5
 
-$deadline = (Get-Date).AddSeconds(60)
+$deadline = (Get-Date).AddSeconds(180)
 $up = $false
 while ((Get-Date) -lt $deadline) {
     try {
@@ -89,6 +102,5 @@ if (-not $up) { throw "coli :8000 did not come back after switch to $NewModel" }
 Write-Host "coli serve up on $NewModel"
 
 if ($RemoveOld) {
-    Write-Host "Refusing to delete $OldModel from this script."
-    Write-Host "After a good uncensored tank answer, delete it by hand."
+    Write-Host "RemoveOld is ignored. This host has a single snapshot: $NewModel"
 }

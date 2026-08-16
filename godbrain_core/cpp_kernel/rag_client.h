@@ -820,6 +820,7 @@ public:
             {"top_k", kTopK},
             {"context_bytes", kContextBytes},
             {"retrieval_mode", kRetrievalMode},
+            {"status", "verified"},
         };
         const HttpResult http = transport_(request.dump());
         if (!http.available) {

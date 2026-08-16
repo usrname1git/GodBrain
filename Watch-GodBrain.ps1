@@ -1,4 +1,5 @@
-# Idempotent keep-alive. Starts missing pieces. Never stops or deletes anything.
+# Same loop as Heal, on a timer. Discover → start missing → verify.
+# Never stops or deletes anything. Not a graph, not a second agent.
 # Safe to run every few minutes as the logged-in user (not LocalSystem).
 
 [CmdletBinding()]
@@ -19,6 +20,6 @@ if (-not (Test-Path -LiteralPath $heal)) {
     throw "Watch-GodBrain: missing $heal"
 }
 
-# Closed loop: detect → start missing allowlist → verify → remember.
-# Never kills Colibri or anything else.
+# Closed loop: detect → start missing allowlist → diagnose → maybe
+# flushdns → verify → remember. Never kills Colibri or anything else.
 & $heal -RepoRoot $RepoRoot

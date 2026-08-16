@@ -1,6 +1,7 @@
 # Start GodBrain as the logged-in user after Windows logon.
 # Not a LocalSystem service: Colibri/CUDA must see an interactive session.
-# MongoDB is assumed to already run as its own Windows service.
+# MongoDB is the Windows service named MongoDB. Heal/Start may start it if
+# :27017 is down. Never kill it.
 
 [CmdletBinding()]
 param(
@@ -99,6 +100,20 @@ function Start-LoggedProcess {
 
 Write-Log "GodBrain logon start from $RepoRoot"
 
+if (-not (Test-Port "127.0.0.1" 27017)) {
+    $svc = Get-Service -Name "MongoDB" -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne "Running") {
+        try {
+            Start-Service -Name "MongoDB" -ErrorAction Stop
+            Write-Log "started Windows service MongoDB"
+        } catch {
+            Write-Log "could not start MongoDB: $_"
+        }
+    } elseif (-not $svc) {
+        Write-Log "Windows service MongoDB is not installed"
+    }
+}
+
 $mongoDeadline = (Get-Date).AddSeconds($MongoWaitSeconds)
 while (-not (Test-Port "127.0.0.1" 27017)) {
     if ((Get-Date) -gt $mongoDeadline) {
@@ -134,11 +149,48 @@ $coli = Join-Path $coliDir "coli"
 if (-not (Test-Path -LiteralPath $coli)) {
     $coli = Join-Path $coliDir "coli.exe"
 }
+
+# Host pin for Heal/Watch/logon. Env wins for one-shot tests; otherwise the
+# last Switch/Start path in logs/coli-model.txt. Default is the uncensored
+# snapshot; never invent a second tree if persist/env is empty.
+$persistModel = Join-Path $logDir "coli-model.txt"
+function Get-PersistedModel {
+    if (-not (Test-Path -LiteralPath $persistModel)) { return $null }
+    $line = (Get-Content -LiteralPath $persistModel -TotalCount 1 -ErrorAction SilentlyContinue)
+    if ($line) { $line = $line.Trim() }
+    if ($line -and (Test-Path -LiteralPath $line)) { return $line }
+    return $null
+}
+function Set-PersistedModel([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $tmp = $persistModel + ".tmp"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($tmp, $Path.Trim() + [Environment]::NewLine, $utf8)
+    Move-Item -LiteralPath $tmp -Destination $persistModel -Force
+}
+function Test-ColiServeProcess {
+    if (Get-Process -Name "coli" -ErrorAction SilentlyContinue) { return $true }
+    $hit = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match '(?i)coli(\.exe)?["'']?\s+serve' }
+    return [bool]$hit
+}
+
 $model = $env:GODBRAIN_SNAPSHOT_PATH
 if (-not $model) { $model = $env:COLI_MODEL }
-if (-not $model) { $model = "C:\nvme\glm52" }
+if ($model -and -not (Test-Path -LiteralPath $model)) {
+    Write-Log "coli model $model is gone; fall through to persist/default"
+    $model = $null
+}
+if (-not $model) { $model = Get-PersistedModel }
+if (-not $model) { $model = "C:\nvme\glm52-uncensored" }
+Write-Log "coli model $model"
+if (Test-Path -LiteralPath $model) {
+    Set-PersistedModel $model
+}
 if (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip coli serve (:8000 already listening)"
+} elseif (Test-ColiServeProcess) {
+    Write-Log "skip coli serve (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
     $pythonCmd = Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     $python = if ($pythonCmd) { $pythonCmd.Source } else { $null }
@@ -149,6 +201,17 @@ if (Test-Port "127.0.0.1" 8000) {
             -Environment @{
                 COLI_CUDA = "1"
                 CUDA_EXPERT_GB = "12"
+                # Auto RAM_GB is ~88% of free at boot. On 48 GB that became a
+                # 32 GB working set, 0.8 GB commit left, and decode hung after
+                # prefill until the kernel 720s cap. Leave room for Windows.
+                RAM_GB = "28"
+                CAP_RAISE = "0"
+                RSS_GUARD_GB = "26"
+                PIN = "C:\nvme\glm52-uncensored\.coli_usage"
+                PIN_GB = "8"
+                # Next CONTINUE/auto-chunk reuses the KV prefix instead of a
+                # 78-layer re-prefill. Takes effect on the next coli start.
+                COLI_KV_SHARE = "1"
             }
     } else {
         Write-Log "skip coli serve (python not on PATH)"

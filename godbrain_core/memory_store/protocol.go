@@ -88,9 +88,11 @@ type ErrorEnvelope struct {
 
 const (
 	JudgmentCommand   = "set_status"
+	StalePinsCommand  = "stale_pins"
 	StatusCandidate   = "candidate"
 	StatusVerified    = "verified"
 	StatusRejected    = "rejected"
+	StatusStale       = "stale"
 	MaxJudgmentReason = 2048
 	MinJudgmentReason = 4
 )
@@ -111,5 +113,22 @@ type JudgmentReceipt struct {
 	From      string    `json:"from"`
 	To        string    `json:"to"`
 	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// StalePinsRequest marks verified windows-sre cards whose os_pin no longer matches.
+type StalePinsRequest struct {
+	Command   string `json:"command"`
+	Sector    string `json:"sector"`
+	Pin       string `json:"pin"`
+	Reasoning string `json:"reasoning"`
+}
+
+// StalePinsReceipt is written after a pin-mismatch sweep.
+type StalePinsReceipt struct {
+	Status    string    `json:"status"`
+	Sector    string    `json:"sector"`
+	Pin       string    `json:"pin"`
+	Stale     int       `json:"stale"`
 	Timestamp time.Time `json:"timestamp"`
 }

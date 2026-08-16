@@ -128,6 +128,7 @@ type ragSearchRequest struct {
 	TopK          int    `json:"top_k"`
 	ContextBytes  int    `json:"context_bytes"`
 	RetrievalMode string `json:"retrieval_mode"`
+	Status        string `json:"status"`
 }
 
 type ragSearchResponse struct {
@@ -270,7 +271,7 @@ func (client *ragClient) search(ctx context.Context, query string) (ragSearchRes
 		return ragSearchResponse{}, errors.New("RAG query is empty or oversized")
 	}
 	body, err := json.Marshal(ragSearchRequest{
-		Query: query, TopK: ragTopK, ContextBytes: ragContextBytes, RetrievalMode: ragRetrievalMode,
+		Query: query, TopK: ragTopK, ContextBytes: ragContextBytes, RetrievalMode: ragRetrievalMode, Status: "verified",
 	})
 	if err != nil {
 		return ragSearchResponse{}, fmt.Errorf("encode canonical RAG request: %w", err)

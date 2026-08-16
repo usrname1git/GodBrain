@@ -138,6 +138,48 @@ namespace telemetry {
         };
     }
 
+    std::string reg_sz(HKEY root, const wchar_t* subkey, const wchar_t* value) {
+        wchar_t buffer[256];
+        DWORD bytes = sizeof(buffer);
+        DWORD type = 0;
+        const LONG rc = RegGetValueW(
+            root, subkey, value, RRF_RT_REG_SZ, &type, buffer, &bytes);
+        if (rc != ERROR_SUCCESS || bytes < sizeof(wchar_t)) return "";
+        const size_t chars = (bytes / sizeof(wchar_t)) - 1;
+        return utf8_from_wide(std::wstring(buffer, chars));
+    }
+
+    DWORD reg_dword(HKEY root, const wchar_t* subkey, const wchar_t* value) {
+        DWORD data = 0;
+        DWORD bytes = sizeof(data);
+        DWORD type = 0;
+        const LONG rc = RegGetValueW(
+            root, subkey, value, RRF_RT_REG_DWORD, &type, &data, &bytes);
+        return rc == ERROR_SUCCESS ? data : 0;
+    }
+
+    json read_windows_pin() {
+        const wchar_t* key = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+        std::string edition = reg_sz(HKEY_LOCAL_MACHINE, key, L"EditionID");
+        std::string build = reg_sz(HKEY_LOCAL_MACHINE, key, L"CurrentBuild");
+        const DWORD ubr = reg_dword(HKEY_LOCAL_MACHINE, key, L"UBR");
+        if (edition.empty()) edition = "unknown";
+        if (build.empty()) build = "0";
+        char pin[96];
+        std::snprintf(
+            pin, sizeof(pin), "%s/%s.%lu", edition.c_str(), build.c_str(),
+            static_cast<unsigned long>(ubr));
+        return {
+            {"edition_id", edition},
+            {"product_name", reg_sz(HKEY_LOCAL_MACHINE, key, L"ProductName")},
+            {"display_version",
+             reg_sz(HKEY_LOCAL_MACHINE, key, L"DisplayVersion")},
+            {"current_build", build},
+            {"ubr", static_cast<int>(ubr)},
+            {"os_pin", std::string(pin)},
+        };
+    }
+
     json get_host_inventory() {
         char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
         DWORD name_size = MAX_COMPUTERNAME_LENGTH + 1;
@@ -159,12 +201,23 @@ namespace telemetry {
         json volume_live = json::array();
         scan_fixed_volumes(volumes, volume_live);
 
+        const json pin = read_windows_pin();
         return {
             {"computer_name", std::string(name)},
             {"total_physical_ram_gb", total_ram_gb},
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
+            {"edition_id", pin.value("edition_id", "")},
+            {"product_name", pin.value("product_name", "")},
+            {"display_version", pin.value("display_version", "")},
+            {"current_build", pin.value("current_build", "")},
+            {"ubr", pin.value("ubr", 0)},
+            {"os_pin", pin.value("os_pin", "")},
             {"volumes", volumes},
         };
+    }
+
+    std::string windows_pin() {
+        return get_host_inventory().value("os_pin", "");
     }
 
     json get_tailscale() {
