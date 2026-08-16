@@ -49,6 +49,31 @@ Do not introduce LangGraph, multi-agent meshes, or a second coli serve to
 "orchestrate." The smallest honest extra node later is a **conflict queue**
 (candidate vs verified), not an org chart.
 
+### Before a large change
+
+Work like a contractor who bills for rework. Investigate the repo first.
+Anything findable in a minute is not a question. Ceremony scales with blast
+radius: a typo or one-obvious-form patch under ~20 lines ships in the same
+turn; schema, auth, money, migration, or any delete gets a written Goal,
+0–3 blocking questions (each with a recommended default), falsifiable
+assumptions, and a file-level plan — then stop until the operator accepts
+or says yes-to-all. If an assumption dies mid-implementation, stop. Do not
+quietly switch designs.
+
+Assumptions, when required, are specific: data shape and trust, failure
+mode (retry / fail loud / degrade), public vs internal API, concurrency
+and idempotency, this Windows host (no LocalSystem Colibri, one GPU
+slot), explicit non-goals, and what will actually be tested.
+
+### Each iteration
+
+1. Rules stay in `AGENTS.md` — do not re-prompt the constitution.
+2. Execute the approved plan (or the obvious one-liner).
+3. Verify on the live listeners (`:8083` `:8084` `:8000`) or the
+   affected test, not only by reading the patch.
+4. Persist (git, `last_oracle.json`, Heal remember as candidate). The next
+   loop starts there, not from chat memory.
+
 ## Status vocabulary
 
 | Status | Meaning |

@@ -77,6 +77,20 @@ searching is not a question.
 This is the same loop as Heal: discover → plan → execute → verify. The
 plan step is skipped when the blast radius is a one-liner.
 
+- **Rails live in this file.** Do not re-negotiate host rules each turn
+  (Windows-first, no LocalSystem Colibri, no DISM, one GPU slot, candidate
+  ≠ verified). A human blog post about an API is extra color after the
+  repo docs, not a replacement for them.
+- **Lock scope before a large write.** Goal + 0–3 blocking questions with
+  defaults. Do not invent XML ceremony.
+- **Verify on the running host.** Ports, `/status`, Galaxy click-path, or
+  a failing test — not only a diff. For UI, screenshot or exercise the
+  route. For Colibri, `/health` and `coli=serve` (not busy).
+- **Next loop starts from persisted state.** `last_oracle.json`, Heal
+  last, git, Golden Records. Do not treat chat history as the source of
+  truth. If the plan died, say so; do not continue from a hallucinated
+  tree.
+
 ## Ingestion protocol (raw vs processed)
 
 This is the research loop. Mongo is the vault. Do not stand up Obsidian or a

@@ -51,6 +51,12 @@ signal pays for it (Architect vs Surgeon, a second inference runner behind
 the same kernel door, or a future candidate-vs-verified conflict queue).
 Colibri and a rebuilt `llama-server` are interchangeable mouths, not a mesh.
 
+Large changes follow a contractor gate: investigate the repo, state a
+Goal and falsifiable assumptions, ask at most three blocking questions
+(each with a default), then implement. One-liners skip the ceremony.
+Verify on the live ports, then persist. The next loop starts from git and
+Golden Records, not from chat history.
+
 Ingest is the same loop with a stricter write rule: **raw sources stay
 immutable**; Librarian extracts *new claims*, not a recap; contradictions
 are flagged on both sides and never silently overwritten; open questions
