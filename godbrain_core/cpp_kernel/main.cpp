@@ -13,6 +13,7 @@
 #include <functional>
 #include <atomic>
 #include <mutex>
+#include <set>
 #include "rag_client.h"
 #include "coli_sse.h"
 #include "kernel_request.h"
@@ -363,6 +364,86 @@ static std::string strip_cut_marker(std::string answer) {
     return trim_copy(std::move(answer));
 }
 
+static std::string ascii_lower_copy(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+static std::string normalize_heading_key(std::string line) {
+    line = trim_copy(std::move(line));
+    while (!line.empty() && (line[0] == '#' || line[0] == '*' ||
+                             line[0] == ' ')) {
+        line.erase(0, 1);
+    }
+    return ascii_lower_copy(trim_copy(std::move(line)));
+}
+
+// GLM got stuck repeating "### Verified Facts: Combat Record & Capabilities".
+// Cut at the second copy of any heading, and split a ### glued onto a sentence.
+static std::string trim_repetition_loop(std::string text) {
+    const std::string glued = "### ";
+    size_t glue = text.find(glued, 1);
+    while (glue != std::string::npos) {
+        if (text[glue - 1] != '\n') {
+            text.insert(glue, "\n");
+            glue += 1;
+        }
+        glue = text.find(glued, glue + 4);
+    }
+
+    std::istringstream in(text);
+    std::string line;
+    std::string kept;
+    std::set<std::string> seen_headings;
+    while (std::getline(in, line)) {
+        std::string t = trim_copy(line);
+        const bool heading =
+            t.size() >= 3 && t[0] == '#' && t[1] == '#';
+        if (heading) {
+            const std::string key = normalize_heading_key(t);
+            if (!key.empty() && seen_headings.count(key)) {
+                return trim_copy(kept);
+            }
+            if (!key.empty()) seen_headings.insert(key);
+        }
+        kept += line;
+        kept += '\n';
+    }
+    // Do not leave a bare ### heading as the continue anchor.
+    for (;;) {
+        kept = trim_copy(kept);
+        if (kept.empty()) break;
+        const size_t nl = kept.find_last_of('\n');
+        const std::string last_line =
+            nl == std::string::npos ? kept : trim_copy(kept.substr(nl + 1));
+        if (last_line.size() >= 3 && last_line[0] == '#' && last_line[1] == '#') {
+            kept = nl == std::string::npos ? std::string() : kept.substr(0, nl);
+            continue;
+        }
+        break;
+    }
+    return trim_copy(std::move(kept));
+}
+
+static bool is_heading_loop(const std::string& text) {
+    int verified = 0;
+    int headings = 0;
+    const std::string lower = ascii_lower_copy(text);
+    for (size_t pos = 0;
+         (pos = lower.find("verified facts", pos)) != std::string::npos;
+         pos += 8) {
+        ++verified;
+    }
+    for (size_t pos = 0;
+         (pos = text.find("### ", pos)) != std::string::npos;
+         pos += 4) {
+        ++headings;
+    }
+    return verified >= 3 || headings >= 5;
+}
+
 static std::string sanitize_oracle_body(std::string answer) {
     answer = strip_cut_marker(std::move(answer));
     for (;;) {
@@ -384,7 +465,7 @@ static std::string sanitize_oracle_body(std::string answer) {
         const size_t pos = answer.find(kill);
         if (pos != std::string::npos) answer.resize(pos);
     }
-    return trim_copy(std::move(answer));
+    return trim_repetition_loop(trim_copy(std::move(answer)));
 }
 
 static std::string last_anchor(const std::string& text, size_t n = 90) {
@@ -396,7 +477,9 @@ static std::string last_anchor(const std::string& text, size_t n = 90) {
 static std::string make_continue_prompt(const std::string& prior) {
     return std::string(
                "Resume immediately after these exact characters. "
-               "Write only new words. Do not repeat any earlier sentence. "
+               "Write only new words. Do not repeat any earlier sentence "
+               "or heading. Do not start a new ### heading. "
+               "Next output must be a bullet or a finished sentence. "
                "Do not mention the prompt, corrections, mistakes, or "
                "Oracle Database. No parenthetical stage directions.\n\n"
                "END>>") +
@@ -434,7 +517,14 @@ static bool find_last_real_oracle_turn(LastOracleTurn& out) {
         if (is_continue_command(it->question)) continue;
         if (it->answer.compare(0, 6, "Error:") == 0) continue;
         if (is_refuse_answer(it->answer)) continue;
+        if (is_heading_loop(it->answer) &&
+            sanitize_oracle_body(it->answer).size() < 80) {
+            continue;
+        }
         out = *it;
+        if (is_heading_loop(it->answer)) {
+            out.answer = sanitize_oracle_body(it->answer);
+        }
         return true;
     }
     return false;
@@ -840,6 +930,7 @@ std::string run_colibri_serve(
         std::string piece;
         std::string sse_buf;
         std::string finish_reason;
+        bool heading_loop = false;
         g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
         const auto response = client.Post(
             "/v1/chat/completions", headers, body.dump(), "application/json",
@@ -847,9 +938,19 @@ std::string run_colibri_serve(
                 godbrain_coli::feed_sse(
                     sse_buf, data, len, piece, on_token, on_ping,
                     [&](const std::string& reason) { finish_reason = reason; });
+                if (is_heading_loop(piece)) {
+                    heading_loop = true;
+                    return false;
+                }
                 return true;
             });
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
+        if (heading_loop) {
+            piece = sanitize_oracle_body(piece);
+            piece = strip_replayed_prefix(assembled, piece);
+            assembled += piece;
+            break;
+        }
         if (!response) {
             assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
             if (assembled.empty()) {
@@ -890,6 +991,7 @@ std::string run_colibri_serve(
         piece = strip_replayed_prefix(assembled, piece);
         assembled += piece;
         last_reason = finish_reason;
+        if (heading_loop) break;
         if (finish_reason != "length") break;
         if (chunk + 1 >= kColiMaxChunks) break;
         messages.push_back(json{{"role", "assistant"}, {"content", piece}});
