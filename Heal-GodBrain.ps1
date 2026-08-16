@@ -1,5 +1,7 @@
-# Closed loop for THIS host only: detect → start missing pieces → verify → remember.
+# One loop for THIS host: discover (probe) → execute (start missing allowlist)
+# → verify (ports) → remember (candidate). Not a multi-agent graph.
 # Allowlist: rag :8084, coli :8000, kernel :8083. Never kills, never deletes, never DISM.
+# The verifier is the probe, not the model. Do not add extra nodes here.
 
 [CmdletBinding()]
 param(

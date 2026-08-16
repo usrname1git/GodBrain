@@ -42,6 +42,15 @@ GodBrain routes every model's tool calls through a native C++ kernel instead of 
 - **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
 
+The runtime default is **one loop**, not an agent graph: discover → plan →
+execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up. Oracle chat
+generates; `/verify last` / `/reject last` is the check that makes a Golden
+Record. Librarian distills transcripts to **candidates**. The bottleneck is
+that verifier, not the model. A second node is allowed only when a named
+signal pays for it (Architect vs Surgeon, a second inference runner behind
+the same kernel door, or a future candidate-vs-verified conflict queue).
+Colibri and a rebuilt `llama-server` are interchangeable mouths, not a mesh.
+
 ### Golden Record RAG status
 
 Layer 3 is implemented. The production C++ kernel and the experimental Go and
@@ -114,6 +123,9 @@ Cloud models can do the heavy context lifting; your local sovereign models pull 
 - [x] MongoDB query / index / update
 - [x] Full local filesystem read/write
 - [x] Privileged execution (`wsudo`, Visual Studio)
+- [x] Host-listener loop (Heal/Watch: detect → start allowlist → verify → remember)
+- [x] Oracle judge loop (`/verify last` / `/reject last` — verifier, not the model)
+- [ ] Candidate-vs-verified conflict queue (smallest extra node: overloaded verifier)
 - [ ] Autonomous CVE ingestion (scan + understand latest threats)
 - [ ] Cross-fleet patch orchestration (Devuan / macOS / Windows)
 - [ ] Self-directed DISM/registry repair beyond stock tooling

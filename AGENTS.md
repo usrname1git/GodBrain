@@ -14,6 +14,36 @@
   object files, or model snapshots). Do not modernize `archive/neo4j`; it is
   historical and is not an active runtime dependency.
 
+## Default is one loop
+
+A loop is one agent (or one script) running discover → plan → execute → verify
+until a checkable done. A graph is several nodes with edges. GodBrain's job is
+to count how many nodes the problem actually has. Usually one.
+
+- **Default to the loop.** Heal, Watch, Oracle CONTINUE, and Librarian are
+  loops. Do not add a second process, subagent, or framework because a diagram
+  looks more serious. This host has one Colibri GPU slot and one
+  `last_oracle.json`.
+- **The verifier is the bottleneck, not the model.** Generation is cheap and
+  often wrong. Value is the check: port probes after Start, fail-closed RAG,
+  loop/ngram abort, `/verify last` / `/reject last` with a why. Strengthen the
+  check before adding nodes. Half of "we need more agents" is a weak verifier.
+- **Name the signal before a second node.** Allowed signals: distinct
+  specialty (Architect vs Surgeon), true parallel fan-out that does not share
+  the GPU slot, a different model/tool per step (Colibri vs a future
+  llama-server runner — still one chat door), auditable branch (verify vs
+  reject), or an overloaded verifier (a future candidate-vs-verified conflict
+  queue). If you cannot name which signal paid for the node, delete it.
+- **One node per real specialty, not per imagined step.** Do not spawn
+  research/plan/execute/review agents for a kernel one-liner.
+- **Keep it collapsible.** If deleting a node leaves the same result, delete
+  it. Coordination is latency and another failure point (two starters racing
+  `:8000` is the tax).
+- **Stop and re-loop when sideways.** Do not keep pushing the same generate
+  (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
+- Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
+  implement this. The loop is Heal + judge + this file.
+
 ## Architecture that exists in source
 
 - `godbrain_core/cpp_kernel/` is the canonical privileged runtime. `main.cpp`

@@ -27,6 +27,28 @@ components are explicitly marked and specified separately in
 - The current runtime is not a decentralized cluster or infinitely scalable.
 - Model output is not automatically executed as a tool call.
 
+## Default control loop
+
+GodBrain ships as **one loop**, not an agent graph. Discover → plan → execute →
+verify, then repeat or stop. A second node is allowed only when a named signal
+forces it (distinct specialty, real parallelism that does not share the one
+GPU slot, a different runner behind the same chat door, an auditable
+verify/reject branch, or a dedicated reviewer because the verifier is
+overloaded). The bottleneck is the verifier, not the model.
+
+Implemented loops:
+
+| Loop | Discover | Execute | Verify |
+|---|---|---|---|
+| Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` | `Start-GodBrain.ps1` allowlist only | Ports up; remember as **candidate** |
+| Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
+| Librarian | Transcript | Distill one JSON | Schema/provenance; status stays **candidate** |
+| Judgment | Last displayable Oracle turn | `set_godbrain_status` | Why string ≥ 4 chars; only path to verified/rejected |
+
+Do not introduce LangGraph, multi-agent meshes, or a second coli serve to
+"orchestrate." The smallest honest extra node later is a **conflict queue**
+(candidate vs verified), not an org chart.
+
 ## Status vocabulary
 
 | Status | Meaning |
@@ -88,6 +110,7 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Data ingestion, diagnostics, and bounded native automation prototypes |
+| Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, verify ports, remember candidate. Never kills. |
 | Agent Factory control plane | Planned | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Policy, scheduling, capability grants, verification, audit, and recovery |
 
 ## Runtime boundaries
@@ -96,8 +119,8 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 
 Colibri is a child process, not an in-process library. Galaxy chat prefers a
 already-running `coli serve` on `127.0.0.1:8000` (`POST /v1/chat/completions`)
-so the model stays resident in VRAM. If serve is down the kernel still
-cold-spawns `colibri.exe` for one shot — that is the slow 16 GB path.
+so the model stays resident in VRAM. If serve is down the kernel **refuses**
+to cold-spawn on 16 GB. Heal/Watch/`GodBrainLogon` start `coli serve` instead.
 
 The Colibri React web UI (Chat/Brain/Profiling) is an engine workshop. It is
 not the GodBrain operator UI and must not be used for RAG, `/observe`, or
