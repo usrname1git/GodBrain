@@ -66,6 +66,9 @@ static std::vector<LastOracleTurn> g_oracle_turns;
 
 static json last_oracle_json();
 static json last_oracle_turns_json();
+static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
+static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
+static std::string sanitize_oracle_body(std::string answer);
 static void load_oracle_turns();
 static void remember_oracle_turn(
     const std::string& question,
@@ -116,15 +119,20 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
 
 static json last_oracle_json() {
     std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-    if (g_oracle_turns.empty()) return json::object();
-    return oracle_turn_to_json(g_oracle_turns.back());
+    for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend(); ++it) {
+        if (is_displayable_oracle_turn(*it)) {
+            return oracle_turn_to_json(display_oracle_turn(*it));
+        }
+    }
+    return json::object();
 }
 
 static json last_oracle_turns_json() {
     std::lock_guard<std::mutex> lock(g_last_oracle_mu);
     json turns = json::array();
     for (const auto& turn : g_oracle_turns) {
-        turns.push_back(oracle_turn_to_json(turn));
+        if (!is_displayable_oracle_turn(turn)) continue;
+        turns.push_back(oracle_turn_to_json(display_oracle_turn(turn)));
     }
     return turns;
 }
@@ -196,6 +204,16 @@ static void load_oracle_turns() {
                 g_oracle_turns.begin() + static_cast<std::ptrdiff_t>(
                     g_oracle_turns.size() - kMaxOracleTurns));
         }
+        bool cleaned = false;
+        for (auto& turn : g_oracle_turns) {
+            if (!turn.ok || turn.answer.empty()) continue;
+            const std::string cleaned_a = sanitize_oracle_body(turn.answer);
+            if (cleaned_a != turn.answer && !cleaned_a.empty()) {
+                turn.answer = cleaned_a;
+                cleaned = true;
+            }
+        }
+        if (cleaned) persist_oracle_turns_locked();
         std::cout << "[MEMORY] Loaded " << g_oracle_turns.size()
                   << " oracle turns from " << path << std::endl;
     } catch (const json::exception& error) {
@@ -246,8 +264,13 @@ static std::string ensure_last_oracle_id() {
     LastOracleTurn turn;
     {
         std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-        if (g_oracle_turns.empty()) return "";
-        turn = g_oracle_turns.back();
+        for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend();
+             ++it) {
+            if (!is_displayable_oracle_turn(*it)) continue;
+            turn = *it;
+            break;
+        }
+        if (turn.question.empty() && turn.answer.empty()) return "";
         if (!turn.stable_id.empty()) return turn.stable_id;
     }
     if (!turn.ok || turn.answer.empty()) return "";
@@ -308,7 +331,9 @@ static void remember_oracle_turn(
     DWORD elapsed_ms) {
     LastOracleTurn turn;
     turn.question = question;
-    turn.answer = answer;
+    turn.answer = answer.compare(0, 6, "Error:") == 0
+                      ? answer
+                      : sanitize_oracle_body(answer);
     turn.elapsed_ms = elapsed_ms;
     turn.ok = answer.compare(0, 6, "Error:") != 0;
     turn.stored = false;
@@ -513,6 +538,24 @@ static std::string sanitize_oracle_body(std::string answer) {
         if (pos != std::string::npos) answer.resize(pos);
     }
     return trim_ngram_loop(trim_repetition_loop(trim_copy(std::move(answer))));
+}
+
+static bool is_displayable_oracle_turn(const LastOracleTurn& turn) {
+    if (!turn.ok || turn.answer.empty()) return false;
+    if (is_continue_command(turn.question)) return false;
+    if (turn.answer.compare(0, 6, "Error:") == 0) return false;
+    if (is_refuse_answer(turn.answer)) return false;
+    if (turn.answer.find("TABLESPACE") != std::string::npos) return false;
+    if (turn.answer.find("Oracle Partition") != std::string::npos) return false;
+    if (turn.answer.find("Understanding Oracle") != std::string::npos) {
+        return false;
+    }
+    return sanitize_oracle_body(turn.answer).size() >= 40;
+}
+
+static LastOracleTurn display_oracle_turn(LastOracleTurn turn) {
+    turn.answer = sanitize_oracle_body(turn.answer);
+    return turn;
 }
 
 static std::string last_anchor(const std::string& text, size_t n = 90) {

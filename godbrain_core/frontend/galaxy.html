@@ -509,7 +509,20 @@
                     ? [status.last_oracle]
                     : []);
             const slice = raw.filter(function(turn) {
-                return turn && turn.answer;
+                if (!turn || !turn.answer) return false;
+                if (turn.ok === false) return false;
+                const q = String(turn.question || '').trim().toLowerCase();
+                if (q === 'continue' || q === '/continue' || q === 'cont') {
+                    return false;
+                }
+                const a = String(turn.answer);
+                if (a.indexOf('Error:') === 0) return false;
+                if (a.indexOf('I cannot fulfill') >= 0) return false;
+                if (a.indexOf('I cannot help with that') >= 0) return false;
+                if (a.indexOf('TABLESPACE') >= 0) return false;
+                if (a.indexOf('Oracle Partition') >= 0) return false;
+                if ((a.match(/Verified Facts/g) || []).length >= 3) return false;
+                return true;
             }).slice(-3);
             if (!slice.length) return;
             if (boot) boot.dataset.replayed = '1';
