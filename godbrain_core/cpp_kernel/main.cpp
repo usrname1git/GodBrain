@@ -87,6 +87,7 @@ static void note_oracle_partial(
 static void retry_unstored_oracle_turns();
 static json load_mouth();
 static json load_last_edit();
+static json load_heal_last();
 static bool maybe_restart_mouth();
 
 static std::string read_env(const char* name) {
@@ -853,6 +854,15 @@ static json kernel_status_body() {
     const json live = telemetry::get_current_state();
     host["ram_available_gb"] = live.value("ram_available_gb", 0.0);
     host["ram_used_percent"] = live.value("system_ram_percent", 0);
+    const json host_record = host_record_from_rag();
+    const json turns = last_oracle_turns_json();
+    int oracle_pending = 0;
+    for (const auto& turn : turns) {
+        if (turn.value("status", "candidate") == "candidate") ++oracle_pending;
+    }
+    const int host_pending =
+        host_record.value("status", "") == "candidate" ? 1 : 0;
+    const json heal = load_heal_last();
     return {
         {"kernel", true},
         {"coli_serve", coli.value("up", false)},
@@ -863,11 +873,17 @@ static json kernel_status_body() {
         {"vram", telemetry::plan_colibri_vram()},
         {"rag", rag_health},
         {"host", host},
-        {"host_record", host_record_from_rag()},
+        {"host_record", host_record},
         {"tailscale", tailscale},
         {"last_oracle", last_oracle_json()},
-        {"last_oracle_turns", last_oracle_turns_json()},
+        {"last_oracle_turns", turns},
         {"last_edit", load_last_edit()},
+        {"heal", heal},
+        {"pending_judge", {
+            {"oracle", oracle_pending},
+            {"host", host_pending},
+            {"total", oracle_pending + host_pending},
+        }},
     };
 }
 
@@ -1922,6 +1938,13 @@ int main() {
                       << host.value("total_physical_ram_gb", 0) << " GB / "
                       << host.value("logical_processors", 0) << " threads\n"
                       << "host_record=" << rec.value("status", "none") << "\n";
+                const json pending = st.value("pending_judge", json::object());
+                const json heal = st.value("heal", json::object());
+                reply << "judge " << pending.value("total", 0) << " waiting";
+                if (heal.contains("ok")) {
+                    reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+                }
+                reply << "\n";
                 if (!coli.value("up", st.value("coli_serve", false))) {
                     reply << mouth_label
                           << (st.value("mouth_restarting", false) ? "=starting"
@@ -2050,10 +2073,16 @@ int main() {
                 const char* mouth_state = !coli.value("up", false)
                     ? (st.value("mouth_restarting", false) ? "starting" : "down")
                     : (coli.value("busy", false) ? "busy" : "serve");
+                const json pending = st.value("pending_judge", json::object());
+                const json heal = st.value("heal", json::object());
                 reply << host.value("computer_name", "?") << " | "
                       << mouth_label << "=" << mouth_state
                       << " rag="
-                      << (rag.value("ready", false) ? "ready" : "down");
+                      << (rag.value("ready", false) ? "ready" : "down")
+                      << " judge=" << pending.value("total", 0);
+                if (heal.contains("ok")) {
+                    reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+                }
                 const double ram = host.value("ram_available_gb", -1.0);
                 if (ram >= 0.0) {
                     char ram_buf[32];

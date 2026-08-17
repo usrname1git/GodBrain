@@ -735,6 +735,17 @@
                     'RAM free ' + ramFree.toFixed(1) + ' GB' +
                     (ramFree < 4 ? ' — paging, wait' : ''));
             }
+            const pending = (status && status.pending_judge) || {};
+            if (typeof pending.total === 'number') {
+                lines.push(
+                    'judge ' + pending.total + ' waiting' +
+                    (pending.oracle ? (' oracle=' + pending.oracle) : '') +
+                    (pending.host ? (' host=' + pending.host) : ''));
+            }
+            const heal = (status && status.heal) || {};
+            if (heal && typeof heal.ok === 'boolean') {
+                lines.push('heal ' + (heal.ok ? 'ok' : 'fail'));
+            }
             const last = (status && status.last_oracle) || {};
             if (last.answer) {
                 const q = String(last.question || '').slice(0, 80);
@@ -1060,6 +1071,14 @@
                     lines.push(
                         'Last: ' + (lastCard.status || 'candidate') +
                         (lastCard.stable_id ? (' ' + String(lastCard.stable_id).slice(0, 12)) : ''));
+                }
+                const pending = status.pending_judge || {};
+                if (typeof pending.total === 'number') {
+                    lines.push('Judge: ' + pending.total + ' waiting');
+                }
+                const heal = status.heal || {};
+                if (typeof heal.ok === 'boolean') {
+                    lines.push('Heal: ' + (heal.ok ? 'ok' : 'fail'));
                 }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {

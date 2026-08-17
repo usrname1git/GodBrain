@@ -197,7 +197,7 @@ cloud model to get it.
   `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
-  host + mouth + last-turn line. If `logs/mouth.txt` says llama and `:8000` is
+  host + mouth + pending-judge + heal + last-turn line. If `logs/mouth.txt` says llama and `:8000` is
   down, `/api/status` and `/brief` kick `Start-LlamaServer.ps1` via
   `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)
   and report `llama=starting` so Galaxy does not wait on the 5 min Watch tick.
