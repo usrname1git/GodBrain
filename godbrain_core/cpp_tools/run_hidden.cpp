@@ -46,9 +46,8 @@ int main() {
     wchar_t* mutable_cmd = _wcsdup(cmd);
     if (!mutable_cmd) return 3;
     const BOOL ok = CreateProcessW(
-        app, mutable_cmd, nullptr, nullptr, FALSE,
-        CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB,
-        nullptr, nullptr, &si, &pi);
+        nullptr, mutable_cmd, nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     free(mutable_cmd);
     if (!ok) return 4;
     CloseHandle(pi.hThread);

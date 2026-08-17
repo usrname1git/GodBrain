@@ -29,7 +29,7 @@ if (-not (Test-Path -LiteralPath $hidden)) {
 $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
 $shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 $action = New-ScheduledTaskAction -Execute $hidden `
-    -Argument "`"$shell`" -NoProfile -File `"$watch`"" `
+    -Argument "`"$shell`" -NoProfile -WindowStyle Hidden -NonInteractive -File `"$watch`" -RepoRoot `"$repo`"" `
     -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
     -RepetitionInterval (New-TimeSpan -Minutes 1) `

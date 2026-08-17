@@ -166,8 +166,8 @@ if (-not $cs2sleep) {
     if ($watchTr -notmatch "Watch-GodBrain\.ps1") {
         $fails.Add("GodBrainWatch TR missing Watch-GodBrain.ps1")
     }
-    if ($watchTr -match "-RepoRoot") {
-        $fails.Add("GodBrainWatch TR still passes -RepoRoot")
+    if ($watchTr -notmatch "-RepoRoot") {
+        $fails.Add("GodBrainWatch should pass -RepoRoot (Register-ScheduledTask, not schtasks /TR)")
     }
     $cs2Tr = (& schtasks.exe /Query /TN GodBrainCs2Pause /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
     if ($cs2Tr -match "cs2pause\.cmd|\.cmd") {
@@ -176,8 +176,8 @@ if (-not $cs2sleep) {
     if ($cs2Tr -notmatch "Watch-Cs2Pause\.ps1") {
         $fails.Add("GodBrainCs2Pause TR missing Watch-Cs2Pause.ps1")
     }
-    if ($cs2Tr -match "-RepoRoot") {
-        $fails.Add("GodBrainCs2Pause TR still passes -RepoRoot")
+    if ($cs2Tr -notmatch "-RepoRoot") {
+        $fails.Add("GodBrainCs2Pause should pass -RepoRoot (Register-ScheduledTask, not schtasks /TR)")
     }
     if (Test-Path -LiteralPath $briefFile) {
         $ageMin = ((Get-Date) - (Get-Item -LiteralPath $briefFile).LastWriteTime).TotalMinutes
