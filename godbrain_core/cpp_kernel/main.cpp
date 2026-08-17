@@ -2336,15 +2336,22 @@ int main() {
                 reply << "playbook=host-listeners (never kills)\n"
                       << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
                       << " rag=" << (live.value("rag", false) ? "up" : "down")
-                      << " coli="
-                      << (live.value("coli", false)
-                              ? (live.value("coli_busy", false) ? "busy" : "serve")
+                      << " mouth="
+                      << (live.value("mouth", live.value("coli", false))
+                              ? (live.value("mouth_busy", live.value("coli_busy", false))
+                                     ? "busy"
+                                     : "serve")
                               : "down")
                       << "\n";
                 if (last.empty()) {
                     reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
                 } else {
                     reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
+                          << " mouth=" << (last.value("mouth", false) ? "up" : "down")
+                          << " tail="
+                          << (last.value("tailscale", false) ? "100.x" : "off")
+                          << " cs2="
+                          << (last.value("cs2_sleep", false) ? "sleep" : "idle")
                           << " at=" << last.value("at", "") << "\n";
                     const json needed = last.value("needed", json::array());
                     reply << "needed=";
