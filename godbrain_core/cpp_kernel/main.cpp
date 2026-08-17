@@ -1578,7 +1578,21 @@ static void handle_vram(const httplib::Request&, httplib::Response& res) {
           << " overcommit="
           << (plan.value("overcommit", false) ? "on" : "off")
           << "\nOne generate at a time. Librarian shares this slot.";
-    res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+    json body = plan;
+    body["response"] = reply.str();
+    body["slots"] = plan.value("slots", 1);
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-vram.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << body.dump(2);
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 static void handle_desk(const httplib::Request&, httplib::Response& res) {

@@ -204,7 +204,7 @@ cloud model to get it.
   `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
-  `GET /api/vram` is the same as `/vram`. `/edit` waits if CS2 is sleeping.
+  `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
   `GET /api/heal` is on the Tailscale door and now wraps the same
   `response` text as `/heal`, including `age=` minutes since
   `heal-last.json`. `GET /api/doors` lists
@@ -231,7 +231,8 @@ cloud model to get it.
   `GET /api/status` includes `pending_items` so the overlay does not need
   a second fetch.
   Each Heal tick refreshes
-  `logs/last-brief.txt` and `logs/last-pending.json` when the kernel is up
+  `logs/last-brief.txt`, `logs/last-pending.json`, and `logs/last-vram.json`
+  when the kernel is up
   (no GPU). Watch/Heal is the
   24/7 loop. `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after
   Start-GodBrain. The Galaxy node panel and `POST /api/judge` are

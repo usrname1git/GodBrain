@@ -61,10 +61,25 @@ if (-not (Test-Path -LiteralPath $briefFile)) {
 if ($vram -and [string]$vram.response -notmatch "1 slot") {
     $fails.Add("vram missing 1 slot")
 }
+$vramFile = Join-Path $RepoRoot "logs\last-vram.json"
+if (-not (Test-Path -LiteralPath $vramFile)) {
+    $fails.Add("missing logs/last-vram.json")
+} else {
+    try {
+        $onVram = Get-Content -LiteralPath $vramFile -Raw | ConvertFrom-Json
+        if ([int]$onVram.slots -ne 1) { $fails.Add("last-vram.json slots is not 1") }
+        if ([string]$onVram.response -notmatch "1 slot") {
+            $fails.Add("last-vram.json missing 1 slot")
+        }
+    } catch {
+        $fails.Add("last-vram.json unreadable")
+    }
+}
 if ($doors) {
     if (-not $doors.loopback.brief) { $fails.Add("doors.loopback.brief missing") }
     if (-not $doors.loopback.desk) { $fails.Add("doors.loopback.desk missing") }
     if (-not $doors.loopback.pending) { $fails.Add("doors.loopback.pending missing") }
+    if (-not $doors.loopback.vram) { $fails.Add("doors.loopback.vram missing") }
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
@@ -157,6 +172,12 @@ if (-not $cs2sleep) {
         $pendAge = ((Get-Date) - (Get-Item -LiteralPath $pendingFile).LastWriteTime).TotalMinutes
         if ($pendAge -gt 20) {
             $fails.Add(("last-pending.json stale ({0:n0} min; Watch/Heal should refresh)" -f $pendAge))
+        }
+    }
+    if (Test-Path -LiteralPath $vramFile) {
+        $vramAge = ((Get-Date) - (Get-Item -LiteralPath $vramFile).LastWriteTime).TotalMinutes
+        if ($vramAge -gt 20) {
+            $fails.Add(("last-vram.json stale ({0:n0} min; Watch/Heal should refresh)" -f $vramAge))
         }
     }
     if (Test-Path -LiteralPath $healFile) {

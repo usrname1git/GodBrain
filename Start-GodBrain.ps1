@@ -374,6 +374,12 @@ try {
 } catch {
     Write-Log "pending persist skipped: $_"
 }
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/vram" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-vram.json"
+} catch {
+    Write-Log "vram persist skipped: $_"
+}
 $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
 if (Test-Path -LiteralPath $desk) {
     try {
