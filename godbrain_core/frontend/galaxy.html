@@ -764,7 +764,12 @@
                 lines.push('edit ' + (edit.applied ? 'done' : 'fail') + ' ' + er);
             }
             if (tail.up) {
-                lines.push('tailscale ' + (tail.ip || '') + ' ' + (tail.writes || ''));
+                lines.push(
+                    'tailscale ' + (tail.ip || '') + ' ' +
+                    (tail.bound ? 'door open' : 'door closed') + ' ' +
+                    (tail.writes || ''));
+            } else if (tail.reason === 'needs_login') {
+                lines.push('tailscale needs login (service up, no 100.x address)');
             } else {
                 lines.push('tailscale down');
             }
@@ -1090,7 +1095,9 @@
                 if (tail.up) {
                     lines.push(
                         'Tailscale ' + (tail.ip || '') +
-                        (tail.bound ? ' door open' : ' door closed (need token)'));
+                        (tail.bound ? ' door open' : ' door closed'));
+                } else if (tail.reason === 'needs_login') {
+                    lines.push('Tailscale needs login');
                 } else {
                     lines.push('Tailscale down');
                 }

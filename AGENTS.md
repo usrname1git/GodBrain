@@ -216,8 +216,11 @@ cloud model to get it.
   claims: host probes and Learn quotes can promote; playbooks stay candidate. Kernel boot loads
   the newest Golden Records into the process session buffer so chat still knows
   the host after a restart. `/api/status` reports the host card and Tailscale
-  remember URL. The Tailscale shortcuts door binds only when
-  `GODBRAIN_API_TOKEN` is set. Chat requires `coli serve` on `:8000` from
+  remember URL. The Tailscale shortcuts door binds when
+  `GODBRAIN_API_TOKEN` is set and the adapter has a 100.x address.
+  `/status` late-binds that door if Tailscale logs in after kernel boot,
+  and reports `needs_login` when the service is up but offline.
+  Chat requires `coli serve` on `:8000` from
   Colibri 1.6.2 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`). Prefer that over
   the vendored 1.1.1 tree under `LLM/colibri_LLM`.
   Cold-spawn of the GLM snapshot on 16 GB is disabled. Do not set both

@@ -89,6 +89,8 @@ static json load_mouth();
 static json load_last_edit();
 static json load_heal_last();
 static bool maybe_restart_mouth();
+static bool maybe_bind_tailscale_door();
+static bool tailscale_door_bound_to(const std::string& ip);
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -841,8 +843,15 @@ static json kernel_status_body() {
             tailscale["writes"] = "disabled_no_token";
             tailscale["bound"] = false;
         } else {
+            maybe_bind_tailscale_door();
             tailscale["writes"] = "token_required";
-            tailscale["bound"] = true;
+            tailscale["bound"] = tailscale_door_bound_to(
+                tailscale.value("ip", ""));
+        }
+    } else {
+        tailscale["bound"] = false;
+        if (tailscale.value("writes", "") == "") {
+            tailscale["writes"] = "loopback_only";
         }
     }
     const json coli = coli_serve_status();
@@ -1114,6 +1123,54 @@ static void attach_shortcut_routes(httplib::Server& server) {
     server.Post("/api/observe", handle_observe);
     server.Post("/api/truth", handle_truth);
     server.Post("/api/judge", handle_judge);
+}
+
+static std::mutex g_tail_mu;
+static std::string g_tail_bound_ip;
+static std::atomic<bool> g_tail_bound{false};
+
+static bool tailscale_door_bound_to(const std::string& ip) {
+    if (ip.empty() || !g_tail_bound.load(std::memory_order_relaxed)) return false;
+    std::lock_guard<std::mutex> lock(g_tail_mu);
+    return g_tail_bound_ip == ip;
+}
+
+static bool maybe_bind_tailscale_door() {
+    if (g_api_token.empty()) return false;
+    const json ts = telemetry::get_tailscale();
+    if (!ts.value("up", false)) return false;
+    const std::string ip = ts.value("ip", "");
+    if (ip.empty()) return false;
+    std::lock_guard<std::mutex> lock(g_tail_mu);
+    if (g_tail_bound.load(std::memory_order_relaxed) && g_tail_bound_ip == ip) {
+        return true;
+    }
+    if (g_tail_bound.load(std::memory_order_relaxed)) return false;
+    auto* door = new httplib::Server();
+    attach_shortcut_routes(*door);
+    if (!door->bind_to_port(ip, 8083)) {
+        delete door;
+        std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
+                  << std::endl;
+        return false;
+    }
+    g_tail_bound_ip = ip;
+    g_tail_bound.store(true, std::memory_order_relaxed);
+    std::thread([door, ip]() {
+        std::cout << "[SYS] Tailscale shortcuts door http://" << ip
+                  << ":8083 (remember/librarian/observe/judge/status/last)"
+                  << std::endl;
+        door->listen_after_bind();
+        {
+            std::lock_guard<std::mutex> inner(g_tail_mu);
+            if (g_tail_bound_ip == ip) {
+                g_tail_bound.store(false, std::memory_order_relaxed);
+                g_tail_bound_ip.clear();
+            }
+        }
+        delete door;
+    }).detach();
+    return true;
 }
 
 constexpr const char* kColibriServeHost = "127.0.0.1";
@@ -2012,7 +2069,10 @@ int main() {
                 }
                 if (tail.value("up", false)) {
                     reply << "tailscale " << tail.value("ip", "") << " "
-                          << tail.value("writes", "") << "\n";
+                          << (tail.value("bound", false) ? "door open" : "door closed")
+                          << " " << tail.value("writes", "") << "\n";
+                } else if (tail.value("reason", "") == "needs_login") {
+                    reply << "tailscale needs login\n";
                 } else {
                     reply << "tailscale down\n";
                 }
@@ -2082,6 +2142,12 @@ int main() {
                       << " judge=" << pending.value("total", 0);
                 if (heal.contains("ok")) {
                     reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+                }
+                const json tail = st.value("tailscale", json::object());
+                if (tail.value("up", false)) {
+                    reply << " tail=" << (tail.value("bound", false) ? "door" : "up");
+                } else if (tail.value("reason", "") == "needs_login") {
+                    reply << " tail=login";
                 }
                 const double ram = host.value("ram_available_gb", -1.0);
                 if (ram >= 0.0) {
@@ -2694,24 +2760,19 @@ int main() {
         }
     });
 
-    const json tailscale = telemetry::get_tailscale();
-    if (tailscale.value("up", false) && !g_api_token.empty()) {
-        const std::string ip = tailscale.value("ip", "");
-        std::thread([ip]() {
-            httplib::Server door;
-            attach_shortcut_routes(door);
-            std::cout << "[SYS] Tailscale shortcuts door http://" << ip
-                      << ":8083 (remember/librarian/observe/judge/status/last)"
+    if (maybe_bind_tailscale_door()) {
+        std::cout << "[SYS] Tailscale shortcuts door requested" << std::endl;
+    } else {
+        const json tailscale = telemetry::get_tailscale();
+        if (tailscale.value("up", false) && g_api_token.empty()) {
+            std::cout << "[SYS] Tailscale " << tailscale.value("ip", "")
+                      << " is up; shortcuts door stays closed until GODBRAIN_API_TOKEN is set"
                       << std::endl;
-            if (!door.listen(ip, 8083)) {
-                std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
-                          << std::endl;
-            }
-        }).detach();
-    } else if (tailscale.value("up", false)) {
-        std::cout << "[SYS] Tailscale " << tailscale.value("ip", "")
-                  << " is up; shortcuts door stays closed until GODBRAIN_API_TOKEN is set"
-                  << std::endl;
+        } else if (tailscale.value("reason", "") == "needs_login") {
+            std::cout << "[SYS] Tailscale adapter up but not logged in; "
+                         "phone door waits for a 100.x address"
+                      << std::endl;
+        }
     }
 
     std::cout << "[SYS] Listening on http://127.0.0.1:8083 (loopback only)" << std::endl;
