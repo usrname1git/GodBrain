@@ -91,6 +91,7 @@ static json load_heal_last();
 static bool maybe_restart_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
+static json cs2_desk();
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -888,6 +889,7 @@ static json kernel_status_body() {
         {"last_oracle_turns", turns},
         {"last_edit", load_last_edit()},
         {"heal", heal},
+        {"cs2", cs2_desk()},
         {"pending_judge", {
             {"oracle", oracle_pending},
             {"host", host_pending},
@@ -1210,20 +1212,36 @@ static std::string repo_root_from_exe() {
     return std::string(canon);
 }
 
-static bool cs2_should_sleep_mouth() {
-    if (process_running_ci(L"CS2.exe")) return true;
+static json read_cs2_pause_file() {
     const std::string path = repo_root_from_exe() + "\\logs\\cs2-pause.json";
     std::ifstream in(path);
-    if (!in) return false;
+    if (!in) return json::object();
     try {
-        const json st = json::parse(in);
-        const std::string seen = st.value("last_seen", "");
-        if (seen.empty()) return false;
-        // last_seen is ISO. If paused or last_action is pause, stay down.
-        if (st.value("paused", false)) return true;
+        return json::parse(in);
     } catch (const json::exception&) {
+        return json::object();
     }
-    return false;
+}
+
+static bool cs2_should_sleep_mouth() {
+    if (process_running_ci(L"CS2.exe")) return true;
+    const json st = read_cs2_pause_file();
+    if (st.empty()) return false;
+    if (st.value("last_seen", "").empty()) return false;
+    return st.value("paused", false);
+}
+
+static json cs2_desk() {
+    const bool running = process_running_ci(L"CS2.exe");
+    const json st = read_cs2_pause_file();
+    const bool paused = st.value("paused", false);
+    const bool sleep = running || (paused && !st.value("last_seen", "").empty());
+    return {
+        {"running", running},
+        {"paused", paused},
+        {"sleep", sleep},
+        {"last_action", st.value("last_action", "")},
+    };
 }
 
 static std::atomic<DWORD> g_mouth_restart_ms{0};
@@ -2001,6 +2019,11 @@ int main() {
                 if (heal.contains("ok")) {
                     reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
                 }
+                const json cs2 = st.value("cs2", json::object());
+                if (cs2.value("sleep", false)) {
+                    reply << " cs2="
+                          << (cs2.value("running", false) ? "play" : "sleep");
+                }
                 reply << "\n";
                 if (!coli.value("up", st.value("coli_serve", false))) {
                     reply << mouth_label
@@ -2148,6 +2171,11 @@ int main() {
                     reply << " tail=" << (tail.value("bound", false) ? "door" : "up");
                 } else if (tail.value("reason", "") == "needs_login") {
                     reply << " tail=login";
+                }
+                const json cs2 = st.value("cs2", json::object());
+                if (cs2.value("sleep", false)) {
+                    reply << " cs2="
+                          << (cs2.value("running", false) ? "play" : "sleep");
                 }
                 const double ram = host.value("ram_available_gb", -1.0);
                 if (ram >= 0.0) {

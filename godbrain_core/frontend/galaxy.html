@@ -746,6 +746,12 @@
             if (heal && typeof heal.ok === 'boolean') {
                 lines.push('heal ' + (heal.ok ? 'ok' : 'fail'));
             }
+            const cs2 = (status && status.cs2) || {};
+            if (cs2.sleep) {
+                lines.push(
+                    'cs2 ' + (cs2.running ? 'play' : 'sleep') +
+                    ' — mouth and Tailscale stay down');
+            }
             const last = (status && status.last_oracle) || {};
             if (last.answer) {
                 const q = String(last.question || '').slice(0, 80);
@@ -1084,6 +1090,10 @@
                 const heal = status.heal || {};
                 if (typeof heal.ok === 'boolean') {
                     lines.push('Heal: ' + (heal.ok ? 'ok' : 'fail'));
+                }
+                const cs2 = status.cs2 || {};
+                if (cs2.sleep) {
+                    lines.push('CS2: ' + (cs2.running ? 'playing' : 'sleep window'));
                 }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
