@@ -860,7 +860,7 @@
                     });
                 return;
             }
-            if (/^\/(brief|vram|doors|heal|last)\b/i.test(text)) {
+            if (/^\/(brief|vram|doors|heal|last|desk)\b/i.test(text)) {
                 const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
                 fetch(path)
                     .then(res => res.json())

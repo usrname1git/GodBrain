@@ -23,6 +23,12 @@ try { $brief = Get-Json "/api/brief" } catch { $fails.Add("brief: $_"); $brief =
 try { $vram = Get-Json "/api/vram" } catch { $fails.Add("vram: $_"); $vram = $null }
 try { $doors = Get-Json "/api/doors" } catch { $fails.Add("doors: $_"); $doors = $null }
 try { $heal = Get-Json "/api/heal" } catch { $fails.Add("heal: $_"); $heal = $null }
+try {
+    $deskApi = Get-Json "/api/desk"
+    if ($deskApi.response -notmatch "desk=") { $fails.Add("desk api missing desk=") }
+} catch {
+    $fails.Add("desk: $_")
+}
 try { $null = Get-Json "/api/last" } catch { $fails.Add("last: $_") }
 
 if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }

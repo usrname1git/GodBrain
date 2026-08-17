@@ -76,6 +76,7 @@ static std::string format_brief_text();
 static void handle_brief(const httplib::Request&, httplib::Response&);
 static void handle_vram(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
+static void handle_desk(const httplib::Request&, httplib::Response&);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -1175,6 +1176,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_doors(req, res);
     });
+    server.Get("/api/desk", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_desk(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1519,6 +1524,21 @@ static void handle_vram(const httplib::Request&, httplib::Response& res) {
     res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
 }
 
+static void handle_desk(const httplib::Request&, httplib::Response& res) {
+    json body = load_last_desk_test();
+    if (body.empty()) {
+        res.status = 404;
+        res.set_content(
+            json({{"error", "no desk test yet"},
+                  {"response", "desk=missing"}})
+                .dump(),
+            "application/json");
+        return;
+    }
+    body["response"] = body.value("ok", false) ? "desk=ok" : "desk=fail";
+    res.set_content(body.dump(), "application/json");
+}
+
 static void handle_doors(const httplib::Request&, httplib::Response& res) {
     const std::string lb = "http://127.0.0.1:8083";
     json loopback = {
@@ -1528,6 +1548,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"status", lb + "/api/status"},
         {"last", lb + "/api/last"},
         {"doors", lb + "/api/doors"},
+        {"desk", lb + "/api/desk"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -1549,6 +1570,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["status"] = base + "/api/status";
         ts["last"] = base + "/api/last";
         ts["doors"] = base + "/api/doors";
+        ts["desk"] = base + "/api/desk";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -2202,6 +2224,9 @@ int main() {
     });
     svr.Get("/api/doors", [&](const httplib::Request& req, httplib::Response& res) {
         handle_doors(req, res);
+    });
+    svr.Get("/api/desk", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_desk(req, res);
     });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
