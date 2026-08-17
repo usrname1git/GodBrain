@@ -161,7 +161,7 @@ func run() error {
 
 	extractorID := payload.ExtractorID
 	if extractorID == "" {
-		extractorID = "Librarian-CPP-Colibri"
+		extractorID = memorystore.DefaultExtractorID
 	}
 	irun, created, err := store.StartIngestionWithMetadata(ctx, payload.Payload.Provenance.SourceHash, payload.Payload.Provenance.SourceID, extractorID, payload.ExtractorVersion, payload.SchemaVersion, nil, payload.Document)
 	if err != nil {

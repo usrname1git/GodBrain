@@ -275,6 +275,8 @@ namespace telemetry {
                 result["adapter"] = name;
                 result["remember_url"] =
                     std::string("http://") + ip + ":8083/api/remember";
+                result["librarian_url"] =
+                    std::string("http://") + ip + ":8083/api/librarian";
                 return result;
             }
         }

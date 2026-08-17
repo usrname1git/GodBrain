@@ -728,7 +728,7 @@ public:
 
         // Build DistillationPayload JSON matching Go's expected input
         json full_payload = {
-            {"extractor_id", "Librarian-CPP-Colibri"},
+            {"extractor_id", "Librarian-CPP"},
             {"extractor_version", result.extractor_version},
             {"schema_version", result.schema_version},
             {"degraded", result.degraded},

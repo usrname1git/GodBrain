@@ -118,7 +118,7 @@ func TestValidatePreIngestionPayloadRejectsHashAndTrustBeforePersistence(t *test
 }
 
 func TestValidatePreIngestionPayloadExtractorID(t *testing.T) {
-	for _, extractorID := range []string{"", "Librarian-CPP-Colibri"} {
+	for _, extractorID := range []string{"", "Librarian-CPP", "Librarian-CPP-Colibri"} {
 		t.Run("valid-"+extractorID, func(t *testing.T) {
 			payload := validPreIngestionPayload(extractorID)
 			if err := ValidatePreIngestionPayload(payload); err != nil {
