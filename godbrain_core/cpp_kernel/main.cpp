@@ -2023,7 +2023,19 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                   << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
         }
     }
-    heal["response"] = reply.str();
+    const std::string text = reply.str();
+    heal["response"] = text;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-heal.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     res.set_content(heal.dump(), "application/json");
 }
 

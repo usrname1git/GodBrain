@@ -116,6 +116,12 @@ if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
 if ($heal -and $heal.last -and $null -eq $heal.age_min) {
     $fails.Add("heal api missing age_min")
 }
+$lastHealFile = Join-Path $RepoRoot "logs\last-heal.txt"
+if (-not (Test-Path -LiteralPath $lastHealFile)) {
+    $fails.Add("missing logs/last-heal.txt")
+} elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "last ok=|no heal run") {
+    $fails.Add("last-heal.txt missing last ok=")
+}
 $healFile = Join-Path $RepoRoot "logs\heal-last.json"
 if (-not (Test-Path -LiteralPath $healFile)) {
     $fails.Add("missing logs/heal-last.json")
@@ -178,6 +184,12 @@ if (-not $cs2sleep) {
         $vramAge = ((Get-Date) - (Get-Item -LiteralPath $vramFile).LastWriteTime).TotalMinutes
         if ($vramAge -gt 20) {
             $fails.Add(("last-vram.json stale ({0:n0} min; Watch/Heal should refresh)" -f $vramAge))
+        }
+    }
+    if (Test-Path -LiteralPath $lastHealFile) {
+        $lastHealAge = ((Get-Date) - (Get-Item -LiteralPath $lastHealFile).LastWriteTime).TotalMinutes
+        if ($lastHealAge -gt 20) {
+            $fails.Add(("last-heal.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastHealAge))
         }
     }
     if (Test-Path -LiteralPath $healFile) {

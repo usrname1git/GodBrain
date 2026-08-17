@@ -380,6 +380,12 @@ try {
 } catch {
     Write-Log "vram persist skipped: $_"
 }
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/heal" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-heal.txt"
+} catch {
+    Write-Log "heal persist skipped: $_"
+}
 $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
 if (Test-Path -LiteralPath $desk) {
     try {
