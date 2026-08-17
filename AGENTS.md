@@ -209,7 +209,10 @@ cloud model to get it.
   If the pin moved, verified `windows-sre` cards that carry a different
   `os_pin=` become `stale` (not deleted). Logon (`Start-GodBrain.ps1`) posts
   `/api/observe` once the kernel is listening; unchanged inventory is an
-  idempotent no-op. `POST /api/truth` writes host_fact / doc_fact / playbook
+  idempotent no-op. WMI process start passes `GODBRAIN_API_TOKEN` in the
+  child environment so Heal/Watch/logon cannot boot a kernel that fail-opens
+  loopback writes; the token is never written to `*.launch.cmd`.
+  `POST /api/truth` writes host_fact / doc_fact / playbook
   claims: host probes and Learn quotes can promote; playbooks stay candidate. Kernel boot loads
   the newest Golden Records into the process session buffer so chat still knows
   the host after a restart. `/api/status` reports the host card and Tailscale

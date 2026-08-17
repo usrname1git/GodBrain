@@ -6,7 +6,8 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [int]$MongoWaitSeconds = 30
+    [int]$MongoWaitSeconds = 30,
+    [switch]$SelfTestEnv
 )
 
 # Nested powershell -File can leave $PSScriptRoot empty. Never start with
@@ -49,6 +50,43 @@ function Test-Port([string]$HostName, [int]$Port) {
     }
 }
 
+# WMI Create replaces the child environment when EnvironmentVariables is set.
+# Pass the user token here (never into a .cmd on disk) or Heal/logon starts a
+# kernel that fail-opens loopback writes.
+function New-GodBrainChildEnvironment {
+    param([hashtable]$Extra = @{})
+    $keep = @(
+        "PATH", "PATHEXT", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec",
+        "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN",
+        "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH", "PUBLIC",
+        "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+        "MONGODB_URI", "GODBRAIN_API_TOKEN"
+    )
+    $map = [ordered]@{}
+    foreach ($name in $keep) {
+        $val = [Environment]::GetEnvironmentVariable($name, "Process")
+        if ([string]::IsNullOrEmpty($val)) {
+            $val = [Environment]::GetEnvironmentVariable($name, "User")
+        }
+        if (-not [string]::IsNullOrEmpty($val)) {
+            $map[$name] = $val
+        }
+    }
+    if (-not $map.Contains("MONGODB_URI") -or [string]::IsNullOrWhiteSpace($map["MONGODB_URI"])) {
+        $map["MONGODB_URI"] = "mongodb://127.0.0.1:27017"
+    }
+    foreach ($key in $Extra.Keys) {
+        if (-not [string]::IsNullOrEmpty($Extra[$key])) {
+            $map[$key] = $Extra[$key]
+        }
+    }
+    $list = New-Object System.Collections.ArrayList
+    foreach ($key in $map.Keys) {
+        [void]$list.Add("$key=$($map[$key])")
+    }
+    return ,$list
+}
+
 function Start-LoggedProcess {
     param(
         [string]$Name,
@@ -87,12 +125,7 @@ function Start-LoggedProcess {
     [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
     # Launch the exe itself. cmd.exe /c wrap is a console process and
     # Windows Terminal flashes a tab even with SW_HIDE.
-    $envList = New-Object System.Collections.ArrayList
-    [void]$envList.Add("MONGODB_URI=mongodb://127.0.0.1:27017")
-    foreach ($key in $Environment.Keys) {
-        if ($key -eq "GODBRAIN_API_TOKEN") { continue }
-        [void]$envList.Add("$key=$($Environment[$key])")
-    }
+    $envList = New-GodBrainChildEnvironment -Extra $Environment
     $cmdLine = if ($Arguments) { "`"$FilePath`" $Arguments" } else { "`"$FilePath`"" }
     $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
     $startup.ShowWindow = 0
@@ -106,7 +139,31 @@ function Start-LoggedProcess {
         Write-Log "failed $Name Win32_Process.Create=$($created.ReturnValue)"
         return
     }
-    Write-Log "started $Name pid=$($created.ProcessId) $FilePath $Arguments"
+    $tokenInEnv = $false
+    foreach ($entry in $envList) {
+        if ($entry.StartsWith("GODBRAIN_API_TOKEN=")) { $tokenInEnv = $true; break }
+    }
+    Write-Log ("started {0} pid={1} {2} {3} token={4}" -f $Name, $created.ProcessId, $FilePath, $Arguments, $(if ($tokenInEnv) { "set" } else { "unset" }))
+}
+
+if ($SelfTestEnv) {
+    $list = New-GodBrainChildEnvironment -Extra @{ GODBRAIN_API_TOKEN = "x-test-token" }
+    $names = @($list | ForEach-Object { ($_ -split "=", 2)[0] })
+    $cmdSample = @(
+        "@echo off",
+        "set `"MONGODB_URI=mongodb://127.0.0.1:27017`""
+    ) -join "`n"
+    if ($names -notcontains "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: WMI list missing token" }
+    if ($names -notcontains "PATH") { throw "SelfTestEnv: WMI list missing PATH" }
+    if ($names -notcontains "SystemRoot") { throw "SelfTestEnv: WMI list missing SystemRoot" }
+    if ($cmdSample -match "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: launch.cmd would contain token" }
+    $hasReal = $false
+    foreach ($entry in $list) {
+        if ($entry -like "GODBRAIN_API_TOKEN=x-test-token") { $hasReal = $true }
+    }
+    if (-not $hasReal) { throw "SelfTestEnv: Extra token was not applied" }
+    Write-Host ("SelfTestEnv ok keys={0} token=set path=set cmd_has_token=false" -f ($names.Count))
+    exit 0
 }
 
 Write-Log "GodBrain logon start from $RepoRoot"
