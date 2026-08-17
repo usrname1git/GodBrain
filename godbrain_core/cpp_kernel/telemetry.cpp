@@ -283,6 +283,8 @@ namespace telemetry {
                     std::string("http://") + ip + ":8083/api/librarian";
                 result["brief_url"] =
                     std::string("http://") + ip + ":8083/api/brief";
+                result["vram_url"] =
+                    std::string("http://") + ip + ":8083/api/vram";
                 return result;
             }
         }

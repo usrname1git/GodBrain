@@ -74,6 +74,7 @@ static json last_oracle_json();
 static json last_oracle_turns_json();
 static std::string format_brief_text();
 static void handle_brief(const httplib::Request&, httplib::Response&);
+static void handle_vram(const httplib::Request&, httplib::Response&);
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
 static std::string sanitize_oracle_body(std::string answer);
@@ -1158,6 +1159,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_brief(req, res);
     });
+    server.Get("/api/vram", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_vram(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1466,6 +1471,24 @@ static std::string format_brief_text() {
 static void handle_brief(const httplib::Request&, httplib::Response& res) {
     res.set_content(
         json({{"response", format_brief_text()}}).dump(), "application/json");
+}
+
+static void handle_vram(const httplib::Request&, httplib::Response& res) {
+    const json plan = gpu_desk();
+    std::ostringstream reply;
+    reply << plan.value("name", "GPU") << " / "
+          << plan.value("dedicated_gb", 0) << " GB dedicated / "
+          << plan.value("slots", 1) << " slot\n"
+          << "mouth=" << plan.value("mouth_label", "?")
+          << " " << plan.value("mouth_model", "") << "\n"
+          << plan.value("worker", "") << "\n"
+          << plan.value("next", "") << "\n"
+          << "coli expert_gb=" << plan.value("expert_gb", 0)
+          << " reserve=" << plan.value("reserve_gb", 0)
+          << " overcommit="
+          << (plan.value("overcommit", false) ? "on" : "off")
+          << "\nOne generate at a time. Librarian shares this slot.";
+    res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
 }
 
 static json load_mouth() {
@@ -2075,6 +2098,9 @@ int main() {
     svr.Get("/api/brief", [&](const httplib::Request& req, httplib::Response& res) {
         handle_brief(req, res);
     });
+    svr.Get("/api/vram", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_vram(req, res);
+    });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_last(req, res);
@@ -2344,21 +2370,7 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json plan = gpu_desk();
-                std::ostringstream reply;
-                reply << plan.value("name", "GPU") << " / "
-                      << plan.value("dedicated_gb", 0) << " GB dedicated / "
-                      << plan.value("slots", 1) << " slot\n"
-                      << "mouth=" << plan.value("mouth_label", "?")
-                      << " " << plan.value("mouth_model", "") << "\n"
-                      << plan.value("worker", "") << "\n"
-                      << plan.value("next", "") << "\n"
-                      << "coli expert_gb=" << plan.value("expert_gb", 0)
-                      << " reserve=" << plan.value("reserve_gb", 0)
-                      << " overcommit="
-                      << (plan.value("overcommit", false) ? "on" : "off")
-                      << "\nOne generate at a time. Librarian shares this slot.";
-                res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+                handle_vram(req, res);
                 return;
             }
 
@@ -2663,6 +2675,15 @@ int main() {
                 "Do not guess an open question. Cite the note if you use one. "
                 "Do not restate these rules. Do not emit constraint lists.";
             if (local_edit::looks_like_edit_request(user_msg)) {
+                if (cs2_should_sleep_mouth()) {
+                    res.set_content(
+                        json({{"response",
+                               "CS2 owns the box. /edit waits. "
+                               "Use Start-CS2.cmd."}})
+                            .dump(),
+                        "application/json");
+                    return;
+                }
                 system_prompt +=
                     " If changing a repo file, end with apply blocks only: "
                     "*** APPLY / path: relative / <<<< old ==== new >>>> / *** END. "
