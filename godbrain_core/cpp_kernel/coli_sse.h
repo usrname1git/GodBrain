@@ -13,7 +13,8 @@ inline void handle_sse_event(
     std::string& assembled,
     const std::function<void(const std::string&)>& on_token,
     const std::function<void()>& on_ping,
-    const std::function<void(const std::string&)>& on_finish = {}) {
+    const std::function<void(const std::string&)>& on_finish = {},
+    std::string* spoken = nullptr) {
     std::istringstream lines(event);
     std::string line;
     while (std::getline(lines, line)) {
@@ -36,14 +37,27 @@ inline void handle_sse_event(
             }
             const nlohmann::json delta =
                 choice.value("delta", nlohmann::json::object());
-            if (!delta.contains("content") || !delta["content"].is_string()) {
+            std::string token;
+            std::string spoken_token;
+            if (delta.contains("content") && delta["content"].is_string()) {
+                spoken_token = delta["content"].get<std::string>();
+                token = spoken_token;
+            }
+            // Stream think so Galaxy can show it. Do not treat it as the
+            // spoken answer: that would fill next-turn KV with the outline.
+            if (token.empty() && delta.contains("reasoning_content") &&
+                delta["reasoning_content"].is_string()) {
+                token = delta["reasoning_content"].get<std::string>();
+            }
+            if (token.empty() && !delta.contains("content") &&
+                !delta.contains("reasoning_content")) {
                 continue;
             }
-            const std::string token = delta["content"].get<std::string>();
             if (token.empty()) {
                 if (on_ping) on_ping();
             } else {
                 assembled += token;
+                if (spoken && !spoken_token.empty()) *spoken += spoken_token;
                 if (on_token) on_token(token);
             }
         } catch (const nlohmann::json::exception&) {
@@ -58,14 +72,15 @@ inline void feed_sse(
     std::string& assembled,
     const std::function<void(const std::string&)>& on_token,
     const std::function<void()>& on_ping,
-    const std::function<void(const std::string&)>& on_finish = {}) {
+    const std::function<void(const std::string&)>& on_finish = {},
+    std::string* spoken = nullptr) {
     buf.append(data, len);
     for (;;) {
         const auto pos = buf.find("\n\n");
         if (pos == std::string::npos) break;
         const std::string event = buf.substr(0, pos);
         buf.erase(0, pos + 2);
-        handle_sse_event(event, assembled, on_token, on_ping, on_finish);
+        handle_sse_event(event, assembled, on_token, on_ping, on_finish, spoken);
     }
 }
 

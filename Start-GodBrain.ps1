@@ -175,6 +175,15 @@ function Test-ColiServeProcess {
         Where-Object { $_.CommandLine -match '(?i)coli(\.exe)?["'']?\s+serve' }
     return [bool]$hit
 }
+function Test-LlamaServerProcess {
+    return [bool](Get-Process -Name "llama-server" -ErrorAction SilentlyContinue)
+}
+function Test-LlamaMouth {
+    $mouth = Join-Path $logDir "mouth.txt"
+    if (-not (Test-Path -LiteralPath $mouth)) { return $false }
+    $line = (Get-Content -LiteralPath $mouth -TotalCount 1 -ErrorAction SilentlyContinue)
+    return [bool]($line -and $line -match "llama-server")
+}
 
 $model = $env:GODBRAIN_SNAPSHOT_PATH
 if (-not $model) { $model = $env:COLI_MODEL }
@@ -198,6 +207,16 @@ if ($coliSleep) {
     Write-Log "skip coli serve (CS2.exe running or gone < 5 min)"
 } elseif (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip coli serve (:8000 already listening)"
+} elseif (Test-LlamaServerProcess) {
+    Write-Log "skip coli serve (llama-server already running)"
+} elseif (Test-LlamaMouth) {
+    $llama = Join-Path $RepoRoot "Start-LlamaServer.ps1"
+    if (Test-Path -LiteralPath $llama) {
+        Write-Log "mouth is llama-server; restarting it instead of coli"
+        & $llama -RepoRoot $RepoRoot
+    } else {
+        Write-Log "skip coli serve (llama mouth set but missing $llama)"
+    }
 } elseif (Test-ColiServeProcess) {
     Write-Log "skip coli serve (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
