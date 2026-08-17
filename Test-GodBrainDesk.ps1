@@ -51,6 +51,15 @@ foreach ($tn in @("GodBrainWatch", "GodBrainLogon", "GodBrainCs2Pause")) {
     & schtasks.exe /Query /TN $tn 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { $fails.Add("missing scheduled task $tn") }
 }
+$cs2sleep = [bool]($status -and $status.cs2 -and $status.cs2.sleep)
+if (-not $cs2sleep) {
+    foreach ($tn in @("GodBrainWatch", "GodBrainLogon")) {
+        $qv = & schtasks.exe /Query /TN $tn /FO LIST /V 2>$null | Out-String
+        if ($qv -notmatch "Scheduled Task State:\s+Enabled") {
+            $fails.Add("task $tn should be Enabled while CS2 is idle")
+        }
+    }
+}
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
     $html = [string]$galaxy.Content
@@ -67,6 +76,7 @@ $result = [ordered]@{
     fails  = @($fails)
     mouth  = $(if ($status) { $status.mouth.label } else { "" })
     serve  = $(if ($status) { [bool]$status.coli.up } else { $false })
+    cs2    = $cs2sleep
 }
 $logDir = Join-Path $RepoRoot "logs"
 if (-not (Test-Path -LiteralPath $logDir)) {
