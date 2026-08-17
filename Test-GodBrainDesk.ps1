@@ -33,6 +33,7 @@ try { $null = Get-Json "/api/last" } catch { $fails.Add("last: $_") }
 try {
     $pending = Get-Json "/api/pending"
     if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
+    if ($pending.response -notmatch "/verify") { $fails.Add("pending api missing /verify hint") }
     if ($null -eq $pending.items) { $fails.Add("pending api missing items") }
 } catch {
     $fails.Add("pending: $_")

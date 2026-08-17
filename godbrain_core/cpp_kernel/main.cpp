@@ -78,6 +78,7 @@ static void handle_vram(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
+static std::string resolve_judgment_id(const std::string& raw, std::string& error);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -1137,8 +1138,16 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        std::string raw_id = payload.value("id", payload.value("stable_id", ""));
+        std::string resolve_err;
+        const std::string resolved = resolve_judgment_id(raw_id, resolve_err);
+        if (!resolve_err.empty() && resolved.empty()) {
+            res.status = 400;
+            res.set_content(json({{"error", resolve_err}}).dump(), "application/json");
+            return;
+        }
         json judged = memory::set_status({
-            {"id", payload.value("id", payload.value("stable_id", ""))},
+            {"id", resolved.empty() ? raw_id : resolved},
             {"status", payload.value("status", "")},
             {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
         });
@@ -1441,6 +1450,16 @@ static std::string format_brief_text() {
           << " rag="
           << (rag.value("ready", false) ? "ready" : "down")
           << " judge=" << pending.value("total", 0);
+    {
+        const json turns = last_oracle_turns_json();
+        for (const auto& turn : turns) {
+            if (turn.value("status", "candidate") != "candidate") continue;
+            const std::string nid = turn.value("stable_id", "");
+            if (nid.empty()) continue;
+            reply << " next=" << nid.substr(0, nid.size() < 12 ? nid.size() : 12);
+            break;
+        }
+    }
     if (heal.contains("ok")) {
         reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
     }
@@ -1592,7 +1611,8 @@ static json pending_body() {
     if (items.empty()) {
         reply << " none waiting";
     } else {
-        reply << " oracle=" << oracle << " host=" << host;
+        reply << " oracle=" << oracle << " host=" << host
+              << "\n/verify <id> <why>  or  /verify last <why>";
         int index = 0;
         for (const auto& item : items) {
             ++index;
@@ -1634,6 +1654,87 @@ static json pending_body() {
 
 static void handle_pending(const httplib::Request&, httplib::Response& res) {
     res.set_content(pending_body().dump(), "application/json");
+}
+
+static bool ids_equal_ignore_case(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool id_has_prefix(const std::string& id, const std::string& prefix) {
+    if (prefix.empty() || prefix.size() > id.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(id[i])) !=
+            std::tolower(static_cast<unsigned char>(prefix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::vector<std::string> known_judgment_ids() {
+    std::vector<std::string> ids;
+    for (const auto& turn : last_oracle_turns_json()) {
+        const std::string id = turn.value("stable_id", "");
+        if (!id.empty()) ids.push_back(id);
+    }
+    const json rec = host_record_from_rag();
+    const std::string host_id = rec.value("stable_id", "");
+    if (!host_id.empty()) ids.push_back(host_id);
+    return ids;
+}
+
+static std::string resolve_judgment_id(const std::string& raw, std::string& error) {
+    error.clear();
+    std::string id = raw;
+    while (!id.empty() && std::isspace(static_cast<unsigned char>(id.front()))) {
+        id.erase(id.begin());
+    }
+    while (!id.empty() && std::isspace(static_cast<unsigned char>(id.back()))) {
+        id.pop_back();
+    }
+    if (id.empty()) {
+        error = "id required";
+        return "";
+    }
+    if (id.size() == 4 &&
+        (id[0] == 'l' || id[0] == 'L') &&
+        (id[1] == 'a' || id[1] == 'A') &&
+        (id[2] == 's' || id[2] == 'S') &&
+        (id[3] == 't' || id[3] == 'T')) {
+        try {
+            const std::string last = ensure_last_oracle_id();
+            if (last.empty()) {
+                error = "no complete Oracle turn on disk";
+                return "";
+            }
+            return last;
+        } catch (const std::exception& err) {
+            error = err.what();
+            return "";
+        }
+    }
+    const auto known = known_judgment_ids();
+    for (const auto& known_id : known) {
+        if (ids_equal_ignore_case(known_id, id)) return known_id;
+    }
+    if (id.size() < 8) return id;
+    std::vector<std::string> matches;
+    for (const auto& known_id : known) {
+        if (id_has_prefix(known_id, id)) matches.push_back(known_id);
+    }
+    if (matches.size() == 1) return matches[0];
+    if (matches.size() > 1) {
+        error = "ambiguous id prefix " + id;
+        return "";
+    }
+    return id;
 }
 
 static void handle_doors(const httplib::Request&, httplib::Response& res) {
@@ -2717,32 +2818,23 @@ int main() {
                     split == std::string::npos ? trimmed : trimmed.substr(0, split);
                 const std::string reasoning =
                     split == std::string::npos ? "" : trim_view(trimmed.substr(split + 1));
-                if (id.size() == 4 &&
-                    (id[0] == 'l' || id[0] == 'L') &&
-                    (id[1] == 'a' || id[1] == 'A') &&
-                    (id[2] == 's' || id[2] == 'S') &&
-                    (id[3] == 't' || id[3] == 'T')) {
-                    try {
-                        id = ensure_last_oracle_id();
-                    } catch (const std::exception& error) {
-                        res.status = 503;
-                        res.set_content(
-                            json({{"response",
-                                   std::string("Could not resolve last Oracle turn: ") +
-                                       error.what()}}).dump(),
-                            "application/json");
-                        return;
-                    }
-                    if (id.empty()) {
-                        res.set_content(
-                            json({{"response",
-                                   "No complete Oracle turn on disk to " +
-                                       std::string(verb) + "."}}).dump(),
-                            "application/json");
-                        return;
-                    }
+                std::string resolve_err;
+                const std::string resolved = resolve_judgment_id(id, resolve_err);
+                if (!resolve_err.empty() && resolved.empty()) {
+                    res.status = 400;
+                    res.set_content(
+                        json({{"response", resolve_err}}).dump(), "application/json");
+                    return;
                 }
+                if (!resolved.empty()) id = resolved;
                 if (id.empty() || reasoning.size() < 4) {
+                    if (!id.empty() && reasoning.size() < 4) {
+                        res.set_content(
+                            json({{"response",
+                                   std::string("Need a why (min 4) for ") + id}}).dump(),
+                            "application/json");
+                        return;
+                    }
                     res.set_content(
                         json({{"response",
                                std::string("Usage: /") + verb +

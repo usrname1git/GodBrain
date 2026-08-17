@@ -199,7 +199,9 @@ cloud model to get it.
   verified-only.
   Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/verify`,
   `/reject`, `/recall`, `/status`, `/last`, `/brief`, and `/pending`. `/verify last <why>`
-  and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
+  and `/reject last <why>` judge the newest on-disk Oracle turn.
+  `/verify <12-char prefix> <why>` resolves against the `/pending` list.
+  `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram`. `/edit` waits if CS2 is sleeping.
