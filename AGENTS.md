@@ -200,7 +200,9 @@ cloud model to get it.
   Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/verify`,
   `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
-  return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
+  return on-disk Oracle turns without touching Colibri. `GET /api/brief`
+  is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
+  `/brief` is the one-glance
   host + mouth + pending-judge + heal + CS2-sleep + last-turn line. If `logs/mouth.txt` says llama and `:8000` is
   down, `/api/status` and `/brief` kick `Start-LlamaServer.ps1` via
   `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)

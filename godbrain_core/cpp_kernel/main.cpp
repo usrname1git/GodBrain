@@ -72,6 +72,8 @@ static std::vector<LastOracleTurn> g_oracle_turns;
 
 static json last_oracle_json();
 static json last_oracle_turns_json();
+static std::string format_brief_text();
+static void handle_brief(const httplib::Request&, httplib::Response&);
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
 static std::string sanitize_oracle_body(std::string answer);
@@ -1152,6 +1154,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_last(req, res);
     });
+    server.Get("/api/brief", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_brief(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1381,6 +1387,85 @@ static std::string load_where_we_are() {
         text += "\n...";
     }
     return text;
+}
+
+static std::string format_brief_text() {
+    const json st = kernel_status_body();
+    const json host = st.value("host", json::object());
+    const json coli = st.value("coli", json::object());
+    const json rag = st.value("rag", json::object());
+    const json last = st.value("last_oracle", json::object());
+    std::ostringstream reply;
+    const std::string where = load_where_we_are();
+    if (!where.empty()) {
+        reply << where;
+        if (where.back() != '\n') reply << '\n';
+        reply << "---\n";
+    }
+    const json mouth = st.value("mouth", json::object());
+    const std::string mouth_label = mouth.value("label", "coli");
+    const char* mouth_state = !coli.value("up", false)
+        ? (st.value("mouth_restarting", false) ? "starting" : "down")
+        : (coli.value("busy", false) ? "busy" : "serve");
+    const json pending = st.value("pending_judge", json::object());
+    const json heal = st.value("heal", json::object());
+    reply << host.value("computer_name", "?") << " | "
+          << mouth_label << "=" << mouth_state
+          << " rag="
+          << (rag.value("ready", false) ? "ready" : "down")
+          << " judge=" << pending.value("total", 0);
+    if (heal.contains("ok")) {
+        reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+    }
+    const json tail = st.value("tailscale", json::object());
+    if (tail.value("up", false)) {
+        reply << " tail=" << (tail.value("bound", false) ? "door" : "up");
+    } else if (tail.value("reason", "") == "needs_login") {
+        reply << " tail=login";
+    }
+    const json cs2 = st.value("cs2", json::object());
+    if (cs2.value("sleep", false)) {
+        reply << " cs2="
+              << (cs2.value("running", false) ? "play" : "sleep");
+    }
+    const json vram = st.value("vram", json::object());
+    if (vram.contains("dedicated_gb")) {
+        reply << " gpu=" << vram.value("dedicated_gb", 0)
+              << "GB/" << vram.value("slots", 1) << "slot";
+    }
+    const double ram = host.value("ram_available_gb", -1.0);
+    if (ram >= 0.0) {
+        char ram_buf[32];
+        std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram);
+        reply << " RAM " << ram_buf << " GB free";
+    }
+    reply << "\n";
+    if (!last.empty() && last.contains("answer")) {
+        auto clip = [](std::string text, size_t max) {
+            if (text.size() > max) {
+                text.resize(max);
+                text += "...";
+            }
+            return text;
+        };
+        reply << "last "
+              << (last.value("complete", true) ? "" : "partial ")
+              << clip(last.value("question", ""), 80) << "\n  "
+              << clip(last.value("answer", ""), 160);
+    } else {
+        reply << "No Oracle turn on disk yet.";
+    }
+    const json edit = st.value("last_edit", json::object());
+    if (edit.contains("report")) {
+        reply << "\nedit "
+              << (edit.value("applied", false) ? "done" : "fail");
+    }
+    return reply.str();
+}
+
+static void handle_brief(const httplib::Request&, httplib::Response& res) {
+    res.set_content(
+        json({{"response", format_brief_text()}}).dump(), "application/json");
 }
 
 static json load_mouth() {
@@ -1987,6 +2072,9 @@ int main() {
         res.set_content(kernel_status_body().dump(), "application/json");
     });
 
+    svr.Get("/api/brief", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_brief(req, res);
+    });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_last(req, res);
@@ -2189,78 +2277,7 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/brief") &&
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
-                const json st = kernel_status_body();
-                const json host = st.value("host", json::object());
-                const json coli = st.value("coli", json::object());
-                const json rag = st.value("rag", json::object());
-                const json last = st.value("last_oracle", json::object());
-                std::ostringstream reply;
-                const std::string where = load_where_we_are();
-                if (!where.empty()) {
-                    reply << where;
-                    if (where.back() != '\n') reply << '\n';
-                    reply << "---\n";
-                }
-                const json mouth = st.value("mouth", json::object());
-                const std::string mouth_label = mouth.value("label", "coli");
-                const char* mouth_state = !coli.value("up", false)
-                    ? (st.value("mouth_restarting", false) ? "starting" : "down")
-                    : (coli.value("busy", false) ? "busy" : "serve");
-                const json pending = st.value("pending_judge", json::object());
-                const json heal = st.value("heal", json::object());
-                reply << host.value("computer_name", "?") << " | "
-                      << mouth_label << "=" << mouth_state
-                      << " rag="
-                      << (rag.value("ready", false) ? "ready" : "down")
-                      << " judge=" << pending.value("total", 0);
-                if (heal.contains("ok")) {
-                    reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
-                }
-                const json tail = st.value("tailscale", json::object());
-                if (tail.value("up", false)) {
-                    reply << " tail=" << (tail.value("bound", false) ? "door" : "up");
-                } else if (tail.value("reason", "") == "needs_login") {
-                    reply << " tail=login";
-                }
-                const json cs2 = st.value("cs2", json::object());
-                if (cs2.value("sleep", false)) {
-                    reply << " cs2="
-                          << (cs2.value("running", false) ? "play" : "sleep");
-                }
-                const json vram = st.value("vram", json::object());
-                if (vram.contains("dedicated_gb")) {
-                    reply << " gpu=" << vram.value("dedicated_gb", 0)
-                          << "GB/" << vram.value("slots", 1) << "slot";
-                }
-                const double ram = host.value("ram_available_gb", -1.0);
-                if (ram >= 0.0) {
-                    char ram_buf[32];
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram);
-                    reply << " RAM " << ram_buf << " GB free";
-                }
-                reply << "\n";
-                if (!last.empty() && last.contains("answer")) {
-                    auto clip = [](std::string text, size_t max) {
-                        if (text.size() > max) {
-                            text.resize(max);
-                            text += "...";
-                        }
-                        return text;
-                    };
-                    reply << "last "
-                          << (last.value("complete", true) ? "" : "partial ")
-                          << clip(last.value("question", ""), 80) << "\n  "
-                          << clip(last.value("answer", ""), 160);
-                } else {
-                    reply << "No Oracle turn on disk yet.";
-                }
-                const json edit = st.value("last_edit", json::object());
-                if (edit.contains("report")) {
-                    reply << "\nedit "
-                          << (edit.value("applied", false) ? "done" : "fail");
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_brief(req, res);
                 return;
             }
 

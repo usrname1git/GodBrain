@@ -1137,15 +1137,28 @@
                     ? status.host.ram_available_gb.toFixed(1)
                     : '?';
                 boot.appendChild(document.createElement('br'));
-                boot.appendChild(document.createTextNode(
-                    '[SYS] Brief: coli ' + painted.label +
-                    ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
-                    ' | RAM ' + ram + ' GB free' +
-                    (last.question
-                        ? (' | last ' + (last.complete === false ? 'partial ' : '') +
-                            String(last.question).slice(0, 60))
-                        : ' | no Oracle turn yet')
-                ));
+                fetch('/api/brief')
+                    .then(r => r.json())
+                    .then(data => {
+                        const text = String((data && data.response) || '');
+                        const lines = text.split('\n');
+                        let one = '';
+                        for (let i = 0; i < lines.length; i++) {
+                            if (lines[i].indexOf(' | ') !== -1 &&
+                                lines[i].indexOf('=') !== -1) {
+                                one = lines[i];
+                                break;
+                            }
+                        }
+                        boot.appendChild(document.createTextNode(
+                            '[SYS] ' + (one || 'Brief ready (GET /api/brief, no GPU).')));
+                    })
+                    .catch(() => {
+                        boot.appendChild(document.createTextNode(
+                            '[SYS] Brief: coli ' + painted.label +
+                            ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
+                            ' | RAM ' + ram + ' GB free'));
+                    });
             }
             replayLastOracle(status);
         }
