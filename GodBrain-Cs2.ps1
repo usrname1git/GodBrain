@@ -98,28 +98,59 @@ function Stop-ColiServe {
     }
 }
 
+function Stop-LlamaMouth {
+    foreach ($p in @(Get-Process -Name "llama-server" -ErrorAction SilentlyContinue)) {
+        Write-Host ("cs2: stopping llama-server pid={0}" -f $p.Id)
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-TailscaleExe {
+    $fixed = "C:\Program Files\Tailscale\tailscale.exe"
+    if (Test-Path -LiteralPath $fixed) { return $fixed }
+    $cmd = Get-Command tailscale.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+# Disconnect only. Never logout, --reset, or stop the Windows service.
+function Set-TailscaleForCs2([bool]$Up) {
+    $exe = Get-TailscaleExe
+    if (-not $exe) { return }
+    if ($Up) {
+        Write-Host "cs2: tailscale up (existing node, no reset)"
+        & $exe up --unattended 2>$null | Out-Null
+    } else {
+        Write-Host "cs2: tailscale down (keep Valve away from the tailnet)"
+        & $exe down 2>$null | Out-Null
+    }
+}
+
 function Suspend-GodBrainForCs2([string]$RepoRoot) {
     $state = Read-Cs2PauseState $RepoRoot
     $state.last_seen = (Get-Date).ToUniversalTime().ToString("o")
     Stop-ColiServe
+    Stop-LlamaMouth
+    Set-TailscaleForCs2 $false
     foreach ($name in Get-GodBrainCs2PauseTasks) {
         Set-GodBrainTaskEnabled $name $false
     }
     $state.paused = $true
     $state.last_action = "pause"
     Write-Cs2PauseState $RepoRoot $state
-    Write-Host "cs2: GodBrain paused (coli down, Watch/Logon disabled)"
+    Write-Host "cs2: GodBrain paused (mouth down, Tailscale down, Watch/Logon disabled)"
 }
 
 function Resume-GodBrainAfterCs2([string]$RepoRoot) {
     foreach ($name in Get-GodBrainCs2PauseTasks) {
         Set-GodBrainTaskEnabled $name $true
     }
+    Set-TailscaleForCs2 $true
     $state = Read-Cs2PauseState $RepoRoot
     $state.paused = $false
     $state.last_action = "resume"
     Write-Cs2PauseState $RepoRoot $state
-    Write-Host "cs2: tasks enabled, starting GodBrain"
+    Write-Host "cs2: tasks enabled, Tailscale up, starting GodBrain"
     $starter = Join-Path $RepoRoot "Start-GodBrain.ps1"
     if (Test-Path -LiteralPath $starter) {
         & $starter -RepoRoot $RepoRoot

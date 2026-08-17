@@ -1,5 +1,5 @@
 # Safety net if CS2 is started from Steam instead of Start-CS2.ps1.
-# Prefer Start-CS2.ps1: it pauses GodBrain before the game launches.
+# Prefer Start-CS2.ps1: it pauses GodBrain and Tailscale before launch.
 
 [CmdletBinding()]
 param(

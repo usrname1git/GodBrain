@@ -1,5 +1,6 @@
-# Play CS2 with the 4080 free. Pause GodBrain first, launch via Steam,
-# wait until CS2.exe exits, wait 5 more minutes, then wake GLM.
+# Play CS2 with the 4080 free and Tailscale off. Pause GodBrain first,
+# launch via Steam, wait until CS2.exe exits, wait 5 more minutes, then
+# wake the mouth and bring Tailscale back. Never uninstall or --reset.
 # Prefer this over clicking Play in Steam. Watch-Cs2Pause is the backup.
 
 [CmdletBinding()]

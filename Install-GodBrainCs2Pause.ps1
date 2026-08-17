@@ -35,6 +35,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Registered $taskName for $env:USERNAME every 1 minute."
-Write-Host "Pauses coli + Watch/Logon while CS2.exe is running."
-Write-Host "Resumes 5 minutes after CS2.exe exits."
+Write-Host "Pauses mouth (coli/llama) + Tailscale + Watch/Logon while CS2.exe is running."
+Write-Host "Resumes 5 minutes after CS2.exe exits. Does not uninstall Tailscale."
 Write-Host "Remove with: .\Install-GodBrainCs2Pause.ps1 -Unregister"
