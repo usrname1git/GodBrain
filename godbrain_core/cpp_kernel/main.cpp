@@ -75,6 +75,7 @@ static json last_oracle_turns_json();
 static std::string format_brief_text();
 static void handle_brief(const httplib::Request&, httplib::Response&);
 static void handle_vram(const httplib::Request&, httplib::Response&);
+static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
 static std::string sanitize_oracle_body(std::string answer);
@@ -1163,6 +1164,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_vram(req, res);
     });
+    server.Get("/api/heal", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        res.set_content(heal_status_body().dump(), "application/json");
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1465,7 +1470,19 @@ static std::string format_brief_text() {
         reply << "\nedit "
               << (edit.value("applied", false) ? "done" : "fail");
     }
-    return reply.str();
+    const std::string text = reply.str();
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return text;
 }
 
 static void handle_brief(const httplib::Request&, httplib::Response& res) {
@@ -1572,7 +1589,9 @@ static json heal_status_body() {
          {{"kernel", true},
           {"rag", rag_up},
           {"coli", coli.value("up", false)},
-          {"coli_busy", coli.value("busy", false)}}},
+          {"coli_busy", coli.value("busy", false)},
+          {"mouth", coli.value("up", false)},
+          {"mouth_busy", coli.value("busy", false)}}},
         {"last", load_heal_last()},
     };
 }

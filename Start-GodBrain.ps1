@@ -362,6 +362,13 @@ if (Test-Port "127.0.0.1" 8083) {
     }
 }
 
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-brief.txt"
+} catch {
+    Write-Log "brief persist skipped: $_"
+}
+
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
