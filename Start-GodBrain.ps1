@@ -88,10 +88,13 @@ function Start-LoggedProcess {
     # WMI Create is owned by the SCM host, not this console/job. Start-Process
     # children die when the starter window or agent job exits — that is the
     # "kernel window popped and Galaxy died" failure.
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine      = "cmd.exe /c `"$wrap`""
-        CurrentDirectory = $WorkingDirectory
-    }
+    # DETACHED_PROCESS + SW_HIDE: no console, so Windows Terminal does not
+    # open a flashing cmd tab (that also stole focus from CS2).
+    $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
+    $startup.ShowWindow = 0
+    $startup.CreateFlags = 8
+    $created = ([wmiclass]"Win32_Process").Create(
+        "cmd.exe /c `"$wrap`"", $WorkingDirectory, $startup)
     if ($created.ReturnValue -ne 0) {
         Write-Log "failed $Name Win32_Process.Create=$($created.ReturnValue)"
         return
