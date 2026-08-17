@@ -158,7 +158,9 @@ cloud model to get it.
   Do not `--ask` while `coli serve` holds the GPU slot.
   Local file edits: Galaxy can ask the mouth to change a repo file.
   The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a
-  second GPU pass for `*** APPLY` blocks, and writes only root
+  second GPU pass for `*** APPLY` blocks (thinking off, spoken-only parse),
+  writes `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy,
+  and writes only root
   `.ps1`/`.cmd`/`.md` or `godbrain_core\` (not build/vendor/LLM/archive).
   Never git push from the mouth.
   Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause coli first,

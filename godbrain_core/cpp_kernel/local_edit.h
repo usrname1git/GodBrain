@@ -13,7 +13,15 @@ struct Result {
     std::string report;
 };
 
+struct Preview {
+    int count = 0;
+    std::string first_path;
+    std::string first_old;
+    std::string first_new;
+};
+
 bool looks_like_edit_request(const std::string& user_msg);
+Preview preview_apply_blocks(const std::string& text);
 
 Result maybe_apply(
     const std::string& user_msg,

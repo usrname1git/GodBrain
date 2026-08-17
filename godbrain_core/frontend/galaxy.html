@@ -747,6 +747,11 @@
                 if (q) lines.push('  Q: ' + q);
                 lines.push('  A: ' + a);
             }
+            const edit = (status && status.last_edit) || {};
+            if (edit.report) {
+                const er = String(edit.report).replace(/\n/g, ' ').slice(0, 80);
+                lines.push('edit ' + (edit.applied ? 'done' : 'fail') + ' ' + er);
+            }
             if (tail.up) {
                 lines.push('tailscale ' + (tail.ip || '') + ' ' + (tail.writes || ''));
             } else {

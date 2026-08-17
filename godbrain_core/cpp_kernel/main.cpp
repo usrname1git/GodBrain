@@ -86,6 +86,7 @@ static void note_oracle_partial(
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
 static json load_mouth();
+static json load_last_edit();
 static bool maybe_restart_mouth();
 
 static std::string read_env(const char* name) {
@@ -866,6 +867,7 @@ static json kernel_status_body() {
         {"tailscale", tailscale},
         {"last_oracle", last_oracle_json()},
         {"last_oracle_turns", last_oracle_turns_json()},
+        {"last_edit", load_last_edit()},
     };
 }
 
@@ -1297,6 +1299,17 @@ static json load_heal_last() {
     }
 }
 
+static json load_last_edit() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-edit-result.json";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
 static json heal_status_body() {
     json rag = json::object();
     httplib::Client rag_client("127.0.0.1", 8084);
@@ -1397,12 +1410,16 @@ std::string run_colibri_serve(
     std::string assembled;
     std::string last_reason;
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
-        const json body = {
+        json body = {
             {"model", model},
             {"stream", true},
             {"max_tokens", chunk_tokens},
             {"messages", messages},
         };
+        // /edit apply pass: do not spend the 1024-token budget on think.
+        if (llama_mouth && wants_apply_continue(system, user)) {
+            body["chat_template_kwargs"] = {{"enable_thinking", false}};
+        }
         std::string piece;
         std::string sse_buf;
         std::string finish_reason;
@@ -1963,6 +1980,13 @@ int main() {
                           << "\n  A: " << clip(last.value("answer", ""), 160)
                           << "\n";
                 }
+                const json edit = st.value("last_edit", json::object());
+                if (edit.contains("report")) {
+                    std::string report = edit.value("report", "");
+                    if (report.size() > 80) report.resize(80);
+                    reply << "edit " << (edit.value("applied", false) ? "done" : "fail")
+                          << " " << report << "\n";
+                }
                 if (tail.value("up", false)) {
                     reply << "tailscale " << tail.value("ip", "") << " "
                           << tail.value("writes", "") << "\n";
@@ -2051,6 +2075,11 @@ int main() {
                           << clip(last.value("answer", ""), 160);
                 } else {
                     reply << "No Oracle turn on disk yet.";
+                }
+                const json edit = st.value("last_edit", json::object());
+                if (edit.contains("report")) {
+                    reply << "\nedit "
+                          << (edit.value("applied", false) ? "done" : "fail");
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(),
                                 "application/json");
@@ -2551,13 +2580,16 @@ int main() {
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
                         const auto edit = local_edit::maybe_apply(
                             asked_q,
-                            chunk,
+                            for_memory,
                             [&](const std::string& sys, const std::string& usr) {
                                 emit({{"type", "status"},
                                       {"text",
                                        "Plan saved in RAM. Second pass on "
                                        "the GPU: emit the patch only."}});
-                                return run_colibri(sys, usr, {}, {}, {}, {});
+                                std::string spoken2;
+                                const std::string raw =
+                                    run_colibri(sys, usr, {}, {}, {}, {}, &spoken2);
+                                return spoken2.empty() ? raw : spoken2;
                             });
                         if (edit.attempted) {
                             chunk += "\n\n";
@@ -2603,9 +2635,12 @@ int main() {
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
             const auto edit = local_edit::maybe_apply(
                 asked,
-                chunk,
+                for_memory,
                 [&](const std::string& sys, const std::string& usr) {
-                    return run_colibri(sys, usr, {}, {}, {}, {});
+                    std::string spoken2;
+                    const std::string raw =
+                        run_colibri(sys, usr, {}, {}, {}, {}, &spoken2);
+                    return spoken2.empty() ? raw : spoken2;
                 });
             if (edit.attempted) {
                 chunk += "\n\n";
