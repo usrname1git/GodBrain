@@ -2724,6 +2724,17 @@ int main() {
                 return;
             }
 
+            if (cs2_should_sleep_mouth()) {
+                res.set_content(
+                    json({{"response",
+                           "CS2 owns the box. Mouth stays down. "
+                           "Desk slashes still work. Ask again after "
+                           "the 5 min window."}})
+                        .dump(),
+                    "application/json");
+                return;
+            }
+
             const bool continue_cmd = is_continue_command(user_msg);
             std::cout << "[RAG] Canonical search requested (" << user_msg.size()
                       << " bytes) continue=" << (continue_cmd ? "1" : "0")
