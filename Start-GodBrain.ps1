@@ -368,6 +368,16 @@ try {
 } catch {
     Write-Log "brief persist skipped: $_"
 }
+$desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
+if (Test-Path -LiteralPath $desk) {
+    try {
+        & $desk -RepoRoot $RepoRoot
+        if ($LASTEXITCODE -ne 0) { Write-Log "desk self-check failed (kernel still up)" }
+        else { Write-Log "desk self-check ok" }
+    } catch {
+        Write-Log "desk self-check skipped: $_"
+    }
+}
 
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
