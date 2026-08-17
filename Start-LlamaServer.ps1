@@ -103,10 +103,11 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
 
 Write-Host "Start-LlamaServer: starting $Server"
-$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine      = "cmd.exe /c `"$wrap`""
-    CurrentDirectory = (Split-Path $Server -Parent)
-}
+$startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
+$startup.ShowWindow = 0
+$startup.CreateFlags = 8
+$created = ([wmiclass]"Win32_Process").Create(
+    "cmd.exe /c `"$wrap`"", (Split-Path $Server -Parent), $startup)
 if ($created.ReturnValue -ne 0) {
     throw "Win32_Process.Create=$($created.ReturnValue)"
 }
