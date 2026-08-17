@@ -704,7 +704,7 @@
             const engine = mouth.label || mouth.engine || 'coli';
             let coliLine;
             if (!coli.up && !status.coli_serve) {
-                coliLine = engine + '=down';
+                coliLine = engine + (status.mouth_restarting ? '=starting' : '=down');
             } else if (busy) {
                 coliLine = engine + '=busy' +
                     (elapsed !== null ? (' ' + elapsed + 's') : '') +
@@ -764,7 +764,9 @@
                 busy: busy,
                 label: busy
                     ? ('busy' + (elapsed !== null ? (' ' + elapsed + 's') : ''))
-                    : ((coli.up || status.coli_serve) ? 'serve' : 'cold')
+                    : ((coli.up || status.coli_serve)
+                        ? 'serve'
+                        : (status.mouth_restarting ? 'starting' : 'cold'))
             };
         }
 

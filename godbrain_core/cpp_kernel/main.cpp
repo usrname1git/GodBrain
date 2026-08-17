@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <tlhelp32.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -85,6 +86,7 @@ static void note_oracle_partial(
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
 static json load_mouth();
+static bool maybe_restart_mouth();
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -842,6 +844,10 @@ static json kernel_status_body() {
         }
     }
     const json coli = coli_serve_status();
+    bool mouth_restarting = false;
+    if (!coli.value("up", false)) {
+        mouth_restarting = maybe_restart_mouth();
+    }
     json host = telemetry::get_host_inventory();
     const json live = telemetry::get_current_state();
     host["ram_available_gb"] = live.value("ram_available_gb", 0.0);
@@ -851,6 +857,7 @@ static json kernel_status_body() {
         {"coli_serve", coli.value("up", false)},
         {"coli", coli},
         {"mouth", load_mouth()},
+        {"mouth_restarting", mouth_restarting},
         {"writes_need_token", !g_api_token.empty()},
         {"vram", telemetry::plan_colibri_vram()},
         {"rag", rag_health},
@@ -1101,6 +1108,94 @@ bool colibri_serve_up() {
     client.set_follow_location(false);
     const auto response = client.Get("/health");
     return response && response->status == 200;
+}
+
+static bool process_running_ci(const wchar_t* exe) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    bool hit = false;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, exe) == 0) {
+                hit = true;
+                break;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return hit;
+}
+
+static std::string repo_root_from_exe() {
+    const std::string dir = get_exe_dir() + "\\..\\..";
+    char canon[MAX_PATH] = {};
+    if (GetFullPathNameA(dir.c_str(), MAX_PATH, canon, nullptr) == 0) return "";
+    return std::string(canon);
+}
+
+static bool cs2_should_sleep_mouth() {
+    if (process_running_ci(L"CS2.exe")) return true;
+    const std::string path = repo_root_from_exe() + "\\logs\\cs2-pause.json";
+    std::ifstream in(path);
+    if (!in) return false;
+    try {
+        const json st = json::parse(in);
+        const std::string seen = st.value("last_seen", "");
+        if (seen.empty()) return false;
+        // last_seen is ISO. If paused or last_action is pause, stay down.
+        if (st.value("paused", false)) return true;
+    } catch (const json::exception&) {
+    }
+    return false;
+}
+
+static std::atomic<DWORD> g_mouth_restart_ms{0};
+// Start-LlamaServer kills every llama-server.exe. Galaxy polls /status often.
+// Do not re-kick while weights are still loading or we just launched.
+static const DWORD kMouthRestartCooldownMs = 300000;
+
+static bool maybe_restart_mouth() {
+    if (load_mouth().value("label", "") != "llama") return false;
+    if (cs2_should_sleep_mouth()) return false;
+    const DWORD now = GetTickCount();
+    const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < kMouthRestartCooldownMs) return true;
+    // Loading: :8000 is down but the process is up. Watch/Heal kill leftovers
+    // after ~4 min. A /status poll must not race Start-LlamaServer.
+    if (process_running_ci(L"llama-server.exe")) return true;
+    const std::string repo = repo_root_from_exe();
+    const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
+    const std::string starter = repo + "\\Start-LlamaServer.ps1";
+    const std::string pwsh = path_exists("C:\\pwsh\\pwsh.exe")
+                                 ? "C:\\pwsh\\pwsh.exe"
+                                 : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    if (!path_exists(hidden) || !path_exists(starter) || !path_exists(pwsh)) {
+        return false;
+    }
+    std::string cmd = "\"" + hidden + "\" \"" + pwsh +
+                      "\" -NoProfile -WindowStyle Hidden -File \"" + starter +
+                      "\" -RepoRoot \"" + repo + "\"";
+    std::vector<char> buf(cmd.begin(), cmd.end());
+    buf.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(
+            nullptr, buf.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, repo.c_str(),
+            &si, &pi)) {
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    g_mouth_restart_ms.store(now, std::memory_order_relaxed);
+    std::cout << "[SYS] mouth down; started Start-LlamaServer via run_hidden"
+              << std::endl;
+    return true;
 }
 
 static json coli_serve_status() {
@@ -1548,6 +1643,12 @@ std::string run_colibri(
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
     const std::string mouth = load_mouth().value("label", "coli");
+    const bool starting = maybe_restart_mouth();
+    if (starting) {
+        return "Error: " + mouth +
+               " is down on 127.0.0.1:8000. Starting it. "
+               "Ask again in about a minute. Do not Continue.";
+    }
     return "Error: " + mouth +
            " is down on 127.0.0.1:8000. "
            "Run Start-LlamaServer.ps1 if the mouth is llama, or "
@@ -1805,7 +1906,9 @@ int main() {
                       << host.value("logical_processors", 0) << " threads\n"
                       << "host_record=" << rec.value("status", "none") << "\n";
                 if (!coli.value("up", st.value("coli_serve", false))) {
-                    reply << mouth_label << "=down";
+                    reply << mouth_label
+                          << (st.value("mouth_restarting", false) ? "=starting"
+                                                                 : "=down");
                 } else if (coli.value("busy", false)) {
                     reply << mouth_label << "=busy";
                     if (coli.contains("elapsed_s")) {
@@ -1918,10 +2021,13 @@ int main() {
                     if (where.back() != '\n') reply << '\n';
                     reply << "---\n";
                 }
-                reply << host.value("computer_name", "?") << " | coli="
-                      << (!coli.value("up", false)
-                              ? "down"
-                              : (coli.value("busy", false) ? "busy" : "serve"))
+                const json mouth = st.value("mouth", json::object());
+                const std::string mouth_label = mouth.value("label", "coli");
+                const char* mouth_state = !coli.value("up", false)
+                    ? (st.value("mouth_restarting", false) ? "starting" : "down")
+                    : (coli.value("busy", false) ? "busy" : "serve");
+                reply << host.value("computer_name", "?") << " | "
+                      << mouth_label << "=" << mouth_state
                       << " rag="
                       << (rag.value("ready", false) ? "ready" : "down");
                 const double ram = host.value("ram_available_gb", -1.0);
