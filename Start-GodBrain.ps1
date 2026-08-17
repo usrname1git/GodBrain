@@ -181,6 +181,12 @@ function Test-ColiServeProcess {
 function Test-LlamaServerProcess {
     return [bool](Get-Process -Name "llama-server" -ErrorAction SilentlyContinue)
 }
+function Get-LlamaServerAgeMinutes {
+    $proc = Get-Process -Name "llama-server" -ErrorAction SilentlyContinue |
+        Sort-Object StartTime | Select-Object -First 1
+    if (-not $proc) { return $null }
+    return ((Get-Date) - $proc.StartTime).TotalMinutes
+}
 function Test-LlamaMouth {
     $mouth = Join-Path $logDir "mouth.txt"
     if (-not (Test-Path -LiteralPath $mouth)) { return $false }
@@ -210,16 +216,19 @@ if ($coliSleep) {
     Write-Log "skip coli serve (CS2.exe running or gone < 5 min)"
 } elseif (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip coli serve (:8000 already listening)"
-} elseif (Test-LlamaServerProcess) {
-    Write-Log "skip coli serve (llama-server already running)"
 } elseif (Test-LlamaMouth) {
     $llama = Join-Path $RepoRoot "Start-LlamaServer.ps1"
-    if (Test-Path -LiteralPath $llama) {
-        Write-Log "mouth is llama-server; restarting it instead of coli"
+    $age = Get-LlamaServerAgeMinutes
+    if ($null -ne $age -and $age -lt 4) {
+        Write-Log ("skip coli serve (llama-server loading {0:n1} min, :8000 not up yet)" -f $age)
+    } elseif (Test-Path -LiteralPath $llama) {
+        Write-Log "mouth is llama-server; :8000 down; starting it (kills leftover llama)"
         & $llama -RepoRoot $RepoRoot
     } else {
         Write-Log "skip coli serve (llama mouth set but missing $llama)"
     }
+} elseif (Test-LlamaServerProcess) {
+    Write-Log "skip coli serve (llama-server already running)"
 } elseif (Test-ColiServeProcess) {
     Write-Log "skip coli serve (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
