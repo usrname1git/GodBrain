@@ -21,13 +21,23 @@ if (-not (Test-Path -LiteralPath $watch)) {
     throw "Missing $watch"
 }
 
-$vbs = Join-Path $repo "Watch-GodBrain.vbs"
-if (-not (Test-Path -LiteralPath $vbs)) {
-    throw "Missing $vbs"
+$hidden = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.exe"
+$hiddenSrc = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.cpp"
+if (-not (Test-Path -LiteralPath $hidden)) {
+    if (-not (Test-Path -LiteralPath $hiddenSrc)) { throw "Missing $hiddenSrc" }
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+    $dir = Split-Path $hiddenSrc -Parent
+    cmd /c "call `"$vcvars`" >nul && cd /d `"$dir`" && cl /nologo /O2 /Fe:run_hidden.exe run_hidden.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $hidden)) {
+        throw "failed to build $hidden"
+    }
 }
-# wscript //B Run 0: no console. Hidden pwsh still flashes Windows Terminal.
-$wscript = Join-Path $env:SystemRoot "System32\wscript.exe"
-$tr = "`"$wscript`" //B //Nologo `"$vbs`""
+$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
+$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+# CREATE_NO_WINDOW child. Hidden pwsh and wscript still flash Windows Terminal.
+$tr = "`"$hidden`" `"$shell`" -NoProfile -WindowStyle Hidden -File `"$watch`" -RepoRoot `"$repo`""
 # schtasks only. Get-ScheduledTask CIM throws 0x8007054f on this host.
 # Never /RU SYSTEM. /IT = only while this user is logged on.
 & schtasks.exe /Create /TN $taskName /SC MINUTE /MO 5 /IT /F /RL LIMITED `
