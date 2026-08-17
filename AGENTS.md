@@ -223,8 +223,11 @@ cloud model to get it.
   `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door), validates
   the result, and sends one JSON document over stdin to the Go Memory Store.
   It does not cold-spawn Colibri unless `GODBRAIN_LIBRARIAN_SPAWN=1`.
-  `trigger_librarian.ps1` extracts the newest Copilot session transcript
-  and starts that pipeline. Any text file is a valid source.
+  `Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or shell.
+  `trigger_librarian.ps1` still extracts the newest Copilot session.
+  Any text file is a valid source. iPhone/Tailscale: POST `/api/remember`
+  to suggest a candidate, or POST `/api/librarian` `{text}` to classify
+  (uses the GPU mouth; bearer required).
 - `godbrain_core/memory_store/` is the active Alexandria write boundary. It
   validates provenance and ingestion state, then stores immutable sources and
   knowledge nodes plus append-only run-to-node links in MongoDB.

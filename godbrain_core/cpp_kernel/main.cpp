@@ -889,6 +889,141 @@ static void handle_remember(const httplib::Request& req, httplib::Response& res)
     }
 }
 
+static std::string librarian_exe_path() {
+    const std::string env = read_env("GODBRAIN_LIBRARIAN_PATH");
+    if (!env.empty() && path_exists(env)) return env;
+    return get_exe_dir() + "\\..\\cpp_tools\\librarian.exe";
+}
+
+static std::string safe_session_id(std::string value) {
+    if (value.empty()) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "door-%lu",
+                      static_cast<unsigned long>(GetTickCount()));
+        return buf;
+    }
+    for (char& ch : value) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c) == 0 && ch != '-' && ch != '_' && ch != '.') {
+            ch = '-';
+        }
+    }
+    if (value.size() > 64) value.resize(64);
+    return value;
+}
+
+static void handle_librarian(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        std::string text = payload.value(
+            "text", payload.value("message", payload.value("idea", "")));
+        if (text.empty()) {
+            res.status = 400;
+            res.set_content(
+                json({{"error", "librarian needs text"}}).dump(),
+                "application/json");
+            return;
+        }
+        if (text.size() > 15u * 1024u * 1024u) {
+            res.status = 400;
+            res.set_content(
+                json({{"error", "text exceeds 15 MiB"}}).dump(),
+                "application/json");
+            return;
+        }
+        const std::string session =
+            safe_session_id(payload.value("session_id", ""));
+        const std::string exe = librarian_exe_path();
+        if (!path_exists(exe)) {
+            res.status = 503;
+            res.set_content(
+                json({{"error", "missing librarian.exe"}}).dump(),
+                "application/json");
+            return;
+        }
+        char tmp_dir[MAX_PATH] = {};
+        if (GetTempPathA(MAX_PATH, tmp_dir) == 0) {
+            throw std::runtime_error("GetTempPath failed");
+        }
+        const std::string tmp = std::string(tmp_dir) + "gb-lib-" + session + ".txt";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("cannot write temp transcript");
+            out << text;
+        }
+        std::string cmd = "\"" + exe + "\" \"" + session + "\" \"" + tmp + "\"";
+        std::vector<char> cmdline(cmd.begin(), cmd.end());
+        cmdline.push_back('\0');
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        HANDLE job = CreateJobObjectA(nullptr, nullptr);
+        if (job) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        }
+        const BOOL started = CreateProcessA(
+            nullptr, cmdline.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi);
+        if (!started) {
+            DeleteFileA(tmp.c_str());
+            if (job) CloseHandle(job);
+            throw std::runtime_error("CreateProcess librarian.exe failed");
+        }
+        if (job) AssignProcessToJobObject(job, pi.hProcess);
+        ResumeThread(pi.hThread);
+        const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
+        if (wait == WAIT_TIMEOUT && job) {
+            CloseHandle(job);
+            job = nullptr;
+        }
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        if (job) CloseHandle(job);
+        DeleteFileA(tmp.c_str());
+        if (wait == WAIT_TIMEOUT) {
+            res.status = 504;
+            res.set_content(
+                json({{"error", "librarian timed out (180s)"},
+                      {"session_id", session}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        if (code != 0) {
+            res.status = 502;
+            res.set_content(
+                json({{"error", "librarian failed"},
+                      {"exit", code},
+                      {"session_id", session}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        res.set_content(
+            json({{"ok", true},
+                  {"session_id", session},
+                  {"extractor_id", "Librarian-CPP"}})
+                .dump(),
+            "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(
+            json({{"error", "librarian body must be JSON"}}).dump(),
+            "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
 static void handle_observe(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -950,6 +1085,7 @@ static void attach_shortcut_routes(httplib::Server& server) {
         handle_last(req, res);
     });
     server.Post("/api/remember", handle_remember);
+    server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
     server.Post("/api/truth", handle_truth);
     server.Post("/api/judge", handle_judge);
@@ -1605,6 +1741,11 @@ int main() {
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_remember(req, res);
+    });
+
+    svr.Post("/api/librarian", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_librarian(req, res);
     });
 
     svr.Post("/api/truth", [&](const httplib::Request& req, httplib::Response& res) {
@@ -2390,7 +2531,8 @@ int main() {
             httplib::Server door;
             attach_shortcut_routes(door);
             std::cout << "[SYS] Tailscale shortcuts door http://" << ip
-                      << ":8083 (remember/observe/judge/status/last only)" << std::endl;
+                      << ":8083 (remember/librarian/observe/judge/status/last)"
+                      << std::endl;
             if (!door.listen(ip, 8083)) {
                 std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
                           << std::endl;

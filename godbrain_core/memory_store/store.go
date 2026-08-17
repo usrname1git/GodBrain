@@ -335,7 +335,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	}
 	extractorID := payload.ExtractorID
 	if extractorID == "" {
-		extractorID = "Librarian-CPP-Colibri"
+		extractorID = DefaultExtractorID
 	}
 	if run.ExtractorID != extractorID {
 		return errors.New("run extractor_id does not match payload")
@@ -546,7 +546,7 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 func ValidatePreIngestionPayload(payload DistillationPayload) error {
 	extractorID := payload.ExtractorID
 	if extractorID == "" {
-		extractorID = "Librarian-CPP-Colibri"
+		extractorID = DefaultExtractorID
 	}
 	if !safeExtractorIDPattern.MatchString(extractorID) || payload.ExtractorVersion == "" ||
 		len(payload.ExtractorVersion) > 128 || payload.SchemaVersion == "" ||
