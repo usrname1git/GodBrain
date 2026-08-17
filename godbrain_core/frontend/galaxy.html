@@ -760,6 +760,10 @@
                     (vram.slots || 1) + ' slot' +
                     (vram.next ? (' — ' + vram.next) : ''));
             }
+            const desk = (status && status.desk_test) || {};
+            if (typeof desk.ok === 'boolean') {
+                lines.push('desk ' + (desk.ok ? 'ok' : 'fail'));
+            }
             const last = (status && status.last_oracle) || {};
             if (last.answer) {
                 const q = String(last.question || '').slice(0, 80);
@@ -839,7 +843,7 @@
                 appendChatMessage(
                     'sys-msg',
                     '[SYS]',
-                    'Colibri is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
+                    'Mouth is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
                 return;
             }
             if (/^\/status\b/i.test(text)) {
@@ -853,6 +857,23 @@
                         appendChatMessage(
                             'sys-msg', '[ERR]',
                             (err && err.message) || 'Status failed', 'red');
+                    });
+                return;
+            }
+            if (/^\/(brief|vram|doors|heal|last)\b/i.test(text)) {
+                const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
+                fetch(path)
+                    .then(res => res.json())
+                    .then(data => {
+                        const textOut = (data && data.response)
+                            ? data.response
+                            : JSON.stringify(data, null, 2);
+                        appendChatMessage('sys-msg', '[SYS]', textOut);
+                    })
+                    .catch(err => {
+                        appendChatMessage(
+                            'sys-msg', '[ERR]',
+                            (err && err.message) || (path + ' failed'), 'red');
                     });
                 return;
             }
@@ -1109,6 +1130,10 @@
                 const heal = status.heal || {};
                 if (typeof heal.ok === 'boolean') {
                     lines.push('Heal: ' + (heal.ok ? 'ok' : 'fail'));
+                }
+                const deskCard = status.desk_test || {};
+                if (typeof deskCard.ok === 'boolean') {
+                    lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
                 }
                 const cs2 = status.cs2 || {};
                 if (cs2.sleep) {
