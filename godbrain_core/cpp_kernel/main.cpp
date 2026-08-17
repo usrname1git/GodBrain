@@ -1548,16 +1548,27 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["observe"] = base + "/api/observe";
         ts["judge"] = base + "/api/judge";
     }
-    res.set_content(
-        json({
-                 {"kernel", true},
-                 {"writes_need_token", !g_api_token.empty()},
-                 {"slots", 1},
-                 {"loopback", loopback},
-                 {"tailscale", ts},
-             })
-            .dump(),
-        "application/json");
+    json body = {
+        {"kernel", true},
+        {"writes_need_token", !g_api_token.empty()},
+        {"slots", 1},
+        {"loopback", loopback},
+        {"tailscale", ts},
+    };
+    const std::string dumped = body.dump(2);
+    body["response"] = dumped;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-doors.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << dumped;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 static json load_mouth() {
@@ -2378,6 +2389,13 @@ int main() {
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
                 handle_brief(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/doors") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                handle_doors(req, res);
                 return;
             }
 

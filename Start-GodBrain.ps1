@@ -371,5 +371,6 @@ try {
 
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
+Write-Log "Doors: GET http://127.0.0.1:8083/api/doors"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
 Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"

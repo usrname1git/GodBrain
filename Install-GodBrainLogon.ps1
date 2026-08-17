@@ -39,6 +39,6 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Registered $taskName for $env:USERNAME at logon."
-Write-Host "Starts (if binaries exist): rag-service :8084, coli serve :8000, kernel :8083"
+Write-Host "Starts (if binaries exist): rag-service :8084, mouth :8000 (llama or coli), kernel :8083"
 Write-Host "Mongo is not started here; keep its own Windows service."
 Write-Host "Remove with: .\Install-GodBrainLogon.ps1 -Unregister"
