@@ -283,7 +283,7 @@ changes directory explicitly.
 Push-Location godbrain_core\memory_store
 go test ./...
 go build -o memory-store.exe ./cmd/memory-store
-go build -o rag-service.exe ./cmd/rag-service
+go build -ldflags "-H windowsgui" -o rag-service.exe ./cmd/rag-service
 go build -o rag-rebuild.exe ./cmd/rag-rebuild
 Pop-Location
 ```
@@ -301,7 +301,7 @@ The kernel has no committed CMake project. From
 `godbrain_core\cpp_kernel` in a Visual Studio x64 Developer shell:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action: it may invoke local `mongosh`,
