@@ -752,6 +752,13 @@
                     'cs2 ' + (cs2.running ? 'play' : 'sleep') +
                     ' — mouth and Tailscale stay down');
             }
+            const vram = (status && status.vram) || {};
+            if (typeof vram.dedicated_gb === 'number') {
+                lines.push(
+                    'gpu ' + vram.dedicated_gb + ' GB / ' +
+                    (vram.slots || 1) + ' slot' +
+                    (vram.next ? (' — ' + vram.next) : ''));
+            }
             const last = (status && status.last_oracle) || {};
             if (last.answer) {
                 const q = String(last.question || '').slice(0, 80);

@@ -88,6 +88,7 @@ static void retry_unstored_oracle_turns();
 static json load_mouth();
 static json load_last_edit();
 static json load_heal_last();
+static json gpu_desk();
 static bool maybe_restart_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
@@ -880,7 +881,7 @@ static json kernel_status_body() {
         {"mouth", load_mouth()},
         {"mouth_restarting", mouth_restarting},
         {"writes_need_token", !g_api_token.empty()},
-        {"vram", telemetry::plan_colibri_vram()},
+        {"vram", gpu_desk()},
         {"rag", rag_health},
         {"host", host},
         {"host_record", host_record},
@@ -1377,6 +1378,24 @@ static json load_mouth() {
     }
     mouth["model"] = model;
     return mouth;
+}
+
+static json gpu_desk() {
+    json plan = telemetry::plan_colibri_vram();
+    const json mouth = load_mouth();
+    const int gb = plan.value("dedicated_gb", 0);
+    plan["slots"] = 1;
+    plan["mouth_label"] = mouth.value("label", "");
+    plan["mouth_model"] = mouth.value("model", "");
+    if (gb < 24) {
+        plan["worker"] = "Gemma 12B Q4 fits; default 27B Q4 does not";
+        plan["next"] =
+            "24 GB VRAM is the next worker (27B Q4), still one generate";
+    } else {
+        plan["worker"] = "24 GB+ can hold a default 27B Q4 worker";
+        plan["next"] = "still one GPU slot; do not stack Librarian on chat";
+    }
+    return plan;
 }
 
 static json load_heal_last() {
@@ -2177,6 +2196,11 @@ int main() {
                     reply << " cs2="
                           << (cs2.value("running", false) ? "play" : "sleep");
                 }
+                const json vram = st.value("vram", json::object());
+                if (vram.contains("dedicated_gb")) {
+                    reply << " gpu=" << vram.value("dedicated_gb", 0)
+                          << "GB/" << vram.value("slots", 1) << "slot";
+                }
                 const double ram = host.value("ram_available_gb", -1.0);
                 if (ram >= 0.0) {
                     char ram_buf[32];
@@ -2272,17 +2296,20 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json plan = telemetry::plan_colibri_vram();
+                const json plan = gpu_desk();
                 std::ostringstream reply;
-                reply << "Colibri VRAM plan (16 GB compensation)\n"
-                      << plan.value("name", "GPU") << " / "
-                      << plan.value("dedicated_gb", 0) << " GB dedicated\n"
-                      << "CUDA_EXPERT_GB=" << plan.value("expert_gb", 0)
-                      << " (reserve " << plan.value("reserve_gb", 0) << " GB for KV/desktop)\n"
-                      << "COLI_RAM_OVERCOMMIT="
-                      << (plan.value("overcommit", false) ? "1" : "0")
-                      << " — off means no silent spill to DDR5\n"
-                      << "Override with GODBRAIN_CUDA_EXPERT_GB or GODBRAIN_COLI_OVERCOMMIT=1";
+                reply << plan.value("name", "GPU") << " / "
+                      << plan.value("dedicated_gb", 0) << " GB dedicated / "
+                      << plan.value("slots", 1) << " slot\n"
+                      << "mouth=" << plan.value("mouth_label", "?")
+                      << " " << plan.value("mouth_model", "") << "\n"
+                      << plan.value("worker", "") << "\n"
+                      << plan.value("next", "") << "\n"
+                      << "coli expert_gb=" << plan.value("expert_gb", 0)
+                      << " reserve=" << plan.value("reserve_gb", 0)
+                      << " overcommit="
+                      << (plan.value("overcommit", false) ? "on" : "off")
+                      << "\nOne generate at a time. Librarian shares this slot.";
                 res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
                 return;
             }

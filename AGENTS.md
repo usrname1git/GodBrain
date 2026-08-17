@@ -196,7 +196,7 @@ cloud model to get it.
   themselves when a live probe or a Learn/support quote actually matches.
   `query_recent_thoughts` reads the active RAG graph. Oracle search is
   verified-only.
-  Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
+  Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/verify`,
   `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
   return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
