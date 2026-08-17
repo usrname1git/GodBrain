@@ -721,6 +721,9 @@
             return lines;
         }
         function attachPendingItems(status) {
+            if (Array.isArray(status.pending_items)) {
+                return Promise.resolve(status);
+            }
             return fetch('/api/pending')
                 .then((res) => res.json())
                 .then((body) => {

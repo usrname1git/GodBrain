@@ -79,6 +79,7 @@ static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
 static json pending_body();
+static json collect_pending_items(const json& turns, const json& host_rec);
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
@@ -903,6 +904,7 @@ static json kernel_status_body() {
         {"desk_test", load_last_desk_test()},
         {"heal", heal},
         {"cs2", cs2_desk()},
+        {"pending_items", collect_pending_items(turns, host_record)},
         {"pending_judge", {
             {"oracle", oracle_pending},
             {"host", host_pending},
@@ -1603,13 +1605,10 @@ static std::string clip_pending_line(std::string text, size_t max) {
     return text;
 }
 
-static json pending_body() {
+static json collect_pending_items(const json& turns, const json& host_rec) {
     json items = json::array();
-    int oracle = 0;
-    int host = 0;
-    for (const auto& turn : last_oracle_turns_json()) {
+    for (const auto& turn : turns) {
         if (turn.value("status", "candidate") != "candidate") continue;
-        ++oracle;
         items.push_back({
             {"kind", "oracle"},
             {"stable_id", turn.value("stable_id", "")},
@@ -1620,18 +1619,29 @@ static json pending_body() {
             {"preview", clip_pending_line(turn.value("answer", ""), 120)},
         });
     }
-    const json rec = host_record_from_rag();
-    if (rec.value("status", "") == "candidate") {
-        ++host;
+    if (host_rec.value("status", "") == "candidate") {
         items.push_back({
             {"kind", "host"},
-            {"stable_id", rec.value("stable_id", "")},
+            {"stable_id", host_rec.value("stable_id", "")},
             {"status", "candidate"},
             {"stored", true},
             {"complete", true},
             {"question", ""},
-            {"preview", clip_pending_line(rec.value("label", ""), 120)},
+            {"preview", clip_pending_line(host_rec.value("label", ""), 120)},
         });
+    }
+    return items;
+}
+
+static json pending_body() {
+    const json turns = last_oracle_turns_json();
+    const json rec = host_record_from_rag();
+    json items = collect_pending_items(turns, rec);
+    int oracle = 0;
+    int host = 0;
+    for (const auto& item : items) {
+        if (item.value("kind", "") == "host") ++host;
+        else ++oracle;
     }
     std::ostringstream reply;
     reply << "judge=" << items.size();
@@ -2546,6 +2556,20 @@ int main() {
                           << (cs2.value("running", false) ? "play" : "sleep");
                 }
                 reply << "\n";
+                int pending_index = 0;
+                for (const auto& item : st.value("pending_items", json::array())) {
+                    ++pending_index;
+                    const std::string id = item.value("stable_id", "");
+                    reply << pending_index << ". " << item.value("kind", "?");
+                    if (!id.empty()) {
+                        reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+                    } else {
+                        reply << " (no id)";
+                    }
+                    const std::string q = item.value("question", "");
+                    if (!q.empty()) reply << " " << q;
+                    reply << "\n";
+                }
                 if (!coli.value("up", st.value("coli_serve", false))) {
                     reply << mouth_label
                           << (st.value("mouth_restarting", false) ? "=starting"

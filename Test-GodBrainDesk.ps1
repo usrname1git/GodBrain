@@ -40,6 +40,9 @@ try {
 }
 
 if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }
+if ($status -and $null -eq $status.pending_items) {
+    $fails.Add("status missing pending_items")
+}
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
     $fails.Add("vram.slots is not 1")
 }

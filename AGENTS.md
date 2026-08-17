@@ -226,6 +226,8 @@ cloud model to get it.
   batteries. A `/verify` or `/reject` rewrites `logs/last-pending.json`.
   Galaxy overlay lists pending short ids from `GET /api/pending` and
   Heal age from `heal-last.at`. Chat `/pending` is a GET, not generate.
+  `GET /api/status` includes `pending_items` so the overlay does not need
+  a second fetch.
   Each Heal tick refreshes
   `logs/last-brief.txt` and `logs/last-pending.json` when the kernel is up
   (no GPU). Watch/Heal is the
