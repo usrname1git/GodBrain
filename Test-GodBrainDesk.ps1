@@ -32,6 +32,12 @@ if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
 if ($brief -and [string]$brief.response -notmatch "llama=|coli=") {
     $fails.Add("brief missing mouth state")
 }
+$briefFile = Join-Path $RepoRoot "logs\last-brief.txt"
+if (-not (Test-Path -LiteralPath $briefFile)) {
+    $fails.Add("missing logs/last-brief.txt")
+} elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "llama=|coli=") {
+    $fails.Add("last-brief.txt missing mouth state")
+}
 if ($vram -and [string]$vram.response -notmatch "1 slot") {
     $fails.Add("vram missing 1 slot")
 }
