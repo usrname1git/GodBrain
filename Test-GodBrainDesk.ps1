@@ -49,6 +49,7 @@ if ($vram -and [string]$vram.response -notmatch "1 slot") {
 }
 if ($doors) {
     if (-not $doors.loopback.brief) { $fails.Add("doors.loopback.brief missing") }
+    if (-not $doors.loopback.desk) { $fails.Add("doors.loopback.desk missing") }
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
@@ -110,6 +111,7 @@ try {
     if ($html -notmatch "GodBrain mouth") { $fails.Add("galaxy title missing GodBrain mouth") }
     if ($html -match "Colibri RAG Uplink") { $fails.Add("galaxy still says Colibri RAG Uplink") }
     if ($html -notmatch "desk_test") { $fails.Add("galaxy overlay missing desk_test") }
+    if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
 } catch {
     $fails.Add("galaxy: $_")
 }
