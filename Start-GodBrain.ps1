@@ -75,8 +75,9 @@ function Start-LoggedProcess {
         if ($key -eq "MONGODB_URI" -or $key -eq "GODBRAIN_API_TOKEN") { continue }
         $lines += "set `"$key=$($Environment[$key])`""
     }
-    # Do not persist MONGODB_URI or GODBRAIN_API_TOKEN. The kernel defaults
-    # the URI; the token must come from the user/task environment.
+    # WMI Create does not inherit this process env. Persist only the local
+    # default URI (not a secret). Never write GODBRAIN_API_TOKEN.
+    $lines += "set `"MONGODB_URI=mongodb://127.0.0.1:27017`""
     if ($Arguments) {
         $lines += "`"$FilePath`" $Arguments >> `"$stdout`" 2>> `"$stderr`""
     } else {
@@ -187,7 +188,15 @@ Write-Log "coli model $model"
 if (Test-Path -LiteralPath $model) {
     Set-PersistedModel $model
 }
-if (Test-Port "127.0.0.1" 8000) {
+$cs2Helper = Join-Path $RepoRoot "GodBrain-Cs2.ps1"
+$coliSleep = $false
+if (Test-Path -LiteralPath $cs2Helper) {
+    . $cs2Helper
+    $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
+}
+if ($coliSleep) {
+    Write-Log "skip coli serve (CS2.exe running or gone < 5 min)"
+} elseif (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip coli serve (:8000 already listening)"
 } elseif (Test-ColiServeProcess) {
     Write-Log "skip coli serve (process already running, still loading)"

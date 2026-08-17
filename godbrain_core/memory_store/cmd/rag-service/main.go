@@ -30,7 +30,7 @@ func main() {
 func run() error {
 	uri := os.Getenv("MONGODB_URI")
 	if uri == "" {
-		return errors.New("MONGODB_URI environment variable is not set")
+		uri = "mongodb://127.0.0.1:27017"
 	}
 	port, err := servicePort(os.Getenv("GODBRAIN_RAG_PORT"))
 	if err != nil {

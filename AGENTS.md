@@ -92,9 +92,12 @@ plan step is skipped when the blast radius is a one-liner.
   voices in `C:\nvme\piper-voices` via `C:\nvme\stt\Speak-Text.ps1`.
   FFmpeg is `C:\Tools\ffmpeg\ffmpeg.exe`. Do not use cloud STT/TTS. Do
   not load Whisper or Piper on the 4080 while `coli serve` is pinned.
-- **Next loop starts from persisted state.** `last_oracle.json`, Heal
-  last, git, Golden Records. Do not treat chat history as the source of
-  truth. If the plan died, say so; do not continue from a hallucinated
+- **Next loop starts from persisted state.** Read
+  `logs/where-we-are.md` first if it exists (session pointer: what
+  changed, what is next). Then `last_oracle.json`, Heal last, git,
+  Golden Records. Do not treat chat history as the source of truth.
+  End a working session with `Write-SessionDigest.ps1 -Now ... -Next
+  ...`. If the plan died, say so; do not continue from a hallucinated
   tree.
 
 ## Ingestion protocol (raw vs processed)
@@ -153,6 +156,11 @@ cloud model to get it.
   The SRE surgeon kit is `godbrain_core/sre_agent/sre_surgeon.exe
   --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
   Do not `--ask` while `coli serve` holds the GPU slot.
+  Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause coli first,
+  launch Steam app 730, wait until `CS2.exe` exits, wait 5 minutes,
+  then Start-GodBrain. `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is
+  only the backup if CS2 is started from Steam Play. Start/Heal skip
+  coli while CS2 is running or has been gone under 5 minutes.
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   runner (Colibri on this host). Reserve a heavier runner (future
   llama-server / a larger model) for a flagged contradiction or a

@@ -967,6 +967,20 @@ static json coli_serve_status() {
     return result;
 }
 
+static std::string load_where_we_are() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::ostringstream out;
+    out << in.rdbuf();
+    std::string text = out.str();
+    if (text.size() > 900) {
+        text.resize(900);
+        text += "\n...";
+    }
+    return text;
+}
+
 static json load_heal_last() {
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
     std::ifstream in(path, std::ios::binary);
@@ -1643,6 +1657,12 @@ int main() {
                 const json rag = st.value("rag", json::object());
                 const json last = st.value("last_oracle", json::object());
                 std::ostringstream reply;
+                const std::string where = load_where_we_are();
+                if (!where.empty()) {
+                    reply << where;
+                    if (where.back() != '\n') reply << '\n';
+                    reply << "---\n";
+                }
                 reply << host.value("computer_name", "?") << " | coli="
                       << (!coli.value("up", false)
                               ? "down"
