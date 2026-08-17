@@ -78,7 +78,9 @@ static void handle_vram(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
+static void handle_heal(const httplib::Request&, httplib::Response&);
 static json pending_body();
+static int file_age_minutes(const std::string& path);
 static json collect_pending_items(const json& turns, const json& host_rec);
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
 static json heal_status_body();
@@ -128,6 +130,24 @@ static bool path_exists(const std::string& p) {
     if (p.empty()) return false;
     DWORD attrs = GetFileAttributesA(p.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+static int file_age_minutes(const std::string& path) {
+    WIN32_FILE_ATTRIBUTE_DATA attrs{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attrs)) {
+        return -1;
+    }
+    FILETIME now_ft{};
+    GetSystemTimeAsFileTime(&now_ft);
+    ULARGE_INTEGER written{};
+    ULARGE_INTEGER now{};
+    written.LowPart = attrs.ftLastWriteTime.dwLowDateTime;
+    written.HighPart = attrs.ftLastWriteTime.dwHighDateTime;
+    now.LowPart = now_ft.dwLowDateTime;
+    now.HighPart = now_ft.dwHighDateTime;
+    if (now.QuadPart < written.QuadPart) return 0;
+    return static_cast<int>(
+        (now.QuadPart - written.QuadPart) / 10000000ull / 60ull);
 }
 
 static json oracle_turn_to_json(const LastOracleTurn& turn) {
@@ -1184,7 +1204,7 @@ static void attach_shortcut_routes(httplib::Server& server) {
     });
     server.Get("/api/heal", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
-        res.set_content(heal_status_body().dump(), "application/json");
+        handle_heal(req, res);
     });
     server.Get("/api/doors", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
@@ -1465,24 +1485,8 @@ static std::string format_brief_text() {
         }
     }
     if (heal.contains("ok")) {
-        const std::string heal_path =
-            get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
-        WIN32_FILE_ATTRIBUTE_DATA attrs{};
-        int heal_age = -1;
-        if (GetFileAttributesExA(heal_path.c_str(), GetFileExInfoStandard, &attrs)) {
-            FILETIME now_ft{};
-            GetSystemTimeAsFileTime(&now_ft);
-            ULARGE_INTEGER written{};
-            ULARGE_INTEGER now{};
-            written.LowPart = attrs.ftLastWriteTime.dwLowDateTime;
-            written.HighPart = attrs.ftLastWriteTime.dwHighDateTime;
-            now.LowPart = now_ft.dwLowDateTime;
-            now.HighPart = now_ft.dwHighDateTime;
-            if (now.QuadPart >= written.QuadPart) {
-                heal_age = static_cast<int>(
-                    (now.QuadPart - written.QuadPart) / 10000000ull / 60ull);
-            }
-        }
+        const int heal_age = file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
         if (heal_age > 20) {
             reply << " heal=stale/" << heal_age << "m";
         } else if (heal_age >= 0) {
@@ -1922,6 +1926,9 @@ static json heal_status_body() {
     rag_client.set_read_timeout(1, 0);
     const bool rag_up = static_cast<bool>(rag_client.Get("/health"));
     const json coli = coli_serve_status();
+    const json last = load_heal_last();
+    const int age_min = file_age_minutes(
+        get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
     return {
         {"playbook", "host-listeners"},
         {"live",
@@ -1931,8 +1938,79 @@ static json heal_status_body() {
           {"coli_busy", coli.value("busy", false)},
           {"mouth", coli.value("up", false)},
           {"mouth_busy", coli.value("busy", false)}}},
-        {"last", load_heal_last()},
+        {"last", last},
+        {"age_min", age_min},
     };
+}
+
+static void handle_heal(const httplib::Request&, httplib::Response& res) {
+    json heal = heal_status_body();
+    const json live = heal.value("live", json::object());
+    const json last = heal.value("last", json::object());
+    std::ostringstream reply;
+    reply << "playbook=host-listeners (never kills)\n"
+          << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
+          << " rag=" << (live.value("rag", false) ? "up" : "down")
+          << " mouth="
+          << (live.value("mouth", live.value("coli", false))
+                  ? (live.value("mouth_busy", live.value("coli_busy", false))
+                         ? "busy"
+                         : "serve")
+                  : "down")
+          << "\n";
+    if (last.empty()) {
+        reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
+    } else {
+        const int age = heal.value("age_min", -1);
+        reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
+              << " mouth=" << (last.value("mouth", false) ? "up" : "down")
+              << " tail="
+              << (last.value("tailscale", false) ? "100.x" : "off")
+              << " cs2="
+              << (last.value("cs2_sleep", false) ? "sleep" : "idle");
+        if (age > 20) {
+            reply << " age=stale/" << age << "m";
+        } else if (age >= 0) {
+            reply << " age=" << age << "m";
+        }
+        reply << " at=" << last.value("at", "") << "\n";
+        const json needed = last.value("needed", json::array());
+        reply << "needed=";
+        if (needed.empty()) {
+            reply << "(none)";
+        } else {
+            bool first = true;
+            for (const auto& item : needed) {
+                if (!first) reply << ",";
+                first = false;
+                if (item.is_string()) reply << item.get<std::string>();
+            }
+        }
+        const json acted = last.value("acted", json::array());
+        reply << "\nacted=";
+        if (acted.empty()) {
+            reply << "(none)";
+        } else {
+            bool first = true;
+            for (const auto& item : acted) {
+                if (!first) reply << ",";
+                first = false;
+                if (item.is_string()) reply << item.get<std::string>();
+            }
+        }
+        const json diagnose = last.value("diagnose", json::object());
+        if (!diagnose.empty()) {
+            reply << "\nlayer=" << diagnose.value("layer", "?")
+                  << " icmp="
+                  << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
+                  << " dns_self="
+                  << (diagnose.value("dns_self", false) ? "ok" : "fail")
+                  << " nic_tcpip="
+                  << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
+        }
+    }
+    heal["response"] = reply.str();
+    res.set_content(heal.dump(), "application/json");
 }
 
 using ColiTokenFn = std::function<void(const std::string&)>;
@@ -2475,7 +2553,7 @@ int main() {
 
     svr.Get("/api/heal", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        res.set_content(heal_status_body().dump(), "application/json");
+        handle_heal(req, res);
     });
 
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
@@ -2712,67 +2790,7 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/heal") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json heal = heal_status_body();
-                const json live = heal.value("live", json::object());
-                const json last = heal.value("last", json::object());
-                std::ostringstream reply;
-                reply << "playbook=host-listeners (never kills)\n"
-                      << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
-                      << " rag=" << (live.value("rag", false) ? "up" : "down")
-                      << " mouth="
-                      << (live.value("mouth", live.value("coli", false))
-                              ? (live.value("mouth_busy", live.value("coli_busy", false))
-                                     ? "busy"
-                                     : "serve")
-                              : "down")
-                      << "\n";
-                if (last.empty()) {
-                    reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
-                } else {
-                    reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
-                          << " mouth=" << (last.value("mouth", false) ? "up" : "down")
-                          << " tail="
-                          << (last.value("tailscale", false) ? "100.x" : "off")
-                          << " cs2="
-                          << (last.value("cs2_sleep", false) ? "sleep" : "idle")
-                          << " at=" << last.value("at", "") << "\n";
-                    const json needed = last.value("needed", json::array());
-                    reply << "needed=";
-                    if (needed.empty()) {
-                        reply << "(none)";
-                    } else {
-                        bool first = true;
-                        for (const auto& item : needed) {
-                            if (!first) reply << ",";
-                            first = false;
-                            if (item.is_string()) reply << item.get<std::string>();
-                        }
-                    }
-                    const json acted = last.value("acted", json::array());
-                    reply << "\nacted=";
-                    if (acted.empty()) {
-                        reply << "(none)";
-                    } else {
-                        bool first = true;
-                        for (const auto& item : acted) {
-                            if (!first) reply << ",";
-                            first = false;
-                            if (item.is_string()) reply << item.get<std::string>();
-                        }
-                    }
-                    const json diagnose = last.value("diagnose", json::object());
-                    if (!diagnose.empty()) {
-                        reply << "\nlayer=" << diagnose.value("layer", "?")
-                              << " icmp="
-                              << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
-                              << " dns_self="
-                              << (diagnose.value("dns_self", false) ? "ok" : "fail")
-                              << " nic_tcpip="
-                              << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
-                    }
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_heal(req, res);
                 return;
             }
 

@@ -95,6 +95,12 @@ if (-not (Test-Path -LiteralPath $pendingFile)) {
     }
 }
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
+if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
+    $fails.Add("heal api missing last ok= text")
+}
+if ($heal -and $heal.last -and $null -eq $heal.age_min) {
+    $fails.Add("heal api missing age_min")
+}
 $healFile = Join-Path $RepoRoot "logs\heal-last.json"
 if (-not (Test-Path -LiteralPath $healFile)) {
     $fails.Add("missing logs/heal-last.json")
