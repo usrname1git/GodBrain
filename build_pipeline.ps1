@@ -11,7 +11,7 @@ Push-Location "$PSScriptRoot\godbrain_core\memory_store"
 try {
     go build -o memory-store.exe ./cmd/memory-store
     if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
-    go build -o rag-service.exe ./cmd/rag-service
+    go build -ldflags "-H windowsgui" -o rag-service.exe ./cmd/rag-service
     if ($LASTEXITCODE -ne 0) { throw "RAG service build failed" }
     go build -o rag-rebuild.exe ./cmd/rag-rebuild
     if ($LASTEXITCODE -ne 0) { throw "RAG rebuild build failed" }
