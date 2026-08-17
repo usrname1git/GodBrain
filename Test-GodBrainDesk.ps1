@@ -179,6 +179,10 @@ if (-not $cs2sleep) {
     if ($cs2Tr -notmatch "-RepoRoot") {
         $fails.Add("GodBrainCs2Pause should pass -RepoRoot (Register-ScheduledTask, not schtasks /TR)")
     }
+    $logonTr = (& schtasks.exe /Query /TN GodBrainLogon /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
+    if ($logonTr -match "\.cmd") {
+        $fails.Add("GodBrainLogon TR still launches a .cmd (flashes WT)")
+    }
     if (Test-Path -LiteralPath $briefFile) {
         $ageMin = ((Get-Date) - (Get-Item -LiteralPath $briefFile).LastWriteTime).TotalMinutes
         if ($ageMin -gt 20) {

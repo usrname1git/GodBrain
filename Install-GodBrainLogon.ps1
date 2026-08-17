@@ -28,7 +28,7 @@ $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
 $shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 
 $action = New-ScheduledTaskAction -Execute $hidden `
-    -Argument "`"$shell`" -NoProfile -WindowStyle Hidden -File `"$starter`"" `
+    -Argument "`"$shell`" -NoProfile -WindowStyle Hidden -NonInteractive -File `"$starter`"" `
     -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited

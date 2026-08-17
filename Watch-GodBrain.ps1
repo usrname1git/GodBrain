@@ -31,6 +31,10 @@ if (-not (Test-Path -LiteralPath $logDir)) {
 }
 $watchLog = Join-Path $logDir "watch.log"
 $utf8 = New-Object System.Text.UTF8Encoding $false
+if ((Test-Path -LiteralPath $watchLog) -and ((Get-Item -LiteralPath $watchLog).Length -gt 256KB)) {
+    $keep = Get-Content -LiteralPath $watchLog -Tail 200
+    [System.IO.File]::WriteAllLines($watchLog, $keep, $utf8)
+}
 function Write-WatchLog([string]$Message) {
     $line = "{0:u} {1}" -f (Get-Date).ToUniversalTime(), $Message
     [System.IO.File]::AppendAllText($watchLog, $line + "`n", $utf8)
