@@ -85,16 +85,21 @@ function Start-LoggedProcess {
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
-    # WMI Create is owned by the SCM host, not this console/job. Start-Process
-    # children die when the starter window or agent job exits — that is the
-    # "kernel window popped and Galaxy died" failure.
-    # DETACHED_PROCESS + SW_HIDE: no console, so Windows Terminal does not
-    # open a flashing cmd tab (that also stole focus from CS2).
+    # Launch the exe itself. cmd.exe /c wrap is a console process and
+    # Windows Terminal flashes a tab even with SW_HIDE.
+    $envList = New-Object System.Collections.ArrayList
+    [void]$envList.Add("MONGODB_URI=mongodb://127.0.0.1:27017")
+    foreach ($key in $Environment.Keys) {
+        if ($key -eq "GODBRAIN_API_TOKEN") { continue }
+        [void]$envList.Add("$key=$($Environment[$key])")
+    }
+    $cmdLine = if ($Arguments) { "`"$FilePath`" $Arguments" } else { "`"$FilePath`"" }
     $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
     $startup.ShowWindow = 0
     $startup.CreateFlags = 8
+    $startup.EnvironmentVariables = [string[]]$envList.ToArray()
     $created = ([wmiclass]"Win32_Process").Create(
-        "cmd.exe /c `"$wrap`"", $WorkingDirectory, $startup)
+        $cmdLine, $WorkingDirectory, $startup)
     if ($created.ReturnValue -ne 0) {
         Write-Log "failed $Name Win32_Process.Create=$($created.ReturnValue)"
         return

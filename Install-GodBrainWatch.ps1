@@ -21,10 +21,13 @@ if (-not (Test-Path -LiteralPath $watch)) {
     throw "Missing $watch"
 }
 
-$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
-$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
-
-$tr = "`"$shell`" -NoProfile -WindowStyle Hidden -File `"$watch`" -RepoRoot `"$repo`""
+$vbs = Join-Path $repo "Watch-GodBrain.vbs"
+if (-not (Test-Path -LiteralPath $vbs)) {
+    throw "Missing $vbs"
+}
+# wscript //B Run 0: no console. Hidden pwsh still flashes Windows Terminal.
+$wscript = Join-Path $env:SystemRoot "System32\wscript.exe"
+$tr = "`"$wscript`" //B //Nologo `"$vbs`""
 # schtasks only. Get-ScheduledTask CIM throws 0x8007054f on this host.
 # Never /RU SYSTEM. /IT = only while this user is logged on.
 & schtasks.exe /Create /TN $taskName /SC MINUTE /MO 5 /IT /F /RL LIMITED `
