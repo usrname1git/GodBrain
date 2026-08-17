@@ -93,6 +93,7 @@ static void retry_unstored_oracle_turns();
 static json load_mouth();
 static json load_last_edit();
 static json load_heal_last();
+static json load_last_desk_test();
 static json gpu_desk();
 static bool maybe_restart_mouth();
 static bool cs2_should_sleep_mouth();
@@ -895,6 +896,7 @@ static json kernel_status_body() {
         {"last_oracle", last_oracle_json()},
         {"last_oracle_turns", turns},
         {"last_edit", load_last_edit()},
+        {"desk_test", load_last_desk_test()},
         {"heal", heal},
         {"cs2", cs2_desk()},
         {"pending_judge", {
@@ -1475,6 +1477,10 @@ static std::string format_brief_text() {
         reply << "\nedit "
               << (edit.value("applied", false) ? "done" : "fail");
     }
+    const json desk = st.value("desk_test", json::object());
+    if (desk.contains("ok")) {
+        reply << "\ndesk=" << (desk.value("ok", false) ? "ok" : "fail");
+    }
     const std::string text = reply.str();
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
     const std::string tmp = path + ".tmp";
@@ -1630,6 +1636,17 @@ static json load_heal_last() {
 
 static json load_last_edit() {
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-edit-result.json";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
+static json load_last_desk_test() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-desk-test.json";
     std::ifstream in(path, std::ios::binary);
     if (!in) return json::object();
     try {

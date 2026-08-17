@@ -263,9 +263,23 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
 
 if ($after.kernel) {
     try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/doors" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-brief and last-doors"
+        Write-Host "heal wrote last-doors"
+    } catch {
+        Write-Host "heal doors skipped: $_"
+    }
+    $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
+    if (Test-Path -LiteralPath $desk) {
+        try {
+            & $desk -RepoRoot $RepoRoot
+            if ($LASTEXITCODE -ne 0) { Write-Host "heal desk self-check failed" }
+        } catch {
+            Write-Host "heal desk self-check skipped: $_"
+        }
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-brief"
     } catch {
         Write-Host "heal brief skipped: $_"
     }
