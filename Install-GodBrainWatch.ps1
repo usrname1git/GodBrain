@@ -34,18 +34,23 @@ if (-not (Test-Path -LiteralPath $hidden)) {
         throw "failed to build $hidden"
     }
 }
-# Short cmd wrapper. A quoted pwsh -File line plus -RepoRoot overflowed
-# schtasks /TR (~261 chars) and the hidden pwsh child was a no-op.
+# Short cmd wrapper. A quoted pwsh -File -RepoRoot line overflowed
+# schtasks /TR (~261 chars) and Heal stopped writing.
 $wrap = Join-Path $repo "godbrain_core\cpp_tools\watch.cmd"
 if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
-$tr = "`"$hidden`" `"$wrap`""
-# schtasks only. Get-ScheduledTask CIM throws 0x8007054f on this host.
-# Never /RU SYSTEM. /IT = only while this user is logged on.
-& schtasks.exe /Create /TN $taskName /SC MINUTE /MO 5 /IT /F /RL LIMITED `
-    /TR $tr | Out-Host
-if ($LASTEXITCODE -ne 0) {
-    throw "schtasks /Create failed with exit $LASTEXITCODE"
-}
+# Same Register-ScheduledTask path as Logon so we can start on batteries.
+# schtasks /Create defaults to "No Start On Batteries".
+$action = New-ScheduledTaskAction -Execute $hidden `
+    -Argument "`"$wrap`"" `
+    -WorkingDirectory $repo
+$trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Registered $taskName for $env:USERNAME every 5 minutes."
 Write-Host "Starts missing rag/kernel/mouth only. Never kills a running process."

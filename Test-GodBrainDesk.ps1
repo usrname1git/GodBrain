@@ -156,6 +156,19 @@ if (-not $cs2sleep) {
             $fails.Add(("heal-last.json stale ({0:n0} min; Watch/Heal should refresh)" -f $healAge))
         }
     }
+    $watchLog = Join-Path $RepoRoot "logs\watch.log"
+    if (-not (Test-Path -LiteralPath $watchLog)) {
+        $fails.Add("missing logs/watch.log (Watch should append each tick)")
+    } else {
+        $watchAge = ((Get-Date) - (Get-Item -LiteralPath $watchLog).LastWriteTime).TotalMinutes
+        if ($watchAge -gt 20) {
+            $fails.Add(("watch.log stale ({0:n0} min; Watch should append)" -f $watchAge))
+        }
+    }
+    $watchXml = & schtasks.exe /Query /TN GodBrainWatch /XML 2>$null | Out-String
+    if ($watchXml -match "DisallowStartIfOnBatteries>\s*true") {
+        $fails.Add("GodBrainWatch will not start on batteries")
+    }
 }
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")

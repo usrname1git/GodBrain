@@ -27,12 +27,17 @@ if (-not (Test-Path -LiteralPath $hidden)) {
 }
 $wrap = Join-Path $repo "godbrain_core\cpp_tools\cs2pause.cmd"
 if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
-$tr = "`"$hidden`" `"$wrap`""
-& schtasks.exe /Create /TN $taskName /SC MINUTE /MO 1 /IT /F /RL LIMITED `
-    /TR $tr | Out-Host
-if ($LASTEXITCODE -ne 0) {
-    throw "schtasks /Create failed with exit $LASTEXITCODE"
-}
+$action = New-ScheduledTaskAction -Execute $hidden `
+    -Argument "`"$wrap`"" `
+    -WorkingDirectory $repo
+$trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+    -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Registered $taskName for $env:USERNAME every 1 minute."
 Write-Host "Pauses mouth (coli/llama) + Tailscale + Watch/Logon while CS2.exe is running."

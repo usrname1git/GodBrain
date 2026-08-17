@@ -222,7 +222,9 @@ cloud model to get it.
   Heal-GodBrain.ps1; it never kills a process. Watch and Cs2Pause tasks
   launch short `watch.cmd` / `cs2pause.cmd` wrappers (schtasks `/TR` is
   ~261 chars; a quoted pwsh `-File -RepoRoot` line truncated this repo
-  to `GodB` and Heal stopped writing). Each Heal tick refreshes
+  to `GodB` and Heal stopped writing). Watch/Cs2Pause allow start on
+  batteries. A `/verify` or `/reject` rewrites `logs/last-pending.json`.
+  Each Heal tick refreshes
   `logs/last-brief.txt` and `logs/last-pending.json` when the kernel is up
   (no GPU). Watch/Heal is the
   24/7 loop. `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after

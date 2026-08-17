@@ -78,6 +78,7 @@ static void handle_vram(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
+static json pending_body();
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
@@ -1151,6 +1152,7 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
             {"status", payload.value("status", "")},
             {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
         });
+        pending_body();
         res.set_content(judged.dump(), "application/json");
     } catch (const json::exception&) {
         res.status = 400;
@@ -2886,6 +2888,7 @@ int main() {
                         }
                         persist_oracle_turns_locked();
                     }
+                    pending_body();
                     res.set_content(
                         json({{"response",
                                std::string(status) + " " + judged.value("stable_id", id) +
