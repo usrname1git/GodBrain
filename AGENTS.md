@@ -202,7 +202,8 @@ cloud model to get it.
   and `/reject last <why>` judge the newest on-disk Oracle turn.
   `/verify <12-char prefix> <why>` resolves against the `/pending` list.
   `/last` and `GET /api/last`
-  return on-disk Oracle turns without touching Colibri. `GET /api/brief`
+  return the same clipped glance, write `logs/last-oracle.txt`, and
+  do not touch Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
   `GET /api/heal` is on the Tailscale door and now wraps the same

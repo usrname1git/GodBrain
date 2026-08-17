@@ -29,7 +29,18 @@ try {
 } catch {
     $fails.Add("desk: $_")
 }
-try { $null = Get-Json "/api/last" } catch { $fails.Add("last: $_") }
+try {
+    $lastApi = Get-Json "/api/last"
+    if ($lastApi.response -notmatch "Oracle turn|No Oracle") {
+        $fails.Add("last api missing Oracle turn text")
+    }
+} catch { $fails.Add("last: $_") }
+$lastOracleFile = Join-Path $RepoRoot "logs\last-oracle.txt"
+if (-not (Test-Path -LiteralPath $lastOracleFile)) {
+    $fails.Add("missing logs/last-oracle.txt")
+} elseif ((Get-Content -LiteralPath $lastOracleFile -Raw) -notmatch "Oracle turn|No Oracle") {
+    $fails.Add("last-oracle.txt missing Oracle turn text")
+}
 try {
     $pending = Get-Json "/api/pending"
     if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
@@ -190,6 +201,12 @@ if (-not $cs2sleep) {
         $lastHealAge = ((Get-Date) - (Get-Item -LiteralPath $lastHealFile).LastWriteTime).TotalMinutes
         if ($lastHealAge -gt 20) {
             $fails.Add(("last-heal.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastHealAge))
+        }
+    }
+    if (Test-Path -LiteralPath $lastOracleFile) {
+        $lastOracleAge = ((Get-Date) - (Get-Item -LiteralPath $lastOracleFile).LastWriteTime).TotalMinutes
+        if ($lastOracleAge -gt 20) {
+            $fails.Add(("last-oracle.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastOracleAge))
         }
     }
     if (Test-Path -LiteralPath $healFile) {

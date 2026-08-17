@@ -80,6 +80,7 @@ static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
 static void handle_heal(const httplib::Request&, httplib::Response&);
 static json pending_body();
+static std::string clip_pending_line(std::string text, size_t max);
 static int file_age_minutes(const std::string& path);
 static json collect_pending_items(const json& turns, const json& host_rec);
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
@@ -1149,12 +1150,55 @@ static void handle_truth(const httplib::Request& req, httplib::Response& res) {
     }
 }
 
+static std::string format_last_text() {
+    const json turns = last_oracle_turns_json();
+    std::ostringstream reply;
+    if (turns.empty()) {
+        reply << "No Oracle turns on disk yet.";
+    } else {
+        reply << turns.size() << " Oracle turn(s) on disk "
+                 "(candidate, not verified):\n";
+        int index = 0;
+        for (const auto& turn : turns) {
+            ++index;
+            const std::string id = turn.value("stable_id", "");
+            reply << index << ". "
+                  << turn.value("status", "candidate") << " "
+                  << (turn.value("ok", false) ? "ok" : "fail")
+                  << (turn.value("complete", true) ? "" : " partial")
+                  << " " << (turn.value("elapsed_ms", 0) / 1000) << "s";
+            if (!id.empty()) {
+                reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+            }
+            reply << "\n  Q: "
+                  << clip_pending_line(turn.value("question", ""), 80)
+                  << "\n  A: "
+                  << clip_pending_line(turn.value("answer", ""), 160)
+                  << "\n";
+        }
+    }
+    return reply.str();
+}
+
 static void handle_last(const httplib::Request&, httplib::Response& res) {
-    res.set_content(
-        json({{"last_oracle", last_oracle_json()},
-              {"turns", last_oracle_turns_json()}})
-            .dump(),
-        "application/json");
+    const std::string text = format_last_text();
+    json body = {
+        {"last_oracle", last_oracle_json()},
+        {"turns", last_oracle_turns_json()},
+        {"response", text},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-oracle.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 static void handle_judge(const httplib::Request& req, httplib::Response& res) {
@@ -2760,28 +2804,7 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/last") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json turns = last_oracle_turns_json();
-                std::ostringstream reply;
-                if (turns.empty()) {
-                    reply << "No Oracle turns on disk yet.";
-                } else {
-                    reply << turns.size() << " Oracle turn(s) on disk "
-                             "(candidate, not verified):\n";
-                    int index = 0;
-                    for (const auto& turn : turns) {
-                        ++index;
-                        reply << index << ". "
-                              << turn.value("status", "candidate") << " "
-                              << (turn.value("ok", false) ? "ok" : "fail")
-                              << (turn.value("complete", true) ? "" : " partial")
-                              << " " << (turn.value("elapsed_ms", 0) / 1000)
-                              << "s\n  Q: "
-                              << turn.value("question", "") << "\n  A: "
-                              << turn.value("answer", "") << "\n";
-                    }
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_last(req, res);
                 return;
             }
 
