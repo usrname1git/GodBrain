@@ -137,6 +137,7 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. |
 | Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, verify, remember on act/fail. Never kills. release / winsock / ip reset / DeviceCleanup / reboot need an operator GO; Heal does not run them. |
+| CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1`, `GodBrain-Cs2.ps1` | launch script + schtask backup | Pause coli, then launch Steam app 730. Resume 5 minutes after `CS2.exe` exits. Watcher covers Steam Play. |
 | Agent Factory control plane | Planned | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Policy, scheduling, capability grants, verification, audit, and recovery |
 
 ## Runtime boundaries
@@ -259,6 +260,7 @@ does not provide kernel-mode access.
 | `GET` | `/api/node` | None | Single Golden Record document by `node_id` or `stable_id` |
 | `GET` | `/api/status` | None | Kernel, `coli serve`, VRAM plan, RAG health, last Oracle turn |
 | `GET` | `/api/last` | None on loopback | On-disk Oracle turns (no Colibri call) |
+| chat `/brief` | None | One-glance host + coli + last turn; prepends `logs/where-we-are.md` if present |
 | `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave) |
 | `POST` | `/api/observe` | Bearer if `GODBRAIN_API_TOKEN` is set | Store host inventory as a candidate |
 | `POST` | `/api/truth` | Bearer if `GODBRAIN_API_TOKEN` is set | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |

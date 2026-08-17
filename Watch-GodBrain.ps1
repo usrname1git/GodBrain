@@ -22,4 +22,5 @@ if (-not (Test-Path -LiteralPath $heal)) {
 
 # Closed loop: detect → start missing allowlist → diagnose → maybe
 # flushdns → verify → remember. Never kills Colibri or anything else.
+# Watch-Cs2Pause disables this task while CS2.exe is running.
 & $heal -RepoRoot $RepoRoot

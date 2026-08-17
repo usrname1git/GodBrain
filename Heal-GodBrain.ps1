@@ -7,6 +7,7 @@
 # DeviceCleanup, and reboot are legal tools but need an operator GO in
 # chat — Heal must not run them unattended.
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
+# Skip coli while CS2.exe is running or has been gone under 5 minutes.
 # The verifier is the probe, not the model. Do not add extra nodes here.
 
 [CmdletBinding()]
@@ -143,6 +144,13 @@ $ServiceAllowlist = [ordered]@{
     nsi   = "nsi"
 }
 
+$cs2Helper = Join-Path $RepoRoot "GodBrain-Cs2.ps1"
+$coliSleep = $false
+if (Test-Path -LiteralPath $cs2Helper) {
+    . $cs2Helper
+    $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
+}
+
 $before = Get-Probe
 $needed = @()
 $acted = @()
@@ -151,7 +159,7 @@ if (-not $before.dns) { $needed += "dns" }
 if (-not $before.iphlp) { $needed += "iphlp" }
 if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag) { $needed += "rag" }
-if (-not $before.coli) { $needed += "coli" }
+if (-not $before.coli -and -not $coliSleep) { $needed += "coli" }
 if (-not $before.kernel) { $needed += "kernel" }
 
 foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
@@ -183,8 +191,9 @@ if (-not $mid.dns_self -and $mid.dns -and $mid.icmp_loopback) {
 
 $after = Get-Probe
 $ok = [bool](
-    $after.mongo -and $after.rag -and $after.coli -and $after.kernel -and
-    $after.dns -and $after.iphlp -and $after.nsi
+    $after.mongo -and $after.rag -and $after.kernel -and
+    $after.dns -and $after.iphlp -and $after.nsi -and
+    ($after.coli -or $coliSleep)
 )
 $diagnose = [ordered]@{
     icmp_loopback = [bool]$after.icmp_loopback
