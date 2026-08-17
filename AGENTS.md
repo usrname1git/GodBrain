@@ -162,6 +162,7 @@ cloud model to get it.
   writes `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy,
   and writes only root
   `.ps1`/`.cmd`/`.md` or `godbrain_core\` (not build/vendor/LLM/archive).
+  `local_edit_test` applies a real fixture file offline (no GPU).
   Never git push from the mouth.
   Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause the mouth
   (coli and `llama-server`) and `tailscale down` first, launch Steam
