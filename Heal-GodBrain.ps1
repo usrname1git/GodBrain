@@ -112,12 +112,22 @@ function Invoke-AllowlistedFlushDns {
     & ipconfig.exe /flushdns | Out-Null
 }
 
+function Test-TailscaleCgNat {
+    $hit = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like "100.*" -and $_.InterfaceAlias -match "tail|Tail" } |
+        Select-Object -First 1
+    return [bool]$hit
+}
+
 function Get-Probe {
+    $mouth = Test-Port "127.0.0.1" 8000
     return [ordered]@{
         mongo         = Test-Port "127.0.0.1" 27017
         rag           = Test-Port "127.0.0.1" 8084
-        coli          = Test-Port "127.0.0.1" 8000
+        coli          = $mouth
+        mouth         = $mouth
         kernel        = Test-Port "127.0.0.1" 8083
+        tailscale     = Test-TailscaleCgNat
         dns           = Test-ServiceUp "Dnscache"
         iphlp         = Test-ServiceUp "iphlpsvc"
         nsi           = Test-ServiceUp "nsi"
@@ -204,7 +214,7 @@ $diagnose = [ordered]@{
     layer         = Get-DiagnoseLayer $after
 }
 $result = [ordered]@{
-    version     = 2
+    version     = 3
     at          = (Get-Date).ToUniversalTime().ToString("o")
     playbook    = "host-listeners"
     needed      = @($needed)
@@ -214,6 +224,9 @@ $result = [ordered]@{
     after       = $after
     ok          = $ok
     never_kills = $true
+    cs2_sleep   = [bool]$coliSleep
+    mouth       = [bool]$after.mouth
+    tailscale   = [bool]$after.tailscale
 }
 
 $json = $result | ConvertTo-Json -Depth 6

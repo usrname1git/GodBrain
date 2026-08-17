@@ -211,7 +211,9 @@ cloud model to get it.
   `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)
   and report `llama=starting` so Galaxy does not wait on the 5 min Watch tick.
   `/heal` reports the host-listener closed loop
-  (detect → start missing allowlist → diagnose → maybe flushdns → verify). Watch-GodBrain runs
+  (detect → start missing allowlist → diagnose → maybe flushdns → verify).
+  `heal-last.json` v3 records mouth (:8000), Tailscale 100.x (detect-only),
+  and cs2_sleep. Heal does not `tailscale up`. Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. The Galaxy node panel and `POST /api/judge` are
   the same judgment path. `/observe` persists stable host inventory including
   `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
