@@ -181,7 +181,7 @@
     <div id="rag-chat">
         <h2>GodBrain mouth</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /brief /doors /vram /heal /last do not use the GPU.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /brief /doors /desk /vram /heal /last do not use the GPU.</div>
         </div>
         <div class="toolbar">
             <button id="observe-btn">Observe</button>
@@ -189,6 +189,7 @@
             <button id="last-btn">Last</button>
             <button id="brief-btn">Brief</button>
             <button id="doors-btn">Doors</button>
+            <button id="desk-btn">Desk</button>
             <button id="focus-last-btn">Focus last</button>
             <button id="heal-btn">Heal</button>
             <button id="vram-btn">VRAM</button>
@@ -1000,6 +1001,16 @@
                 })
                 .catch(err => {
                     appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'doors failed', 'red');
+                });
+        });
+        document.getElementById('desk-btn').addEventListener('click', () => {
+            fetch('/api/desk')
+                .then(r => r.json())
+                .then(data => {
+                    appendChatMessage('sys-msg', '[SYS]', (data && data.response) || 'desk=?');
+                })
+                .catch(err => {
+                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'desk failed', 'red');
                 });
         });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));

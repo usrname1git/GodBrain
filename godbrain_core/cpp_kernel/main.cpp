@@ -2441,6 +2441,13 @@ int main() {
                 return;
             }
 
+            if (starts_with_ignore_case(user_msg, "/desk") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                handle_desk(req, res);
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/heal") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
