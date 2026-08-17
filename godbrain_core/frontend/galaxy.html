@@ -179,15 +179,16 @@
     </div>
     
     <div id="rag-chat">
-        <h2>Colibri RAG Uplink</h2>
+        <h2>GodBrain mouth</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /verify last &lt;why&gt; /reject last &lt;why&gt; /brief /last still work in chat.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /brief /doors /vram /heal /last do not use the GPU.</div>
         </div>
         <div class="toolbar">
             <button id="observe-btn">Observe</button>
             <button id="status-btn">Status</button>
             <button id="last-btn">Last</button>
             <button id="brief-btn">Brief</button>
+            <button id="doors-btn">Doors</button>
             <button id="focus-last-btn">Focus last</button>
             <button id="heal-btn">Heal</button>
             <button id="vram-btn">VRAM</button>
@@ -969,6 +970,17 @@
         document.getElementById('status-btn').addEventListener('click', () => runSlash('/status'));
         document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
         document.getElementById('brief-btn').addEventListener('click', () => runSlash('/brief'));
+        document.getElementById('doors-btn').addEventListener('click', () => {
+            fetch('/api/doors')
+                .then(r => r.json())
+                .then(data => {
+                    const text = (data && data.response) ? data.response : JSON.stringify(data, null, 2);
+                    appendChatMessage('sys-msg', '[SYS]', text);
+                })
+                .catch(err => {
+                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'doors failed', 'red');
+                });
+        });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
         document.getElementById('focus-last-btn').addEventListener('click', () => {
