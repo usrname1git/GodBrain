@@ -25,10 +25,11 @@ $hidden = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.exe"
 if (-not (Test-Path -LiteralPath $hidden)) {
     throw "Missing $hidden — run Install-GodBrainWatch.ps1 once to build it"
 }
-$wrap = Join-Path $repo "godbrain_core\cpp_tools\cs2pause.cmd"
-if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
+# run_hidden + pwsh -File. Never a .cmd: cmd.exe flashes Windows Terminal.
+$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
+$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 $action = New-ScheduledTaskAction -Execute $hidden `
-    -Argument "`"$wrap`"" `
+    -Argument "`"$shell`" -NoProfile -File `"$watch`"" `
     -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
     -RepetitionInterval (New-TimeSpan -Minutes 1) `

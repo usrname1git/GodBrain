@@ -34,14 +34,13 @@ if (-not (Test-Path -LiteralPath $hidden)) {
         throw "failed to build $hidden"
     }
 }
-# Short cmd wrapper. A quoted pwsh -File -RepoRoot line overflowed
-# schtasks /TR (~261 chars) and Heal stopped writing.
-$wrap = Join-Path $repo "godbrain_core\cpp_tools\watch.cmd"
-if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
-# Same Register-ScheduledTask path as Logon so we can start on batteries.
-# schtasks /Create defaults to "No Start On Batteries".
+# run_hidden + pwsh -File. Never a .cmd: cmd.exe flashes Windows Terminal.
+# Register-ScheduledTask (not schtasks /TR) so the line can be long.
+# Watch infers RepoRoot from -File; do not pass -RepoRoot.
+$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
+$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 $action = New-ScheduledTaskAction -Execute $hidden `
-    -Argument "`"$wrap`"" `
+    -Argument "`"$shell`" -NoProfile -File `"$watch`"" `
     -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `

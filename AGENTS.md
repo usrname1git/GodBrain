@@ -223,9 +223,9 @@ cloud model to get it.
   `heal-last.json` v3 records mouth (:8000), Tailscale 100.x (detect-only),
   and cs2_sleep. Heal does not `tailscale up`. Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. Watch and Cs2Pause tasks
-  launch short `watch.cmd` / `cs2pause.cmd` wrappers (schtasks `/TR` is
-  ~261 chars; a quoted pwsh `-File -RepoRoot` line truncated this repo
-  to `GodB` and Heal stopped writing). Watch/Cs2Pause allow start on
+  launch `run_hidden` + `pwsh -File` (never a `.cmd`: `cmd.exe` flashes
+  Windows Terminal). Register-ScheduledTask so the line is not truncated.
+  Watch infers RepoRoot from `-File`. Watch/Cs2Pause allow start on
   batteries. A `/verify` or `/reject` rewrites `logs/last-pending.json`.
   Galaxy overlay lists pending short ids from `GET /api/pending` and
   Heal age from `heal-last.at`. Chat `/pending` is a GET, not generate.
