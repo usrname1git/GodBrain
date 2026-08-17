@@ -74,7 +74,7 @@ $appearDeadline = (Get-Date).AddMinutes($AppearTimeoutMinutes)
 Write-Host ("Start-CS2: waiting up to {0} min for CS2.exe" -f $AppearTimeoutMinutes)
 while (-not (Test-Cs2Running)) {
     if ((Get-Date) -gt $appearDeadline) {
-        Write-Host "Start-CS2: CS2.exe never appeared. Not starting GLM. Run Start-GodBrain.ps1 when you want it."
+        Write-Host "Start-CS2: CS2.exe never appeared. Not starting the mouth. Run Start-GodBrain.ps1 when you want it."
         Set-GodBrainTaskEnabled "GodBrainCs2Pause" $true
         exit 2
     }

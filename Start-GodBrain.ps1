@@ -277,24 +277,24 @@ if (Test-Path -LiteralPath $cs2Helper) {
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
 if ($coliSleep) {
-    Write-Log "skip coli serve (CS2.exe running or gone < 5 min)"
+    Write-Log "skip mouth (CS2.exe running or gone < 5 min)"
 } elseif (Test-Port "127.0.0.1" 8000) {
-    Write-Log "skip coli serve (:8000 already listening)"
+    Write-Log "skip mouth (:8000 already listening)"
 } elseif (Test-LlamaMouth) {
     $llama = Join-Path $RepoRoot "Start-LlamaServer.ps1"
     $age = Get-LlamaServerAgeMinutes
     if ($null -ne $age -and $age -lt 4) {
-        Write-Log ("skip coli serve (llama-server loading {0:n1} min, :8000 not up yet)" -f $age)
+        Write-Log ("skip mouth (llama-server loading {0:n1} min, :8000 not up yet)" -f $age)
     } elseif (Test-Path -LiteralPath $llama) {
         Write-Log "mouth is llama-server; :8000 down; starting it (kills leftover llama)"
         & $llama -RepoRoot $RepoRoot
     } else {
-        Write-Log "skip coli serve (llama mouth set but missing $llama)"
+        Write-Log "skip mouth (llama mouth set but missing $llama)"
     }
 } elseif (Test-LlamaServerProcess) {
-    Write-Log "skip coli serve (llama-server already running)"
+    Write-Log "skip mouth (llama-server already running)"
 } elseif (Test-ColiServeProcess) {
-    Write-Log "skip coli serve (process already running, still loading)"
+    Write-Log "skip mouth (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
     $pythonCmd = Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     $python = if ($pythonCmd) { $pythonCmd.Source } else { $null }
@@ -318,10 +318,10 @@ if ($coliSleep) {
                 COLI_KV_SHARE = "1"
             }
     } else {
-        Write-Log "skip coli serve (python not on PATH)"
+        Write-Log "skip mouth (python not on PATH)"
     }
 } else {
-    Write-Log "skip coli serve (need $coli and model dir $model)"
+    Write-Log "skip mouth (need $coli and model dir $model)"
 }
 
 $kernel = Join-Path $RepoRoot "godbrain_core\cpp_kernel\godbrain-kernel.exe"

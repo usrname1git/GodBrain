@@ -1,5 +1,5 @@
 # Register a current-user 5-minute keep-alive. Never LocalSystem.
-# The watch script only starts missing listeners. It does not kill Colibri.
+# The watch script only starts missing listeners. It does not kill the mouth.
 
 [CmdletBinding()]
 param(
