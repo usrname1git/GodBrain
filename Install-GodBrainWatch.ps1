@@ -47,5 +47,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Registered $taskName for $env:USERNAME every 5 minutes."
-Write-Host "Starts missing rag/kernel/coli only. Never kills a running process."
+Write-Host "Starts missing rag/kernel/mouth only. Never kills a running process."
 Write-Host "Remove with: .\Install-GodBrainWatch.ps1 -Unregister"

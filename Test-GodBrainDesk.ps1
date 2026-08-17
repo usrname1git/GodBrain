@@ -41,6 +41,10 @@ if ($doors) {
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
+foreach ($tn in @("GodBrainWatch", "GodBrainLogon", "GodBrainCs2Pause")) {
+    & schtasks.exe /Query /TN $tn 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { $fails.Add("missing scheduled task $tn") }
+}
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
     $html = [string]$galaxy.Content
