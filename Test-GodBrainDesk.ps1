@@ -85,6 +85,12 @@ if (-not $cs2sleep) {
             $fails.Add("task $tn should be Enabled while CS2 is idle")
         }
     }
+    if (Test-Path -LiteralPath $briefFile) {
+        $ageMin = ((Get-Date) - (Get-Item -LiteralPath $briefFile).LastWriteTime).TotalMinutes
+        if ($ageMin -gt 20) {
+            $fails.Add(("last-brief.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $ageMin))
+        }
+    }
 }
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
