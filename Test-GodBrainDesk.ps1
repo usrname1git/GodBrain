@@ -54,6 +54,13 @@ if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }
 if ($status -and $null -eq $status.pending_items) {
     $fails.Add("status missing pending_items")
 }
+if ($status -and $status.heal -and $status.heal.ok -ne $null -and $null -eq $status.heal.age_min) {
+    $fails.Add("status.heal missing age_min")
+}
+$gateExe = Join-Path $RepoRoot "godbrain_core\cpp_tools\cs2_gate.exe"
+if (-not (Test-Path -LiteralPath $gateExe)) {
+    $fails.Add("missing cs2_gate.exe")
+}
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
     $fails.Add("vram.slots is not 1")
 }

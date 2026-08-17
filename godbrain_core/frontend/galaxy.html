@@ -683,7 +683,9 @@
         }
 
         function healAgeMinutes(heal) {
-            if (!heal || !heal.at) return null;
+            if (!heal) return null;
+            if (typeof heal.age_min === 'number') return heal.age_min;
+            if (!heal.at) return null;
             const t = Date.parse(heal.at);
             if (isNaN(t)) return null;
             return Math.max(0, Math.round((Date.now() - t) / 60000));

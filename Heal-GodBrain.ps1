@@ -2,7 +2,7 @@
 # (icmp / dns_self / nic_tcpip) → at most one flushdns if DNS missed after
 # that split → verify → remember (candidate). Not a multi-agent graph.
 # Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
-# Allowlist repair: ipconfig /flushdns only when dns_self fails, Dnscache is
+# Allowlist repair: Clear-DnsClientCache only when dns_self fails, Dnscache is
 # up, and icmp_loopback is up. release, winsock reset, int ip reset,
 # DeviceCleanup, and reboot are legal tools but need an operator GO in
 # chat — Heal must not run them unattended.
@@ -108,8 +108,8 @@ function Start-AllowlistedService([string]$Name) {
 }
 
 function Invoke-AllowlistedFlushDns {
-    Write-Host "heal: ipconfig /flushdns (dns_self failed, Dnscache up, icmp ok)"
-    & ipconfig.exe /flushdns | Out-Null
+    Write-Host "heal: Clear-DnsClientCache (dns_self failed, Dnscache up, icmp ok)"
+    Clear-DnsClientCache
 }
 
 function Test-TailscaleCgNat {

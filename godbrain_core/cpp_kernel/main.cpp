@@ -906,7 +906,11 @@ static json kernel_status_body() {
     }
     const int host_pending =
         host_record.value("status", "") == "candidate" ? 1 : 0;
-    const json heal = load_heal_last();
+    json heal = load_heal_last();
+    if (!heal.empty()) {
+        heal["age_min"] = file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
+    }
     return {
         {"kernel", true},
         {"coli_serve", coli.value("up", false)},
@@ -1529,8 +1533,8 @@ static std::string format_brief_text() {
         }
     }
     if (heal.contains("ok")) {
-        const int heal_age = file_age_minutes(
-            get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
+        const int heal_age = heal.value("age_min", file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json"));
         if (heal_age > 20) {
             reply << " heal=stale/" << heal_age << "m";
         } else if (heal_age >= 0) {
@@ -2696,7 +2700,17 @@ int main() {
                 const json heal = st.value("heal", json::object());
                 reply << "judge " << pending.value("total", 0) << " waiting";
                 if (heal.contains("ok")) {
-                    reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+                    const int heal_age = heal.value("age_min", -1);
+                    if (heal_age > 20) {
+                        reply << " heal=stale/" << heal_age << "m";
+                    } else if (heal_age >= 0) {
+                        reply << " heal="
+                              << (heal.value("ok", false) ? "ok" : "fail")
+                              << "/" << heal_age << "m";
+                    } else {
+                        reply << " heal="
+                              << (heal.value("ok", false) ? "ok" : "fail");
+                    }
                 }
                 const json cs2 = st.value("cs2", json::object());
                 if (cs2.value("sleep", false)) {
