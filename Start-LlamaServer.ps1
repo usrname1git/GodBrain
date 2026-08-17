@@ -41,7 +41,7 @@ function Test-Port([int]$PortNum) {
 
 Write-Host "Start-LlamaServer: disabling Watch so it cannot restart coli mid-swap"
 schtasks /Change /TN GodBrainWatch /DISABLE 2>$null | Out-Null
-
+try {
 $coli = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match '(?i)coli(\.exe)?["'']?\s+serve' })
 foreach ($p in $coli) {
@@ -119,7 +119,6 @@ while ((Get-Date) -lt $waitUntil) {
     $alive = Get-Process -Id $cmdPid -ErrorAction SilentlyContinue
     $llama = Get-Process -Name "llama-server" -ErrorAction SilentlyContinue
     if (-not $alive -and -not $llama) {
-        schtasks /Change /TN GodBrainWatch /ENABLE 2>$null | Out-Null
         throw "llama-server process gone before healthy. See $stderr"
     }
     if (Test-Port $Port) {
@@ -131,10 +130,11 @@ while ((Get-Date) -lt $waitUntil) {
     Start-Sleep -Seconds 2
 }
 if (-not $up) {
-    schtasks /Change /TN GodBrainWatch /ENABLE 2>$null | Out-Null
     throw "llama-server did not become healthy on :$Port. See $stderr"
 }
 Write-Host "Start-LlamaServer: up on :$Port  model=$Model"
 Write-Host "Galaxy: http://127.0.0.1:8083/galaxy"
-schtasks /Change /TN GodBrainWatch /ENABLE 2>$null | Out-Null
+} finally {
+    schtasks /Change /TN GodBrainWatch /ENABLE 2>$null | Out-Null
+}
 exit 0

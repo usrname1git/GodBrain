@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -44,6 +45,11 @@ std::string replace_slashes(std::string path) {
     return path;
 }
 
+bool ends_with(const std::string& value, const std::string& suf) {
+    return value.size() >= suf.size() &&
+           value.compare(value.size() - suf.size(), suf.size(), suf) == 0;
+}
+
 bool path_ok(const std::string& rel) {
     if (rel.empty() || rel.size() > 240) return false;
     if (rel.find("..") != std::string::npos) return false;
@@ -52,15 +58,31 @@ bool path_ok(const std::string& rel) {
     if (lower.rfind(".git\\", 0) == 0 || lower.find("\\.git\\") != std::string::npos) {
         return false;
     }
-    return true;
+    static const char* denied[] = {
+        "build\\", "target\\", "out\\", "cache\\", "node_modules\\",
+        "llm\\", "archive\\", "godbrain_core\\smart_contracts\\lib\\",
+    };
+    for (const char* d : denied) {
+        if (lower.rfind(d, 0) == 0 || lower.find(std::string("\\") + d) != std::string::npos) {
+            return false;
+        }
+    }
+    const bool root_file = lower.find('\\') == std::string::npos;
+    if (root_file) {
+        return ends_with(lower, ".ps1") || ends_with(lower, ".cmd") ||
+               ends_with(lower, ".md");
+    }
+    return lower.rfind("godbrain_core\\", 0) == 0;
 }
 
-std::string read_all(const std::string& path) {
+bool read_all(const std::string& path, std::string& body) {
     std::ifstream in(path, std::ios::binary);
-    if (!in) return "";
+    if (!in) return false;
     std::ostringstream out;
     out << in.rdbuf();
-    return out.str();
+    if (!in && !in.eof()) return false;
+    body = out.str();
+    return true;
 }
 
 bool write_all(const std::string& path, const std::string& body) {
@@ -120,12 +142,13 @@ std::vector<Hunk> parse_apply_blocks(const std::string& text) {
         if (!hunk.old_text.empty() && hunk.old_text[0] == '\n') hunk.old_text.erase(0, 1);
         if (!hunk.new_text.empty() && hunk.new_text[0] == '\r') hunk.new_text.erase(0, 1);
         if (!hunk.new_text.empty() && hunk.new_text[0] == '\n') hunk.new_text.erase(0, 1);
-        if (!hunk.path.empty() && !hunk.old_text.empty()) hunks.push_back(hunk);
+        if (!hunk.path.empty()) hunks.push_back(hunk);
         pos = end + 7;
     }
     return hunks;
 }
 
+std::mutex g_plan_mu;
 std::string g_plan;
 
 void save_plan(const std::string& user_msg, const std::string& first_answer) {
@@ -163,7 +186,8 @@ std::string guess_file(const std::string& text) {
 
 std::string excerpt(const std::string& rel) {
     const std::string full = repo_root() + "\\" + rel;
-    std::string body = read_all(full);
+    std::string body;
+    if (!read_all(full, body)) return "";
     if (body.size() > 4000) body.resize(4000);
     return body;
 }
@@ -179,9 +203,18 @@ std::string apply_hunks(const std::vector<Hunk>& hunks) {
             continue;
         }
         const std::string full = root + "\\" + hunk.path;
-        std::string body = read_all(full);
-        if (body.empty()) {
+        std::string body;
+        if (!read_all(full, body)) {
             report << "skip missing " << hunk.path << "\n";
+            continue;
+        }
+        if (body.empty() && hunk.old_text.empty()) {
+            if (!write_all(full, hunk.new_text)) {
+                report << "skip write failed " << hunk.path << "\n";
+                continue;
+            }
+            ++ok;
+            report << "edited " << hunk.path << "\n";
             continue;
         }
         const size_t at = body.find(hunk.old_text);
@@ -232,6 +265,7 @@ Result maybe_apply(
     const std::function<std::string(const std::string&, const std::string&)>& generate) {
     Result result;
     if (!looks_like_edit_request(user_msg)) return result;
+    std::lock_guard<std::mutex> lock(g_plan_mu);
     result.attempted = true;
     save_plan(user_msg, first_answer);
 

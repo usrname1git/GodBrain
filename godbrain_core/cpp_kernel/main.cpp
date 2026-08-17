@@ -663,7 +663,7 @@ static std::string make_edit_continue_prompt(const std::string& prior) {
                "exact new text\n"
                ">>>>\n"
                "*** END\n\n"
-               "END>>") +
+               "Last tokens:\n") +
            last_anchor(prior);
 }
 
