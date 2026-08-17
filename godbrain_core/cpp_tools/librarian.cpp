@@ -145,11 +145,12 @@ static std::string chat_complete(
     client.set_connection_timeout(2, 0);
     client.set_read_timeout(180, 0);
     client.set_write_timeout(10, 0);
-    const json body = {
+    json body = {
         {"model", model},
         {"stream", false},
         {"temperature", temperature},
-        {"max_tokens", 1024},
+        {"max_tokens", 512},
+        {"chat_template_kwargs", json{{"enable_thinking", false}}},
         {"messages",
          json::array(
              {json{{"role", "system"}, {"content", system}},
@@ -169,8 +170,12 @@ static std::string chat_complete(
     const auto& choice = parsed.at("choices").at(0);
     const json msg = choice.value("message", json::object());
     std::string content = msg.value("content", "");
+    const std::string think = msg.value("reasoning_content", "");
+    if (content.find('{') == std::string::npos && think.find('{') != std::string::npos) {
+        content = think;
+    }
     if (content.empty()) {
-        content = msg.value("reasoning_content", "");
+        content = think;
     }
     if (content.empty()) {
         throw std::runtime_error("mouth returned empty content");
@@ -369,9 +374,9 @@ public:
                 
                 const std::string system = llm_input["system"].get<std::string>();
                 const std::string user =
-                    std::string("Transcript (raw, immutable). Extract specific "
-                                "new claims as JSON only. Do not summarize the "
-                                "whole source.\n\n") +
+                    std::string("Transcript (raw, immutable). Reply with one "
+                                "JSON object only. First character must be '{'. "
+                                "No markdown. No thinking. No prose.\n\n") +
                     envelope.content;
                 return execute_llm_call(
                     envelope, system, user, llm_input.dump(), prompt_version,
@@ -379,7 +384,10 @@ public:
             } catch (const std::exception& e) {
                 last_error = e.what();
                 std::cerr << "[LIBRARIAN WARN] LLM Extraction attempt " << (attempt + 1) << " failed: " << last_error << std::endl;
-                if (attempt == max_retries) throw;
+                const bool mouth_dead =
+                    last_error.find("did not finish") != std::string::npos ||
+                    last_error.find("mouth is down") != std::string::npos;
+                if (mouth_dead || attempt == max_retries) throw;
                 std::cout << "[LIBRARIAN] Retrying LLM extraction with error feedback..." << std::endl;
             }
         }
