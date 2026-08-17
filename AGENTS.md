@@ -219,10 +219,12 @@ cloud model to get it.
   non-privileged RAG router alternatives on loopback port 8082. They cannot run
   together because they use the same port. Both use the canonical loopback RAG
   service and neither exposes the C++ kernel's `command_type` dispatcher.
-- `godbrain_core/cpp_tools/librarian.cpp` distills a transcript with Colibri,
-  validates the result, and sends one JSON document over stdin to the Go Memory
-  Store. `trigger_librarian.ps1` extracts the newest Copilot session transcript
-  and starts that pipeline.
+- `godbrain_core/cpp_tools/librarian.cpp` distills a transcript through the live
+  `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door), validates
+  the result, and sends one JSON document over stdin to the Go Memory Store.
+  It does not cold-spawn Colibri unless `GODBRAIN_LIBRARIAN_SPAWN=1`.
+  `trigger_librarian.ps1` extracts the newest Copilot session transcript
+  and starts that pipeline. Any text file is a valid source.
 - `godbrain_core/memory_store/` is the active Alexandria write boundary. It
   validates provenance and ingestion state, then stores immutable sources and
   knowledge nodes plus append-only run-to-node links in MongoDB.
