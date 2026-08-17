@@ -25,9 +25,9 @@ $hidden = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.exe"
 if (-not (Test-Path -LiteralPath $hidden)) {
     throw "Missing $hidden — run Install-GodBrainWatch.ps1 once to build it"
 }
-$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
-$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
-$tr = "`"$hidden`" `"$shell`" -NoProfile -WindowStyle Hidden -File `"$watch`" -RepoRoot `"$repo`""
+$wrap = Join-Path $repo "godbrain_core\cpp_tools\cs2pause.cmd"
+if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
+$tr = "`"$hidden`" `"$wrap`""
 & schtasks.exe /Create /TN $taskName /SC MINUTE /MO 1 /IT /F /RL LIMITED `
     /TR $tr | Out-Host
 if ($LASTEXITCODE -ne 0) {

@@ -3,12 +3,17 @@
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = $PSScriptRoot
+    [string]$RepoRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# $PSScriptRoot in a param() default is empty when Task Scheduler launches -File.
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $RepoRoot = $PSScriptRoot
+    } elseif ($MyInvocation.MyCommand.Path) {
+        $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
 }
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     throw "Watch-Cs2Pause: RepoRoot is empty."

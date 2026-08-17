@@ -118,6 +118,20 @@ if (-not $cs2sleep) {
             $fails.Add("task $tn should be Enabled while CS2 is idle")
         }
     }
+    $watchTr = (& schtasks.exe /Query /TN GodBrainWatch /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
+    if ($watchTr -notmatch "watch\.cmd") {
+        $fails.Add("GodBrainWatch TR missing watch.cmd")
+    }
+    if ($watchTr -match "-RepoRoot") {
+        $fails.Add("GodBrainWatch TR still passes -RepoRoot (over 261 chars)")
+    }
+    $cs2Tr = (& schtasks.exe /Query /TN GodBrainCs2Pause /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
+    if ($cs2Tr -notmatch "cs2pause\.cmd") {
+        $fails.Add("GodBrainCs2Pause TR missing cs2pause.cmd")
+    }
+    if ($cs2Tr -match "-RepoRoot") {
+        $fails.Add("GodBrainCs2Pause TR still passes -RepoRoot (over 261 chars)")
+    }
     if (Test-Path -LiteralPath $briefFile) {
         $ageMin = ((Get-Date) - (Get-Item -LiteralPath $briefFile).LastWriteTime).TotalMinutes
         if ($ageMin -gt 20) {
@@ -134,6 +148,12 @@ if (-not $cs2sleep) {
         $pendAge = ((Get-Date) - (Get-Item -LiteralPath $pendingFile).LastWriteTime).TotalMinutes
         if ($pendAge -gt 20) {
             $fails.Add(("last-pending.json stale ({0:n0} min; Watch/Heal should refresh)" -f $pendAge))
+        }
+    }
+    if (Test-Path -LiteralPath $healFile) {
+        $healAge = ((Get-Date) - (Get-Item -LiteralPath $healFile).LastWriteTime).TotalMinutes
+        if ($healAge -gt 20) {
+            $fails.Add(("heal-last.json stale ({0:n0} min; Watch/Heal should refresh)" -f $healAge))
         }
     }
 }

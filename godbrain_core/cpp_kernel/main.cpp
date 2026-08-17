@@ -1461,7 +1461,32 @@ static std::string format_brief_text() {
         }
     }
     if (heal.contains("ok")) {
-        reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+        const std::string heal_path =
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
+        WIN32_FILE_ATTRIBUTE_DATA attrs{};
+        int heal_age = -1;
+        if (GetFileAttributesExA(heal_path.c_str(), GetFileExInfoStandard, &attrs)) {
+            FILETIME now_ft{};
+            GetSystemTimeAsFileTime(&now_ft);
+            ULARGE_INTEGER written{};
+            ULARGE_INTEGER now{};
+            written.LowPart = attrs.ftLastWriteTime.dwLowDateTime;
+            written.HighPart = attrs.ftLastWriteTime.dwHighDateTime;
+            now.LowPart = now_ft.dwLowDateTime;
+            now.HighPart = now_ft.dwHighDateTime;
+            if (now.QuadPart >= written.QuadPart) {
+                heal_age = static_cast<int>(
+                    (now.QuadPart - written.QuadPart) / 10000000ull / 60ull);
+            }
+        }
+        if (heal_age > 20) {
+            reply << " heal=stale/" << heal_age << "m";
+        } else if (heal_age >= 0) {
+            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail")
+                  << "/" << heal_age << "m";
+        } else {
+            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+        }
     }
     const json tail = st.value("tailscale", json::object());
     if (tail.value("up", false)) {

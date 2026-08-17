@@ -34,10 +34,11 @@ if (-not (Test-Path -LiteralPath $hidden)) {
         throw "failed to build $hidden"
     }
 }
-$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
-$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
-# CREATE_NO_WINDOW child. Hidden pwsh and wscript still flash Windows Terminal.
-$tr = "`"$hidden`" `"$shell`" -NoProfile -WindowStyle Hidden -File `"$watch`" -RepoRoot `"$repo`""
+# Short cmd wrapper. A quoted pwsh -File line plus -RepoRoot overflowed
+# schtasks /TR (~261 chars) and the hidden pwsh child was a no-op.
+$wrap = Join-Path $repo "godbrain_core\cpp_tools\watch.cmd"
+if (-not (Test-Path -LiteralPath $wrap)) { throw "Missing $wrap" }
+$tr = "`"$hidden`" `"$wrap`""
 # schtasks only. Get-ScheduledTask CIM throws 0x8007054f on this host.
 # Never /RU SYSTEM. /IT = only while this user is logged on.
 & schtasks.exe /Create /TN $taskName /SC MINUTE /MO 5 /IT /F /RL LIMITED `
