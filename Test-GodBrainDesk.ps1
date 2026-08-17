@@ -59,6 +59,20 @@ if (-not (Test-Path -LiteralPath $doorsFile)) {
     }
 }
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
+$healFile = Join-Path $RepoRoot "logs\heal-last.json"
+if (-not (Test-Path -LiteralPath $healFile)) {
+    $fails.Add("missing logs/heal-last.json")
+} else {
+    try {
+        $hl = Get-Content -LiteralPath $healFile -Raw | ConvertFrom-Json
+        if ([int]$hl.version -lt 3) { $fails.Add("heal-last.json version < 3") }
+        if (-not $hl.PSObject.Properties.Name.Contains("mouth")) {
+            $fails.Add("heal-last.json missing mouth")
+        }
+    } catch {
+        $fails.Add("heal-last.json unreadable")
+    }
+}
 foreach ($tn in @("GodBrainWatch", "GodBrainLogon", "GodBrainCs2Pause")) {
     & schtasks.exe /Query /TN $tn 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) { $fails.Add("missing scheduled task $tn") }
