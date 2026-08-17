@@ -203,7 +203,8 @@ cloud model to get it.
   return on-disk Oracle turns without touching Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram`. `/edit` waits if CS2 is sleeping.
-  `GET /api/heal` is on the Tailscale door. `/brief` also writes
+  `GET /api/heal` is on the Tailscale door. `GET /api/doors` lists
+  loopback and Tailscale URLs (chat stays loopback-only). `/brief` also writes
   `logs/last-brief.txt` so the glance survives a dead kernel.
   `/brief` is the one-glance
   host + mouth + pending-judge + heal + CS2-sleep + last-turn line. If `logs/mouth.txt` says llama and `:8000` is

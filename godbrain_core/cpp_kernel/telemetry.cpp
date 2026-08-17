@@ -287,6 +287,8 @@ namespace telemetry {
                     std::string("http://") + ip + ":8083/api/vram";
                 result["heal_url"] =
                     std::string("http://") + ip + ":8083/api/heal";
+                result["doors_url"] =
+                    std::string("http://") + ip + ":8083/api/doors";
                 return result;
             }
         }

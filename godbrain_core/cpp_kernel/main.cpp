@@ -75,6 +75,7 @@ static json last_oracle_turns_json();
 static std::string format_brief_text();
 static void handle_brief(const httplib::Request&, httplib::Response&);
 static void handle_vram(const httplib::Request&, httplib::Response&);
+static void handle_doors(const httplib::Request&, httplib::Response&);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -1168,6 +1169,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         res.set_content(heal_status_body().dump(), "application/json");
     });
+    server.Get("/api/doors", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_doors(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1506,6 +1511,53 @@ static void handle_vram(const httplib::Request&, httplib::Response& res) {
           << (plan.value("overcommit", false) ? "on" : "off")
           << "\nOne generate at a time. Librarian shares this slot.";
     res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+}
+
+static void handle_doors(const httplib::Request&, httplib::Response& res) {
+    const std::string lb = "http://127.0.0.1:8083";
+    json loopback = {
+        {"brief", lb + "/api/brief"},
+        {"vram", lb + "/api/vram"},
+        {"heal", lb + "/api/heal"},
+        {"status", lb + "/api/status"},
+        {"last", lb + "/api/last"},
+        {"doors", lb + "/api/doors"},
+        {"remember", lb + "/api/remember"},
+        {"librarian", lb + "/api/librarian"},
+        {"observe", lb + "/api/observe"},
+        {"judge", lb + "/api/judge"},
+    };
+    const json tail = telemetry::get_tailscale();
+    const std::string ip = tail.value("ip", "");
+    json ts = {
+        {"up", tail.value("up", false)},
+        {"reason", tail.value("reason", "")},
+        {"bound", tailscale_door_bound_to(ip)},
+        {"ip", ip},
+    };
+    if (!ip.empty() && tail.value("up", false)) {
+        const std::string base = "http://" + ip + ":8083";
+        ts["brief"] = base + "/api/brief";
+        ts["vram"] = base + "/api/vram";
+        ts["heal"] = base + "/api/heal";
+        ts["status"] = base + "/api/status";
+        ts["last"] = base + "/api/last";
+        ts["doors"] = base + "/api/doors";
+        ts["remember"] = base + "/api/remember";
+        ts["librarian"] = base + "/api/librarian";
+        ts["observe"] = base + "/api/observe";
+        ts["judge"] = base + "/api/judge";
+    }
+    res.set_content(
+        json({
+                 {"kernel", true},
+                 {"writes_need_token", !g_api_token.empty()},
+                 {"slots", 1},
+                 {"loopback", loopback},
+                 {"tailscale", ts},
+             })
+            .dump(),
+        "application/json");
 }
 
 static json load_mouth() {
@@ -2119,6 +2171,9 @@ int main() {
     });
     svr.Get("/api/vram", [&](const httplib::Request& req, httplib::Response& res) {
         handle_vram(req, res);
+    });
+    svr.Get("/api/doors", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_doors(req, res);
     });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
