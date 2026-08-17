@@ -173,11 +173,11 @@ if (-not $cs2sleep) {
     if ($cs2Tr -match "cs2pause\.cmd|\.cmd") {
         $fails.Add("GodBrainCs2Pause TR still launches a .cmd (flashes WT)")
     }
-    if ($cs2Tr -notmatch "Watch-Cs2Pause\.ps1") {
-        $fails.Add("GodBrainCs2Pause TR missing Watch-Cs2Pause.ps1")
+    if ($cs2Tr -notmatch "cs2_gate\.exe") {
+        $fails.Add("GodBrainCs2Pause TR missing cs2_gate.exe")
     }
-    if ($cs2Tr -notmatch "-RepoRoot") {
-        $fails.Add("GodBrainCs2Pause should pass -RepoRoot (Register-ScheduledTask, not schtasks /TR)")
+    if ($cs2Tr -match "pwsh\.exe|powershell\.exe") {
+        $fails.Add("GodBrainCs2Pause should not start pwsh every minute")
     }
     $logonTr = (& schtasks.exe /Query /TN GodBrainLogon /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
     if ($logonTr -match "\.cmd") {

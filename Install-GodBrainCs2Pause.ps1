@@ -21,16 +21,25 @@ if (-not (Test-Path -LiteralPath $watch)) {
     throw "Missing $watch"
 }
 
-$hidden = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.exe"
+$tools = Join-Path $repo "godbrain_core\cpp_tools"
+$hidden = Join-Path $tools "run_hidden.exe"
 if (-not (Test-Path -LiteralPath $hidden)) {
     throw "Missing $hidden — run Install-GodBrainWatch.ps1 once to build it"
 }
-# run_hidden + pwsh -File. Never a .cmd: cmd.exe flashes Windows Terminal.
-$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
-$shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
-$action = New-ScheduledTaskAction -Execute $hidden `
-    -Argument "`"$shell`" -NoProfile -WindowStyle Hidden -NonInteractive -File `"$watch`" -RepoRoot `"$repo`"" `
-    -WorkingDirectory $repo
+$gate = Join-Path $tools "cs2_gate.exe"
+$gateSrc = Join-Path $tools "cs2_gate.cpp"
+if (-not (Test-Path -LiteralPath $gate)) {
+    if (-not (Test-Path -LiteralPath $gateSrc)) { throw "Missing $gateSrc" }
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+    cmd /c "call `"$vcvars`" >nul && cd /d `"$tools`" && cl /nologo /O2 /Fe:cs2_gate.exe cs2_gate.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup"
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gate)) {
+        throw "failed to build $gate"
+    }
+}
+# WINDOWS-subsystem gate. No pwsh unless CS2 is up or pause-state is set.
+$action = New-ScheduledTaskAction -Execute $gate -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddSeconds(20)) `
     -RepetitionInterval (New-TimeSpan -Minutes 1) `
     -RepetitionDuration (New-TimeSpan -Days 3650)

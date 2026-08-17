@@ -226,7 +226,9 @@ cloud model to get it.
   launch `run_hidden` + `pwsh -File` (never a `.cmd`: `cmd.exe` flashes
   Windows Terminal). Register-ScheduledTask so the line is not truncated.
   Watch infers RepoRoot from `-File`. Watch/Cs2Pause allow start on
-  batteries. A `/verify` or `/reject` rewrites `logs/last-pending.json`.
+  batteries. Cs2Pause runs `cs2_gate.exe` (no console); pwsh starts only
+  if CS2.exe is up or `logs/cs2-pause.json` is paused.
+  A `/verify` or `/reject` rewrites `logs/last-pending.json`.
   Galaxy overlay lists pending short ids from `GET /api/pending` and
   Heal age from `heal-last.at`. Chat `/pending` is a GET, not generate.
   `GET /api/status` includes `pending_items` so the overlay does not need
