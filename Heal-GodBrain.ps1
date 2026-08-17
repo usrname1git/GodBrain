@@ -261,5 +261,14 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
     }
 }
 
+if ($after.kernel) {
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-brief"
+    } catch {
+        Write-Host "heal brief skipped: $_"
+    }
+}
+
 if (-not $ok) { exit 1 }
 exit 0
