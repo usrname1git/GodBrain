@@ -216,7 +216,9 @@ cloud model to get it.
   `heal-last.json` v3 records mouth (:8000), Tailscale 100.x (detect-only),
   and cs2_sleep. Heal does not `tailscale up`. Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. Each Heal tick refreshes
-  `logs/last-brief.txt` when the kernel is up (no GPU). The Galaxy node panel and `POST /api/judge` are
+  `logs/last-brief.txt` when the kernel is up (no GPU). Watch/Heal is the
+  24/7 loop. `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after
+  Start-GodBrain. The Galaxy node panel and `POST /api/judge` are
   the same judgment path. `/observe` persists stable host inventory including
   `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
   If the pin moved, verified `windows-sre` cards that carry a different
