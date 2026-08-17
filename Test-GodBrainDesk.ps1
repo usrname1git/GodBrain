@@ -46,6 +46,18 @@ if ($doors) {
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
+$doorsFile = Join-Path $RepoRoot "logs\last-doors.json"
+if (-not (Test-Path -LiteralPath $doorsFile)) {
+    $fails.Add("missing logs/last-doors.json")
+} else {
+    try {
+        $onDisk = Get-Content -LiteralPath $doorsFile -Raw | ConvertFrom-Json
+        if ([int]$onDisk.slots -ne 1) { $fails.Add("last-doors.json slots is not 1") }
+        if ($onDisk.tailscale.chat) { $fails.Add("last-doors.json has chat on Tailscale") }
+    } catch {
+        $fails.Add("last-doors.json unreadable")
+    }
+}
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
 foreach ($tn in @("GodBrainWatch", "GodBrainLogon", "GodBrainCs2Pause")) {
     & schtasks.exe /Query /TN $tn 2>$null | Out-Null
