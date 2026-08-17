@@ -178,6 +178,11 @@ try {
     if ($html -notmatch "desk_test") { $fails.Add("galaxy overlay missing desk_test") }
     if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
     if ($html -notmatch "pending-btn") { $fails.Add("galaxy missing Pending button") }
+    if ($html -notmatch "pendingOverlayLines") { $fails.Add("galaxy overlay missing pending list") }
+    if ($html -notmatch "healAgeMinutes") { $fails.Add("galaxy overlay missing heal age") }
+    if ($html -notmatch "brief\|vram\|doors\|heal\|last\|desk\|pending") {
+        $fails.Add("galaxy chat still sends /pending through generate")
+    }
 } catch {
     $fails.Add("galaxy: $_")
 }

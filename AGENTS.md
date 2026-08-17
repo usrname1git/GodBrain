@@ -224,6 +224,8 @@ cloud model to get it.
   ~261 chars; a quoted pwsh `-File -RepoRoot` line truncated this repo
   to `GodB` and Heal stopped writing). Watch/Cs2Pause allow start on
   batteries. A `/verify` or `/reject` rewrites `logs/last-pending.json`.
+  Galaxy overlay lists pending short ids from `GET /api/pending` and
+  Heal age from `heal-last.at`. Chat `/pending` is a GET, not generate.
   Each Heal tick refreshes
   `logs/last-brief.txt` and `logs/last-pending.json` when the kernel is up
   (no GPU). Watch/Heal is the

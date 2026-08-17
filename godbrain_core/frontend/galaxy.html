@@ -682,6 +682,57 @@
                     ' Oracle turn(s) from disk. Candidate, not verified.');
         }
 
+        function healAgeMinutes(heal) {
+            if (!heal || !heal.at) return null;
+            const t = Date.parse(heal.at);
+            if (isNaN(t)) return null;
+            return Math.max(0, Math.round((Date.now() - t) / 60000));
+        }
+        function formatHealLine(heal) {
+            if (!heal || typeof heal.ok !== 'boolean') return '';
+            const age = healAgeMinutes(heal);
+            if (age == null) return 'heal ' + (heal.ok ? 'ok' : 'fail');
+            if (age > 20) return 'heal stale/' + age + 'm';
+            return 'heal ' + (heal.ok ? 'ok' : 'fail') + '/' + age + 'm';
+        }
+        function pendingOverlayLines(status) {
+            const pending = (status && status.pending_judge) || {};
+            const items = Array.isArray(status && status.pending_items)
+                ? status.pending_items
+                : [];
+            const lines = [];
+            if (typeof pending.total === 'number') {
+                lines.push(
+                    'judge ' + pending.total + ' waiting' +
+                    (pending.oracle ? (' oracle=' + pending.oracle) : '') +
+                    (pending.host ? (' host=' + pending.host) : ''));
+            }
+            items.slice(0, 5).forEach((item, index) => {
+                const id = String((item && item.stable_id) || '');
+                const shortId = id ? id.slice(0, 12) : 'no id';
+                const q = String((item && (item.question || item.preview)) || '')
+                    .replace(/\s+/g, ' ')
+                    .slice(0, 40);
+                lines.push(
+                    '  ' + (index + 1) + '. ' +
+                    ((item && item.kind) || '?') + ' ' + shortId +
+                    (q ? (' ' + q) : ''));
+            });
+            return lines;
+        }
+        function attachPendingItems(status) {
+            return fetch('/api/pending')
+                .then((res) => res.json())
+                .then((body) => {
+                    status.pending_items = (body && body.items) || [];
+                    return status;
+                })
+                .catch(() => {
+                    status.pending_items = [];
+                    return status;
+                });
+        }
+
         function formatColiStatus(status) {
             const coli = (status && status.coli) || {};
             const host = (status && status.host) || {};
@@ -738,17 +789,9 @@
                     'RAM free ' + ramFree.toFixed(1) + ' GB' +
                     (ramFree < 4 ? ' — paging, wait' : ''));
             }
-            const pending = (status && status.pending_judge) || {};
-            if (typeof pending.total === 'number') {
-                lines.push(
-                    'judge ' + pending.total + ' waiting' +
-                    (pending.oracle ? (' oracle=' + pending.oracle) : '') +
-                    (pending.host ? (' host=' + pending.host) : ''));
-            }
-            const heal = (status && status.heal) || {};
-            if (heal && typeof heal.ok === 'boolean') {
-                lines.push('heal ' + (heal.ok ? 'ok' : 'fail'));
-            }
+            pendingOverlayLines(status).forEach((line) => lines.push(line));
+            const healLine = formatHealLine((status && status.heal) || {});
+            if (healLine) lines.push(healLine);
             const cs2 = (status && status.cs2) || {};
             if (cs2.sleep) {
                 lines.push(
@@ -851,6 +894,7 @@
             if (/^\/status\b/i.test(text)) {
                 fetch('/api/status')
                     .then(res => res.json())
+                    .then((status) => attachPendingItems(status))
                     .then(status => {
                         writesNeedToken = !!status.writes_need_token;
                         appendChatMessage('sys-msg', '[SYS]', formatColiStatus(status).text);
@@ -862,7 +906,7 @@
                     });
                 return;
             }
-            if (/^\/(brief|vram|doors|heal|last|desk)\b/i.test(text)) {
+            if (/^\/(brief|vram|doors|heal|last|desk|pending)\b/i.test(text)) {
                 const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
                 fetch(path)
                     .then(res => res.json())
@@ -1104,6 +1148,7 @@
         document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
 
         function paintStatus(status) {
+            return attachPendingItems(status).then((status) => {
             writesNeedToken = !!status.writes_need_token;
             const painted = formatColiStatus(status);
             coliBusy = !!painted.busy;
@@ -1145,14 +1190,9 @@
                         'Last: ' + (lastCard.status || 'candidate') +
                         (lastCard.stable_id ? (' ' + String(lastCard.stable_id).slice(0, 12)) : ''));
                 }
-                const pending = status.pending_judge || {};
-                if (typeof pending.total === 'number') {
-                    lines.push('Judge: ' + pending.total + ' waiting');
-                }
-                const heal = status.heal || {};
-                if (typeof heal.ok === 'boolean') {
-                    lines.push('Heal: ' + (heal.ok ? 'ok' : 'fail'));
-                }
+                pendingOverlayLines(status).forEach((line) => lines.push(line));
+                const healLine = formatHealLine(status.heal || {});
+                if (healLine) lines.push(healLine);
                 const deskCard = status.desk_test || {};
                 if (typeof deskCard.ok === 'boolean') {
                     lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
@@ -1220,6 +1260,7 @@
                     });
             }
             replayLastOracle(status);
+            });
         }
 
         function refreshStatus() {
