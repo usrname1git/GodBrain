@@ -91,6 +91,12 @@ if (-not $cs2sleep) {
             $fails.Add(("last-brief.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $ageMin))
         }
     }
+    if (Test-Path -LiteralPath $doorsFile) {
+        $doorAge = ((Get-Date) - (Get-Item -LiteralPath $doorsFile).LastWriteTime).TotalMinutes
+        if ($doorAge -gt 20) {
+            $fails.Add(("last-doors.json stale ({0:n0} min; Watch/Heal should refresh)" -f $doorAge))
+        }
+    }
 }
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
