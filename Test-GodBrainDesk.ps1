@@ -38,6 +38,9 @@ if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
 if ($brief -and [string]$brief.response -notmatch "llama=|coli=") {
     $fails.Add("brief missing mouth state")
 }
+if ($brief -and [string]$brief.response -notmatch "desk=") {
+    $fails.Add("brief missing desk=")
+}
 $briefFile = Join-Path $RepoRoot "logs\last-brief.txt"
 if (-not (Test-Path -LiteralPath $briefFile)) {
     $fails.Add("missing logs/last-brief.txt")

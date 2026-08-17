@@ -1455,6 +1455,10 @@ static std::string format_brief_text() {
         reply << " gpu=" << vram.value("dedicated_gb", 0)
               << "GB/" << vram.value("slots", 1) << "slot";
     }
+    const json desk = st.value("desk_test", json::object());
+    if (desk.contains("ok")) {
+        reply << " desk=" << (desk.value("ok", false) ? "ok" : "fail");
+    }
     const double ram = host.value("ram_available_gb", -1.0);
     if (ram >= 0.0) {
         char ram_buf[32];
@@ -1481,10 +1485,6 @@ static std::string format_brief_text() {
     if (edit.contains("report")) {
         reply << "\nedit "
               << (edit.value("applied", false) ? "done" : "fail");
-    }
-    const json desk = st.value("desk_test", json::object());
-    if (desk.contains("ok")) {
-        reply << "\ndesk=" << (desk.value("ok", false) ? "ok" : "fail");
     }
     const std::string text = reply.str();
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
