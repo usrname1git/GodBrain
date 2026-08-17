@@ -223,6 +223,9 @@ cloud model to get it.
   `GODBRAIN_API_TOKEN` is set and the adapter has a 100.x address.
   `/status` late-binds that door if Tailscale logs in after kernel boot,
   and reports `needs_login` when the service is up but offline.
+  `POST /api/librarian` fail-closes if CS2 is sleeping, the mouth is
+  busy, or `:8000` is down (it may kick Start-LlamaServer; it will not
+  stack a second generate).
   Chat requires `coli serve` on `:8000` from
   Colibri 1.6.2 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`). Prefer that over
   the vendored 1.1.1 tree under `LLM/colibri_LLM`.

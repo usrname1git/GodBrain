@@ -90,6 +90,7 @@ static json load_last_edit();
 static json load_heal_last();
 static json gpu_desk();
 static bool maybe_restart_mouth();
+static bool cs2_should_sleep_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
 static json cs2_desk();
@@ -952,6 +953,36 @@ static std::string safe_session_id(std::string value) {
 static void handle_librarian(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
+        if (cs2_should_sleep_mouth()) {
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "CS2 owns the box; Librarian waits. Use Start-CS2.cmd."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        const json coli = coli_serve_status();
+        if (coli.value("busy", false)) {
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "mouth is generating (one GPU slot). Wait for serve."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        if (!coli.value("up", false)) {
+            maybe_restart_mouth();
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "mouth is down on :8000. Starting it if llama. "
+                       "Ask Librarian again in a minute."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
         std::string text = payload.value(
             "text", payload.value("message", payload.value("idea", "")));
