@@ -156,6 +156,10 @@ cloud model to get it.
   The SRE surgeon kit is `godbrain_core/sre_agent/sre_surgeon.exe
   --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
   Do not `--ask` while `coli serve` holds the GPU slot.
+  Local file edits: Galaxy can ask the mouth to change a repo file.
+  The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a
+  second GPU pass for `*** APPLY` blocks, and writes allowlisted repo
+  paths only. Never git push from the mouth.
   Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause coli first,
   launch Steam app 730, wait until `CS2.exe` exits, wait 5 minutes,
   then Start-GodBrain. `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is
@@ -291,7 +295,7 @@ The kernel has no committed CMake project. From
 `godbrain_core\cpp_kernel` in a Visual Studio x64 Developer shell:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp /link pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action: it may invoke local `mongosh`,

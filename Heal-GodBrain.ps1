@@ -159,6 +159,8 @@ if (-not $before.dns) { $needed += "dns" }
 if (-not $before.iphlp) { $needed += "iphlp" }
 if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag) { $needed += "rag" }
+# "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
+# instead of coli when logs/mouth.txt says llama-server.
 if (-not $before.coli -and -not $coliSleep) { $needed += "coli" }
 if (-not $before.kernel) { $needed += "kernel" }
 

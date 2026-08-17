@@ -16,6 +16,7 @@
 #include <set>
 #include "rag_client.h"
 #include "coli_sse.h"
+#include "local_edit.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -27,6 +28,10 @@ static const DWORD COLIBRI_TIMEOUT_MS = 180000;
 // up to 4 chunks so a normal answer finishes without the user babysitting.
 static const int kColiChunkTokens = 160;
 static const int kColiMaxChunks = 4;
+// Gemma/llama on this 4080 Super decodes at ~140 tok/s with VRAM to spare.
+// 160+tank-CONTINUE was for GLM paging; it makes 12B restate the system prompt.
+static const int kLlamaChunkTokens = 1024;
+static const int kLlamaMaxChunks = 2;
 // 160 tokens at ~3s plus a 78-layer prefill misses 720s on this 16 GB box.
 static const int kColiChunkTimeoutMs = 1200000;
 
@@ -79,6 +84,7 @@ static void note_oracle_partial(
     const std::string& partial,
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
+static json load_mouth();
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -503,8 +509,16 @@ static bool is_ngram_loop(const std::string& text) {
     return find_ngram_loop(t, nullptr, nullptr, nullptr);
 }
 
+static bool is_resume_jail(const std::string& text) {
+    return text.find("END>>") != std::string::npos ||
+           text.find("Resume immediately after these exact characters") !=
+               std::string::npos ||
+           text.find("Do not mention the prompt, corrections") !=
+               std::string::npos;
+}
+
 static bool is_generation_loop(const std::string& text) {
-    return is_heading_loop(text) || is_ngram_loop(text);
+    return is_heading_loop(text) || is_ngram_loop(text) || is_resume_jail(text);
 }
 
 static std::string trim_ngram_loop(std::string text) {
@@ -545,6 +559,7 @@ static bool is_displayable_oracle_turn(const LastOracleTurn& turn) {
     if (is_continue_command(turn.question)) return false;
     if (turn.answer.compare(0, 6, "Error:") == 0) return false;
     if (is_refuse_answer(turn.answer)) return false;
+    if (is_resume_jail(turn.answer)) return false;
     if (turn.answer.find("TABLESPACE") != std::string::npos) return false;
     if (turn.answer.find("Oracle Partition") != std::string::npos) return false;
     if (turn.answer.find("Understanding Oracle") != std::string::npos) {
@@ -623,6 +638,35 @@ static std::string make_continue_prompt(const std::string& prior) {
            last_anchor(prior);
 }
 
+static bool wants_apply_continue(
+    const std::string& system, const std::string& user) {
+    if (system.find("apply blocks") != std::string::npos) return true;
+    if (system.find("local file editor") != std::string::npos) return true;
+    return local_edit::looks_like_edit_request(user);
+}
+
+static bool looks_unfinished(const std::string& text) {
+    const std::string t = trim_copy(text);
+    if (t.empty()) return true;
+    const char end = t.back();
+    return end != '.' && end != '!' && end != '?' && end != '"' && end != ')';
+}
+
+static std::string make_edit_continue_prompt(const std::string& prior) {
+    return std::string(
+               "Continue the repo patch. Emit only apply blocks, no essay:\n"
+               "*** APPLY\n"
+               "path: relative/from/repo\n"
+               "<<<<\n"
+               "exact old text\n"
+               "====\n"
+               "exact new text\n"
+               ">>>>\n"
+               "*** END\n\n"
+               "END>>") +
+           last_anchor(prior);
+}
+
 static std::string strip_replayed_prefix(
     const std::string& prior, std::string next) {
     next = trim_copy(std::move(next));
@@ -654,6 +698,7 @@ static bool find_last_real_oracle_turn(LastOracleTurn& out) {
         if (is_continue_command(it->question)) continue;
         if (it->answer.compare(0, 6, "Error:") == 0) continue;
         if (is_refuse_answer(it->answer)) continue;
+        if (is_resume_jail(it->answer)) continue;
         if (is_generation_loop(it->answer) &&
             sanitize_oracle_body(it->answer).size() < 80) {
             continue;
@@ -805,6 +850,7 @@ static json kernel_status_body() {
         {"kernel", true},
         {"coli_serve", coli.value("up", false)},
         {"coli", coli},
+        {"mouth", load_mouth()},
         {"writes_need_token", !g_api_token.empty()},
         {"vram", telemetry::plan_colibri_vram()},
         {"rag", rag_health},
@@ -981,6 +1027,34 @@ static std::string load_where_we_are() {
     return text;
 }
 
+static json load_mouth() {
+    json mouth = {{"engine", "coli"}, {"label", "coli"}, {"model", ""}};
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\mouth.txt";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return mouth;
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                             line.back() == ' ')) {
+        line.pop_back();
+    }
+    if (line.empty()) return mouth;
+    const auto space = line.find(' ');
+    const std::string engine =
+        ascii_lower_copy(space == std::string::npos ? line : line.substr(0, space));
+    const std::string model =
+        space == std::string::npos ? "" : line.substr(space + 1);
+    if (engine.find("llama") != std::string::npos) {
+        mouth["engine"] = "llama-server";
+        mouth["label"] = "llama";
+    } else {
+        mouth["engine"] = engine;
+        mouth["label"] = engine;
+    }
+    mouth["model"] = model;
+    return mouth;
+}
+
 static json load_heal_last() {
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
     std::ifstream in(path, std::ios::binary);
@@ -1056,7 +1130,8 @@ std::string run_colibri_serve(
     ColiTokenFn on_token = {},
     ColiPingFn on_ping = {},
     const std::string& prior_user = {},
-    const std::string& prior_assistant = {}) {
+    const std::string& prior_assistant = {},
+    std::string* spoken = nullptr) {
     httplib::Client client(kColibriServeHost, kColibriServePort);
     client.set_connection_timeout(0, 500000);
     // Colibri pings empty deltas every ~10s during prefill. A 60s read
@@ -1084,13 +1159,17 @@ std::string run_colibri_serve(
         headers.emplace("Authorization", "Bearer " + coli_key);
     }
 
+    const bool llama_mouth = load_mouth().value("label", "") == "llama";
+    const int chunk_tokens = llama_mouth ? kLlamaChunkTokens : kColiChunkTokens;
+    const int max_chunks = llama_mouth ? kLlamaMaxChunks : kColiMaxChunks;
+
     std::string assembled;
     std::string last_reason;
-    for (int chunk = 0; chunk < kColiMaxChunks; ++chunk) {
+    for (int chunk = 0; chunk < max_chunks; ++chunk) {
         const json body = {
             {"model", model},
             {"stream", true},
-            {"max_tokens", kColiChunkTokens},
+            {"max_tokens", chunk_tokens},
             {"messages", messages},
         };
         std::string piece;
@@ -1103,7 +1182,8 @@ std::string run_colibri_serve(
             [&](const char* data, size_t len) {
                 godbrain_coli::feed_sse(
                     sse_buf, data, len, piece, on_token, on_ping,
-                    [&](const std::string& reason) { finish_reason = reason; });
+                    [&](const std::string& reason) { finish_reason = reason; },
+                    spoken);
                 if (is_generation_loop(piece)) {
                     heading_loop = true;
                     return false;
@@ -1113,6 +1193,11 @@ std::string run_colibri_serve(
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (heading_loop) {
             piece = sanitize_oracle_body(piece);
+            if (is_resume_jail(piece)) {
+                const size_t cut = piece.find("END>>");
+                if (cut != std::string::npos) piece.resize(cut);
+                piece = sanitize_oracle_body(piece);
+            }
             piece = strip_replayed_prefix(assembled, piece);
             assembled += piece;
             break;
@@ -1124,7 +1209,9 @@ std::string run_colibri_serve(
                        "GLM-5.2 is paging experts off disk on 16 GB. "
                        "Wait until /status shows coli=serve (not busy) and ask again.";
             }
-            assembled += "\n[cut — serve timed out, say continue]";
+            assembled += llama_mouth
+                             ? "\n[cut — mouth dropped mid-generate. Ask again, do not Continue.]"
+                             : "\n[cut — serve timed out, say continue]";
             return assembled;
         }
         if (response->status != 200) {
@@ -1163,15 +1250,30 @@ std::string run_colibri_serve(
         last_reason = finish_reason;
         if (heading_loop) break;
         if (finish_reason != "length") break;
-        if (chunk + 1 >= kColiMaxChunks) break;
+        if (chunk + 1 >= max_chunks) break;
+        // /edit: one plan chunk, then local_edit second pass.
+        if (wants_apply_continue(system, user)) break;
+        if (llama_mouth) {
+            const std::string tail =
+                (spoken && !spoken->empty()) ? *spoken : assembled;
+            if (!looks_unfinished(tail)) break;
+            messages.push_back(json{{"role", "assistant"}, {"content", piece}});
+            messages.push_back(json{
+                {"role", "user"},
+                {"content",
+                 "Finish only the last unfinished sentence. "
+                 "No new outline. No constraint list. No bullets."}});
+            continue;
+        }
         messages.push_back(json{{"role", "assistant"}, {"content", piece}});
         messages.push_back(
             json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
-    if (last_reason == "length") {
+    if (last_reason == "length" && !llama_mouth) {
         assembled +=
             "\n[cut at 640 tokens — say continue]";
     }
+    if (spoken && spoken->empty()) *spoken = assembled;
     return assembled;
 }
 
@@ -1292,7 +1394,8 @@ std::string run_colibri(
     ColiTokenFn on_token = {},
     ColiPingFn on_ping = {},
     const std::string& prior_user = {},
-    const std::string& prior_assistant = {}) {
+    const std::string& prior_assistant = {},
+    std::string* spoken = nullptr) {
     const json coli = coli_serve_status();
     if (coli.value("up", false)) {
         if (coli.value("busy", false)) {
@@ -1303,13 +1406,17 @@ std::string run_colibri(
         }
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
         return run_colibri_serve(
-            system, user, on_token, on_ping, prior_user, prior_assistant);
+            system, user, on_token, on_ping, prior_user, prior_assistant,
+            spoken);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
-    return "Error: coli serve is down on 127.0.0.1:8000. "
-           "Run schtasks /Run /TN GodBrainLogon and wait until /status shows coli serve. "
-           "Cold-spawn of this snapshot on 16 GB is disabled.";
+    const std::string mouth = load_mouth().value("label", "coli");
+    return "Error: " + mouth +
+           " is down on 127.0.0.1:8000. "
+           "Run Start-LlamaServer.ps1 if the mouth is llama, or "
+           "schtasks /Run /TN GodBrainLogon for coli. "
+           "Do not Continue a dead generate. Ask the question again.";
 }
 
 #pragma comment(lib, "user32.lib")
@@ -1550,25 +1657,32 @@ int main() {
                 const json rag = st.value("rag", json::object());
                 std::ostringstream reply;
                 const json coli = st.value("coli", json::object());
+                const json mouth = st.value("mouth", json::object());
+                const std::string mouth_label = mouth.value("label", "coli");
                 reply << (host.value("computer_name", "?")) << " / "
                       << host.value("total_physical_ram_gb", 0) << " GB / "
                       << host.value("logical_processors", 0) << " threads\n"
                       << "host_record=" << rec.value("status", "none") << "\n";
                 if (!coli.value("up", st.value("coli_serve", false))) {
-                    reply << "coli=down";
+                    reply << mouth_label << "=down";
                 } else if (coli.value("busy", false)) {
-                    reply << "coli=busy";
+                    reply << mouth_label << "=busy";
                     if (coli.contains("elapsed_s")) {
                         reply << " " << coli.value("elapsed_s", 0) << "s";
                     }
                     reply << " — generating, do not ask again";
                 } else {
-                    reply << "coli=serve";
+                    reply << mouth_label << "=serve";
                 }
-                reply << " active=" << coli.value("active", 0)
-                      << " done=" << coli.value("completed", 0)
-                      << " queued=" << coli.value("queued", 0)
-                      << " rag=" << (rag.value("ready", false) ? "ready" : "down")
+                if (!mouth.value("model", "").empty()) {
+                    reply << " " << mouth.value("model", "");
+                }
+                if (mouth_label == "coli") {
+                    reply << " active=" << coli.value("active", 0)
+                          << " done=" << coli.value("completed", 0)
+                          << " queued=" << coli.value("queued", 0);
+                }
+                reply << " rag=" << (rag.value("ready", false) ? "ready" : "down")
                       << " writes="
                       << (st.value("writes_need_token", false) ? "need bearer"
                                                               : "open on loopback")
@@ -2072,7 +2186,14 @@ int main() {
                 "Never narrate the prompt or apologize mid-answer. "
                 "Prefer verified notes over candidates. "
                 "If notes disagree, say so; do not pick a silent winner. "
-                "Do not guess an open question. Cite the note if you use one.";
+                "Do not guess an open question. Cite the note if you use one. "
+                "Do not restate these rules. Do not emit constraint lists.";
+            if (local_edit::looks_like_edit_request(user_msg)) {
+                system_prompt +=
+                    " If changing a repo file, end with apply blocks only: "
+                    "*** APPLY / path: relative / <<<< old ==== new >>>> / *** END. "
+                    "No git. No push. After the blocks, write DONE.";
+            }
             LastOracleTurn prior_turn;
             const bool have_prior = find_last_real_oracle_turn(prior_turn);
             const std::string prior_q = have_prior ? prior_turn.question : std::string();
@@ -2098,7 +2219,9 @@ int main() {
             std::string asked = user_msg;
             if (continue_cmd) {
                 asked = prior_q;
-                user_prompt = make_continue_prompt(prior_a);
+                user_prompt = local_edit::looks_like_edit_request(prior_q)
+                                  ? make_edit_continue_prompt(prior_a)
+                                  : make_continue_prompt(prior_a);
                 context_text.clear();
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
@@ -2149,6 +2272,7 @@ int main() {
                                "/status ticks while this runs."}});
                         const DWORD coli_started = GetTickCount();
                         std::string streamed;
+                        std::string spoken;
                         DWORD last_partial = 0;
                         const std::string combined = run_colibri(
                             sys,
@@ -2173,9 +2297,32 @@ int main() {
                                        elapsed_s < 1 ? 1 : elapsed_s}});
                             },
                             hist_q,
-                            hist_a);
-                        const std::string chunk = strip_coli_reply(combined);
-                        const std::string final_answer = stitch_continue(chunk);
+                            hist_a,
+                            &spoken);
+                        std::string chunk = strip_coli_reply(combined);
+                        const std::string for_memory =
+                            spoken.empty() ? chunk : strip_coli_reply(spoken);
+                        const auto edit = local_edit::maybe_apply(
+                            asked_q,
+                            chunk,
+                            [&](const std::string& sys, const std::string& usr) {
+                                emit({{"type", "status"},
+                                      {"text",
+                                       "Plan saved in RAM. Second pass on "
+                                       "the GPU: emit the patch only."}});
+                                return run_colibri(sys, usr, {}, {}, {}, {});
+                            });
+                        if (edit.attempted) {
+                            chunk += "\n\n";
+                            chunk += edit.report;
+                            emit({{"type", "token"}, {"text", "\n\n" + edit.report}});
+                        }
+                        std::string mem = for_memory;
+                        if (edit.attempted) {
+                            if (!mem.empty()) mem += "\n\n";
+                            mem += edit.report;
+                        }
+                        const std::string final_answer = stitch_continue(mem);
                         const DWORD elapsed = GetTickCount() - coli_started;
                         remember_oracle_turn(asked_q, final_answer, elapsed);
                         std::cout << "[COLIBRI] Reply in " << elapsed << " ms ("
@@ -2193,6 +2340,7 @@ int main() {
                 return;
             }
             const DWORD coli_started = GetTickCount();
+            std::string spoken;
             const std::string combined = run_colibri(
                 system_prompt,
                 user_prompt,
@@ -2201,9 +2349,27 @@ int main() {
                 follow_up ? prior_q : std::string(),
                 follow_up ? (continue_cmd ? continue_history_tail(prior_a)
                                           : prior_a)
-                          : std::string());
-            const std::string chunk = strip_coli_reply(combined);
-            const std::string final_answer = stitch_continue(chunk);
+                          : std::string(),
+                &spoken);
+            std::string chunk = strip_coli_reply(combined);
+            const std::string for_memory =
+                spoken.empty() ? chunk : strip_coli_reply(spoken);
+            const auto edit = local_edit::maybe_apply(
+                asked,
+                chunk,
+                [&](const std::string& sys, const std::string& usr) {
+                    return run_colibri(sys, usr, {}, {}, {}, {});
+                });
+            if (edit.attempted) {
+                chunk += "\n\n";
+                chunk += edit.report;
+            }
+            std::string mem = for_memory;
+            if (edit.attempted) {
+                if (!mem.empty()) mem += "\n\n";
+                mem += edit.report;
+            }
+            const std::string final_answer = stitch_continue(mem);
             remember_oracle_turn(
                 asked, final_answer, GetTickCount() - coli_started);
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)

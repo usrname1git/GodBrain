@@ -67,6 +67,27 @@ int main() {
         return 1;
     }
 
+    std::string think_only;
+    std::string spoken;
+    godbrain_coli::handle_sse_event(
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan \"}}]}",
+        think_only,
+        on_token,
+        on_ping,
+        {},
+        &spoken);
+    godbrain_coli::handle_sse_event(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"done.\"}}]}",
+        think_only,
+        on_token,
+        on_ping,
+        {},
+        &spoken);
+    if (!expect(think_only == "plan done." && spoken == "done.",
+                "think streams, spoken is content only")) {
+        return 1;
+    }
+
     std::cout << "coli_sse_test ok" << std::endl;
     return 0;
 }

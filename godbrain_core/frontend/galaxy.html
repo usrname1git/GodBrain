@@ -8,7 +8,19 @@
     <script src="https://unpkg.com/three-spritetext@1.6.5/dist/three-spritetext.min.js"></script>
     <script src="https://unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; color: #0f0; }
+        :root {
+            --void: #05070c;
+            --panel: rgba(8, 12, 20, 0.86);
+            --panel-solid: #080c14;
+            --starlight: #d7e3f4;
+            --heading: #f4f8ff;
+            --dust: #8fa4c4;
+            --ice: #9ecbff;
+            --user: #eef4ff;
+            --chrome: #3d5a80;
+            --gold: #ffd24a;
+        }
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: var(--void); font-family: 'Courier New', Courier, monospace; color: var(--starlight); }
         #3d-graph { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         #overlay {
@@ -16,12 +28,13 @@
             top: 10px;
             left: 10px;
             z-index: 10;
-            background: rgba(0, 20, 0, 0.8);
-            border: 1px solid #0f0;
+            background: var(--panel);
+            border: 1px solid var(--chrome);
             padding: 15px;
             border-radius: 5px;
-            box-shadow: 0 0 10px #0f0;
-            max-width: 300px;
+            box-shadow: 0 0 18px rgba(61, 90, 128, 0.35);
+            max-width: 380px;
+            word-break: break-word;
         }
         
         #rag-chat {
@@ -29,8 +42,8 @@
             bottom: 20px;
             right: 20px;
             z-index: 10;
-            background: rgba(0, 20, 0, 0.8);
-            border: 1px solid #0f0;
+            background: var(--panel);
+            border: 1px solid var(--chrome);
             padding: 12px;
             border-radius: 5px;
             width: min(460px, calc(100vw - 40px));
@@ -40,7 +53,7 @@
             flex-direction: column;
             box-sizing: border-box;
             overflow: hidden;
-            box-shadow: 0 0 10px #0f0;
+            box-shadow: 0 0 18px rgba(61, 90, 128, 0.35);
         }
         #rag-chat .toolbar {
             display: flex;
@@ -65,23 +78,23 @@
             box-sizing: border-box;
         }
         
-        h1, h2, h3 { margin-top: 0; text-transform: uppercase; text-shadow: 0 0 5px #0f0; }
+        h1, h2, h3 { margin-top: 0; color: var(--heading); text-transform: uppercase; text-shadow: 0 0 8px rgba(158, 203, 255, 0.25); }
         select, input, button {
-            background: #000;
-            color: #0f0;
-            border: 1px solid #0f0;
+            background: var(--void);
+            color: var(--starlight);
+            border: 1px solid var(--chrome);
             padding: 5px;
             margin: 5px 0;
             width: 100%;
             font-family: inherit;
         }
-        button { cursor: pointer; text-transform: uppercase; font-weight: bold; }
-        button:hover { background: #0f0; color: #000; }
+        button { cursor: pointer; text-transform: uppercase; font-weight: bold; color: var(--ice); }
+        button:hover { background: var(--ice); color: var(--void); }
         
         input[type="checkbox"] {
             width: auto;
             margin-right: 10px;
-            accent-color: #0f0;
+            accent-color: var(--ice);
         }
         
         #chat-history {
@@ -89,16 +102,16 @@
             overflow-y: auto;
             margin-bottom: 10px;
             padding: 5px;
-            border: 1px solid #030;
+            border: 1px solid var(--chrome);
             font-size: 0.9em;
         }
-        .user-msg { color: #fff; margin-bottom: 5px; }
-        .sys-msg { color: #0f0; margin-bottom: 10px; text-shadow: 0 0 2px #0f0; }
+        .user-msg { color: var(--user); margin-bottom: 5px; }
+        .sys-msg { color: var(--ice); margin-bottom: 10px; text-shadow: 0 0 4px rgba(158, 203, 255, 0.2); }
         
         /* Custom scrollbar */
         ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #001100; }
-        ::-webkit-scrollbar-thumb { background: #0f0; }
+        ::-webkit-scrollbar-track { background: var(--void); }
+        ::-webkit-scrollbar-thumb { background: var(--chrome); }
         
         #node-manual {
             position: absolute;
@@ -107,10 +120,10 @@
             transform: translate(-50%, -50%);
             width: 60vw;
             height: 70vh;
-            background: rgba(0, 20, 0, 0.95);
-            border: 2px solid #0f0;
+            background: rgba(8, 12, 20, 0.95);
+            border: 2px solid var(--chrome);
             border-radius: 5px;
-            box-shadow: 0 0 20px #0f0;
+            box-shadow: 0 0 24px rgba(61, 90, 128, 0.45);
             z-index: 100;
             display: none;
             flex-direction: column;
@@ -121,17 +134,17 @@
             position: absolute;
             top: 10px;
             right: 10px;
-            background: #000;
-            color: #0f0;
-            border: 1px solid #0f0;
+            background: var(--void);
+            color: var(--ice);
+            border: 1px solid var(--chrome);
             cursor: pointer;
             font-weight: bold;
             padding: 5px 10px;
         }
         
         #node-manual-close:hover {
-            background: #0f0;
-            color: #000;
+            background: var(--ice);
+            color: var(--void);
         }
         
         #node-manual-content {
@@ -139,8 +152,9 @@
             overflow-y: auto;
             margin-top: 20px;
             padding: 10px;
-            border: 1px solid #030;
+            border: 1px solid var(--chrome);
             white-space: pre-wrap;
+            color: var(--starlight);
         }
     </style>
 </head>
@@ -192,7 +206,7 @@
     <div id="node-manual">
         <button id="node-manual-close">X</button>
         <h2 id="node-manual-title">Node Title</h2>
-        <div style="font-size: 0.8em; color: #0a0;" id="node-manual-meta">Type: note | Tags: []</div>
+        <div style="font-size: 0.8em; color: #8fa4c4;" id="node-manual-meta">Type: note | Tags: []</div>
         <div id="node-manual-content">Loading...</div>
         <div id="node-judge" style="display: none; margin-top: 12px;">
             <input type="text" id="judge-reason" placeholder="Why it works, or why it is junk (min 4 chars)">
@@ -242,8 +256,8 @@
 
         function statusColor(status) {
             if (status === 'verified') return 0xffd24a;
-            if (status === 'candidate') return 0x33ff66;
-            return 0x226622;
+            if (status === 'candidate') return 0x7ec8ff;
+            return 0x334155;
         }
         
         // Initialize basic empty graph
@@ -254,8 +268,8 @@
         const ctx = canvas.getContext('2d');
         const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
         gradient.addColorStop(0, 'rgba(255,255,255,1)');
-        gradient.addColorStop(0.2, 'rgba(100,255,100,0.8)');
-        gradient.addColorStop(0.5, 'rgba(0,150,0,0.4)');
+        gradient.addColorStop(0.2, 'rgba(210,230,255,0.85)');
+        gradient.addColorStop(0.5, 'rgba(80,130,200,0.35)');
         gradient.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 64, 64);
@@ -287,7 +301,7 @@
                 })
                 .linkWidth(0.2)
                 .linkOpacity(0.1)
-                .backgroundColor('#000300')
+                .backgroundColor('#05070c')
                 .onNodeClick(node => {
                     // Fetch full node details and show manual
                     document.getElementById('node-manual').style.display = 'flex';
@@ -567,20 +581,25 @@
                 (host.total_physical_ram_gb || '?') + ' GB / ' +
                 (host.logical_processors || '?') + ' threads');
             lines.push('host_record=' + (rec.status || 'none'));
+            const mouth = (status && status.mouth) || {};
+            const engine = mouth.label || mouth.engine || 'coli';
             let coliLine;
             if (!coli.up && !status.coli_serve) {
-                coliLine = 'coli=down';
+                coliLine = engine + '=down';
             } else if (busy) {
-                coliLine = 'coli=busy' +
+                coliLine = engine + '=busy' +
                     (elapsed !== null ? (' ' + elapsed + 's') : '') +
                     ' — generating, do not ask again';
             } else {
-                coliLine = 'coli=serve';
+                coliLine = engine + '=serve';
             }
-            coliLine += ' active=' + (coli.active || 0) +
-                ' done=' + (coli.completed || 0) +
-                ' queued=' + (coli.queued || 0) +
-                ' rag=' + (rag.ready ? 'ready' : 'down') +
+            if (mouth.model) coliLine += ' ' + mouth.model;
+            if (engine === 'coli') {
+                coliLine += ' active=' + (coli.active || 0) +
+                    ' done=' + (coli.completed || 0) +
+                    ' queued=' + (coli.queued || 0);
+            }
+            coliLine += ' rag=' + (rag.ready ? 'ready' : 'down') +
                 ' writes=' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
             lines.push(coliLine);
             if (coli.experts_disk != null) {
@@ -879,8 +898,11 @@
             const painted = formatColiStatus(status);
             coliBusy = !!painted.busy;
             const ragReady = status.rag && status.rag.ready;
+            const mouth = status.mouth || {};
+            const engine = mouth.label || mouth.engine || 'coli';
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
-                ' | coli ' + painted.label +
+                ' | ' + engine + ' ' + painted.label +
+                (mouth.model ? (' ' + mouth.model) : '') +
                 ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
             if (stats) {
@@ -901,8 +923,11 @@
                         (host.logical_processors || '?') + ' threads',
                     'Record: ' + (record.status || 'none') +
                         (record.stable_id ? ' ' + String(record.stable_id).slice(0, 12) : ''),
-                    'Coli: ' + painted.label +
-                        ' done=' + ((status.coli && status.coli.completed) || 0),
+                    'Mouth: ' + engine + ' ' + painted.label +
+                        (mouth.model ? (' ' + mouth.model) : '') +
+                        (engine === 'coli'
+                            ? (' done=' + ((status.coli && status.coli.completed) || 0))
+                            : ''),
                 ];
                 const lastCard = status.last_oracle || {};
                 if (lastCard.question) {
