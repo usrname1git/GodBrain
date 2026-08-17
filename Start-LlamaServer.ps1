@@ -99,7 +99,7 @@ $cmdLine = "`"$Server`" $($argParts -join ' ')"
 Write-Host "Start-LlamaServer: starting $Server"
 $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
 $startup.ShowWindow = 0
-$startup.CreateFlags = 8
+$startup.CreateFlags = 0x8000008
 $created = ([wmiclass]"Win32_Process").Create(
     $cmdLine, (Split-Path $Server -Parent), $startup)
 if ($created.ReturnValue -ne 0) {

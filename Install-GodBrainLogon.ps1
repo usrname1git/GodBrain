@@ -20,11 +20,15 @@ if (-not (Test-Path -LiteralPath $starter)) {
     throw "Missing $starter"
 }
 
+$hidden = Join-Path $repo "godbrain_core\cpp_tools\run_hidden.exe"
+if (-not (Test-Path -LiteralPath $hidden)) {
+    throw "Missing $hidden — run Install-GodBrainWatch.ps1 once to build it"
+}
 $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)
 $shell = if ($pwsh) { $pwsh.Source } else { "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 
-$action = New-ScheduledTaskAction -Execute $shell `
-    -Argument "-NoProfile -WindowStyle Minimized -File `"$starter`"" `
+$action = New-ScheduledTaskAction -Execute $hidden `
+    -Argument "`"$shell`" -NoProfile -WindowStyle Hidden -File `"$starter`"" `
     -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited

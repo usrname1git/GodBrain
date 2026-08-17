@@ -96,7 +96,9 @@ function Start-LoggedProcess {
     $cmdLine = if ($Arguments) { "`"$FilePath`" $Arguments" } else { "`"$FilePath`"" }
     $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
     $startup.ShowWindow = 0
-    $startup.CreateFlags = 8
+    # DETACHED_PROCESS | CREATE_NO_WINDOW. CREATE_NO_WINDOW alone is invalid
+    # on this WMI path; together it stops Windows Terminal from flashing.
+    $startup.CreateFlags = 0x8000008
     $startup.EnvironmentVariables = [string[]]$envList.ToArray()
     $created = ([wmiclass]"Win32_Process").Create(
         $cmdLine, $WorkingDirectory, $startup)
