@@ -181,7 +181,7 @@
     <div id="rag-chat">
         <h2>GodBrain mouth</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /brief /doors /desk /pending /vram /heal /last do not use the GPU.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /brief /doors /desk /pending /vram /heal /last /last-edit do not use the GPU.</div>
         </div>
         <div class="toolbar">
             <button id="observe-btn">Observe</button>
@@ -194,6 +194,7 @@
             <button id="focus-last-btn">Focus last</button>
             <button id="heal-btn">Heal</button>
             <button id="vram-btn">VRAM</button>
+            <button id="last-edit-btn">Last edit</button>
         </div>
         <div class="toolbar">
             <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)">
@@ -911,7 +912,7 @@
                     });
                 return;
             }
-            if (/^\/(brief|vram|doors|heal|last|desk|pending)\b/i.test(text)) {
+            if (/^\/(brief|vram|doors|heal|last-edit|last|desk|pending)\b/i.test(text)) {
                 const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
                 fetch(path)
                     .then(res => res.json())
@@ -1075,6 +1076,7 @@
         });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
+        document.getElementById('last-edit-btn').addEventListener('click', () => runSlash('/last-edit'));
         document.getElementById('focus-last-btn').addEventListener('click', () => {
             fetch('/api/last')
                 .then(res => res.json())

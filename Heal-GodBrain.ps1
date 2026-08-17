@@ -307,6 +307,12 @@ if ($after.kernel) {
     } catch {
         Write-Host "heal last skipped: $_"
     }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last-edit" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-edit"
+    } catch {
+        Write-Host "heal last-edit skipped: $_"
+    }
 }
 
 if (-not $ok) { exit 1 }

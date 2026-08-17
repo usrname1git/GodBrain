@@ -42,6 +42,18 @@ if (-not (Test-Path -LiteralPath $lastOracleFile)) {
     $fails.Add("last-oracle.txt missing Oracle turn text")
 }
 try {
+    $lastEditApi = Get-Json "/api/last-edit"
+    if ($lastEditApi.response -notmatch "edit=") { $fails.Add("last-edit api missing edit=") }
+} catch {
+    if ("$_" -notmatch "404") { $fails.Add("last-edit: $_") }
+}
+$lastEditFile = Join-Path $RepoRoot "logs\last-edit.txt"
+if (-not (Test-Path -LiteralPath $lastEditFile)) {
+    $fails.Add("missing logs/last-edit.txt")
+} elseif ((Get-Content -LiteralPath $lastEditFile -Raw) -notmatch "edit=") {
+    $fails.Add("last-edit.txt missing edit=")
+}
+try {
     $pending = Get-Json "/api/pending"
     if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
     if ($pending.response -notmatch "/verify") { $fails.Add("pending api missing /verify hint") }
@@ -98,6 +110,7 @@ if ($doors) {
     if (-not $doors.loopback.desk) { $fails.Add("doors.loopback.desk missing") }
     if (-not $doors.loopback.pending) { $fails.Add("doors.loopback.pending missing") }
     if (-not $doors.loopback.vram) { $fails.Add("doors.loopback.vram missing") }
+    if (-not $doors.loopback.last_edit) { $fails.Add("doors.loopback.last_edit missing") }
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
@@ -226,6 +239,12 @@ if (-not $cs2sleep) {
             $fails.Add(("last-oracle.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastOracleAge))
         }
     }
+    if (Test-Path -LiteralPath $lastEditFile) {
+        $lastEditAge = ((Get-Date) - (Get-Item -LiteralPath $lastEditFile).LastWriteTime).TotalMinutes
+        if ($lastEditAge -gt 20) {
+            $fails.Add(("last-edit.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastEditAge))
+        }
+    }
     if (Test-Path -LiteralPath $healFile) {
         $healAge = ((Get-Date) - (Get-Item -LiteralPath $healFile).LastWriteTime).TotalMinutes
         if ($healAge -gt 20) {
@@ -254,9 +273,10 @@ try {
     if ($html -notmatch "desk_test") { $fails.Add("galaxy overlay missing desk_test") }
     if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
     if ($html -notmatch "pending-btn") { $fails.Add("galaxy missing Pending button") }
+    if ($html -notmatch "last-edit-btn") { $fails.Add("galaxy missing Last edit button") }
     if ($html -notmatch "pendingOverlayLines") { $fails.Add("galaxy overlay missing pending list") }
     if ($html -notmatch "healAgeMinutes") { $fails.Add("galaxy overlay missing heal age") }
-    if ($html -notmatch "brief\|vram\|doors\|heal\|last\|desk\|pending") {
+    if ($html -notmatch "brief\|vram\|doors\|heal\|last-edit\|last\|desk\|pending") {
         $fails.Add("galaxy chat still sends /pending through generate")
     }
 } catch {

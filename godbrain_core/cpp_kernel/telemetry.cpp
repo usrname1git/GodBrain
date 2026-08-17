@@ -293,6 +293,8 @@ namespace telemetry {
                     std::string("http://") + ip + ":8083/api/desk";
                 result["pending_url"] =
                     std::string("http://") + ip + ":8083/api/pending";
+                result["last_edit_url"] =
+                    std::string("http://") + ip + ":8083/api/last-edit";
                 return result;
             }
         }

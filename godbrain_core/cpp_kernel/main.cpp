@@ -79,6 +79,7 @@ static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
 static void handle_heal(const httplib::Request&, httplib::Response&);
+static void handle_last_edit(const httplib::Request&, httplib::Response&);
 static json pending_body();
 static std::string clip_pending_line(std::string text, size_t max);
 static int file_age_minutes(const std::string& path);
@@ -1266,6 +1267,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_pending(req, res);
     });
+    server.Get("/api/last-edit", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_last_edit(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1658,6 +1663,35 @@ static void handle_desk(const httplib::Request&, httplib::Response& res) {
     res.set_content(body.dump(), "application/json");
 }
 
+static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
+    json body = load_last_edit();
+    std::ostringstream reply;
+    if (body.empty()) {
+        reply << "edit=missing";
+        res.status = 404;
+    } else {
+        reply << "edit=" << (body.value("applied", false) ? "done" : "fail");
+        const std::string report = body.value("report", "");
+        if (!report.empty()) {
+            reply << "\n" << clip_pending_line(report, 200);
+        }
+    }
+    const std::string text = reply.str();
+    body["response"] = text;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-edit.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
+}
+
 static std::string clip_pending_line(std::string text, size_t max) {
     for (char& ch : text) {
         if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
@@ -1851,6 +1885,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"doors", lb + "/api/doors"},
         {"desk", lb + "/api/desk"},
         {"pending", lb + "/api/pending"},
+        {"last_edit", lb + "/api/last-edit"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -1874,6 +1909,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["doors"] = base + "/api/doors";
         ts["desk"] = base + "/api/desk";
         ts["pending"] = base + "/api/pending";
+        ts["last_edit"] = base + "/api/last-edit";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -2617,6 +2653,9 @@ int main() {
     svr.Get("/api/desk", [&](const httplib::Request& req, httplib::Response& res) {
         handle_desk(req, res);
     });
+    svr.Get("/api/last-edit", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_last_edit(req, res);
+    });
     svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
         handle_pending(req, res);
     });
@@ -2812,6 +2851,13 @@ int main() {
                           << volume.value("total_gb", 0) << " GB\n";
                 }
                 res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/last-edit") &&
+                (user_msg.size() == 10 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[10])) != 0)) {
+                handle_last_edit(req, res);
                 return;
             }
 

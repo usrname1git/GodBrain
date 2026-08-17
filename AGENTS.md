@@ -206,6 +206,8 @@ cloud model to get it.
   do not touch Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
+  `GET /api/last-edit` and `/last-edit` return the last local-edit result
+  (no GPU) and write `logs/last-edit.txt`.
   `GET /api/heal` is on the Tailscale door and now wraps the same
   `response` text as `/heal`, including `age=` minutes since
   `heal-last.json`. That text is also written to `logs/last-heal.txt`. `GET /api/doors` lists
