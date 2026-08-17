@@ -77,6 +77,7 @@ static void handle_brief(const httplib::Request&, httplib::Response&);
 static void handle_vram(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
+static void handle_pending(const httplib::Request&, httplib::Response&);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -1180,6 +1181,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_desk(req, res);
     });
+    server.Get("/api/pending", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_pending(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1539,6 +1544,98 @@ static void handle_desk(const httplib::Request&, httplib::Response& res) {
     res.set_content(body.dump(), "application/json");
 }
 
+static std::string clip_pending_line(std::string text, size_t max) {
+    for (char& ch : text) {
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+    }
+    while (!text.empty() && text.front() == ' ') text.erase(text.begin());
+    while (!text.empty() && text.back() == ' ') text.pop_back();
+    if (text.size() > max) {
+        text.resize(max);
+        text += "...";
+    }
+    return text;
+}
+
+static json pending_body() {
+    json items = json::array();
+    int oracle = 0;
+    int host = 0;
+    for (const auto& turn : last_oracle_turns_json()) {
+        if (turn.value("status", "candidate") != "candidate") continue;
+        ++oracle;
+        items.push_back({
+            {"kind", "oracle"},
+            {"stable_id", turn.value("stable_id", "")},
+            {"status", "candidate"},
+            {"stored", turn.value("stored", false)},
+            {"complete", turn.value("complete", true)},
+            {"question", clip_pending_line(turn.value("question", ""), 80)},
+            {"preview", clip_pending_line(turn.value("answer", ""), 120)},
+        });
+    }
+    const json rec = host_record_from_rag();
+    if (rec.value("status", "") == "candidate") {
+        ++host;
+        items.push_back({
+            {"kind", "host"},
+            {"stable_id", rec.value("stable_id", "")},
+            {"status", "candidate"},
+            {"stored", true},
+            {"complete", true},
+            {"question", ""},
+            {"preview", clip_pending_line(rec.value("label", ""), 120)},
+        });
+    }
+    std::ostringstream reply;
+    reply << "judge=" << items.size();
+    if (items.empty()) {
+        reply << " none waiting";
+    } else {
+        reply << " oracle=" << oracle << " host=" << host;
+        int index = 0;
+        for (const auto& item : items) {
+            ++index;
+            const std::string id = item.value("stable_id", "");
+            reply << "\n" << index << ". " << item.value("kind", "?");
+            if (!id.empty()) {
+                reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+            } else {
+                reply << " (no id)";
+            }
+            if (!item.value("complete", true)) reply << " partial";
+            if (!item.value("stored", true)) reply << " unstored";
+            const std::string question = item.value("question", "");
+            const std::string preview = item.value("preview", "");
+            if (!question.empty()) reply << "\n  Q: " << question;
+            if (!preview.empty()) reply << "\n  " << preview;
+        }
+    }
+    json body = {
+        {"total", static_cast<int>(items.size())},
+        {"oracle", oracle},
+        {"host", host},
+        {"items", items},
+        {"response", reply.str()},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-pending.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << body.dump(2);
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return body;
+}
+
+static void handle_pending(const httplib::Request&, httplib::Response& res) {
+    res.set_content(pending_body().dump(), "application/json");
+}
+
 static void handle_doors(const httplib::Request&, httplib::Response& res) {
     const std::string lb = "http://127.0.0.1:8083";
     json loopback = {
@@ -1549,6 +1646,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"last", lb + "/api/last"},
         {"doors", lb + "/api/doors"},
         {"desk", lb + "/api/desk"},
+        {"pending", lb + "/api/pending"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -1571,6 +1669,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["last"] = base + "/api/last";
         ts["doors"] = base + "/api/doors";
         ts["desk"] = base + "/api/desk";
+        ts["pending"] = base + "/api/pending";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -2228,6 +2327,9 @@ int main() {
     svr.Get("/api/desk", [&](const httplib::Request& req, httplib::Response& res) {
         handle_desk(req, res);
     });
+    svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_pending(req, res);
+    });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_last(req, res);
@@ -2445,6 +2547,13 @@ int main() {
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
                 handle_desk(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/pending") &&
+                (user_msg.size() == 8 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[8])) != 0)) {
+                handle_pending(req, res);
                 return;
             }
 

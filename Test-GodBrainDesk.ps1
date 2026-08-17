@@ -30,6 +30,13 @@ try {
     $fails.Add("desk: $_")
 }
 try { $null = Get-Json "/api/last" } catch { $fails.Add("last: $_") }
+try {
+    $pending = Get-Json "/api/pending"
+    if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
+    if ($null -eq $pending.items) { $fails.Add("pending api missing items") }
+} catch {
+    $fails.Add("pending: $_")
+}
 
 if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
@@ -53,6 +60,7 @@ if ($vram -and [string]$vram.response -notmatch "1 slot") {
 if ($doors) {
     if (-not $doors.loopback.brief) { $fails.Add("doors.loopback.brief missing") }
     if (-not $doors.loopback.desk) { $fails.Add("doors.loopback.desk missing") }
+    if (-not $doors.loopback.pending) { $fails.Add("doors.loopback.pending missing") }
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
@@ -66,6 +74,20 @@ if (-not (Test-Path -LiteralPath $doorsFile)) {
         if ($onDisk.tailscale.chat) { $fails.Add("last-doors.json has chat on Tailscale") }
     } catch {
         $fails.Add("last-doors.json unreadable")
+    }
+}
+$pendingFile = Join-Path $RepoRoot "logs\last-pending.json"
+if (-not (Test-Path -LiteralPath $pendingFile)) {
+    $fails.Add("missing logs/last-pending.json")
+} else {
+    try {
+        $onPending = Get-Content -LiteralPath $pendingFile -Raw | ConvertFrom-Json
+        if ($null -eq $onPending.items) { $fails.Add("last-pending.json missing items") }
+        if (-not $onPending.PSObject.Properties.Name.Contains("total")) {
+            $fails.Add("last-pending.json missing total")
+        }
+    } catch {
+        $fails.Add("last-pending.json unreadable")
     }
 }
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
@@ -107,6 +129,12 @@ if (-not $cs2sleep) {
             $fails.Add(("last-doors.json stale ({0:n0} min; Watch/Heal should refresh)" -f $doorAge))
         }
     }
+    if (Test-Path -LiteralPath $pendingFile) {
+        $pendAge = ((Get-Date) - (Get-Item -LiteralPath $pendingFile).LastWriteTime).TotalMinutes
+        if ($pendAge -gt 20) {
+            $fails.Add(("last-pending.json stale ({0:n0} min; Watch/Heal should refresh)" -f $pendAge))
+        }
+    }
 }
 try {
     $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
@@ -115,6 +143,7 @@ try {
     if ($html -match "Colibri RAG Uplink") { $fails.Add("galaxy still says Colibri RAG Uplink") }
     if ($html -notmatch "desk_test") { $fails.Add("galaxy overlay missing desk_test") }
     if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
+    if ($html -notmatch "pending-btn") { $fails.Add("galaxy missing Pending button") }
 } catch {
     $fails.Add("galaxy: $_")
 }

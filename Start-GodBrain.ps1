@@ -368,6 +368,12 @@ try {
 } catch {
     Write-Log "brief persist skipped: $_"
 }
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/pending" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-pending.json"
+} catch {
+    Write-Log "pending persist skipped: $_"
+}
 $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
 if (Test-Path -LiteralPath $desk) {
     try {
@@ -382,5 +388,6 @@ if (Test-Path -LiteralPath $desk) {
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
 Write-Log "Doors: GET http://127.0.0.1:8083/api/doors"
+Write-Log "Pending: GET http://127.0.0.1:8083/api/pending"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
 Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"

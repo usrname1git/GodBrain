@@ -291,6 +291,8 @@ namespace telemetry {
                     std::string("http://") + ip + ":8083/api/doors";
                 result["desk_url"] =
                     std::string("http://") + ip + ":8083/api/desk";
+                result["pending_url"] =
+                    std::string("http://") + ip + ":8083/api/pending";
                 return result;
             }
         }

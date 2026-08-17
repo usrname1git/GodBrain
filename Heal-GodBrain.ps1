@@ -268,6 +268,12 @@ if ($after.kernel) {
     } catch {
         Write-Host "heal doors skipped: $_"
     }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/pending" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-pending"
+    } catch {
+        Write-Host "heal pending skipped: $_"
+    }
     $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
     if (Test-Path -LiteralPath $desk) {
         try {
