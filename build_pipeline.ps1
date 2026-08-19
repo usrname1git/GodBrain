@@ -11,7 +11,7 @@ Push-Location "$PSScriptRoot\godbrain_core\memory_store"
 try {
     go build -o memory-store.exe ./cmd/memory-store
     if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
-    go build -o rag-service.exe ./cmd/rag-service
+    go build -ldflags "-H windowsgui" -o rag-service.exe ./cmd/rag-service
     if ($LASTEXITCODE -ne 0) { throw "RAG service build failed" }
     go build -o rag-rebuild.exe ./cmd/rag-rebuild
     if ($LASTEXITCODE -ne 0) { throw "RAG rebuild build failed" }
@@ -29,7 +29,7 @@ try {
     # Check if cl is already in PATH
     $clOutput = (Get-Command cl -ErrorAction SilentlyContinue)
     if ($clOutput) {
-        cmd.exe /c "cl /EHsc /Fe:librarian.exe librarian.cpp"
+        cmd.exe /c "cl /std:c++17 /EHsc /Fe:librarian.exe librarian.cpp /link ws2_32.lib"
     } else {
         # Find vcvars64.bat
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -42,7 +42,7 @@ try {
             throw "Could not find vcvars64.bat at $vcvars"
         }
 
-        cmd.exe /c "call `"$vcvars`" >nul && cl /EHsc /Fe:librarian.exe librarian.cpp"
+        cmd.exe /c "call `"$vcvars`" >nul && cl /std:c++17 /EHsc /Fe:librarian.exe librarian.cpp /link ws2_32.lib"
     }
     if ($LASTEXITCODE -ne 0) { throw "C++ build failed" }
     Write-Host "Librarian built successfully."

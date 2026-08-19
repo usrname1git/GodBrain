@@ -2,7 +2,7 @@
 # (icmp / dns_self / nic_tcpip) → at most one flushdns if DNS missed after
 # that split → verify → remember (candidate). Not a multi-agent graph.
 # Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
-# Allowlist repair: ipconfig /flushdns only when dns_self fails, Dnscache is
+# Allowlist repair: Clear-DnsClientCache only when dns_self fails, Dnscache is
 # up, and icmp_loopback is up. release, winsock reset, int ip reset,
 # DeviceCleanup, and reboot are legal tools but need an operator GO in
 # chat — Heal must not run them unattended.
@@ -108,16 +108,26 @@ function Start-AllowlistedService([string]$Name) {
 }
 
 function Invoke-AllowlistedFlushDns {
-    Write-Host "heal: ipconfig /flushdns (dns_self failed, Dnscache up, icmp ok)"
-    & ipconfig.exe /flushdns | Out-Null
+    Write-Host "heal: Clear-DnsClientCache (dns_self failed, Dnscache up, icmp ok)"
+    Clear-DnsClientCache
+}
+
+function Test-TailscaleCgNat {
+    $hit = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like "100.*" -and $_.InterfaceAlias -match "tail|Tail" } |
+        Select-Object -First 1
+    return [bool]$hit
 }
 
 function Get-Probe {
+    $mouth = Test-Port "127.0.0.1" 8000
     return [ordered]@{
         mongo         = Test-Port "127.0.0.1" 27017
         rag           = Test-Port "127.0.0.1" 8084
-        coli          = Test-Port "127.0.0.1" 8000
+        coli          = $mouth
+        mouth         = $mouth
         kernel        = Test-Port "127.0.0.1" 8083
+        tailscale     = Test-TailscaleCgNat
         dns           = Test-ServiceUp "Dnscache"
         iphlp         = Test-ServiceUp "iphlpsvc"
         nsi           = Test-ServiceUp "nsi"
@@ -204,7 +214,7 @@ $diagnose = [ordered]@{
     layer         = Get-DiagnoseLayer $after
 }
 $result = [ordered]@{
-    version     = 2
+    version     = 3
     at          = (Get-Date).ToUniversalTime().ToString("o")
     playbook    = "host-listeners"
     needed      = @($needed)
@@ -214,6 +224,9 @@ $result = [ordered]@{
     after       = $after
     ok          = $ok
     never_kills = $true
+    cs2_sleep   = [bool]$coliSleep
+    mouth       = [bool]$after.mouth
+    tailscale   = [bool]$after.tailscale
 }
 
 $json = $result | ConvertTo-Json -Depth 6
@@ -245,6 +258,60 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
         Write-Host "heal remembered"
     } catch {
         Write-Host "heal remember skipped: $_"
+    }
+}
+
+if ($after.kernel) {
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/doors" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-doors"
+    } catch {
+        Write-Host "heal doors skipped: $_"
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/pending" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-pending"
+    } catch {
+        Write-Host "heal pending skipped: $_"
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/vram" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-vram"
+    } catch {
+        Write-Host "heal vram skipped: $_"
+    }
+    $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
+    if (Test-Path -LiteralPath $desk) {
+        try {
+            & $desk -RepoRoot $RepoRoot
+            if ($LASTEXITCODE -ne 0) { Write-Host "heal desk self-check failed" }
+        } catch {
+            Write-Host "heal desk self-check skipped: $_"
+        }
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-brief"
+    } catch {
+        Write-Host "heal brief skipped: $_"
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/heal" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-heal"
+    } catch {
+        Write-Host "heal glance skipped: $_"
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-oracle"
+    } catch {
+        Write-Host "heal last skipped: $_"
+    }
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last-edit" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-edit"
+    } catch {
+        Write-Host "heal last-edit skipped: $_"
     }
 }
 

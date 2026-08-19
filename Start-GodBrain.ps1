@@ -6,7 +6,8 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [int]$MongoWaitSeconds = 30
+    [int]$MongoWaitSeconds = 30,
+    [switch]$SelfTestEnv
 )
 
 # Nested powershell -File can leave $PSScriptRoot empty. Never start with
@@ -49,6 +50,43 @@ function Test-Port([string]$HostName, [int]$Port) {
     }
 }
 
+# WMI Create replaces the child environment when EnvironmentVariables is set.
+# Pass the user token here (never into a .cmd on disk) or Heal/logon starts a
+# kernel that fail-opens loopback writes.
+function New-GodBrainChildEnvironment {
+    param([hashtable]$Extra = @{})
+    $keep = @(
+        "PATH", "PATHEXT", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec",
+        "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN",
+        "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH", "PUBLIC",
+        "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+        "MONGODB_URI", "GODBRAIN_API_TOKEN"
+    )
+    $map = [ordered]@{}
+    foreach ($name in $keep) {
+        $val = [Environment]::GetEnvironmentVariable($name, "Process")
+        if ([string]::IsNullOrEmpty($val)) {
+            $val = [Environment]::GetEnvironmentVariable($name, "User")
+        }
+        if (-not [string]::IsNullOrEmpty($val)) {
+            $map[$name] = $val
+        }
+    }
+    if (-not $map.Contains("MONGODB_URI") -or [string]::IsNullOrWhiteSpace($map["MONGODB_URI"])) {
+        $map["MONGODB_URI"] = "mongodb://127.0.0.1:27017"
+    }
+    foreach ($key in $Extra.Keys) {
+        if (-not [string]::IsNullOrEmpty($Extra[$key])) {
+            $map[$key] = $Extra[$key]
+        }
+    }
+    $list = New-Object System.Collections.ArrayList
+    foreach ($key in $map.Keys) {
+        [void]$list.Add("$key=$($map[$key])")
+    }
+    return ,$list
+}
+
 function Start-LoggedProcess {
     param(
         [string]$Name,
@@ -85,18 +123,47 @@ function Start-LoggedProcess {
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
-    # WMI Create is owned by the SCM host, not this console/job. Start-Process
-    # children die when the starter window or agent job exits — that is the
-    # "kernel window popped and Galaxy died" failure.
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine      = "cmd.exe /c `"$wrap`""
-        CurrentDirectory = $WorkingDirectory
-    }
+    # Launch the exe itself. cmd.exe /c wrap is a console process and
+    # Windows Terminal flashes a tab even with SW_HIDE.
+    $envList = New-GodBrainChildEnvironment -Extra $Environment
+    $cmdLine = if ($Arguments) { "`"$FilePath`" $Arguments" } else { "`"$FilePath`"" }
+    $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
+    $startup.ShowWindow = 0
+    # DETACHED_PROCESS | CREATE_NO_WINDOW. CREATE_NO_WINDOW alone is invalid
+    # on this WMI path; together it stops Windows Terminal from flashing.
+    $startup.CreateFlags = 0x8000008
+    $startup.EnvironmentVariables = [string[]]$envList.ToArray()
+    $created = ([wmiclass]"Win32_Process").Create(
+        $cmdLine, $WorkingDirectory, $startup)
     if ($created.ReturnValue -ne 0) {
         Write-Log "failed $Name Win32_Process.Create=$($created.ReturnValue)"
         return
     }
-    Write-Log "started $Name pid=$($created.ProcessId) $FilePath $Arguments"
+    $tokenInEnv = $false
+    foreach ($entry in $envList) {
+        if ($entry.StartsWith("GODBRAIN_API_TOKEN=")) { $tokenInEnv = $true; break }
+    }
+    Write-Log ("started {0} pid={1} {2} {3} token={4}" -f $Name, $created.ProcessId, $FilePath, $Arguments, $(if ($tokenInEnv) { "set" } else { "unset" }))
+}
+
+if ($SelfTestEnv) {
+    $list = New-GodBrainChildEnvironment -Extra @{ GODBRAIN_API_TOKEN = "x-test-token" }
+    $names = @($list | ForEach-Object { ($_ -split "=", 2)[0] })
+    $cmdSample = @(
+        "@echo off",
+        "set `"MONGODB_URI=mongodb://127.0.0.1:27017`""
+    ) -join "`n"
+    if ($names -notcontains "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: WMI list missing token" }
+    if ($names -notcontains "PATH") { throw "SelfTestEnv: WMI list missing PATH" }
+    if ($names -notcontains "SystemRoot") { throw "SelfTestEnv: WMI list missing SystemRoot" }
+    if ($cmdSample -match "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: launch.cmd would contain token" }
+    $hasReal = $false
+    foreach ($entry in $list) {
+        if ($entry -like "GODBRAIN_API_TOKEN=x-test-token") { $hasReal = $true }
+    }
+    if (-not $hasReal) { throw "SelfTestEnv: Extra token was not applied" }
+    Write-Host ("SelfTestEnv ok keys={0} token=set path=set cmd_has_token=false" -f ($names.Count))
+    exit 0
 }
 
 Write-Log "GodBrain logon start from $RepoRoot"
@@ -178,6 +245,12 @@ function Test-ColiServeProcess {
 function Test-LlamaServerProcess {
     return [bool](Get-Process -Name "llama-server" -ErrorAction SilentlyContinue)
 }
+function Get-LlamaServerAgeMinutes {
+    $proc = Get-Process -Name "llama-server" -ErrorAction SilentlyContinue |
+        Sort-Object StartTime | Select-Object -First 1
+    if (-not $proc) { return $null }
+    return ((Get-Date) - $proc.StartTime).TotalMinutes
+}
 function Test-LlamaMouth {
     $mouth = Join-Path $logDir "mouth.txt"
     if (-not (Test-Path -LiteralPath $mouth)) { return $false }
@@ -204,21 +277,24 @@ if (Test-Path -LiteralPath $cs2Helper) {
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
 if ($coliSleep) {
-    Write-Log "skip coli serve (CS2.exe running or gone < 5 min)"
+    Write-Log "skip mouth (CS2.exe running or gone < 5 min)"
 } elseif (Test-Port "127.0.0.1" 8000) {
-    Write-Log "skip coli serve (:8000 already listening)"
-} elseif (Test-LlamaServerProcess) {
-    Write-Log "skip coli serve (llama-server already running)"
+    Write-Log "skip mouth (:8000 already listening)"
 } elseif (Test-LlamaMouth) {
     $llama = Join-Path $RepoRoot "Start-LlamaServer.ps1"
-    if (Test-Path -LiteralPath $llama) {
-        Write-Log "mouth is llama-server; restarting it instead of coli"
+    $age = Get-LlamaServerAgeMinutes
+    if ($null -ne $age -and $age -lt 4) {
+        Write-Log ("skip mouth (llama-server loading {0:n1} min, :8000 not up yet)" -f $age)
+    } elseif (Test-Path -LiteralPath $llama) {
+        Write-Log "mouth is llama-server; :8000 down; starting it (kills leftover llama)"
         & $llama -RepoRoot $RepoRoot
     } else {
-        Write-Log "skip coli serve (llama mouth set but missing $llama)"
+        Write-Log "skip mouth (llama mouth set but missing $llama)"
     }
+} elseif (Test-LlamaServerProcess) {
+    Write-Log "skip mouth (llama-server already running)"
 } elseif (Test-ColiServeProcess) {
-    Write-Log "skip coli serve (process already running, still loading)"
+    Write-Log "skip mouth (process already running, still loading)"
 } elseif ((Test-Path -LiteralPath $coli) -and (Test-Path -LiteralPath $model)) {
     $pythonCmd = Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     $python = if ($pythonCmd) { $pythonCmd.Source } else { $null }
@@ -242,10 +318,10 @@ if ($coliSleep) {
                 COLI_KV_SHARE = "1"
             }
     } else {
-        Write-Log "skip coli serve (python not on PATH)"
+        Write-Log "skip mouth (python not on PATH)"
     }
 } else {
-    Write-Log "skip coli serve (need $coli and model dir $model)"
+    Write-Log "skip mouth (need $coli and model dir $model)"
 }
 
 $kernel = Join-Path $RepoRoot "godbrain_core\cpp_kernel\godbrain-kernel.exe"
@@ -286,7 +362,58 @@ if (Test-Port "127.0.0.1" 8083) {
     }
 }
 
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-brief.txt"
+} catch {
+    Write-Log "brief persist skipped: $_"
+}
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/pending" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-pending.json"
+} catch {
+    Write-Log "pending persist skipped: $_"
+}
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/vram" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-vram.json"
+} catch {
+    Write-Log "vram persist skipped: $_"
+}
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/heal" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-heal.txt"
+} catch {
+    Write-Log "heal persist skipped: $_"
+}
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-oracle.txt"
+} catch {
+    Write-Log "last persist skipped: $_"
+}
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last-edit" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-edit.txt"
+} catch {
+    Write-Log "last-edit persist skipped: $_"
+}
+$desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
+if (Test-Path -LiteralPath $desk) {
+    try {
+        & $desk -RepoRoot $RepoRoot
+        if ($LASTEXITCODE -ne 0) { Write-Log "desk self-check failed (kernel still up)" }
+        else { Write-Log "desk self-check ok" }
+    } catch {
+        Write-Log "desk self-check skipped: $_"
+    }
+}
+
 Write-Log "GodBrain logon start finished"
 Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
+Write-Log "Doors: GET http://127.0.0.1:8083/api/doors"
+Write-Log "Pending: GET http://127.0.0.1:8083/api/pending"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
+Write-Log "Ask without Galaxy: .\Ask-GodBrain.ps1 your question"
+Write-Log "Store idea: .\Ask-GodBrain.ps1 -Idea `"thought`"  or  /idea in chat"
 Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"

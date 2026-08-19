@@ -313,6 +313,8 @@ bool path_under_allowlist(const std::string& path) {
         "c:\\nvme\\stt\\",
         "c:\\nvme\\piper-voices\\",
         "c:\\nvme\\faster-whisper-large-v3\\",
+        "c:\\nvme\\gemma4-12b-hauhau\\",
+        "c:\\nvme\\llama-cpp\\",
     };
     for (const char* prefix : prefixes) {
         if (lower.rfind(prefix, 0) == 0) return true;

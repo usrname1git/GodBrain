@@ -158,14 +158,20 @@ cloud model to get it.
   Do not `--ask` while `coli serve` holds the GPU slot.
   Local file edits: Galaxy can ask the mouth to change a repo file.
   The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a
-  second GPU pass for `*** APPLY` blocks, and writes only root
+  second GPU pass for `*** APPLY` blocks (thinking off, spoken-only parse),
+  writes `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy,
+  and writes only root
   `.ps1`/`.cmd`/`.md` or `godbrain_core\` (not build/vendor/LLM/archive).
+  `local_edit_test` applies a real fixture file offline (no GPU).
   Never git push from the mouth.
-  Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause coli first,
-  launch Steam app 730, wait until `CS2.exe` exits, wait 5 minutes,
-  then Start-GodBrain. `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is
-  only the backup if CS2 is started from Steam Play. Start/Heal skip
-  coli while CS2 is running or has been gone under 5 minutes.
+  Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause the mouth
+  (coli and `llama-server`) and `tailscale down` first, launch Steam
+  app 730, wait until `CS2.exe` exits, wait 5 minutes, then
+  `tailscale up --unattended` and Start-GodBrain. Never logout,
+  `--reset`, or uninstall Tailscale. `Watch-Cs2Pause` (task
+  `GodBrainCs2Pause`) is only the backup if CS2 is started from Steam
+  Play. Start/Heal skip the mouth while CS2 is running or has been
+  gone under 5 minutes.
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   runner (Colibri on this host). Reserve a heavier runner (future
   llama-server / a larger model) for a flagged contradiction or a
@@ -191,24 +197,73 @@ cloud model to get it.
   themselves when a live probe or a Learn/support quote actually matches.
   `query_recent_thoughts` reads the active RAG graph. Oracle search is
   verified-only.
-  Ordinary Galaxy chat exposes `/observe`, `/vram`, `/remember`, `/verify`,
-  `/reject`, `/recall`, `/status`, `/last`, and `/brief`. `/verify last <why>`
-  and `/reject last <why>` judge the newest on-disk Oracle turn. `/last` and `GET /api/last`
-  return on-disk Oracle turns without touching Colibri. `/brief` is the one-glance
-  host + coli + last-turn line. `/heal` reports the host-listener closed loop
-  (detect → start missing allowlist → diagnose → maybe flushdns → verify). Watch-GodBrain runs
-  Heal-GodBrain.ps1; it never kills a process. The Galaxy node panel and `POST /api/judge` are
+  Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/idea`, `/ideas`, `/verify`,
+  `/reject`, `/recall`, `/status`, `/last`, `/brief`, and `/pending`. `/verify last <why>`
+  and `/reject last <why>` judge the newest on-disk Oracle turn.
+  `/verify <12-char prefix> <why>` resolves against the `/pending` list.
+  `/last` and `GET /api/last`
+  return the same clipped glance, write `logs/last-oracle.txt`, and
+  do not touch Colibri. `GET /api/brief`
+  is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
+  `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
+  Live `/edit` works on the no-MTP Gemma 12B Q4 mouth. Do not pass
+  `Start-LlamaServer.ps1 -UseDraft` (MTP CUDA IMA on this 4080).
+  `GET /api/last-edit` and `/last-edit` return the last local-edit result
+  (no GPU) and write `logs/last-edit.txt`.
+  `GET /api/heal` is on the Tailscale door and now wraps the same
+  `response` text as `/heal`, including `age=` minutes since
+  `heal-last.json`. That text is also written to `logs/last-heal.txt`. `GET /api/doors` lists
+  loopback and Tailscale URLs (chat stays loopback-only). `GET /api/pending`
+  lists the candidate Oracle turns and host card that `judge=N` is counting
+  and writes `logs/last-pending.json`. `/brief` also writes
+  `logs/last-brief.txt` so the glance survives a dead kernel.
+  When the Tailscale door is bound, `/brief` prints `tail=door/<100.x>` so
+  the phone glance carries the actual address. `/brief` is the one-glance
+  host + mouth + pending-judge + heal + CS2-sleep + last-turn line. If `logs/mouth.txt` says llama and `:8000` is
+  down, `/api/status` and `/brief` kick `Start-LlamaServer.ps1` via
+  `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)
+  and report `llama=starting` so Galaxy does not wait on the 5 min Watch tick.
+  `/heal` reports the host-listener closed loop
+  (detect → start missing allowlist → diagnose → maybe flushdns → verify).
+  `heal-last.json` v3 records mouth (:8000), Tailscale 100.x (detect-only),
+  and cs2_sleep. Heal does not `tailscale up`. Watch-GodBrain runs
+  Heal-GodBrain.ps1; it never kills a process. Watch and Cs2Pause tasks
+  launch `run_hidden` + `pwsh -File` (never a `.cmd`: `cmd.exe` flashes
+  Windows Terminal). Register-ScheduledTask so the line is not truncated.
+  Watch infers RepoRoot from `-File`. Watch/Cs2Pause allow start on
+  batteries. Cs2Pause runs `cs2_gate.exe` (no console); pwsh starts only
+  if CS2.exe is up or `logs/cs2-pause.json` is paused.
+  A `/verify` or `/reject` rewrites `logs/last-pending.json`.
+  Galaxy overlay lists pending short ids from `GET /api/pending` and
+  Heal age from `heal-last.at`. Chat `/pending` is a GET, not generate.
+  `GET /api/status` includes `pending_items` so the overlay does not need
+  a second fetch.
+  Each Heal tick refreshes
+  `logs/last-brief.txt`, `logs/last-pending.json`, and `logs/last-vram.json`
+  when the kernel is up
+  (no GPU). Watch/Heal is the
+  24/7 loop. `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after
+  Start-GodBrain. The Galaxy node panel and `POST /api/judge` are
   the same judgment path. `/observe` persists stable host inventory including
   `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
   If the pin moved, verified `windows-sre` cards that carry a different
   `os_pin=` become `stale` (not deleted). Logon (`Start-GodBrain.ps1`) posts
   `/api/observe` once the kernel is listening; unchanged inventory is an
-  idempotent no-op. `POST /api/truth` writes host_fact / doc_fact / playbook
+  idempotent no-op. WMI process start passes `GODBRAIN_API_TOKEN` in the
+  child environment so Heal/Watch/logon cannot boot a kernel that fail-opens
+  loopback writes; the token is never written to `*.launch.cmd`.
+  `POST /api/truth` writes host_fact / doc_fact / playbook
   claims: host probes and Learn quotes can promote; playbooks stay candidate. Kernel boot loads
   the newest Golden Records into the process session buffer so chat still knows
   the host after a restart. `/api/status` reports the host card and Tailscale
-  remember URL. The Tailscale shortcuts door binds only when
-  `GODBRAIN_API_TOKEN` is set. Chat requires `coli serve` on `:8000` from
+  remember URL. The Tailscale shortcuts door binds when
+  `GODBRAIN_API_TOKEN` is set and the adapter has a 100.x address.
+  `/status` late-binds that door if Tailscale logs in after kernel boot,
+  and reports `needs_login` when the service is up but offline.
+  `POST /api/librarian` fail-closes if CS2 is sleeping, the mouth is
+  busy, or `:8000` is down (it may kick Start-LlamaServer; it will not
+  stack a second generate).
+  Chat requires `coli serve` on `:8000` from
   Colibri 1.6.2 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`). Prefer that over
   the vendored 1.1.1 tree under `LLM/colibri_LLM`.
   Cold-spawn of the GLM snapshot on 16 GB is disabled. Do not set both
@@ -219,10 +274,23 @@ cloud model to get it.
   non-privileged RAG router alternatives on loopback port 8082. They cannot run
   together because they use the same port. Both use the canonical loopback RAG
   service and neither exposes the C++ kernel's `command_type` dispatcher.
-- `godbrain_core/cpp_tools/librarian.cpp` distills a transcript with Colibri,
-  validates the result, and sends one JSON document over stdin to the Go Memory
-  Store. `trigger_librarian.ps1` extracts the newest Copilot session transcript
-  and starts that pipeline.
+- `godbrain_core/cpp_tools/librarian.cpp` distills a transcript through the live
+  `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door), validates
+  the result, and sends one JSON document over stdin to the Go Memory Store.
+  It does not cold-spawn Colibri unless `GODBRAIN_LIBRARIAN_SPAWN=1`.
+  Mouth path uses a short extract prompt (`max_tokens` 768, thinking off).
+  The Hermes skill bible stays on disk for the spawn path; that prompt
+  IMA'd Gemma 12B Q4 on this 16 GB card. The parser coerces numeric
+  `claim_id` / spans so valid JSON is not rejected as `type_error`.
+  `Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or shell.
+  `trigger_librarian.ps1` still extracts the newest Copilot session.
+  Any text file is a valid source. iPhone/Tailscale: POST `/api/remember`
+  `{text, sector:"idea"}` for an idea candidate (never auto-verified).
+  Loopback ask without Galaxy: `Ask-GodBrain.ps1` POSTs `/api/chat`.
+  Chat generate stays loopback-only. `/idea` and `/ideas` are the idea
+  category. iPhone/Tailscale: POST `/api/remember`
+  to suggest a candidate, or POST `/api/librarian` `{text}` to classify
+  (uses the GPU mouth; bearer required).
 - `godbrain_core/memory_store/` is the active Alexandria write boundary. It
   validates provenance and ingestion state, then stores immutable sources and
   knowledge nodes plus append-only run-to-node links in MongoDB.
@@ -278,7 +346,7 @@ changes directory explicitly.
 Push-Location godbrain_core\memory_store
 go test ./...
 go build -o memory-store.exe ./cmd/memory-store
-go build -o rag-service.exe ./cmd/rag-service
+go build -ldflags "-H windowsgui" -o rag-service.exe ./cmd/rag-service
 go build -o rag-rebuild.exe ./cmd/rag-rebuild
 Pop-Location
 ```
@@ -296,7 +364,7 @@ The kernel has no committed CMake project. From
 `godbrain_core\cpp_kernel` in a Visual Studio x64 Developer shell:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action: it may invoke local `mongosh`,

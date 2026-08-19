@@ -102,19 +102,42 @@ struct Hunk {
     std::string new_text;
 };
 
+size_t find_marker(const std::string& text, size_t from,
+                     const char* spaced, const char* tight) {
+    const size_t a = text.find(spaced, from);
+    const size_t b = text.find(tight, from);
+    if (a == std::string::npos) return b;
+    if (b == std::string::npos) return a;
+    return a < b ? a : b;
+}
+
+std::string trim_path_token(std::string path) {
+    while (!path.empty() && (path.front() == '`' || path.front() == '"' ||
+                             path.front() == '\'' || path.front() == ' ' ||
+                             path.front() == '\t')) {
+        path.erase(path.begin());
+    }
+    while (!path.empty() && (path.back() == '`' || path.back() == '"' ||
+                             path.back() == '\'' || path.back() == ' ' ||
+                             path.back() == '\t' || path.back() == '\r')) {
+        path.pop_back();
+    }
+    return replace_slashes(path);
+}
+
 std::vector<Hunk> parse_apply_blocks(const std::string& text) {
     std::vector<Hunk> hunks;
     size_t pos = 0;
     while (hunks.size() < 6) {
-        const size_t start = text.find("*** APPLY", pos);
+        const size_t start = find_marker(text, pos, "*** APPLY", "***APPLY");
         if (start == std::string::npos) break;
-        const size_t end = text.find("*** END", start);
-        if (end == std::string::npos) break;
-        const std::string block = text.substr(start, end - start);
+        const size_t stop = find_marker(text, start, "*** END", "***END");
+        if (stop == std::string::npos) break;
+        const std::string block = text.substr(start, stop - start);
         Hunk hunk;
         const size_t path_at = block.find("path:");
         if (path_at == std::string::npos) {
-            pos = end + 7;
+            pos = stop + 6;
             continue;
         }
         size_t path_line = path_at + 5;
@@ -124,16 +147,13 @@ std::vector<Hunk> parse_apply_blocks(const std::string& text) {
         }
         size_t path_end = block.find_first_of("\r\n", path_line);
         if (path_end == std::string::npos) path_end = block.size();
-        hunk.path = replace_slashes(block.substr(path_line, path_end - path_line));
-        while (!hunk.path.empty() && (hunk.path.back() == ' ' || hunk.path.back() == '\t')) {
-            hunk.path.pop_back();
-        }
+        hunk.path = trim_path_token(block.substr(path_line, path_end - path_line));
         const size_t old_at = block.find("<<<<");
         const size_t mid_at = block.find("====", old_at == std::string::npos ? 0 : old_at);
         const size_t new_at = block.find(">>>>", mid_at == std::string::npos ? 0 : mid_at);
         if (old_at == std::string::npos || mid_at == std::string::npos ||
             new_at == std::string::npos) {
-            pos = end + 7;
+            pos = stop + 6;
             continue;
         }
         hunk.old_text = block.substr(old_at + 4, mid_at - (old_at + 4));
@@ -143,7 +163,7 @@ std::vector<Hunk> parse_apply_blocks(const std::string& text) {
         if (!hunk.new_text.empty() && hunk.new_text[0] == '\r') hunk.new_text.erase(0, 1);
         if (!hunk.new_text.empty() && hunk.new_text[0] == '\n') hunk.new_text.erase(0, 1);
         if (!hunk.path.empty()) hunks.push_back(hunk);
-        pos = end + 7;
+        pos = stop + 6;
     }
     return hunks;
 }
@@ -158,6 +178,23 @@ void save_plan(const std::string& user_msg, const std::string& first_answer) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return;
     out << "USER\n" << user_msg << "\n\nPLAN\n" << g_plan << "\n";
+}
+
+void save_result(bool applied, const std::string& report) {
+    const std::string path = repo_root() + "\\logs\\last-edit-result.json";
+    std::ostringstream json;
+    json << "{\"applied\":" << (applied ? "true" : "false")
+         << ",\"report\":\"";
+    for (char ch : report) {
+        if (ch == '\\' || ch == '"') json << '\\';
+        if (ch == '\n') json << "\\n";
+        else if (ch == '\r') continue;
+        else json << ch;
+    }
+    json << "\"}\n";
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+    out << json.str();
 }
 
 std::string guess_file(const std::string& text) {
@@ -296,16 +333,31 @@ Result maybe_apply(
             result.report =
                 "Plan saved. Second pass had no apply blocks. "
                 "Ask again with /edit and a file name.";
+            save_result(false, result.report);
             return result;
         }
     } else if (hunks.empty()) {
         result.report = "Plan saved. No apply blocks and no second pass.";
+        save_result(false, result.report);
         return result;
     }
 
     result.report = apply_hunks(hunks);
     result.applied = result.report.rfind("DONE", 0) == 0;
+    save_result(result.applied, result.report);
     return result;
+}
+
+Preview preview_apply_blocks(const std::string& text) {
+    Preview out;
+    const auto hunks = parse_apply_blocks(text);
+    out.count = static_cast<int>(hunks.size());
+    if (!hunks.empty()) {
+        out.first_path = hunks[0].path;
+        out.first_old = hunks[0].old_text;
+        out.first_new = hunks[0].new_text;
+    }
+    return out;
 }
 
 }  // namespace local_edit

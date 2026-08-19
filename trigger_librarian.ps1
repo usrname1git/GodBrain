@@ -1,6 +1,7 @@
 # trigger_librarian.ps1
-# This script extracts the latest GitHub Copilot CLI session transcript
-# and feeds it into the GodBrain Librarian for distillation and storage.
+# Extract the latest Copilot CLI session transcript and feed it to Librarian.
+# Librarian classifies via the live :8000 mouth (any model). It does not
+# spawn Colibri unless GODBRAIN_LIBRARIAN_SPAWN=1.
 
 $ErrorActionPreference = "Stop"
 

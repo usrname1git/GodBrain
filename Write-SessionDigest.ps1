@@ -58,6 +58,9 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($tmp, $body, $utf8)
 Move-Item -LiteralPath $tmp -Destination $path -Force
 Write-Host "wrote $path"
+try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
+} catch { }
 
 if ($Remember -and $env:GODBRAIN_API_TOKEN) {
     try {
@@ -67,7 +70,7 @@ if ($Remember -and $env:GODBRAIN_API_TOKEN) {
         }
         $payload = @{
             text   = "Session digest (candidate)`n$body"
-            sector = "windows-sre"
+            sector = "operator"
         } | ConvertTo-Json
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/remember" `
             -Method POST -Headers $headers -Body $payload | Out-Null

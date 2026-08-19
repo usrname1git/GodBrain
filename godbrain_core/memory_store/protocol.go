@@ -4,6 +4,10 @@ import "time"
 
 // Protocol models the JSON schema exchanged between the C++ Librarian and the Go Memory Store
 
+// DefaultExtractorID is used when extractor_id is omitted. Old payloads may
+// still send Librarian-CPP-Colibri; that name stays valid, it is just not default.
+const DefaultExtractorID = "Librarian-CPP"
+
 type Provenance struct {
 	SourceID       string  `json:"source_id"`
 	SourceType     string  `json:"source_type"`
@@ -58,7 +62,7 @@ type AlexandriaPayload struct {
 
 // DistillationPayload is the master envelope sent on stdin
 type DistillationPayload struct {
-	ExtractorID      string            `json:"extractor_id,omitempty"` // Empty selects the default; otherwise starts alphanumeric and uses 1-64 ASCII letters, digits, dots, underscores, or hyphens.
+	ExtractorID      string            `json:"extractor_id,omitempty"` // Empty selects DefaultExtractorID; otherwise starts with ASCII letter or digit, then up to 63 letters, digits, dots, underscores, or hyphens.
 	ExtractorVersion string            `json:"extractor_version"`
 	SchemaVersion    string            `json:"schema_version"`
 	Degraded         bool              `json:"degraded"`

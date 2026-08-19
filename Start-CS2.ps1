@@ -1,5 +1,6 @@
-# Play CS2 with the 4080 free. Pause GodBrain first, launch via Steam,
-# wait until CS2.exe exits, wait 5 more minutes, then wake GLM.
+# Play CS2 with the 4080 free and Tailscale off. Pause GodBrain first,
+# launch via Steam, wait until CS2.exe exits, wait 5 more minutes, then
+# wake the mouth and bring Tailscale back. Never uninstall or --reset.
 # Prefer this over clicking Play in Steam. Watch-Cs2Pause is the backup.
 
 [CmdletBinding()]
@@ -73,7 +74,7 @@ $appearDeadline = (Get-Date).AddMinutes($AppearTimeoutMinutes)
 Write-Host ("Start-CS2: waiting up to {0} min for CS2.exe" -f $AppearTimeoutMinutes)
 while (-not (Test-Cs2Running)) {
     if ((Get-Date) -gt $appearDeadline) {
-        Write-Host "Start-CS2: CS2.exe never appeared. Not starting GLM. Run Start-GodBrain.ps1 when you want it."
+        Write-Host "Start-CS2: CS2.exe never appeared. Not starting the mouth. Run Start-GodBrain.ps1 when you want it."
         Set-GodBrainTaskEnabled "GodBrainCs2Pause" $true
         exit 2
     }

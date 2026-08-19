@@ -10,7 +10,8 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # MTP + Gemma4 hit CUDA illegal-memory-access twice on this 4080 Super.
+    # MTP + Gemma4 hit CUDA IMA on this 4080 Super. Leave -UseDraft off.
+    # Live /edit works on the no-MTP Gemma 12B Q4 mouth.
     [switch]$UseDraft
 )
 
@@ -74,7 +75,6 @@ foreach ($log in @($stdout, $stderr)) {
 # Do not pass -ngl: --fit on only adjusts unset knobs. 999 packed the 16 GB card.
 # WMI Create so llama-server is not a child of this shell's Job Object.
 # Start-Process dies with the agent wrapper; Win32_Process.Create does not.
-$wrap = Join-Path $logDir "llama-server.launch.cmd"
 $argParts = @(
     "--host 127.0.0.1",
     "--port $Port",
@@ -84,7 +84,8 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a Gemma4-12B-HauhauCS"
+    "-a Gemma4-12B-HauhauCS",
+    "--log-file `"$stderr`""
 )
 if ($UseDraft) {
     $argParts += @(
@@ -93,25 +94,20 @@ if ($UseDraft) {
         "--spec-draft-n-max 3"
     )
 }
-$quotedArgs = $argParts -join " "
-$lines = @(
-    "@echo off",
-    "cd /d `"$(Split-Path $Server -Parent)`"",
-    "`"$Server`" $quotedArgs >> `"$stdout`" 2>> `"$stderr`""
-)
-$utf8 = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllLines($wrap, $lines, $utf8)
-
+# Launch llama-server.exe directly. A cmd wrapper is a console process and
+# Windows Terminal opens a tab for it (and for console children).
+$cmdLine = "`"$Server`" $($argParts -join ' ')"
 Write-Host "Start-LlamaServer: starting $Server"
-$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-    CommandLine      = "cmd.exe /c `"$wrap`""
-    CurrentDirectory = (Split-Path $Server -Parent)
-}
+$startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
+$startup.ShowWindow = 0
+$startup.CreateFlags = 0x8000008
+$created = ([wmiclass]"Win32_Process").Create(
+    $cmdLine, (Split-Path $Server -Parent), $startup)
 if ($created.ReturnValue -ne 0) {
     throw "Win32_Process.Create=$($created.ReturnValue)"
 }
 $cmdPid = [int]$created.ProcessId
-Write-Host "Start-LlamaServer: cmd pid=$cmdPid"
+Write-Host "Start-LlamaServer: pid=$cmdPid"
 
 $up = $false
 $waitUntil = (Get-Date).AddMinutes(8)

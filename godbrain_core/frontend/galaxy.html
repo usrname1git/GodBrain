@@ -179,18 +179,22 @@
     </div>
     
     <div id="rag-chat">
-        <h2>Colibri RAG Uplink</h2>
+        <h2>GodBrain mouth</h2>
         <div id="chat-history">
-            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. /verify last &lt;why&gt; /reject last &lt;why&gt; /brief /last still work in chat.</div>
+            <div class="sys-msg" id="sys-boot">[SYS] Observe this PC, then open a node and Verify or Reject with a reason. Intergalactic GET doors on Tailscale 100.x need bearer. /brief /doors /desk /pending /vram /heal /last /last-edit do not use the GPU.</div>
         </div>
         <div class="toolbar">
             <button id="observe-btn">Observe</button>
             <button id="status-btn">Status</button>
             <button id="last-btn">Last</button>
             <button id="brief-btn">Brief</button>
+            <button id="doors-btn">Doors</button>
+            <button id="desk-btn">Desk</button>
+            <button id="pending-btn">Pending</button>
             <button id="focus-last-btn">Focus last</button>
             <button id="heal-btn">Heal</button>
             <button id="vram-btn">VRAM</button>
+            <button id="last-edit-btn">Last edit</button>
         </div>
         <div class="toolbar">
             <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)">
@@ -198,7 +202,7 @@
             <button id="reject-last-btn" type="button">Reject last</button>
         </div>
         <div class="toolbar">
-            <input type="text" id="chat-input" placeholder="/remember ...  or ask GodBrain">
+            <input type="text" id="chat-input" placeholder="/idea ...  /remember ...  or ask GodBrain">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
         </div>
     </div>
@@ -255,25 +259,133 @@
         }
 
         function statusColor(status) {
-            if (status === 'verified') return 0xffd24a;
-            if (status === 'candidate') return 0x7ec8ff;
-            return 0x334155;
+            if (status === 'verified') return 0xffe08a;
+            if (status === 'candidate') return 0xb7d4ff;
+            return 0x4a5568;
         }
-        
-        // Initialize basic empty graph
-        // Create a reusable glowing star texture for extreme GPU efficiency
-        const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
-        const ctx = canvas.getContext('2d');
-        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        gradient.addColorStop(0, 'rgba(255,255,255,1)');
-        gradient.addColorStop(0.2, 'rgba(210,230,255,0.85)');
-        gradient.addColorStop(0.5, 'rgba(80,130,200,0.35)');
-        gradient.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 64, 64);
-        const starTexture = new THREE.CanvasTexture(canvas);
+
+        function makeStarTexture(rgb, spikes) {
+            const c = document.createElement('canvas');
+            c.width = 128;
+            c.height = 128;
+            const g = c.getContext('2d');
+            const r = rgb[0];
+            const gg = rgb[1];
+            const b = rgb[2];
+            if (spikes) {
+                g.strokeStyle = 'rgba(' + r + ',' + gg + ',' + b + ',0.28)';
+                g.lineWidth = 1.5;
+                g.beginPath();
+                g.moveTo(64, 6);
+                g.lineTo(64, 122);
+                g.stroke();
+                g.beginPath();
+                g.moveTo(6, 64);
+                g.lineTo(122, 64);
+                g.stroke();
+            }
+            const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+            grd.addColorStop(0, 'rgba(255,255,255,1)');
+            grd.addColorStop(0.1, 'rgba(' + r + ',' + gg + ',' + b + ',0.95)');
+            grd.addColorStop(0.32, 'rgba(' + r + ',' + gg + ',' + b + ',0.32)');
+            grd.addColorStop(1, 'rgba(0,0,0,0)');
+            g.fillStyle = grd;
+            g.fillRect(0, 0, 128, 128);
+            const tex = new THREE.CanvasTexture(c);
+            tex.needsUpdate = true;
+            return tex;
+        }
+        const starTexture = makeStarTexture([210, 230, 255], false);
+        const goldStarTexture = makeStarTexture([255, 220, 140], true);
+        const dimStarTexture = makeStarTexture([90, 110, 140], false);
+
+        function hash32(text) {
+            let h = 2166136261;
+            const s = String(text || '');
+            for (let i = 0; i < s.length; i++) {
+                h ^= s.charCodeAt(i);
+                h = Math.imul(h, 16777619);
+            }
+            return h >>> 0;
+        }
+
+        function seedSpiral(nodes) {
+            nodes.forEach((node, index) => {
+                if (typeof node.x === 'number' && typeof node.z === 'number') return;
+                const h = hash32(node.id || node.stable_id || index);
+                const arm = h % 2;
+                const t = (h % 10000) / 10000;
+                const radius = 30 + t * 260;
+                const theta = arm * Math.PI + t * 3.6 * Math.PI + ((h >>> 8) % 80) / 220;
+                node.x = radius * Math.cos(theta);
+                node.y = (((h >>> 16) % 36) - 18) * 0.45;
+                node.z = radius * Math.sin(theta);
+            });
+        }
+
+        function addGalaxyBackdrop(scene) {
+            if (!scene || scene.userData.godbrainBackdrop) return;
+            scene.userData.godbrainBackdrop = true;
+            scene.fog = new THREE.FogExp2(0x05070c, 0.0009);
+
+            const farN = 14000;
+            const farPos = new Float32Array(farN * 3);
+            const farCol = new Float32Array(farN * 3);
+            for (let i = 0; i < farN; i++) {
+                const radius = 500 + Math.random() * 2200;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                farPos[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+                farPos[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta) * 0.38;
+                farPos[i * 3 + 2] = radius * Math.cos(phi);
+                const warm = Math.random();
+                farCol[i * 3] = 0.65 + warm * 0.35;
+                farCol[i * 3 + 1] = 0.72 + warm * 0.18;
+                farCol[i * 3 + 2] = 0.88 - warm * 0.2;
+            }
+            const farGeo = new THREE.BufferGeometry();
+            farGeo.setAttribute('position', new THREE.BufferAttribute(farPos, 3));
+            farGeo.setAttribute('color', new THREE.BufferAttribute(farCol, 3));
+            scene.add(new THREE.Points(farGeo, new THREE.PointsMaterial({
+                size: 1.15,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                sizeAttenuation: true
+            })));
+
+            const dustN = 7000;
+            const dustPos = new Float32Array(dustN * 3);
+            const dustCol = new Float32Array(dustN * 3);
+            for (let i = 0; i < dustN; i++) {
+                const arm = i % 2;
+                const t = Math.random();
+                const radius = 20 + t * 340;
+                const theta = arm * Math.PI + t * 3.5 * Math.PI + (Math.random() - 0.5) * 0.55;
+                const spread = (Math.random() - 0.5) * (18 + t * 28);
+                dustPos[i * 3] = radius * Math.cos(theta) + spread * 0.35;
+                dustPos[i * 3 + 1] = (Math.random() - 0.5) * (8 + t * 10);
+                dustPos[i * 3 + 2] = radius * Math.sin(theta) + spread * 0.35;
+                const core = 1 - t;
+                dustCol[i * 3] = 0.45 + core * 0.35;
+                dustCol[i * 3 + 1] = 0.5 + core * 0.25;
+                dustCol[i * 3 + 2] = 0.75 + core * 0.2;
+            }
+            const dustGeo = new THREE.BufferGeometry();
+            dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+            dustGeo.setAttribute('color', new THREE.BufferAttribute(dustCol, 3));
+            scene.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
+                size: 6,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.18,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                sizeAttenuation: true
+            })));
+        }
 
         // Inject test error just to make sure logging works
         setTimeout(() => {
@@ -287,20 +399,24 @@
                 .nodeLabel('title')
                 .nodeAutoColorBy('group')
                 .nodeThreeObject(node => {
-                    const material = new THREE.SpriteMaterial({ 
-                        map: starTexture, 
+                    const map = node.status === 'verified'
+                        ? goldStarTexture
+                        : (node.status === 'candidate' ? starTexture : dimStarTexture);
+                    const material = new THREE.SpriteMaterial({
+                        map: map,
                         color: statusColor(node.status),
                         blending: THREE.AdditiveBlending,
                         depthWrite: false,
                         transparent: true
                     });
                     const sprite = new THREE.Sprite(material);
-                    const size = Math.log(node.val || 2) * 3 + 2;
+                    const size = Math.log(node.val || 2) * 3.4 + 2.4;
                     sprite.scale.set(size, size, 1);
                     return sprite;
                 })
-                .linkWidth(0.2)
-                .linkOpacity(0.1)
+                .linkWidth(0.15)
+                .linkOpacity(0.07)
+                .linkColor(() => 'rgba(120,160,220,0.25)')
                 .backgroundColor('#05070c')
                 .onNodeClick(node => {
                     // Fetch full node details and show manual
@@ -349,6 +465,15 @@
                         1000
                     );
                 });
+            addGalaxyBackdrop(graph.scene());
+            if (graph.cameraPosition) {
+                graph.cameraPosition({ x: 40, y: 160, z: 380 });
+            }
+            const controls = graph.controls && graph.controls();
+            if (controls) {
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 0.18;
+            }
         } catch (e) {
             console.error("Graph init error:", e);
         }
@@ -363,12 +488,9 @@
         // Optimize physics for huge 45k node galaxy
         try {
             if (graph.d3Force && graph.d3Force('charge')) {
-                // Extreme repulsion to break apart the massive 6000+ node Apple/Windows singularity
-                graph.d3Force('charge').strength(-200); 
-                
-                // Force the central nodes to push their children much further away
+                graph.d3Force('charge').strength(-45);
                 if (graph.d3Force('link')) {
-                    graph.d3Force('link').distance(150);
+                    graph.d3Force('link').distance(28);
                 }
             }
         } catch(e) { console.log(e); }
@@ -468,6 +590,7 @@
             });
             
             if (graph) {
+                seedSpiral(renderData.nodes);
                 graph.graphData(renderData);
             } else {
                 console.error("Graph is null, cannot apply filter");
@@ -560,6 +683,62 @@
                     ' Oracle turn(s) from disk. Candidate, not verified.');
         }
 
+        function healAgeMinutes(heal) {
+            if (!heal) return null;
+            if (typeof heal.age_min === 'number') return heal.age_min;
+            if (!heal.at) return null;
+            const t = Date.parse(heal.at);
+            if (isNaN(t)) return null;
+            return Math.max(0, Math.round((Date.now() - t) / 60000));
+        }
+        function formatHealLine(heal) {
+            if (!heal || typeof heal.ok !== 'boolean') return '';
+            const age = healAgeMinutes(heal);
+            if (age == null) return 'heal ' + (heal.ok ? 'ok' : 'fail');
+            if (age > 20) return 'heal stale/' + age + 'm';
+            return 'heal ' + (heal.ok ? 'ok' : 'fail') + '/' + age + 'm';
+        }
+        function pendingOverlayLines(status) {
+            const pending = (status && status.pending_judge) || {};
+            const items = Array.isArray(status && status.pending_items)
+                ? status.pending_items
+                : [];
+            const lines = [];
+            if (typeof pending.total === 'number') {
+                lines.push(
+                    'judge ' + pending.total + ' waiting' +
+                    (pending.oracle ? (' oracle=' + pending.oracle) : '') +
+                    (pending.host ? (' host=' + pending.host) : ''));
+            }
+            items.slice(0, 5).forEach((item, index) => {
+                const id = String((item && item.stable_id) || '');
+                const shortId = id ? id.slice(0, 12) : 'no id';
+                const q = String((item && (item.question || item.preview)) || '')
+                    .replace(/\s+/g, ' ')
+                    .slice(0, 40);
+                lines.push(
+                    '  ' + (index + 1) + '. ' +
+                    ((item && item.kind) || '?') + ' ' + shortId +
+                    (q ? (' ' + q) : ''));
+            });
+            return lines;
+        }
+        function attachPendingItems(status) {
+            if (Array.isArray(status.pending_items)) {
+                return Promise.resolve(status);
+            }
+            return fetch('/api/pending')
+                .then((res) => res.json())
+                .then((body) => {
+                    status.pending_items = (body && body.items) || [];
+                    return status;
+                })
+                .catch(() => {
+                    status.pending_items = [];
+                    return status;
+                });
+        }
+
         function formatColiStatus(status) {
             const coli = (status && status.coli) || {};
             const host = (status && status.host) || {};
@@ -585,7 +764,7 @@
             const engine = mouth.label || mouth.engine || 'coli';
             let coliLine;
             if (!coli.up && !status.coli_serve) {
-                coliLine = engine + '=down';
+                coliLine = engine + (status.mouth_restarting ? '=starting' : '=down');
             } else if (busy) {
                 coliLine = engine + '=busy' +
                     (elapsed !== null ? (' ' + elapsed + 's') : '') +
@@ -616,6 +795,26 @@
                     'RAM free ' + ramFree.toFixed(1) + ' GB' +
                     (ramFree < 4 ? ' — paging, wait' : ''));
             }
+            pendingOverlayLines(status).forEach((line) => lines.push(line));
+            const healLine = formatHealLine((status && status.heal) || {});
+            if (healLine) lines.push(healLine);
+            const cs2 = (status && status.cs2) || {};
+            if (cs2.sleep) {
+                lines.push(
+                    'cs2 ' + (cs2.running ? 'play' : 'sleep') +
+                    ' — mouth and Tailscale stay down');
+            }
+            const vram = (status && status.vram) || {};
+            if (typeof vram.dedicated_gb === 'number') {
+                lines.push(
+                    'gpu ' + vram.dedicated_gb + ' GB / ' +
+                    (vram.slots || 1) + ' slot' +
+                    (vram.next ? (' — ' + vram.next) : ''));
+            }
+            const desk = (status && status.desk_test) || {};
+            if (typeof desk.ok === 'boolean') {
+                lines.push('desk ' + (desk.ok ? 'ok' : 'fail'));
+            }
             const last = (status && status.last_oracle) || {};
             if (last.answer) {
                 const q = String(last.question || '').slice(0, 80);
@@ -628,8 +827,18 @@
                 if (q) lines.push('  Q: ' + q);
                 lines.push('  A: ' + a);
             }
+            const edit = (status && status.last_edit) || {};
+            if (edit.report) {
+                const er = String(edit.report).replace(/\n/g, ' ').slice(0, 80);
+                lines.push('edit ' + (edit.applied ? 'done' : 'fail') + ' ' + er);
+            }
             if (tail.up) {
-                lines.push('tailscale ' + (tail.ip || '') + ' ' + (tail.writes || ''));
+                lines.push(
+                    'tailscale ' + (tail.ip || '') + ' ' +
+                    (tail.bound ? 'door open' : 'door closed') + ' ' +
+                    (tail.writes || ''));
+            } else if (tail.reason === 'needs_login') {
+                lines.push('tailscale needs login (service up, no 100.x address)');
             } else {
                 lines.push('tailscale down');
             }
@@ -645,7 +854,9 @@
                 busy: busy,
                 label: busy
                     ? ('busy' + (elapsed !== null ? (' ' + elapsed + 's') : ''))
-                    : ((coli.up || status.coli_serve) ? 'serve' : 'cold')
+                    : ((coli.up || status.coli_serve)
+                        ? 'serve'
+                        : (status.mouth_restarting ? 'starting' : 'cold'))
             };
         }
 
@@ -683,12 +894,13 @@
                 appendChatMessage(
                     'sys-msg',
                     '[SYS]',
-                    'Colibri is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
+                    'Mouth is busy (one GPU slot). Use /status or /last. Do not stack a generate.');
                 return;
             }
             if (/^\/status\b/i.test(text)) {
                 fetch('/api/status')
                     .then(res => res.json())
+                    .then((status) => attachPendingItems(status))
                     .then(status => {
                         writesNeedToken = !!status.writes_need_token;
                         appendChatMessage('sys-msg', '[SYS]', formatColiStatus(status).text);
@@ -697,6 +909,23 @@
                         appendChatMessage(
                             'sys-msg', '[ERR]',
                             (err && err.message) || 'Status failed', 'red');
+                    });
+                return;
+            }
+            if (/^\/(brief|vram|doors|heal|last-edit|last|desk|pending)\b/i.test(text)) {
+                const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
+                fetch(path)
+                    .then(res => res.json())
+                    .then(data => {
+                        const textOut = (data && data.response)
+                            ? data.response
+                            : JSON.stringify(data, null, 2);
+                        appendChatMessage('sys-msg', '[SYS]', textOut);
+                    })
+                    .catch(err => {
+                        appendChatMessage(
+                            'sys-msg', '[ERR]',
+                            (err && err.message) || (path + ' failed'), 'red');
                     });
                 return;
             }
@@ -814,8 +1043,40 @@
         document.getElementById('status-btn').addEventListener('click', () => runSlash('/status'));
         document.getElementById('last-btn').addEventListener('click', () => runSlash('/last'));
         document.getElementById('brief-btn').addEventListener('click', () => runSlash('/brief'));
+        document.getElementById('doors-btn').addEventListener('click', () => {
+            fetch('/api/doors')
+                .then(r => r.json())
+                .then(data => {
+                    const text = (data && data.response) ? data.response : JSON.stringify(data, null, 2);
+                    appendChatMessage('sys-msg', '[SYS]', text);
+                })
+                .catch(err => {
+                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'doors failed', 'red');
+                });
+        });
+        document.getElementById('desk-btn').addEventListener('click', () => {
+            fetch('/api/desk')
+                .then(r => r.json())
+                .then(data => {
+                    appendChatMessage('sys-msg', '[SYS]', (data && data.response) || 'desk=?');
+                })
+                .catch(err => {
+                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'desk failed', 'red');
+                });
+        });
+        document.getElementById('pending-btn').addEventListener('click', () => {
+            fetch('/api/pending')
+                .then(r => r.json())
+                .then(data => {
+                    appendChatMessage('sys-msg', '[SYS]', (data && data.response) || 'judge=?');
+                })
+                .catch(err => {
+                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'pending failed', 'red');
+                });
+        });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
+        document.getElementById('last-edit-btn').addEventListener('click', () => runSlash('/last-edit'));
         document.getElementById('focus-last-btn').addEventListener('click', () => {
             fetch('/api/last')
                 .then(res => res.json())
@@ -894,6 +1155,7 @@
         document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
 
         function paintStatus(status) {
+            return attachPendingItems(status).then((status) => {
             writesNeedToken = !!status.writes_need_token;
             const painted = formatColiStatus(status);
             coliBusy = !!painted.busy;
@@ -935,6 +1197,17 @@
                         'Last: ' + (lastCard.status || 'candidate') +
                         (lastCard.stable_id ? (' ' + String(lastCard.stable_id).slice(0, 12)) : ''));
                 }
+                pendingOverlayLines(status).forEach((line) => lines.push(line));
+                const healLine = formatHealLine(status.heal || {});
+                if (healLine) lines.push(healLine);
+                const deskCard = status.desk_test || {};
+                if (typeof deskCard.ok === 'boolean') {
+                    lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
+                }
+                const cs2 = status.cs2 || {};
+                if (cs2.sleep) {
+                    lines.push('CS2: ' + (cs2.running ? 'playing' : 'sleep window'));
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(
@@ -945,7 +1218,9 @@
                 if (tail.up) {
                     lines.push(
                         'Tailscale ' + (tail.ip || '') +
-                        (tail.bound ? ' door open' : ' door closed (need token)'));
+                        (tail.bound ? ' door open' : ' door closed'));
+                } else if (tail.reason === 'needs_login') {
+                    lines.push('Tailscale needs login');
                 } else {
                     lines.push('Tailscale down');
                 }
@@ -968,17 +1243,31 @@
                     ? status.host.ram_available_gb.toFixed(1)
                     : '?';
                 boot.appendChild(document.createElement('br'));
-                boot.appendChild(document.createTextNode(
-                    '[SYS] Brief: coli ' + painted.label +
-                    ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
-                    ' | RAM ' + ram + ' GB free' +
-                    (last.question
-                        ? (' | last ' + (last.complete === false ? 'partial ' : '') +
-                            String(last.question).slice(0, 60))
-                        : ' | no Oracle turn yet')
-                ));
+                fetch('/api/brief')
+                    .then(r => r.json())
+                    .then(data => {
+                        const text = String((data && data.response) || '');
+                        const lines = text.split('\n');
+                        let one = '';
+                        for (let i = 0; i < lines.length; i++) {
+                            if (lines[i].indexOf(' | ') !== -1 &&
+                                lines[i].indexOf('=') !== -1) {
+                                one = lines[i];
+                                break;
+                            }
+                        }
+                        boot.appendChild(document.createTextNode(
+                            '[SYS] ' + (one || 'Brief ready (GET /api/brief, no GPU).')));
+                    })
+                    .catch(() => {
+                        boot.appendChild(document.createTextNode(
+                            '[SYS] Brief: coli ' + painted.label +
+                            ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
+                            ' | RAM ' + ram + ' GB free'));
+                    });
             }
             replayLastOracle(status);
+            });
         }
 
         function refreshStatus() {

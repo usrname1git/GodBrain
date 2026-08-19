@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <tlhelp32.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -71,6 +72,20 @@ static std::vector<LastOracleTurn> g_oracle_turns;
 
 static json last_oracle_json();
 static json last_oracle_turns_json();
+static std::string format_brief_text();
+static void handle_brief(const httplib::Request&, httplib::Response&);
+static void handle_vram(const httplib::Request&, httplib::Response&);
+static void handle_doors(const httplib::Request&, httplib::Response&);
+static void handle_desk(const httplib::Request&, httplib::Response&);
+static void handle_pending(const httplib::Request&, httplib::Response&);
+static void handle_heal(const httplib::Request&, httplib::Response&);
+static void handle_last_edit(const httplib::Request&, httplib::Response&);
+static json pending_body();
+static std::string clip_pending_line(std::string text, size_t max);
+static int file_age_minutes(const std::string& path);
+static json collect_pending_items(const json& turns, const json& host_rec);
+static std::string resolve_judgment_id(const std::string& raw, std::string& error);
+static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
 static std::string sanitize_oracle_body(std::string answer);
@@ -85,6 +100,15 @@ static void note_oracle_partial(
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
 static json load_mouth();
+static json load_last_edit();
+static json load_heal_last();
+static json load_last_desk_test();
+static json gpu_desk();
+static bool maybe_restart_mouth();
+static bool cs2_should_sleep_mouth();
+static bool maybe_bind_tailscale_door();
+static bool tailscale_door_bound_to(const std::string& ip);
+static json cs2_desk();
 
 static std::string read_env(const char* name) {
     char* value = nullptr;
@@ -108,6 +132,24 @@ static bool path_exists(const std::string& p) {
     if (p.empty()) return false;
     DWORD attrs = GetFileAttributesA(p.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES;
+}
+
+static int file_age_minutes(const std::string& path) {
+    WIN32_FILE_ATTRIBUTE_DATA attrs{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attrs)) {
+        return -1;
+    }
+    FILETIME now_ft{};
+    GetSystemTimeAsFileTime(&now_ft);
+    ULARGE_INTEGER written{};
+    ULARGE_INTEGER now{};
+    written.LowPart = attrs.ftLastWriteTime.dwLowDateTime;
+    written.HighPart = attrs.ftLastWriteTime.dwHighDateTime;
+    now.LowPart = now_ft.dwLowDateTime;
+    now.HighPart = now_ft.dwHighDateTime;
+    if (now.QuadPart < written.QuadPart) return 0;
+    return static_cast<int>(
+        (now.QuadPart - written.QuadPart) / 10000000ull / 60ull);
 }
 
 static json oracle_turn_to_json(const LastOracleTurn& turn) {
@@ -837,28 +879,63 @@ static json kernel_status_body() {
             tailscale["writes"] = "disabled_no_token";
             tailscale["bound"] = false;
         } else {
+            maybe_bind_tailscale_door();
             tailscale["writes"] = "token_required";
-            tailscale["bound"] = true;
+            tailscale["bound"] = tailscale_door_bound_to(
+                tailscale.value("ip", ""));
+        }
+    } else {
+        tailscale["bound"] = false;
+        if (tailscale.value("writes", "") == "") {
+            tailscale["writes"] = "loopback_only";
         }
     }
     const json coli = coli_serve_status();
+    bool mouth_restarting = false;
+    if (!coli.value("up", false)) {
+        mouth_restarting = maybe_restart_mouth();
+    }
     json host = telemetry::get_host_inventory();
     const json live = telemetry::get_current_state();
     host["ram_available_gb"] = live.value("ram_available_gb", 0.0);
     host["ram_used_percent"] = live.value("system_ram_percent", 0);
+    const json host_record = host_record_from_rag();
+    const json turns = last_oracle_turns_json();
+    int oracle_pending = 0;
+    for (const auto& turn : turns) {
+        if (turn.value("status", "candidate") == "candidate") ++oracle_pending;
+    }
+    const int host_pending =
+        host_record.value("status", "") == "candidate" ? 1 : 0;
+    json heal = load_heal_last();
+    if (!heal.empty()) {
+        heal["age_min"] = file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
+    }
     return {
         {"kernel", true},
         {"coli_serve", coli.value("up", false)},
         {"coli", coli},
         {"mouth", load_mouth()},
+        {"mouth_restarting", mouth_restarting},
         {"writes_need_token", !g_api_token.empty()},
-        {"vram", telemetry::plan_colibri_vram()},
+        {"vram", gpu_desk()},
         {"rag", rag_health},
         {"host", host},
-        {"host_record", host_record_from_rag()},
+        {"host_record", host_record},
         {"tailscale", tailscale},
         {"last_oracle", last_oracle_json()},
-        {"last_oracle_turns", last_oracle_turns_json()},
+        {"last_oracle_turns", turns},
+        {"last_edit", load_last_edit()},
+        {"desk_test", load_last_desk_test()},
+        {"heal", heal},
+        {"cs2", cs2_desk()},
+        {"pending_items", collect_pending_items(turns, host_record)},
+        {"pending_judge", {
+            {"oracle", oracle_pending},
+            {"host", host_pending},
+            {"total", oracle_pending + host_pending},
+        }},
     };
 }
 
@@ -889,6 +966,175 @@ static void handle_remember(const httplib::Request& req, httplib::Response& res)
     }
 }
 
+static std::string librarian_exe_path() {
+    const std::string env = read_env("GODBRAIN_LIBRARIAN_PATH");
+    if (!env.empty() && path_exists(env)) return env;
+    return get_exe_dir() + "\\..\\cpp_tools\\librarian.exe";
+}
+
+static std::string safe_session_id(std::string value) {
+    if (value.empty()) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "door-%lu",
+                      static_cast<unsigned long>(GetTickCount()));
+        return buf;
+    }
+    for (char& ch : value) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c) == 0 && ch != '-' && ch != '_' && ch != '.') {
+            ch = '-';
+        }
+    }
+    if (value.size() > 64) value.resize(64);
+    return value;
+}
+
+static void handle_librarian(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        if (cs2_should_sleep_mouth()) {
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "CS2 owns the box; Librarian waits. Use Start-CS2.cmd."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        const json coli = coli_serve_status();
+        if (coli.value("busy", false)) {
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "mouth is generating (one GPU slot). Wait for serve."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        if (!coli.value("up", false)) {
+            maybe_restart_mouth();
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "mouth is down on :8000. Starting it if llama. "
+                       "Ask Librarian again in a minute."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        std::string text = payload.value(
+            "text", payload.value("message", payload.value("idea", "")));
+        if (text.empty()) {
+            res.status = 400;
+            res.set_content(
+                json({{"error", "librarian needs text"}}).dump(),
+                "application/json");
+            return;
+        }
+        if (text.size() > 15u * 1024u * 1024u) {
+            res.status = 400;
+            res.set_content(
+                json({{"error", "text exceeds 15 MiB"}}).dump(),
+                "application/json");
+            return;
+        }
+        const std::string session =
+            safe_session_id(payload.value("session_id", ""));
+        const std::string exe = librarian_exe_path();
+        if (!path_exists(exe)) {
+            res.status = 503;
+            res.set_content(
+                json({{"error", "missing librarian.exe"}}).dump(),
+                "application/json");
+            return;
+        }
+        char tmp_dir[MAX_PATH] = {};
+        if (GetTempPathA(MAX_PATH, tmp_dir) == 0) {
+            throw std::runtime_error("GetTempPath failed");
+        }
+        const std::string tmp = std::string(tmp_dir) + "gb-lib-" + session + ".txt";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("cannot write temp transcript");
+            out << text;
+        }
+        std::string cmd = "\"" + exe + "\" \"" + session + "\" \"" + tmp + "\"";
+        std::vector<char> cmdline(cmd.begin(), cmd.end());
+        cmdline.push_back('\0');
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        HANDLE job = CreateJobObjectA(nullptr, nullptr);
+        if (job) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        }
+        const BOOL started = CreateProcessA(
+            nullptr, cmdline.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi);
+        if (!started) {
+            DeleteFileA(tmp.c_str());
+            if (job) CloseHandle(job);
+            throw std::runtime_error("CreateProcess librarian.exe failed");
+        }
+        if (job) AssignProcessToJobObject(job, pi.hProcess);
+        ResumeThread(pi.hThread);
+        const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
+        if (wait == WAIT_TIMEOUT) {
+            if (job) {
+                CloseHandle(job);
+                job = nullptr;
+            }
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+        }
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        if (job) CloseHandle(job);
+        DeleteFileA(tmp.c_str());
+        if (wait == WAIT_TIMEOUT) {
+            res.status = 504;
+            res.set_content(
+                json({{"error", "librarian timed out (180s)"},
+                      {"session_id", session}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        if (code != 0) {
+            res.status = 502;
+            res.set_content(
+                json({{"error", "librarian failed"},
+                      {"exit", code},
+                      {"session_id", session}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        res.set_content(
+            json({{"ok", true},
+                  {"session_id", session},
+                  {"extractor_id", "Librarian-CPP"}})
+                .dump(),
+            "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content(
+            json({{"error", "librarian body must be JSON"}}).dump(),
+            "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
 static void handle_observe(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -913,23 +1159,75 @@ static void handle_truth(const httplib::Request& req, httplib::Response& res) {
     }
 }
 
+static std::string format_last_text() {
+    const json turns = last_oracle_turns_json();
+    std::ostringstream reply;
+    if (turns.empty()) {
+        reply << "No Oracle turns on disk yet.";
+    } else {
+        reply << turns.size() << " Oracle turn(s) on disk "
+                 "(candidate, not verified):\n";
+        int index = 0;
+        for (const auto& turn : turns) {
+            ++index;
+            const std::string id = turn.value("stable_id", "");
+            reply << index << ". "
+                  << turn.value("status", "candidate") << " "
+                  << (turn.value("ok", false) ? "ok" : "fail")
+                  << (turn.value("complete", true) ? "" : " partial")
+                  << " " << (turn.value("elapsed_ms", 0) / 1000) << "s";
+            if (!id.empty()) {
+                reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+            }
+            reply << "\n  Q: "
+                  << clip_pending_line(turn.value("question", ""), 80)
+                  << "\n  A: "
+                  << clip_pending_line(turn.value("answer", ""), 160)
+                  << "\n";
+        }
+    }
+    return reply.str();
+}
+
 static void handle_last(const httplib::Request&, httplib::Response& res) {
-    res.set_content(
-        json({{"last_oracle", last_oracle_json()},
-              {"turns", last_oracle_turns_json()}})
-            .dump(),
-        "application/json");
+    const std::string text = format_last_text();
+    json body = {
+        {"last_oracle", last_oracle_json()},
+        {"turns", last_oracle_turns_json()},
+        {"response", text},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-oracle.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 static void handle_judge(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
+        std::string raw_id = payload.value("id", payload.value("stable_id", ""));
+        std::string resolve_err;
+        const std::string resolved = resolve_judgment_id(raw_id, resolve_err);
+        if (!resolve_err.empty() && resolved.empty()) {
+            res.status = 400;
+            res.set_content(json({{"error", resolve_err}}).dump(), "application/json");
+            return;
+        }
         json judged = memory::set_status({
-            {"id", payload.value("id", payload.value("stable_id", ""))},
+            {"id", resolved.empty() ? raw_id : resolved},
             {"status", payload.value("status", "")},
             {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
         });
+        pending_body();
         res.set_content(judged.dump(), "application/json");
     } catch (const json::exception&) {
         res.status = 400;
@@ -949,10 +1247,135 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_last(req, res);
     });
+    server.Get("/api/brief", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_brief(req, res);
+    });
+    server.Get("/api/vram", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_vram(req, res);
+    });
+    server.Get("/api/heal", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_heal(req, res);
+    });
+    server.Get("/api/doors", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_doors(req, res);
+    });
+    server.Get("/api/desk", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_desk(req, res);
+    });
+    server.Get("/api/pending", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_pending(req, res);
+    });
+    server.Get("/api/last-edit", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_last_edit(req, res);
+    });
     server.Post("/api/remember", handle_remember);
+    server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
     server.Post("/api/truth", handle_truth);
     server.Post("/api/judge", handle_judge);
+}
+
+static std::mutex g_tail_mu;
+static std::string g_tail_bound_ip;
+static std::atomic<bool> g_tail_bound{false};
+static httplib::Server* g_tail_door = nullptr;
+static std::thread g_tail_thread;
+
+static void stop_tailscale_door() {
+    httplib::Server* door = nullptr;
+    std::thread th;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        door = g_tail_door;
+        g_tail_door = nullptr;
+        g_tail_bound.store(false, std::memory_order_relaxed);
+        g_tail_bound_ip.clear();
+        if (g_tail_thread.joinable()) th = std::move(g_tail_thread);
+    }
+    if (door) door->stop();
+    if (th.joinable()) th.join();
+    delete door;
+}
+
+static bool tailscale_door_bound_to(const std::string& ip) {
+    if (ip.empty() || !g_tail_bound.load(std::memory_order_relaxed)) return false;
+    std::lock_guard<std::mutex> lock(g_tail_mu);
+    return g_tail_bound_ip == ip;
+}
+
+static bool maybe_bind_tailscale_door() {
+    if (g_api_token.empty()) return false;
+    const json ts = telemetry::get_tailscale();
+    if (!ts.value("up", false)) return false;
+    const std::string ip = ts.value("ip", "");
+    if (ip.empty()) return false;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        if (g_tail_bound.load(std::memory_order_relaxed) && g_tail_bound_ip == ip) {
+            return true;
+        }
+    }
+    std::thread reap;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        if (!g_tail_bound.load(std::memory_order_relaxed) &&
+            g_tail_thread.joinable()) {
+            reap = std::move(g_tail_thread);
+        }
+    }
+    if (reap.joinable()) reap.join();
+    bool rebind = false;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        rebind = g_tail_bound.load(std::memory_order_relaxed) &&
+                 g_tail_bound_ip != ip;
+    }
+    if (rebind) {
+        std::cout << "[SYS] Tailscale door moving to " << ip << ":8083"
+                  << std::endl;
+        stop_tailscale_door();
+    }
+    std::lock_guard<std::mutex> lock(g_tail_mu);
+    if (g_tail_bound.load(std::memory_order_relaxed) && g_tail_bound_ip == ip) {
+        return true;
+    }
+    if (g_tail_bound.load(std::memory_order_relaxed)) return false;
+    auto* door = new httplib::Server();
+    attach_shortcut_routes(*door);
+    if (!door->bind_to_port(ip, 8083)) {
+        delete door;
+        std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
+                  << std::endl;
+        return false;
+    }
+    g_tail_door = door;
+    g_tail_bound_ip = ip;
+    g_tail_bound.store(true, std::memory_order_relaxed);
+    g_tail_thread = std::thread([door, ip]() {
+        std::cout << "[SYS] Tailscale shortcuts door http://" << ip
+                  << ":8083 (remember/librarian/observe/judge/status/last)"
+                  << std::endl;
+        door->listen_after_bind();
+        bool owned = false;
+        {
+            std::lock_guard<std::mutex> inner(g_tail_mu);
+            if (g_tail_door == door) {
+                g_tail_door = nullptr;
+                g_tail_bound.store(false, std::memory_order_relaxed);
+                g_tail_bound_ip.clear();
+                owned = true;
+            }
+        }
+        if (owned) delete door;
+    });
+    return true;
 }
 
 constexpr const char* kColibriServeHost = "127.0.0.1";
@@ -965,6 +1388,110 @@ bool colibri_serve_up() {
     client.set_follow_location(false);
     const auto response = client.Get("/health");
     return response && response->status == 200;
+}
+
+static bool process_running_ci(const wchar_t* exe) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    bool hit = false;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, exe) == 0) {
+                hit = true;
+                break;
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+    return hit;
+}
+
+static std::string repo_root_from_exe() {
+    const std::string dir = get_exe_dir() + "\\..\\..";
+    char canon[MAX_PATH] = {};
+    if (GetFullPathNameA(dir.c_str(), MAX_PATH, canon, nullptr) == 0) return "";
+    return std::string(canon);
+}
+
+static json read_cs2_pause_file() {
+    const std::string path = repo_root_from_exe() + "\\logs\\cs2-pause.json";
+    std::ifstream in(path);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
+static bool cs2_should_sleep_mouth() {
+    if (process_running_ci(L"CS2.exe")) return true;
+    const json st = read_cs2_pause_file();
+    if (st.empty()) return false;
+    if (st.value("last_seen", "").empty()) return false;
+    return st.value("paused", false);
+}
+
+static json cs2_desk() {
+    const bool running = process_running_ci(L"CS2.exe");
+    const json st = read_cs2_pause_file();
+    const bool paused = st.value("paused", false);
+    const bool sleep = running || (paused && !st.value("last_seen", "").empty());
+    return {
+        {"running", running},
+        {"paused", paused},
+        {"sleep", sleep},
+        {"last_action", st.value("last_action", "")},
+    };
+}
+
+static std::atomic<DWORD> g_mouth_restart_ms{0};
+// Start-LlamaServer kills every llama-server.exe. Galaxy polls /status often.
+// Do not re-kick while weights are still loading or we just launched.
+static const DWORD kMouthRestartCooldownMs = 300000;
+
+static bool maybe_restart_mouth() {
+    if (load_mouth().value("label", "") != "llama") return false;
+    if (cs2_should_sleep_mouth()) return false;
+    const DWORD now = GetTickCount();
+    const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < kMouthRestartCooldownMs) return true;
+    // Loading: :8000 is down but the process is up. Watch/Heal kill leftovers
+    // after ~4 min. A /status poll must not race Start-LlamaServer.
+    if (process_running_ci(L"llama-server.exe")) return true;
+    const std::string repo = repo_root_from_exe();
+    const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
+    const std::string starter = repo + "\\Start-LlamaServer.ps1";
+    const std::string pwsh = path_exists("C:\\pwsh\\pwsh.exe")
+                                 ? "C:\\pwsh\\pwsh.exe"
+                                 : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    if (!path_exists(hidden) || !path_exists(starter) || !path_exists(pwsh)) {
+        return false;
+    }
+    std::string cmd = "\"" + hidden + "\" \"" + pwsh +
+                      "\" -NoProfile -WindowStyle Hidden -File \"" + starter +
+                      "\" -RepoRoot \"" + repo + "\"";
+    std::vector<char> buf(cmd.begin(), cmd.end());
+    buf.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(
+            nullptr, buf.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, repo.c_str(),
+            &si, &pi)) {
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    g_mouth_restart_ms.store(now, std::memory_order_relaxed);
+    std::cout << "[SYS] mouth down; started Start-LlamaServer via run_hidden"
+              << std::endl;
+    return true;
 }
 
 static json coli_serve_status() {
@@ -1027,6 +1554,448 @@ static std::string load_where_we_are() {
     return text;
 }
 
+static std::string format_brief_text() {
+    const json st = kernel_status_body();
+    const json host = st.value("host", json::object());
+    const json coli = st.value("coli", json::object());
+    const json rag = st.value("rag", json::object());
+    const json last = st.value("last_oracle", json::object());
+    std::ostringstream reply;
+    const std::string where = load_where_we_are();
+    if (!where.empty()) {
+        reply << where;
+        if (where.back() != '\n') reply << '\n';
+        reply << "---\n";
+    }
+    const json mouth = st.value("mouth", json::object());
+    const std::string mouth_label = mouth.value("label", "coli");
+    const char* mouth_state = !coli.value("up", false)
+        ? (st.value("mouth_restarting", false) ? "starting" : "down")
+        : (coli.value("busy", false) ? "busy" : "serve");
+    const json pending = st.value("pending_judge", json::object());
+    const json heal = st.value("heal", json::object());
+    reply << host.value("computer_name", "?") << " | "
+          << mouth_label << "=" << mouth_state
+          << " rag="
+          << (rag.value("ready", false) ? "ready" : "down")
+          << " judge=" << pending.value("total", 0);
+    {
+        const json turns = last_oracle_turns_json();
+        for (const auto& turn : turns) {
+            if (turn.value("status", "candidate") != "candidate") continue;
+            const std::string nid = turn.value("stable_id", "");
+            if (nid.empty()) continue;
+            reply << " next=" << nid.substr(0, nid.size() < 12 ? nid.size() : 12);
+            break;
+        }
+    }
+    if (heal.contains("ok")) {
+        const int heal_age = heal.value("age_min", file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\heal-last.json"));
+        if (heal_age > 20) {
+            reply << " heal=stale/" << heal_age << "m";
+        } else if (heal_age >= 0) {
+            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail")
+                  << "/" << heal_age << "m";
+        } else {
+            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+        }
+    }
+    const json tail = st.value("tailscale", json::object());
+    if (tail.value("up", false)) {
+        if (tail.value("bound", false)) {
+            const std::string ip = tail.value("ip", "");
+            reply << " tail=door";
+            if (!ip.empty()) reply << "/" << ip;
+        } else {
+            reply << " tail=up";
+        }
+    } else if (tail.value("reason", "") == "needs_login") {
+        reply << " tail=login";
+    }
+    const json cs2 = st.value("cs2", json::object());
+    if (cs2.value("sleep", false)) {
+        reply << " cs2="
+              << (cs2.value("running", false) ? "play" : "sleep");
+    }
+    const json vram = st.value("vram", json::object());
+    if (vram.contains("dedicated_gb")) {
+        reply << " gpu=" << vram.value("dedicated_gb", 0)
+              << "GB/" << vram.value("slots", 1) << "slot";
+    }
+    const json desk = st.value("desk_test", json::object());
+    if (desk.contains("ok")) {
+        reply << " desk=" << (desk.value("ok", false) ? "ok" : "fail");
+    }
+    const double ram = host.value("ram_available_gb", -1.0);
+    if (ram >= 0.0) {
+        char ram_buf[32];
+        std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram);
+        reply << " RAM " << ram_buf << " GB free";
+    }
+    reply << "\n";
+    if (!last.empty() && last.contains("answer")) {
+        auto clip = [](std::string text, size_t max) {
+            if (text.size() > max) {
+                text.resize(max);
+                text += "...";
+            }
+            return text;
+        };
+        reply << "last "
+              << (last.value("complete", true) ? "" : "partial ")
+              << clip(last.value("question", ""), 80) << "\n  "
+              << clip(last.value("answer", ""), 160);
+    } else {
+        reply << "No Oracle turn on disk yet.";
+    }
+    const json edit = st.value("last_edit", json::object());
+    if (edit.contains("report")) {
+        reply << "\nedit "
+              << (edit.value("applied", false) ? "done" : "fail");
+    }
+    const std::string text = reply.str();
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return text;
+}
+
+static void handle_brief(const httplib::Request&, httplib::Response& res) {
+    res.set_content(
+        json({{"response", format_brief_text()}}).dump(), "application/json");
+}
+
+static void handle_vram(const httplib::Request&, httplib::Response& res) {
+    const json plan = gpu_desk();
+    std::ostringstream reply;
+    reply << plan.value("name", "GPU") << " / "
+          << plan.value("dedicated_gb", 0) << " GB dedicated / "
+          << plan.value("slots", 1) << " slot\n"
+          << "mouth=" << plan.value("mouth_label", "?")
+          << " " << plan.value("mouth_model", "") << "\n"
+          << plan.value("worker", "") << "\n"
+          << plan.value("next", "") << "\n"
+          << "coli expert_gb=" << plan.value("expert_gb", 0)
+          << " reserve=" << plan.value("reserve_gb", 0)
+          << " overcommit="
+          << (plan.value("overcommit", false) ? "on" : "off")
+          << "\nOne generate at a time. Librarian shares this slot.";
+    json body = plan;
+    body["response"] = reply.str();
+    body["slots"] = plan.value("slots", 1);
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-vram.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << body.dump(2);
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
+}
+
+static void handle_desk(const httplib::Request&, httplib::Response& res) {
+    json body = load_last_desk_test();
+    if (body.empty()) {
+        res.status = 404;
+        res.set_content(
+            json({{"error", "no desk test yet"},
+                  {"response", "desk=missing"}})
+                .dump(),
+            "application/json");
+        return;
+    }
+    body["response"] = body.value("ok", false) ? "desk=ok" : "desk=fail";
+    res.set_content(body.dump(), "application/json");
+}
+
+static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
+    json body = load_last_edit();
+    std::ostringstream reply;
+    if (body.empty()) {
+        reply << "edit=missing";
+        res.status = 404;
+    } else {
+        reply << "edit=" << (body.value("applied", false) ? "done" : "fail");
+        const std::string report = body.value("report", "");
+        if (!report.empty()) {
+            reply << "\n" << clip_pending_line(report, 200);
+        }
+    }
+    const std::string text = reply.str();
+    body["response"] = text;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-edit.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
+}
+
+static std::string clip_pending_line(std::string text, size_t max) {
+    for (char& ch : text) {
+        if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+    }
+    while (!text.empty() && text.front() == ' ') text.erase(text.begin());
+    while (!text.empty() && text.back() == ' ') text.pop_back();
+    if (text.size() > max) {
+        text.resize(max);
+        text += "...";
+    }
+    return text;
+}
+
+static json collect_pending_items(const json& turns, const json& host_rec) {
+    json items = json::array();
+    for (const auto& turn : turns) {
+        if (turn.value("status", "candidate") != "candidate") continue;
+        items.push_back({
+            {"kind", "oracle"},
+            {"stable_id", turn.value("stable_id", "")},
+            {"status", "candidate"},
+            {"stored", turn.value("stored", false)},
+            {"complete", turn.value("complete", true)},
+            {"question", clip_pending_line(turn.value("question", ""), 80)},
+            {"preview", clip_pending_line(turn.value("answer", ""), 120)},
+        });
+    }
+    if (host_rec.value("status", "") == "candidate") {
+        items.push_back({
+            {"kind", "host"},
+            {"stable_id", host_rec.value("stable_id", "")},
+            {"status", "candidate"},
+            {"stored", true},
+            {"complete", true},
+            {"question", ""},
+            {"preview", clip_pending_line(host_rec.value("label", ""), 120)},
+        });
+    }
+    return items;
+}
+
+static json pending_body() {
+    const json turns = last_oracle_turns_json();
+    const json rec = host_record_from_rag();
+    json items = collect_pending_items(turns, rec);
+    int oracle = 0;
+    int host = 0;
+    for (const auto& item : items) {
+        if (item.value("kind", "") == "host") ++host;
+        else ++oracle;
+    }
+    std::ostringstream reply;
+    reply << "judge=" << items.size();
+    if (items.empty()) {
+        reply << " none waiting";
+    } else {
+        reply << " oracle=" << oracle << " host=" << host
+              << "\n/verify <id> <why>  or  /verify last <why>";
+        int index = 0;
+        for (const auto& item : items) {
+            ++index;
+            const std::string id = item.value("stable_id", "");
+            reply << "\n" << index << ". " << item.value("kind", "?");
+            if (!id.empty()) {
+                reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+            } else {
+                reply << " (no id)";
+            }
+            if (!item.value("complete", true)) reply << " partial";
+            if (!item.value("stored", true)) reply << " unstored";
+            const std::string question = item.value("question", "");
+            const std::string preview = item.value("preview", "");
+            if (!question.empty()) reply << "\n  Q: " << question;
+            if (!preview.empty()) reply << "\n  " << preview;
+        }
+    }
+    json body = {
+        {"total", static_cast<int>(items.size())},
+        {"oracle", oracle},
+        {"host", host},
+        {"items", items},
+        {"response", reply.str()},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-pending.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << body.dump(2);
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return body;
+}
+
+static void handle_pending(const httplib::Request&, httplib::Response& res) {
+    res.set_content(pending_body().dump(), "application/json");
+}
+
+static bool ids_equal_ignore_case(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool id_has_prefix(const std::string& id, const std::string& prefix) {
+    if (prefix.empty() || prefix.size() > id.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(id[i])) !=
+            std::tolower(static_cast<unsigned char>(prefix[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::vector<std::string> known_judgment_ids() {
+    std::vector<std::string> ids;
+    for (const auto& turn : last_oracle_turns_json()) {
+        const std::string id = turn.value("stable_id", "");
+        if (!id.empty()) ids.push_back(id);
+    }
+    const json rec = host_record_from_rag();
+    const std::string host_id = rec.value("stable_id", "");
+    if (!host_id.empty()) ids.push_back(host_id);
+    return ids;
+}
+
+static std::string resolve_judgment_id(const std::string& raw, std::string& error) {
+    error.clear();
+    std::string id = raw;
+    while (!id.empty() && std::isspace(static_cast<unsigned char>(id.front()))) {
+        id.erase(id.begin());
+    }
+    while (!id.empty() && std::isspace(static_cast<unsigned char>(id.back()))) {
+        id.pop_back();
+    }
+    if (id.empty()) {
+        error = "id required";
+        return "";
+    }
+    if (id.size() == 4 &&
+        (id[0] == 'l' || id[0] == 'L') &&
+        (id[1] == 'a' || id[1] == 'A') &&
+        (id[2] == 's' || id[2] == 'S') &&
+        (id[3] == 't' || id[3] == 'T')) {
+        try {
+            const std::string last = ensure_last_oracle_id();
+            if (last.empty()) {
+                error = "no complete Oracle turn on disk";
+                return "";
+            }
+            return last;
+        } catch (const std::exception& err) {
+            error = err.what();
+            return "";
+        }
+    }
+    const auto known = known_judgment_ids();
+    for (const auto& known_id : known) {
+        if (ids_equal_ignore_case(known_id, id)) return known_id;
+    }
+    if (id.size() < 8) return id;
+    std::vector<std::string> matches;
+    for (const auto& known_id : known) {
+        if (id_has_prefix(known_id, id)) matches.push_back(known_id);
+    }
+    if (matches.size() == 1) return matches[0];
+    if (matches.size() > 1) {
+        error = "ambiguous id prefix " + id;
+        return "";
+    }
+    return id;
+}
+
+static void handle_doors(const httplib::Request&, httplib::Response& res) {
+    const std::string lb = "http://127.0.0.1:8083";
+    json loopback = {
+        {"brief", lb + "/api/brief"},
+        {"vram", lb + "/api/vram"},
+        {"heal", lb + "/api/heal"},
+        {"status", lb + "/api/status"},
+        {"last", lb + "/api/last"},
+        {"doors", lb + "/api/doors"},
+        {"desk", lb + "/api/desk"},
+        {"pending", lb + "/api/pending"},
+        {"last_edit", lb + "/api/last-edit"},
+        {"remember", lb + "/api/remember"},
+        {"librarian", lb + "/api/librarian"},
+        {"observe", lb + "/api/observe"},
+        {"judge", lb + "/api/judge"},
+    };
+    const json tail = telemetry::get_tailscale();
+    const std::string ip = tail.value("ip", "");
+    json ts = {
+        {"up", tail.value("up", false)},
+        {"reason", tail.value("reason", "")},
+        {"bound", tailscale_door_bound_to(ip)},
+        {"ip", ip},
+    };
+    if (!ip.empty() && tail.value("up", false)) {
+        const std::string base = "http://" + ip + ":8083";
+        ts["brief"] = base + "/api/brief";
+        ts["vram"] = base + "/api/vram";
+        ts["heal"] = base + "/api/heal";
+        ts["status"] = base + "/api/status";
+        ts["last"] = base + "/api/last";
+        ts["doors"] = base + "/api/doors";
+        ts["desk"] = base + "/api/desk";
+        ts["pending"] = base + "/api/pending";
+        ts["last_edit"] = base + "/api/last-edit";
+        ts["remember"] = base + "/api/remember";
+        ts["librarian"] = base + "/api/librarian";
+        ts["observe"] = base + "/api/observe";
+        ts["judge"] = base + "/api/judge";
+    }
+    json body = {
+        {"kernel", true},
+        {"writes_need_token", !g_api_token.empty()},
+        {"slots", 1},
+        {"loopback", loopback},
+        {"tailscale", ts},
+    };
+    const std::string dumped = body.dump(2);
+    body["response"] = dumped;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-doors.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << dumped;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
+}
+
 static json load_mouth() {
     json mouth = {{"engine", "coli"}, {"label", "coli"}, {"model", ""}};
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\mouth.txt";
@@ -1055,8 +2024,48 @@ static json load_mouth() {
     return mouth;
 }
 
+static json gpu_desk() {
+    json plan = telemetry::plan_colibri_vram();
+    const json mouth = load_mouth();
+    const int gb = plan.value("dedicated_gb", 0);
+    plan["slots"] = 1;
+    plan["mouth_label"] = mouth.value("label", "");
+    plan["mouth_model"] = mouth.value("model", "");
+    if (gb < 24) {
+        plan["worker"] = "Gemma 12B Q4 fits; default 27B Q4 does not";
+        plan["next"] =
+            "24 GB VRAM is the next worker (27B Q4), still one generate";
+    } else {
+        plan["worker"] = "24 GB+ can hold a default 27B Q4 worker";
+        plan["next"] = "still one GPU slot; do not stack Librarian on chat";
+    }
+    return plan;
+}
+
 static json load_heal_last() {
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
+static json load_last_edit() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-edit-result.json";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
+}
+
+static json load_last_desk_test() {
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-desk-test.json";
     std::ifstream in(path, std::ios::binary);
     if (!in) return json::object();
     try {
@@ -1073,15 +2082,103 @@ static json heal_status_body() {
     rag_client.set_read_timeout(1, 0);
     const bool rag_up = static_cast<bool>(rag_client.Get("/health"));
     const json coli = coli_serve_status();
+    const json last = load_heal_last();
+    const int age_min = file_age_minutes(
+        get_exe_dir() + "\\..\\..\\logs\\heal-last.json");
     return {
         {"playbook", "host-listeners"},
         {"live",
          {{"kernel", true},
           {"rag", rag_up},
           {"coli", coli.value("up", false)},
-          {"coli_busy", coli.value("busy", false)}}},
-        {"last", load_heal_last()},
+          {"coli_busy", coli.value("busy", false)},
+          {"mouth", coli.value("up", false)},
+          {"mouth_busy", coli.value("busy", false)}}},
+        {"last", last},
+        {"age_min", age_min},
     };
+}
+
+static void handle_heal(const httplib::Request&, httplib::Response& res) {
+    json heal = heal_status_body();
+    const json live = heal.value("live", json::object());
+    const json last = heal.value("last", json::object());
+    std::ostringstream reply;
+    reply << "playbook=host-listeners (never kills)\n"
+          << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
+          << " rag=" << (live.value("rag", false) ? "up" : "down")
+          << " mouth="
+          << (live.value("mouth", live.value("coli", false))
+                  ? (live.value("mouth_busy", live.value("coli_busy", false))
+                         ? "busy"
+                         : "serve")
+                  : "down")
+          << "\n";
+    if (last.empty()) {
+        reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
+    } else {
+        const int age = heal.value("age_min", -1);
+        reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
+              << " mouth=" << (last.value("mouth", false) ? "up" : "down")
+              << " tail="
+              << (last.value("tailscale", false) ? "100.x" : "off")
+              << " cs2="
+              << (last.value("cs2_sleep", false) ? "sleep" : "idle");
+        if (age > 20) {
+            reply << " age=stale/" << age << "m";
+        } else if (age >= 0) {
+            reply << " age=" << age << "m";
+        }
+        reply << " at=" << last.value("at", "") << "\n";
+        const json needed = last.value("needed", json::array());
+        reply << "needed=";
+        if (needed.empty()) {
+            reply << "(none)";
+        } else {
+            bool first = true;
+            for (const auto& item : needed) {
+                if (!first) reply << ",";
+                first = false;
+                if (item.is_string()) reply << item.get<std::string>();
+            }
+        }
+        const json acted = last.value("acted", json::array());
+        reply << "\nacted=";
+        if (acted.empty()) {
+            reply << "(none)";
+        } else {
+            bool first = true;
+            for (const auto& item : acted) {
+                if (!first) reply << ",";
+                first = false;
+                if (item.is_string()) reply << item.get<std::string>();
+            }
+        }
+        const json diagnose = last.value("diagnose", json::object());
+        if (!diagnose.empty()) {
+            reply << "\nlayer=" << diagnose.value("layer", "?")
+                  << " icmp="
+                  << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
+                  << " dns_self="
+                  << (diagnose.value("dns_self", false) ? "ok" : "fail")
+                  << " nic_tcpip="
+                  << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
+        }
+    }
+    const std::string text = reply.str();
+    heal["response"] = text;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-heal.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(heal.dump(), "application/json");
 }
 
 using ColiTokenFn = std::function<void(const std::string&)>;
@@ -1166,12 +2263,16 @@ std::string run_colibri_serve(
     std::string assembled;
     std::string last_reason;
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
-        const json body = {
+        json body = {
             {"model", model},
             {"stream", true},
             {"max_tokens", chunk_tokens},
             {"messages", messages},
         };
+        // /edit apply pass: do not spend the 1024-token budget on think.
+        if (llama_mouth && wants_apply_continue(system, user)) {
+            body["chat_template_kwargs"] = {{"enable_thinking", false}};
+        }
         std::string piece;
         std::string sse_buf;
         std::string finish_reason;
@@ -1412,6 +2513,12 @@ std::string run_colibri(
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
     const std::string mouth = load_mouth().value("label", "coli");
+    const bool starting = maybe_restart_mouth();
+    if (starting) {
+        return "Error: " + mouth +
+               " is down on 127.0.0.1:8000. Starting it. "
+               "Ask again in about a minute. Do not Continue.";
+    }
     return "Error: " + mouth +
            " is down on 127.0.0.1:8000. "
            "Run Start-LlamaServer.ps1 if the mouth is llama, or "
@@ -1592,6 +2699,24 @@ int main() {
         res.set_content(kernel_status_body().dump(), "application/json");
     });
 
+    svr.Get("/api/brief", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_brief(req, res);
+    });
+    svr.Get("/api/vram", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_vram(req, res);
+    });
+    svr.Get("/api/doors", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_doors(req, res);
+    });
+    svr.Get("/api/desk", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_desk(req, res);
+    });
+    svr.Get("/api/last-edit", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_last_edit(req, res);
+    });
+    svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
+        handle_pending(req, res);
+    });
     svr.Get("/api/last", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_last(req, res);
@@ -1599,12 +2724,17 @@ int main() {
 
     svr.Get("/api/heal", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
-        res.set_content(heal_status_body().dump(), "application/json");
+        handle_heal(req, res);
     });
 
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_remember(req, res);
+    });
+
+    svr.Post("/api/librarian", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_librarian(req, res);
     });
 
     svr.Post("/api/truth", [&](const httplib::Request& req, httplib::Response& res) {
@@ -1663,8 +2793,46 @@ int main() {
                       << host.value("total_physical_ram_gb", 0) << " GB / "
                       << host.value("logical_processors", 0) << " threads\n"
                       << "host_record=" << rec.value("status", "none") << "\n";
+                const json pending = st.value("pending_judge", json::object());
+                const json heal = st.value("heal", json::object());
+                reply << "judge " << pending.value("total", 0) << " waiting";
+                if (heal.contains("ok")) {
+                    const int heal_age = heal.value("age_min", -1);
+                    if (heal_age > 20) {
+                        reply << " heal=stale/" << heal_age << "m";
+                    } else if (heal_age >= 0) {
+                        reply << " heal="
+                              << (heal.value("ok", false) ? "ok" : "fail")
+                              << "/" << heal_age << "m";
+                    } else {
+                        reply << " heal="
+                              << (heal.value("ok", false) ? "ok" : "fail");
+                    }
+                }
+                const json cs2 = st.value("cs2", json::object());
+                if (cs2.value("sleep", false)) {
+                    reply << " cs2="
+                          << (cs2.value("running", false) ? "play" : "sleep");
+                }
+                reply << "\n";
+                int pending_index = 0;
+                for (const auto& item : st.value("pending_items", json::array())) {
+                    ++pending_index;
+                    const std::string id = item.value("stable_id", "");
+                    reply << pending_index << ". " << item.value("kind", "?");
+                    if (!id.empty()) {
+                        reply << " " << id.substr(0, id.size() < 12 ? id.size() : 12);
+                    } else {
+                        reply << " (no id)";
+                    }
+                    const std::string q = item.value("question", "");
+                    if (!q.empty()) reply << " " << q;
+                    reply << "\n";
+                }
                 if (!coli.value("up", st.value("coli_serve", false))) {
-                    reply << mouth_label << "=down";
+                    reply << mouth_label
+                          << (st.value("mouth_restarting", false) ? "=starting"
+                                                                 : "=down");
                 } else if (coli.value("busy", false)) {
                     reply << mouth_label << "=busy";
                     if (coli.contains("elapsed_s")) {
@@ -1719,9 +2887,19 @@ int main() {
                           << "\n  A: " << clip(last.value("answer", ""), 160)
                           << "\n";
                 }
+                const json edit = st.value("last_edit", json::object());
+                if (edit.contains("report")) {
+                    std::string report = edit.value("report", "");
+                    if (report.size() > 80) report.resize(80);
+                    reply << "edit " << (edit.value("applied", false) ? "done" : "fail")
+                          << " " << report << "\n";
+                }
                 if (tail.value("up", false)) {
                     reply << "tailscale " << tail.value("ip", "") << " "
-                          << tail.value("writes", "") << "\n";
+                          << (tail.value("bound", false) ? "door open" : "door closed")
+                          << " " << tail.value("writes", "") << "\n";
+                } else if (tail.value("reason", "") == "needs_login") {
+                    reply << "tailscale needs login\n";
                 } else {
                     reply << "tailscale down\n";
                 }
@@ -1734,157 +2912,59 @@ int main() {
                 return;
             }
 
+            if (starts_with_ignore_case(user_msg, "/last-edit") &&
+                (user_msg.size() == 10 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[10])) != 0)) {
+                handle_last_edit(req, res);
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/last") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json turns = last_oracle_turns_json();
-                std::ostringstream reply;
-                if (turns.empty()) {
-                    reply << "No Oracle turns on disk yet.";
-                } else {
-                    reply << turns.size() << " Oracle turn(s) on disk "
-                             "(candidate, not verified):\n";
-                    int index = 0;
-                    for (const auto& turn : turns) {
-                        ++index;
-                        reply << index << ". "
-                              << turn.value("status", "candidate") << " "
-                              << (turn.value("ok", false) ? "ok" : "fail")
-                              << (turn.value("complete", true) ? "" : " partial")
-                              << " " << (turn.value("elapsed_ms", 0) / 1000)
-                              << "s\n  Q: "
-                              << turn.value("question", "") << "\n  A: "
-                              << turn.value("answer", "") << "\n";
-                    }
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_last(req, res);
                 return;
             }
 
             if (starts_with_ignore_case(user_msg, "/brief") &&
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
-                const json st = kernel_status_body();
-                const json host = st.value("host", json::object());
-                const json coli = st.value("coli", json::object());
-                const json rag = st.value("rag", json::object());
-                const json last = st.value("last_oracle", json::object());
-                std::ostringstream reply;
-                const std::string where = load_where_we_are();
-                if (!where.empty()) {
-                    reply << where;
-                    if (where.back() != '\n') reply << '\n';
-                    reply << "---\n";
-                }
-                reply << host.value("computer_name", "?") << " | coli="
-                      << (!coli.value("up", false)
-                              ? "down"
-                              : (coli.value("busy", false) ? "busy" : "serve"))
-                      << " rag="
-                      << (rag.value("ready", false) ? "ready" : "down");
-                const double ram = host.value("ram_available_gb", -1.0);
-                if (ram >= 0.0) {
-                    char ram_buf[32];
-                    std::snprintf(ram_buf, sizeof(ram_buf), "%.1f", ram);
-                    reply << " RAM " << ram_buf << " GB free";
-                }
-                reply << "\n";
-                if (!last.empty() && last.contains("answer")) {
-                    auto clip = [](std::string text, size_t max) {
-                        if (text.size() > max) {
-                            text.resize(max);
-                            text += "...";
-                        }
-                        return text;
-                    };
-                    reply << "last "
-                          << (last.value("complete", true) ? "" : "partial ")
-                          << clip(last.value("question", ""), 80) << "\n  "
-                          << clip(last.value("answer", ""), 160);
-                } else {
-                    reply << "No Oracle turn on disk yet.";
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_brief(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/doors") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                handle_doors(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/desk") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                handle_desk(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/pending") &&
+                (user_msg.size() == 8 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[8])) != 0)) {
+                handle_pending(req, res);
                 return;
             }
 
             if (starts_with_ignore_case(user_msg, "/heal") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json heal = heal_status_body();
-                const json live = heal.value("live", json::object());
-                const json last = heal.value("last", json::object());
-                std::ostringstream reply;
-                reply << "playbook=host-listeners (never kills)\n"
-                      << "live kernel=" << (live.value("kernel", false) ? "up" : "down")
-                      << " rag=" << (live.value("rag", false) ? "up" : "down")
-                      << " coli="
-                      << (live.value("coli", false)
-                              ? (live.value("coli_busy", false) ? "busy" : "serve")
-                              : "down")
-                      << "\n";
-                if (last.empty()) {
-                    reply << "no heal run recorded yet. Watch-GodBrain writes logs/heal-last.json";
-                } else {
-                    reply << "last ok=" << (last.value("ok", false) ? "true" : "false")
-                          << " at=" << last.value("at", "") << "\n";
-                    const json needed = last.value("needed", json::array());
-                    reply << "needed=";
-                    if (needed.empty()) {
-                        reply << "(none)";
-                    } else {
-                        bool first = true;
-                        for (const auto& item : needed) {
-                            if (!first) reply << ",";
-                            first = false;
-                            if (item.is_string()) reply << item.get<std::string>();
-                        }
-                    }
-                    const json acted = last.value("acted", json::array());
-                    reply << "\nacted=";
-                    if (acted.empty()) {
-                        reply << "(none)";
-                    } else {
-                        bool first = true;
-                        for (const auto& item : acted) {
-                            if (!first) reply << ",";
-                            first = false;
-                            if (item.is_string()) reply << item.get<std::string>();
-                        }
-                    }
-                    const json diagnose = last.value("diagnose", json::object());
-                    if (!diagnose.empty()) {
-                        reply << "\nlayer=" << diagnose.value("layer", "?")
-                              << " icmp="
-                              << (diagnose.value("icmp_loopback", false) ? "ok" : "fail")
-                              << " dns_self="
-                              << (diagnose.value("dns_self", false) ? "ok" : "fail")
-                              << " nic_tcpip="
-                              << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
-                    }
-                }
-                res.set_content(json({{"response", reply.str()}}).dump(),
-                                "application/json");
+                handle_heal(req, res);
                 return;
             }
 
             if (starts_with_ignore_case(user_msg, "/vram") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
-                const json plan = telemetry::plan_colibri_vram();
-                std::ostringstream reply;
-                reply << "Colibri VRAM plan (16 GB compensation)\n"
-                      << plan.value("name", "GPU") << " / "
-                      << plan.value("dedicated_gb", 0) << " GB dedicated\n"
-                      << "CUDA_EXPERT_GB=" << plan.value("expert_gb", 0)
-                      << " (reserve " << plan.value("reserve_gb", 0) << " GB for KV/desktop)\n"
-                      << "COLI_RAM_OVERCOMMIT="
-                      << (plan.value("overcommit", false) ? "1" : "0")
-                      << " — off means no silent spill to DDR5\n"
-                      << "Override with GODBRAIN_CUDA_EXPERT_GB or GODBRAIN_COLI_OVERCOMMIT=1";
-                res.set_content(json({{"response", reply.str()}}).dump(), "application/json");
+                handle_vram(req, res);
                 return;
             }
 
@@ -1967,6 +3047,70 @@ int main() {
                 }
                 return;
             }
+
+            if (starts_with_ignore_case(user_msg, "/idea") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                std::string thought = trim_view(user_msg.substr(5));
+                if (thought.empty()) {
+                    res.set_content(
+                        "{\"response\":\"Say /idea followed by the idea. Stored as sector=idea candidate.\"}",
+                        "application/json");
+                    return;
+                }
+                try {
+                    json stored = memory::save_thought(
+                        {{"content", thought}, {"sector", "idea"}});
+                    res.set_content(
+                        json({{"response",
+                               std::string("Idea stored (candidate, sector=idea). "
+                                           "Not verified. stable_id=") +
+                                   stored.value("stable_id", "")}}).dump(),
+                        "application/json");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    res.set_content(
+                        json({{"response",
+                               std::string("Could not store idea: ") + error.what()}})
+                            .dump(),
+                        "application/json");
+                }
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/ideas") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                try {
+                    std::ostringstream listing;
+                    listing << "Idea candidates (not verified):\n";
+                    int shown = 0;
+                    const json recent =
+                        memory::get_recent(25).value("thoughts", json::array());
+                    for (const auto& thought : recent) {
+                        if (thought.value("sector", "") != "idea") continue;
+                        ++shown;
+                        listing << "- [" << thought.value("status", "candidate")
+                                << "] "
+                                << thought.value("stable_id", thought.value("id", ""))
+                                << " | " << thought.value("label", "") << "\n";
+                    }
+                    if (shown == 0) {
+                        listing << "(none in the active projection yet)";
+                    }
+                    res.set_content(
+                        json({{"response", listing.str()}}).dump(),
+                        "application/json");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    res.set_content(
+                        json({{"response",
+                               std::string("Could not list ideas: ") + error.what()}})
+                            .dump(),
+                        "application/json");
+                }
+                return;
+            }
             auto handle_judgment = [&](const char* verb, const char* status, const std::string& rest) {
                 const std::string trimmed = trim_view(rest);
                 const size_t split = trimmed.find_first_of(" \t");
@@ -1974,32 +3118,23 @@ int main() {
                     split == std::string::npos ? trimmed : trimmed.substr(0, split);
                 const std::string reasoning =
                     split == std::string::npos ? "" : trim_view(trimmed.substr(split + 1));
-                if (id.size() == 4 &&
-                    (id[0] == 'l' || id[0] == 'L') &&
-                    (id[1] == 'a' || id[1] == 'A') &&
-                    (id[2] == 's' || id[2] == 'S') &&
-                    (id[3] == 't' || id[3] == 'T')) {
-                    try {
-                        id = ensure_last_oracle_id();
-                    } catch (const std::exception& error) {
-                        res.status = 503;
-                        res.set_content(
-                            json({{"response",
-                                   std::string("Could not resolve last Oracle turn: ") +
-                                       error.what()}}).dump(),
-                            "application/json");
-                        return;
-                    }
-                    if (id.empty()) {
-                        res.set_content(
-                            json({{"response",
-                                   "No complete Oracle turn on disk to " +
-                                       std::string(verb) + "."}}).dump(),
-                            "application/json");
-                        return;
-                    }
+                std::string resolve_err;
+                const std::string resolved = resolve_judgment_id(id, resolve_err);
+                if (!resolve_err.empty() && resolved.empty()) {
+                    res.status = 400;
+                    res.set_content(
+                        json({{"response", resolve_err}}).dump(), "application/json");
+                    return;
                 }
+                if (!resolved.empty()) id = resolved;
                 if (id.empty() || reasoning.size() < 4) {
+                    if (!id.empty() && reasoning.size() < 4) {
+                        res.set_content(
+                            json({{"response",
+                                   std::string("Need a why (min 4) for ") + id}}).dump(),
+                            "application/json");
+                        return;
+                    }
                     res.set_content(
                         json({{"response",
                                std::string("Usage: /") + verb +
@@ -2026,6 +3161,7 @@ int main() {
                         }
                         persist_oracle_turns_locked();
                     }
+                    pending_body();
                     res.set_content(
                         json({{"response",
                                std::string(status) + " " + judged.value("stable_id", id) +
@@ -2122,6 +3258,17 @@ int main() {
                 return;
             }
 
+            if (cs2_should_sleep_mouth()) {
+                res.set_content(
+                    json({{"response",
+                           "CS2 owns the box. Mouth stays down. "
+                           "Desk slashes still work. Ask again after "
+                           "the 5 min window."}})
+                        .dump(),
+                    "application/json");
+                return;
+            }
+
             const bool continue_cmd = is_continue_command(user_msg);
             std::cout << "[RAG] Canonical search requested (" << user_msg.size()
                       << " bytes) continue=" << (continue_cmd ? "1" : "0")
@@ -2189,6 +3336,15 @@ int main() {
                 "Do not guess an open question. Cite the note if you use one. "
                 "Do not restate these rules. Do not emit constraint lists.";
             if (local_edit::looks_like_edit_request(user_msg)) {
+                if (cs2_should_sleep_mouth()) {
+                    res.set_content(
+                        json({{"response",
+                               "CS2 owns the box. /edit waits. "
+                               "Use Start-CS2.cmd."}})
+                            .dump(),
+                        "application/json");
+                    return;
+                }
                 system_prompt +=
                     " If changing a repo file, end with apply blocks only: "
                     "*** APPLY / path: relative / <<<< old ==== new >>>> / *** END. "
@@ -2304,13 +3460,16 @@ int main() {
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
                         const auto edit = local_edit::maybe_apply(
                             asked_q,
-                            chunk,
+                            for_memory,
                             [&](const std::string& sys, const std::string& usr) {
                                 emit({{"type", "status"},
                                       {"text",
                                        "Plan saved in RAM. Second pass on "
                                        "the GPU: emit the patch only."}});
-                                return run_colibri(sys, usr, {}, {}, {}, {});
+                                std::string spoken2;
+                                const std::string raw =
+                                    run_colibri(sys, usr, {}, {}, {}, {}, &spoken2);
+                                return spoken2.empty() ? raw : spoken2;
                             });
                         if (edit.attempted) {
                             chunk += "\n\n";
@@ -2356,9 +3515,12 @@ int main() {
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
             const auto edit = local_edit::maybe_apply(
                 asked,
-                chunk,
+                for_memory,
                 [&](const std::string& sys, const std::string& usr) {
-                    return run_colibri(sys, usr, {}, {}, {}, {});
+                    std::string spoken2;
+                    const std::string raw =
+                        run_colibri(sys, usr, {}, {}, {}, {}, &spoken2);
+                    return spoken2.empty() ? raw : spoken2;
                 });
             if (edit.attempted) {
                 chunk += "\n\n";
@@ -2383,23 +3545,19 @@ int main() {
         }
     });
 
-    const json tailscale = telemetry::get_tailscale();
-    if (tailscale.value("up", false) && !g_api_token.empty()) {
-        const std::string ip = tailscale.value("ip", "");
-        std::thread([ip]() {
-            httplib::Server door;
-            attach_shortcut_routes(door);
-            std::cout << "[SYS] Tailscale shortcuts door http://" << ip
-                      << ":8083 (remember/observe/judge/status/last only)" << std::endl;
-            if (!door.listen(ip, 8083)) {
-                std::cerr << "[SYS] Tailscale bind failed on " << ip << ":8083"
-                          << std::endl;
-            }
-        }).detach();
-    } else if (tailscale.value("up", false)) {
-        std::cout << "[SYS] Tailscale " << tailscale.value("ip", "")
-                  << " is up; shortcuts door stays closed until GODBRAIN_API_TOKEN is set"
-                  << std::endl;
+    if (maybe_bind_tailscale_door()) {
+        std::cout << "[SYS] Tailscale shortcuts door requested" << std::endl;
+    } else {
+        const json tailscale = telemetry::get_tailscale();
+        if (tailscale.value("up", false) && g_api_token.empty()) {
+            std::cout << "[SYS] Tailscale " << tailscale.value("ip", "")
+                      << " is up; shortcuts door stays closed until GODBRAIN_API_TOKEN is set"
+                      << std::endl;
+        } else if (tailscale.value("reason", "") == "needs_login") {
+            std::cout << "[SYS] Tailscale adapter up but not logged in; "
+                         "phone door waits for a 100.x address"
+                      << std::endl;
+        }
     }
 
     std::cout << "[SYS] Listening on http://127.0.0.1:8083 (loopback only)" << std::endl;
@@ -2407,7 +3565,9 @@ int main() {
         std::cerr << "[SYS] FATAL: could not bind 127.0.0.1:8083 "
                      "(already running or port blocked)"
                   << std::endl;
+        stop_tailscale_door();
         return 1;
     }
+    stop_tailscale_door();
     return 0;
 }

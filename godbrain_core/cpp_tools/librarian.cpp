@@ -18,6 +18,7 @@
 
 // Include JSON support
 #include "../cpp_kernel/json.hpp"
+#include "../cpp_kernel/httplib.h"
 // Include Keccak256 for source hashing
 #include "keccak256.hpp"
 
@@ -78,11 +79,109 @@ struct LibrarianConfig {
     std::string llm_executable_path;
     std::string prompt_template_path;
     std::string mongo_store_path;
-    std::string model_id = "Colibri-Llama-3-8B"; // Configured model, NOT model-reported
+    std::string model_id = "mouth";
     std::string model_hash = "N/A";
+    std::string mouth_host = "127.0.0.1";
+    int mouth_port = 8000;
     double llm_temperature = 0.1;
     bool dry_run = false;
 };
+
+static std::string env_or(const char* name, const std::string& fallback) {
+    const char* value = std::getenv(name);
+    return (value && *value) ? std::string(value) : fallback;
+}
+
+static bool spawn_colibri_allowed() {
+    const std::string v = env_or("GODBRAIN_LIBRARIAN_SPAWN", "");
+    return v == "1" || _stricmp(v.c_str(), "true") == 0;
+}
+
+static std::string load_mouth_model_id() {
+    const std::string override = env_or("GODBRAIN_LIBRARIAN_MODEL", "");
+    if (!override.empty()) return override;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\mouth.txt";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "mouth";
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                             line.back() == ' ')) {
+        line.pop_back();
+    }
+    if (line.empty()) return "mouth";
+    const auto space = line.find(' ');
+    return space == std::string::npos ? line : line.substr(space + 1);
+}
+
+static bool mouth_http_up(const std::string& host, int port) {
+    httplib::Client client(host, port);
+    client.set_connection_timeout(0, 300000);
+    client.set_read_timeout(2, 0);
+    if (const auto probe = client.Get("/health")) {
+        return probe->status == 200;
+    }
+    return false;
+}
+
+static std::string extract_json_object(const std::string& text) {
+    const size_t json_start = text.find('{');
+    const size_t json_end = text.rfind('}');
+    if (json_start == std::string::npos || json_end == std::string::npos ||
+        json_end < json_start) {
+        throw std::runtime_error("LLM output had no JSON object");
+    }
+    return text.substr(json_start, json_end - json_start + 1);
+}
+
+static std::string chat_complete(
+    const std::string& host,
+    int port,
+    const std::string& model,
+    const std::string& system,
+    const std::string& user,
+    double temperature) {
+    httplib::Client client(host, port);
+    client.set_connection_timeout(2, 0);
+    client.set_read_timeout(180, 0);
+    client.set_write_timeout(10, 0);
+    json body = {
+        {"model", model},
+        {"stream", false},
+        {"temperature", temperature},
+        {"max_tokens", 768},
+        {"chat_template_kwargs", json{{"enable_thinking", false}}},
+        {"messages",
+         json::array(
+             {json{{"role", "system"}, {"content", system}},
+              json{{"role", "user"}, {"content", user}}})},
+    };
+    const auto response =
+        client.Post("/v1/chat/completions", body.dump(), "application/json");
+    if (!response) {
+        throw std::runtime_error("mouth HTTP did not finish on " + host + ":" +
+                                 std::to_string(port));
+    }
+    if (response->status != 200) {
+        throw std::runtime_error("mouth HTTP " + std::to_string(response->status) +
+                                 ": " + response->body.substr(0, 240));
+    }
+    const json parsed = json::parse(response->body);
+    const auto& choice = parsed.at("choices").at(0);
+    const json msg = choice.value("message", json::object());
+    std::string content = msg.value("content", "");
+    const std::string think = msg.value("reasoning_content", "");
+    if (content.find('{') == std::string::npos && think.find('{') != std::string::npos) {
+        content = think;
+    }
+    if (content.empty()) {
+        content = think;
+    }
+    if (content.empty()) {
+        throw std::runtime_error("mouth returned empty content");
+    }
+    return content;
+}
 
 // --- DOMAIN MODELS ---
 
@@ -273,13 +372,33 @@ public:
                     llm_input["system"] = llm_input["system"].get<std::string>() + "\n\nWARNING: Your previous attempt failed validation. Please fix this error:\n" + last_error;
                 }
                 
-                std::string full_prompt_json = llm_input.dump();
-                
-                return execute_llm_call(envelope, full_prompt_json, prompt_version, prompt_hash);
+                // Mouth path: short extract prompt. The full Hermes skill
+                // bible is ~2k tokens and IMA'd Gemma 12B Q4 on this 4080.
+                const std::string system =
+                    "You are Librarian-CPP. Extract at most 6 specific claims "
+                    "from the transcript. Output one JSON object only. "
+                    "schema_version 1.0, extractor Librarian-CPP, "
+                    "trust_tier raw_candidate, provenance "
+                    "{source_type session_transcript, language mixed}, "
+                    "claims[{claim_id, type factual|architecture|"
+                    "contradiction|open_question, content, confidence, "
+                    "evidence_spans}], core_concepts[], opsec_candidates[], "
+                    "skills_extracted[]. Empty arrays if none. "
+                    "Close every brace. No markdown. No thinking.";
+                const std::string user =
+                    std::string("Transcript (raw, immutable). First character "
+                                "must be '{'.\n\n") +
+                    envelope.content;
+                return execute_llm_call(
+                    envelope, system, user, llm_input.dump(), prompt_version,
+                    prompt_hash);
             } catch (const std::exception& e) {
                 last_error = e.what();
                 std::cerr << "[LIBRARIAN WARN] LLM Extraction attempt " << (attempt + 1) << " failed: " << last_error << std::endl;
-                if (attempt == max_retries) throw;
+                const bool mouth_dead =
+                    last_error.find("did not finish") != std::string::npos ||
+                    last_error.find("mouth is down") != std::string::npos;
+                if (mouth_dead || attempt == max_retries) throw;
                 std::cout << "[LIBRARIAN] Retrying LLM extraction with error feedback..." << std::endl;
             }
         }
@@ -287,7 +406,33 @@ public:
     }
 
 private:
-    DistillationResult execute_llm_call(const SourceEnvelope& envelope, const std::string& input_json, const std::string& prompt_version, const std::string& prompt_hash) {
+    DistillationResult execute_llm_call(
+        const SourceEnvelope& envelope,
+        const std::string& system,
+        const std::string& user,
+        const std::string& framed_json,
+        const std::string& prompt_version,
+        const std::string& prompt_hash) {
+        std::string output;
+        if (mouth_http_up(config.mouth_host, config.mouth_port)) {
+            std::cout << "[LIBRARIAN] Distilling via mouth HTTP "
+                      << config.mouth_host << ":" << config.mouth_port
+                      << " model=" << config.model_id << std::endl;
+            output = chat_complete(
+                config.mouth_host, config.mouth_port, config.model_id, system,
+                user, config.llm_temperature);
+        } else if (!spawn_colibri_allowed()) {
+            throw std::runtime_error(
+                "mouth is down on " + config.mouth_host + ":" +
+                std::to_string(config.mouth_port) +
+                ". Will not cold-spawn Colibri. Start llama-server or coli serve.");
+        } else {
+            output = execute_colibri_spawn(framed_json);
+        }
+        return parse_distillation(envelope, output, prompt_version, prompt_hash);
+    }
+
+    std::string execute_colibri_spawn(const std::string& input_json) {
         SECURITY_ATTRIBUTES saAttr; 
         saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 
         saAttr.bInheritHandle = TRUE; 
@@ -443,16 +588,23 @@ private:
         if (exitCode != 0) {
             throw std::runtime_error("LLM failed with exit code " + std::to_string(exitCode) + ". Output: " + output);
         }
+        return output;
+    }
 
-        // Colibri's legacy protocol returns \x01\x01END\x01\x01, STAT lines, READY lines, etc.
-        // Find the first { and last } to extract the JSON.
-        size_t json_start = output.find('{');
-        size_t json_end = output.rfind('}');
-        if (json_start != std::string::npos && json_end != std::string::npos && json_end >= json_start) {
-            output = output.substr(json_start, json_end - json_start + 1);
-        }
+    static std::string json_as_string(const json& value) {
+        if (value.is_string()) return value.get<std::string>();
+        if (value.is_number() || value.is_boolean()) return value.dump();
+        if (value.is_null()) return "";
+        return value.dump();
+    }
 
-        // 5. Strict JSON Schema Extraction
+    DistillationResult parse_distillation(
+        const SourceEnvelope& envelope,
+        std::string output,
+        const std::string& prompt_version,
+        const std::string& prompt_hash) {
+        output = extract_json_object(output);
+
         json extracted_json;
         try {
             extracted_json = json::parse(output);
@@ -465,14 +617,20 @@ private:
         
         if (extracted_json.contains("claims") && extracted_json["claims"].is_array()) {
             for (const auto& c : extracted_json["claims"]) {
+                if (!c.is_object()) continue;
                 Claim claim;
-                claim.claim_id = c.value("claim_id", "");
-                claim.type = c.value("type", "");
-                claim.content = c.value("content", "");
-                claim.confidence = c.value("confidence", 0.0);
+                claim.claim_id = c.contains("claim_id") ? json_as_string(c["claim_id"]) : "";
+                claim.type = c.contains("type") ? json_as_string(c["type"]) : "";
+                claim.content = c.contains("content") ? json_as_string(c["content"]) : "";
+                if (c.contains("confidence") && c["confidence"].is_number()) {
+                    claim.confidence = c["confidence"].get<double>();
+                } else {
+                    claim.confidence = 0.0;
+                }
                 if (c.contains("evidence_spans") && c["evidence_spans"].is_array()) {
                     for (const auto& s : c["evidence_spans"]) {
-                        claim.evidence_spans.push_back(s.get<std::string>());
+                        const std::string span = json_as_string(s);
+                        if (!span.empty()) claim.evidence_spans.push_back(span);
                     }
                 }
                 alexandria_payload.claims.push_back(claim);
@@ -481,13 +639,15 @@ private:
         
         if (extracted_json.contains("core_concepts") && extracted_json["core_concepts"].is_array()) {
             for (const auto& concept : extracted_json["core_concepts"]) {
-                alexandria_payload.core_concepts.push_back(concept.get<std::string>());
+                const std::string s = json_as_string(concept);
+                if (!s.empty()) alexandria_payload.core_concepts.push_back(s);
             }
         }
         
         if (extracted_json.contains("opsec_candidates") && extracted_json["opsec_candidates"].is_array()) {
             for (const auto& candidate : extracted_json["opsec_candidates"]) {
-                alexandria_payload.opsec_candidates.push_back(candidate.get<std::string>());
+                const std::string s = json_as_string(candidate);
+                if (!s.empty()) alexandria_payload.opsec_candidates.push_back(s);
             }
         }
         
@@ -503,7 +663,8 @@ private:
             config.llm_temperature
         };
 
-        std::string full_extractor_version = "LLM-Native-1.0 (Prompt: " + prompt_version + ")";
+        std::string full_extractor_version =
+            "Librarian-CPP-1.0 (Prompt: " + prompt_version + ")";
         
         return DistillationResult{
             full_extractor_version,
@@ -601,7 +762,7 @@ public:
 
         // Build DistillationPayload JSON matching Go's expected input
         json full_payload = {
-            {"extractor_id", "Librarian-CPP-Colibri"},
+            {"extractor_id", "Librarian-CPP"},
             {"extractor_version", result.extractor_version},
             {"schema_version", result.schema_version},
             {"degraded", result.degraded},
@@ -694,7 +855,6 @@ bool commit_to_brain(const std::string& session_id, const std::string& raw_trans
     if (config.dry_run) {
         distiller = std::make_unique<FallbackDistillationProvider>(); // Use fallback during testing/dry-run
     } else {
-        // Colibri requires prompt template JSON and the executable path
         distiller = std::make_unique<LLMDistillationProvider>(config);
     }
     std::unique_ptr<SchemaValidator> validator = std::make_unique<StrictSchemaValidator>();
@@ -751,7 +911,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (argc >= 2 && std::string(argv[1]) == "--self-test") {
-        LibrarianConfig test_config{"", "", "", "Colibri-Llama-3-8B", "N/A", 0.1, true};
+        LibrarianConfig test_config{
+            "", "", "", "mouth", "N/A", "127.0.0.1", 8000, 0.1, true};
         bool success = commit_to_brain("session_test_alexandria", "User: We need a C++ Librarian with provenance. AI: Executing native protocol.", std::make_unique<InMemoryMemoryStore>(), test_config);
         return success ? 0 : 1;
     }
@@ -779,12 +940,20 @@ int main(int argc, char* argv[]) {
     
     std::string exe_dir = get_exe_dir();
     
+    int mouth_port = 8000;
+    try {
+        mouth_port = std::stoi(env_or("GODBRAIN_MOUTH_PORT", "8000"));
+    } catch (...) {
+        mouth_port = 8000;
+    }
     LibrarianConfig config{
         env_llm ? std::string(env_llm) : exe_dir + "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
         env_prompt ? std::string(env_prompt) : exe_dir + "\\prompts\\hermes_v1.json",
         env_mongo ? std::string(env_mongo) : exe_dir + "\\..\\memory_store\\memory-store.exe",
-        "Colibri-Llama-3-8B",
+        load_mouth_model_id(),
         "N/A",
+        env_or("GODBRAIN_MOUTH_HOST", "127.0.0.1"),
+        mouth_port,
         0.1,
         dry_run
     };

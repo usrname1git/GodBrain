@@ -261,7 +261,8 @@ does not provide kernel-mode access.
 | `GET` | `/api/status` | None | Kernel, `coli serve`, VRAM plan, RAG health, last Oracle turn |
 | `GET` | `/api/last` | None on loopback | On-disk Oracle turns (no Colibri call) |
 | chat `/brief` | None | One-glance host + coli + last turn; prepends `logs/where-we-are.md` if present |
-| `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave) |
+| `POST` | `/api/remember` | Bearer if `GODBRAIN_API_TOKEN` is set | Save a candidate idea (Shortcuts / Brave / iPhone) |
+| `POST` | `/api/librarian` | Bearer if `GODBRAIN_API_TOKEN` is set | Distill `text` via the live `:8000` mouth; same door on Tailscale |
 | `POST` | `/api/observe` | Bearer if `GODBRAIN_API_TOKEN` is set | Store host inventory as a candidate |
 | `POST` | `/api/truth` | Bearer if `GODBRAIN_API_TOKEN` is set | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
 | `POST` | `/api/judge` | Bearer if `GODBRAIN_API_TOKEN` is set | Set a node `verified` or `rejected` with reasoning |
@@ -273,11 +274,11 @@ controls browser access; non-browser callers still require authentication for
 privileged commands.
 
 `GET /api/status` also reports live host inventory, the newest `windows-sre`
-Golden Record, and Tailscale (`ip`, `remember_url`, `writes`, `bound`).
+Golden Record, and Tailscale (`ip`, `remember_url`, `librarian_url`, `writes`, `bound`).
 Privileged `command_type` and Galaxy stay on `127.0.0.1`. If Tailscale is up
 and `GODBRAIN_API_TOKEN` is set, a second listener on the Tailscale IPv4
-exposes only `/api/remember`, `/api/observe`, `/api/judge`, `/api/status`,
-and `/api/last`. Those routes require the bearer on that listener. Loopback
+exposes only `/api/remember`, `/api/librarian`, `/api/observe`, `/api/judge`,
+`/api/status`, and `/api/last`. Those routes require the bearer on that listener. Loopback
 `/api/status` and `/api/last` stay open for Galaxy. Without a token the door
 stays closed so the tailnet cannot read inventory or write.
 

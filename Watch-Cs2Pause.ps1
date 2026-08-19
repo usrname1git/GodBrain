@@ -1,14 +1,19 @@
 # Safety net if CS2 is started from Steam instead of Start-CS2.ps1.
-# Prefer Start-CS2.ps1: it pauses GodBrain before the game launches.
+# Prefer Start-CS2.ps1: it pauses GodBrain and Tailscale before launch.
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = $PSScriptRoot
+    [string]$RepoRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# $PSScriptRoot in a param() default is empty when Task Scheduler launches -File.
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $RepoRoot = $PSScriptRoot
+    } elseif ($MyInvocation.MyCommand.Path) {
+        $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
 }
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     throw "Watch-Cs2Pause: RepoRoot is empty."

@@ -228,6 +228,7 @@ namespace telemetry {
             {"remember_url", ""},
             {"writes", "loopback_only"},
             {"bound", false},
+            {"reason", "down"},
         };
         ULONG size = 16384;
         std::vector<unsigned char> buffer(size);
@@ -254,6 +255,8 @@ namespace telemetry {
                 description.find("Tailscale") != std::string::npos ||
                 description.find("tailscale") != std::string::npos;
             if (!named) continue;
+            result["adapter"] = name;
+            result["reason"] = "needs_login";
             for (IP_ADAPTER_UNICAST_ADDRESS* address = adapter->FirstUnicastAddress;
                  address != nullptr; address = address->Next) {
                 if (address->Address.lpSockaddr == nullptr ||
@@ -273,8 +276,25 @@ namespace telemetry {
                 result["up"] = true;
                 result["ip"] = std::string(ip);
                 result["adapter"] = name;
+                result["reason"] = "up";
                 result["remember_url"] =
                     std::string("http://") + ip + ":8083/api/remember";
+                result["librarian_url"] =
+                    std::string("http://") + ip + ":8083/api/librarian";
+                result["brief_url"] =
+                    std::string("http://") + ip + ":8083/api/brief";
+                result["vram_url"] =
+                    std::string("http://") + ip + ":8083/api/vram";
+                result["heal_url"] =
+                    std::string("http://") + ip + ":8083/api/heal";
+                result["doors_url"] =
+                    std::string("http://") + ip + ":8083/api/doors";
+                result["desk_url"] =
+                    std::string("http://") + ip + ":8083/api/desk";
+                result["pending_url"] =
+                    std::string("http://") + ip + ":8083/api/pending";
+                result["last_edit_url"] =
+                    std::string("http://") + ip + ":8083/api/last-edit";
                 return result;
             }
         }
