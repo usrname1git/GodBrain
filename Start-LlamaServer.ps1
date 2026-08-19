@@ -10,8 +10,9 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # MTP + Gemma4 hit CUDA IMA on this 4080 Super. Leave -UseDraft off.
-    # Live /edit works on the no-MTP Gemma 12B Q4 mouth.
+    # Desk default is off. Official Google IT Q4_0 + MTP drafted ~2x tok/s
+    # with no IMA on two 512-token gens (2026-08-19). Aug 17 Hauhau long-gen
+    # still logged an IMA. Not a Golden Record ban; just the quiet default.
     [switch]$UseDraft
 )
 
