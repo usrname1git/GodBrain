@@ -215,7 +215,8 @@ cloud model to get it.
   lists the candidate Oracle turns and host card that `judge=N` is counting
   and writes `logs/last-pending.json`. `/brief` also writes
   `logs/last-brief.txt` so the glance survives a dead kernel.
-  `/brief` is the one-glance
+  When the Tailscale door is bound, `/brief` prints `tail=door/<100.x>` so
+  the phone glance carries the actual address. `/brief` is the one-glance
   host + mouth + pending-judge + heal + CS2-sleep + last-turn line. If `logs/mouth.txt` says llama and `:8000` is
   down, `/api/status` and `/brief` kick `Start-LlamaServer.ps1` via
   `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)

@@ -1551,7 +1551,13 @@ static std::string format_brief_text() {
     }
     const json tail = st.value("tailscale", json::object());
     if (tail.value("up", false)) {
-        reply << " tail=" << (tail.value("bound", false) ? "door" : "up");
+        if (tail.value("bound", false)) {
+            const std::string ip = tail.value("ip", "");
+            reply << " tail=door";
+            if (!ip.empty()) reply << "/" << ip;
+        } else {
+            reply << " tail=up";
+        }
     } else if (tail.value("reason", "") == "needs_login") {
         reply << " tail=login";
     }

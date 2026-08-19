@@ -82,6 +82,11 @@ if ($brief -and [string]$brief.response -notmatch "llama=|coli=") {
 if ($brief -and [string]$brief.response -notmatch "desk=") {
     $fails.Add("brief missing desk=")
 }
+if ($status -and $status.tailscale -and $status.tailscale.bound) {
+    if ($brief -and [string]$brief.response -notmatch "tail=door/") {
+        $fails.Add("brief missing tail=door/<ip> while Tailscale door is bound")
+    }
+}
 $briefFile = Join-Path $RepoRoot "logs\last-brief.txt"
 if (-not (Test-Path -LiteralPath $briefFile)) {
     $fails.Add("missing logs/last-brief.txt")
