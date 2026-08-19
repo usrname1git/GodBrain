@@ -782,6 +782,13 @@
             if (age > 20) return 'heal stale/' + age + 'm';
             return 'heal ' + (heal.ok ? 'ok' : 'fail') + '/' + age + 'm';
         }
+        function inboxOverlayLine(status) {
+            const inbox = (status && status.inbox) || {};
+            if (typeof inbox.waiting !== 'number') return '';
+            let line = 'inbox ' + inbox.waiting + ' waiting';
+            if (inbox.failed) line += ' failed=' + inbox.failed;
+            return line;
+        }
         function pendingOverlayLines(status) {
             const pending = (status && status.pending_judge) || {};
             const items = Array.isArray(status && status.pending_items)
@@ -882,6 +889,8 @@
             pendingOverlayLines(status).forEach((line) => lines.push(line));
             const healLine = formatHealLine((status && status.heal) || {});
             if (healLine) lines.push(healLine);
+            const inboxLine = inboxOverlayLine(status);
+            if (inboxLine) lines.push(inboxLine);
             const cs2 = (status && status.cs2) || {};
             if (cs2.sleep) {
                 lines.push(

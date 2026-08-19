@@ -224,9 +224,14 @@ cloud model to get it.
   `run_hidden` (skip CS2, skip a loading `llama-server.exe`, 5 min cooldown)
   and report `llama=starting` so Galaxy does not wait on the 5 min Watch tick.
   `/heal` reports the host-listener closed loop
-  (detect → start missing allowlist → diagnose → maybe flushdns → verify).
-  `heal-last.json` v3 records mouth (:8000), Tailscale 100.x (detect-only),
-  and cs2_sleep. Heal does not `tailscale up`. Watch-GodBrain runs
+  (detect → reason layer → allowlist patch → verify).
+  `heal-last.json` v4 records mouth HTTP ready, `rag /health.ready`, inbox
+  waiting, Tailscale 100.x (detect-only), and cs2_sleep. Unready RAG is
+  repaired with `rag-rebuild.exe` (30 min cooldown, never kills rag-service).
+  Oldest `inbox\*.txt` is Librarian-ingested when the mouth is healthy and
+  not busy; a failed extract moves to `inbox\failed\` so the next tick does
+  not steal the GPU. Claims stay candidate. Each Heal tick POSTs `/api/observe`
+  (idempotent host pin). `/brief` and Galaxy show live `inbox=N`. Heal does not `tailscale up`. Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. Watch and Cs2Pause tasks
   launch `run_hidden` + `pwsh -File` (never a `.cmd`: `cmd.exe` flashes
   Windows Terminal). Register-ScheduledTask so the line is not truncated.

@@ -1,5 +1,13 @@
 *.exe
 logs/
+inbox/*
+!inbox/.gitkeep
+!inbox/done/
+inbox/done/*
+!inbox/done/.gitkeep
+!inbox/failed/
+inbox/failed/*
+!inbox/failed/.gitkeep
 godbrain_core/cpp_kernel/last_oracle.json
 godbrain_core/cpp_kernel/last_oracle.json.tmp
 godbrain_core/cpp_kernel/windows-pin.txt

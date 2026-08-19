@@ -86,6 +86,12 @@ if ($brief -and [string]$brief.response -notmatch "llama=|coli=") {
 if ($brief -and [string]$brief.response -notmatch "desk=") {
     $fails.Add("brief missing desk=")
 }
+if ($brief -and [string]$brief.response -notmatch "inbox=") {
+    $fails.Add("brief missing inbox=")
+}
+if ($status -and ($null -eq $status.inbox -or $null -eq $status.inbox.waiting)) {
+    $fails.Add("status missing inbox.waiting")
+}
 if ($status -and $status.tailscale -and $status.tailscale.bound) {
     if ($brief -and [string]$brief.response -notmatch "tail=door/") {
         $fails.Add("brief missing tail=door/<ip> while Tailscale door is bound")
@@ -96,6 +102,8 @@ if (-not (Test-Path -LiteralPath $briefFile)) {
     $fails.Add("missing logs/last-brief.txt")
 } elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "llama=|coli=") {
     $fails.Add("last-brief.txt missing mouth state")
+} elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "inbox=") {
+    $fails.Add("last-brief.txt missing inbox=")
 }
 if ($vram -and [string]$vram.response -notmatch "1 slot") {
     $fails.Add("vram missing 1 slot")
@@ -168,9 +176,17 @@ if (-not (Test-Path -LiteralPath $healFile)) {
 } else {
     try {
         $hl = Get-Content -LiteralPath $healFile -Raw | ConvertFrom-Json
-        if ([int]$hl.version -lt 3) { $fails.Add("heal-last.json version < 3") }
+        if ([int]$hl.version -lt 4) { $fails.Add("heal-last.json version < 4") }
         if (-not $hl.PSObject.Properties.Name.Contains("mouth")) {
             $fails.Add("heal-last.json missing mouth")
+        }
+        if (-not $hl.PSObject.Properties.Name.Contains("rag_ready")) {
+            $fails.Add("heal-last.json missing rag_ready")
+        }
+        if (-not $hl.PSObject.Properties.Name.Contains("inbox")) {
+            $fails.Add("heal-last.json missing inbox")
+        } elseif ($null -eq $hl.inbox.failed) {
+            $fails.Add("heal-last.json inbox missing failed")
         }
     } catch {
         $fails.Add("heal-last.json unreadable")
@@ -285,6 +301,7 @@ try {
     if ($html -notmatch "last-edit-btn") { $fails.Add("galaxy missing Last edit button") }
     if ($html -notmatch "pendingOverlayLines") { $fails.Add("galaxy overlay missing pending list") }
     if ($html -notmatch "healAgeMinutes") { $fails.Add("galaxy overlay missing heal age") }
+    if ($html -notmatch "inboxOverlayLine") { $fails.Add("galaxy overlay missing inbox") }
     if ($html -notmatch "brief\|vram\|doors\|heal\|last-edit\|last\|desk\|pending") {
         $fails.Add("galaxy chat still sends /pending through generate")
     }

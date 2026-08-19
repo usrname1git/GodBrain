@@ -1,13 +1,17 @@
-# One loop for THIS host: discover (probe) → start allowlist → diagnose
-# (icmp / dns_self / nic_tcpip) → at most one flushdns if DNS missed after
-# that split → verify → remember (candidate). Not a multi-agent graph.
+# One loop for THIS host: detect → reason (layer) → allowlist patch → verify.
+# TCP ports, then HTTP readiness (rag /health.ready, mouth /health).
 # Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
 # Allowlist repair: Clear-DnsClientCache only when dns_self fails, Dnscache is
-# up, and icmp_loopback is up. release, winsock reset, int ip reset,
-# DeviceCleanup, and reboot are legal tools but need an operator GO in
-# chat — Heal must not run them unattended.
+# up, and icmp_loopback is up. If rag listens but the projection is unready,
+# rag-rebuild.exe once (30 min cooldown, never kills rag-service).
+# Inbox: one oldest inbox\*.txt via Librarian when the mouth is healthy,
+# not busy, and CS2 is idle. A failed extract is quarantined to inbox\failed\
+# so the next Watch tick does not steal the GPU. Claims stay candidate.
+# Empty inbox is a no-op. Each tick POSTs /api/observe (idempotent pin).
+# release, winsock reset, int ip reset, DeviceCleanup, and reboot need an
+# operator GO in chat — Heal must not run them unattended.
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
-# Skip coli while CS2.exe is running or has been gone under 5 minutes.
+# Skip coli / inbox while CS2.exe is running or has been gone under 5 minutes.
 # The verifier is the probe, not the model. Do not add extra nodes here.
 
 [CmdletBinding()]
@@ -119,13 +123,67 @@ function Test-TailscaleCgNat {
     return [bool]$hit
 }
 
+function Test-HttpOk([string]$Url) {
+    try {
+        $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri $Url
+        return [bool]($r.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+function Get-RagHealth {
+    try {
+        return Invoke-RestMethod -TimeoutSec 3 -Uri "http://127.0.0.1:8084/health"
+    } catch {
+        return $null
+    }
+}
+
+function Test-MouthBusy([bool]$KernelUp) {
+    if (-not $KernelUp) { return $true }
+    try {
+        $st = Invoke-RestMethod -TimeoutSec 3 -Uri "http://127.0.0.1:8083/api/status"
+        if ($st.coli -and [bool]$st.coli.busy) { return $true }
+        if ($st.mouth -and $st.mouth.PSObject.Properties.Name -contains "busy" -and [bool]$st.mouth.busy) {
+            return $true
+        }
+        return $false
+    } catch {
+        return $true
+    }
+}
+
+function Test-LibrarianRunning {
+    return [bool](Get-Process -Name "librarian" -ErrorAction SilentlyContinue)
+}
+
+function Get-InboxWaiting {
+    $inboxDir = Join-Path $RepoRoot "inbox"
+    if (-not (Test-Path -LiteralPath $inboxDir)) { return @() }
+    return @(Get-ChildItem -LiteralPath $inboxDir -File -Filter "*.txt" -ErrorAction SilentlyContinue)
+}
+
+function Get-InboxFailed {
+    $failDir = Join-Path $RepoRoot "inbox\failed"
+    if (-not (Test-Path -LiteralPath $failDir)) { return @() }
+    return @(Get-ChildItem -LiteralPath $failDir -File -Filter "*.txt" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '\.reason$' })
+}
+
 function Get-Probe {
     $mouth = Test-Port "127.0.0.1" 8000
+    $rag = Test-Port "127.0.0.1" 8084
+    $ragHealth = $null
+    if ($rag) { $ragHealth = Get-RagHealth }
     return [ordered]@{
         mongo         = Test-Port "127.0.0.1" 27017
-        rag           = Test-Port "127.0.0.1" 8084
+        rag           = $rag
+        rag_ready     = [bool]($ragHealth -and $ragHealth.ready)
+        rag_building  = [bool]($ragHealth -and -not [string]::IsNullOrWhiteSpace([string]$ragHealth.building_generation))
         coli          = $mouth
         mouth         = $mouth
+        mouth_ready   = [bool]($mouth -and (Test-HttpOk "http://127.0.0.1:8000/health"))
         kernel        = Test-Port "127.0.0.1" 8083
         tailscale     = Test-TailscaleCgNat
         dns           = Test-ServiceUp "Dnscache"
@@ -144,7 +202,38 @@ function Get-DiagnoseLayer($probe) {
     if (-not ($probe.mongo -and $probe.rag -and $probe.coli -and $probe.kernel)) {
         return "listeners"
     }
+    if (-not $probe.rag_ready) { return "rag" }
+    if (-not $probe.mouth_ready -and -not $coliSleep) { return "mouth" }
     return "ok"
+}
+
+function Invoke-AllowlistedRagRebuild {
+    $exe = Join-Path $RepoRoot "godbrain_core\memory_store\rag-rebuild.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { return "skip:missing-exe" }
+    $stamp = Join-Path $logDir "heal-rag-rebuild.stamp"
+    if (Test-Path -LiteralPath $stamp) {
+        $age = ((Get-Date) - (Get-Item -LiteralPath $stamp).LastWriteTime).TotalMinutes
+        if ($age -lt 30) { return "skip:cooldown" }
+    }
+    $lock = Join-Path $logDir "heal-rag-rebuild.lock"
+    if (Test-Path -LiteralPath $lock) {
+        $lockAge = ((Get-Date) - (Get-Item -LiteralPath $lock).LastWriteTime).TotalMinutes
+        if ($lockAge -lt 15) { return "skip:in-progress" }
+    }
+    if (-not $env:MONGODB_URI) { $env:MONGODB_URI = "mongodb://127.0.0.1:27017" }
+    try {
+        [System.IO.File]::WriteAllText($lock, "$PID $(Get-Date -Format o)")
+        Write-Host "heal: rag-rebuild (projection not ready)"
+        $null = & $exe
+        $code = $LASTEXITCODE
+        [System.IO.File]::WriteAllText($stamp, (Get-Date).ToUniversalTime().ToString("o"))
+        if ($code -ne 0) { return "fail:$code" }
+        return "ok"
+    } catch {
+        return "fail:throw"
+    } finally {
+        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $ServiceAllowlist = [ordered]@{
@@ -202,19 +291,90 @@ if (-not $mid.dns_self -and $mid.dns -and $mid.icmp_loopback) {
 }
 
 $after = Get-Probe
+$ragRebuild = ""
+if ($after.mongo -and $after.rag -and -not $after.rag_ready -and -not $after.rag_building) {
+    $ragRebuild = Invoke-AllowlistedRagRebuild
+    if ($ragRebuild -eq "ok") {
+        $acted += "rag-rebuild"
+        Start-Sleep -Milliseconds 400
+        $after = Get-Probe
+    } else {
+        Write-Host ("heal rag-rebuild {0}" -f $ragRebuild)
+    }
+}
+
+$inbox = [ordered]@{
+    waiting     = 0
+    failed      = 0
+    acted       = $false
+    skip        = ""
+    quarantined = ""
+}
+$waitingFiles = @(Get-InboxWaiting)
+$inbox.waiting = $waitingFiles.Count
+$inbox.failed = @(Get-InboxFailed).Count
+$inboxLock = Join-Path $logDir "heal-inbox.lock"
+if ($waitingFiles.Count -gt 0) {
+    if ($coliSleep) {
+        $inbox.skip = "cs2"
+    } elseif (-not $after.mouth_ready) {
+        $inbox.skip = "mouth-down"
+    } elseif (Test-LibrarianRunning) {
+        $inbox.skip = "librarian-running"
+    } elseif (Test-MouthBusy ([bool]$after.kernel)) {
+        $inbox.skip = "mouth-busy"
+    } elseif ((Test-Path -LiteralPath $inboxLock) -and
+              (((Get-Date) - (Get-Item -LiteralPath $inboxLock).LastWriteTime).TotalMinutes -lt 20)) {
+        $inbox.skip = "in-progress"
+    } else {
+        $lib = Join-Path $RepoRoot "Invoke-Librarian.ps1"
+        if (-not (Test-Path -LiteralPath $lib)) {
+            $inbox.skip = "missing-invoke"
+        } else {
+            try {
+                [System.IO.File]::WriteAllText($inboxLock, "$PID $(Get-Date -Format o)")
+                $beforeName = $waitingFiles[0].Name
+                & $lib -Inbox -RepoRoot $RepoRoot
+                if ($LASTEXITCODE -eq 0) {
+                    $inbox.acted = $true
+                    $acted += "inbox:librarian"
+                } else {
+                    $inbox.skip = "librarian-exit-$LASTEXITCODE"
+                    $inbox.quarantined = $beforeName
+                }
+            } catch {
+                $inbox.skip = "librarian-throw"
+                Write-Host "heal inbox skipped: $_"
+            } finally {
+                Remove-Item -LiteralPath $inboxLock -Force -ErrorAction SilentlyContinue
+            }
+            $inbox.waiting = @(Get-InboxWaiting).Count
+            $inbox.failed = @(Get-InboxFailed).Count
+            if ($inbox.acted) {
+                $after = Get-Probe
+            }
+        }
+    }
+    if ($inbox.skip) {
+        Write-Host ("heal inbox waiting={0} failed={1} skip={2}" -f $inbox.waiting, $inbox.failed, $inbox.skip)
+    }
+}
+
 $ok = [bool](
-    $after.mongo -and $after.rag -and $after.kernel -and
+    $after.mongo -and $after.rag -and $after.rag_ready -and $after.kernel -and
     $after.dns -and $after.iphlp -and $after.nsi -and
-    ($after.coli -or $coliSleep)
+    ($after.mouth_ready -or $coliSleep)
 )
 $diagnose = [ordered]@{
     icmp_loopback = [bool]$after.icmp_loopback
     dns_self      = [bool]$after.dns_self
     nic_tcpip     = [bool]$after.nic_tcpip
+    rag_ready     = [bool]$after.rag_ready
+    mouth_ready   = [bool]$after.mouth_ready
     layer         = Get-DiagnoseLayer $after
 }
 $result = [ordered]@{
-    version     = 3
+    version     = 4
     at          = (Get-Date).ToUniversalTime().ToString("o")
     playbook    = "host-listeners"
     needed      = @($needed)
@@ -226,6 +386,10 @@ $result = [ordered]@{
     never_kills = $true
     cs2_sleep   = [bool]$coliSleep
     mouth       = [bool]$after.mouth
+    mouth_ready = [bool]$after.mouth_ready
+    rag_ready   = [bool]$after.rag_ready
+    rag_rebuild = $ragRebuild
+    inbox       = $inbox
     tailscale   = [bool]$after.tailscale
 }
 
@@ -237,12 +401,13 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 Move-Item -LiteralPath $tmp -Destination $last -Force
 Add-Content -LiteralPath (Join-Path $logDir "heal.jsonl") -Value (($json -replace "`r?`n", " "))
 
-Write-Host ("heal needed=[{0}] acted=[{1}] layer={2} ok={3}" -f `
-    ($needed -join ","), ($acted -join ","), $diagnose.layer, $ok)
+Write-Host ("heal needed=[{0}] acted=[{1}] layer={2} rag_ready={3} inbox={4} ok={5}" -f `
+    ($needed -join ","), ($acted -join ","), $diagnose.layer, $after.rag_ready, $inbox.waiting, $ok)
 
 # Remember only a failed or acted loop. Success-every-5-min is wiki noise.
 $shouldRemember = $needed.Count -gt 0 -or $acted.Count -gt 0 -or -not $ok `
-    -or -not $after.icmp_loopback -or -not $after.dns_self -or -not $after.nic_tcpip
+    -or -not $after.icmp_loopback -or -not $after.dns_self -or -not $after.nic_tcpip `
+    -or -not $after.rag_ready
 if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
     try {
         $headers = @{
@@ -262,6 +427,19 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
 }
 
 if ($after.kernel) {
+    if ($env:GODBRAIN_API_TOKEN) {
+        try {
+            $obsHeaders = @{
+                "Content-Type"  = "application/json"
+                "Authorization" = "Bearer $($env:GODBRAIN_API_TOKEN)"
+            }
+            $observe = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/observe" `
+                -Method POST -Headers $obsHeaders -Body "{}" -TimeoutSec 8
+            Write-Host ("heal observed {0}" -f $observe.store_status)
+        } catch {
+            Write-Host "heal observe skipped: $_"
+        }
+    }
     try {
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/doors" -TimeoutSec 3 | Out-Null
         Write-Host "heal wrote last-doors"
