@@ -1882,7 +1882,125 @@ static std::vector<std::string> known_judgment_ids() {
     const json rec = host_record_from_rag();
     const std::string host_id = rec.value("stable_id", "");
     if (!host_id.empty()) ids.push_back(host_id);
+    try {
+        const json recent = memory::get_recent(25);
+        for (const auto& thought : recent.value("thoughts", json::array())) {
+            const std::string id = thought.value("stable_id", "");
+            if (!id.empty()) ids.push_back(id);
+        }
+    } catch (const std::exception&) {
+    }
     return ids;
+}
+
+static bool looks_like_card_id(const std::string& tok) {
+    if (tok.size() < 8 || tok.size() > 64) return false;
+    for (unsigned char ch : tok) {
+        if (std::isxdigit(ch) == 0) return false;
+    }
+    return true;
+}
+
+static std::string extract_named_card_id(const std::string& text) {
+    std::string best;
+    std::string cur;
+    auto flush = [&]() {
+        if (looks_like_card_id(cur) && cur.size() >= best.size()) best = cur;
+        cur.clear();
+    };
+    for (unsigned char ch : text) {
+        if (std::isxdigit(ch) != 0) {
+            cur.push_back(static_cast<char>(std::tolower(ch)));
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return best;
+}
+
+static std::string render_named_card_note(const json& doc) {
+    std::ostringstream out;
+    out << "Named Golden Record (cite this; do not invent a name):\n";
+    out << "status=" << doc.value("status", "") << " sector="
+        << doc.value("sector", "") << " kind=" << doc.value("kind", "")
+        << "\nstable_id=" << doc.value("stable_id", "") << "\n";
+    std::string body = doc.value("content", doc.value("label", ""));
+    if (body.size() > 800) {
+        body.resize(800);
+        body += "...";
+    }
+    out << body;
+    return out.str();
+}
+
+static std::string expand_card_id(
+    const std::string& raw,
+    godbrain_rag::Client& client) {
+    if (raw.empty()) return "";
+    json doc;
+    std::string err;
+    if (client.document(raw, doc, err)) return raw;
+    json graph;
+    if (!client.graph(250, graph, err)) return raw;
+    std::vector<std::string> hits;
+    for (const auto& node : graph.value("nodes", json::array())) {
+        const std::string sid = node.value("stable_id", "");
+        if (sid.empty()) continue;
+        if (ids_equal_ignore_case(sid, raw) || id_has_prefix(sid, raw)) {
+            hits.push_back(sid);
+        }
+    }
+    if (hits.size() == 1) return hits[0];
+    return raw;
+}
+
+static std::string lookup_named_card_note(
+    const std::string& id,
+    godbrain_rag::Client& client) {
+    if (id.empty()) return "";
+    const std::string full = expand_card_id(id, client);
+    json doc;
+    std::string err;
+    if (client.document(full, doc, err)) {
+        return render_named_card_note(doc);
+    }
+    try {
+        const json recent = memory::get_recent(25);
+        for (const auto& thought : recent.value("thoughts", json::array())) {
+            const std::string sid = thought.value("stable_id", "");
+            if (!ids_equal_ignore_case(sid, full) && !id_has_prefix(sid, full) &&
+                !id_has_prefix(sid, id)) {
+                continue;
+            }
+            json fake = {
+                {"status", thought.value("status", "")},
+                {"sector", thought.value("sector", "")},
+                {"kind", thought.value("kind", "")},
+                {"stable_id", sid},
+                {"content", thought.value("label", "")},
+            };
+            return render_named_card_note(fake);
+        }
+    } catch (const std::exception&) {
+    }
+    for (const auto& turn : last_oracle_turns_json()) {
+        const std::string sid = turn.value("stable_id", "");
+        if (!ids_equal_ignore_case(sid, id) && !id_has_prefix(sid, id)) {
+            continue;
+        }
+        json fake = {
+            {"status", turn.value("status", "candidate")},
+            {"sector", "oracle"},
+            {"kind", "oracle"},
+            {"stable_id", sid},
+            {"content",
+             std::string("Q: ") + turn.value("question", "") + "\nA: " +
+                 turn.value("answer", "")},
+        };
+        return render_named_card_note(fake);
+    }
+    return "";
 }
 
 static std::string resolve_judgment_id(const std::string& raw, std::string& error) {
@@ -1924,6 +2042,8 @@ static std::string resolve_judgment_id(const std::string& raw, std::string& erro
     for (const auto& known_id : known) {
         if (id_has_prefix(known_id, id)) matches.push_back(known_id);
     }
+    std::sort(matches.begin(), matches.end());
+    matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
     if (matches.size() == 1) return matches[0];
     if (matches.size() > 1) {
         error = "ambiguous id prefix " + id;
@@ -2358,6 +2478,7 @@ std::string run_colibri_serve(
             const std::string tail =
                 (spoken && !spoken->empty()) ? *spoken : assembled;
             if (!looks_unfinished(tail)) break;
+            if (user.find("Named Golden Record") != std::string::npos) break;
             messages.push_back(json{{"role", "assistant"}, {"content", piece}});
             messages.push_back(json{
                 {"role", "user"},
@@ -3270,6 +3391,52 @@ int main() {
             }
 
             const bool continue_cmd = is_continue_command(user_msg);
+            std::string named_err;
+            const std::string named_raw = extract_named_card_id(user_msg);
+            std::string named_id;
+            std::string card_note;
+            if (!continue_cmd && !named_raw.empty()) {
+                named_id = resolve_judgment_id(named_raw, named_err);
+                if (named_id.empty() || !named_err.empty()) {
+                    named_id = named_raw;
+                }
+                card_note = lookup_named_card_note(named_id, rag_client);
+            }
+            if (!continue_cmd && !card_note.empty()) {
+                remember_oracle_turn(user_msg, card_note, 1);
+                const bool want_stream =
+                    payload.value("stream", false) ||
+                    req.get_header_value("Accept").find("text/event-stream") !=
+                        std::string::npos;
+                if (want_stream) {
+                    res.set_header("Cache-Control", "no-cache");
+                    res.set_header("X-Accel-Buffering", "no");
+                    const std::string note = card_note;
+                    res.set_chunked_content_provider(
+                        "text/event-stream",
+                        [note](size_t, httplib::DataSink& sink) {
+                            const std::string tok =
+                                std::string("data: ") +
+                                json({{"type", "token"}, {"text", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(tok.data(), tok.size());
+                            const std::string done =
+                                std::string("data: ") +
+                                json({{"type", "done"}, {"response", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(done.data(), done.size());
+                            sink.done();
+                            return true;
+                        });
+                    return;
+                }
+                res.set_content(
+                    json({{"response", card_note}}).dump(),
+                    "application/json");
+                return;
+            }
             std::cout << "[RAG] Canonical search requested (" << user_msg.size()
                       << " bytes) continue=" << (continue_cmd ? "1" : "0")
                       << std::endl;
@@ -3315,6 +3482,9 @@ int main() {
             constexpr size_t kMaxColiContextBytes = 160;
             if (context_text.size() > kMaxColiContextBytes) {
                 context_text.resize(kMaxColiContextBytes);
+            }
+            if (!card_note.empty()) {
+                context_text = card_note;
             }
 
             const std::string hostname =
@@ -3373,12 +3543,19 @@ int main() {
             // "Oracle" + "Continue" became SQL partitions).
             std::string user_prompt = user_msg;
             std::string asked = user_msg;
+            const bool named_card = !card_note.empty();
             if (continue_cmd) {
                 asked = prior_q;
                 user_prompt = local_edit::looks_like_edit_request(prior_q)
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
+            } else if (named_card) {
+                user_prompt = context_text +
+                    "\n\nAnswer in at most 4 complete sentences from the "
+                    "Named Golden Record only. Cite status. Do not invent a "
+                    "nickname.\n\n" +
+                    user_msg;
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
             }
@@ -3386,6 +3563,7 @@ int main() {
             std::cout << "[RAG] Context built (" << context_text.size()
                       << " bytes) follow_up=" << (follow_up ? "1" : "0")
                       << " continue=" << (continue_cmd ? "1" : "0")
+                      << " named_card=" << (named_card ? "1" : "0")
                       << ". Asking Colibri..." << std::endl;
             const bool want_stream =
                 payload.value("stream", false) ||
@@ -3406,9 +3584,11 @@ int main() {
                 const std::string sys = system_prompt;
                 const std::string usr = user_prompt;
                 const std::string asked_q = asked;
-                const std::string hist_q = follow_up ? prior_q : std::string();
+                const bool hist =
+                    follow_up && card_note.empty();
+                const std::string hist_q = hist ? prior_q : std::string();
                 const std::string hist_a =
-                    follow_up
+                    hist
                         ? (continue_cmd ? continue_history_tail(prior_a)
                                         : prior_a)
                         : std::string();
@@ -3505,10 +3685,10 @@ int main() {
                 user_prompt,
                 {},
                 {},
-                follow_up ? prior_q : std::string(),
-                follow_up ? (continue_cmd ? continue_history_tail(prior_a)
-                                          : prior_a)
-                          : std::string(),
+                (follow_up && !named_card) ? prior_q : std::string(),
+                (follow_up && !named_card)
+                    ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
+                    : std::string(),
                 &spoken);
             std::string chunk = strip_coli_reply(combined);
             const std::string for_memory =
