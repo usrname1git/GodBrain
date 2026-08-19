@@ -6,6 +6,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <iterator>
 #include <thread>
 #include <algorithm>
 #include <cctype>
@@ -79,6 +80,7 @@ static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
 static void handle_heal(const httplib::Request&, httplib::Response&);
+static void handle_sre(const httplib::Request&, httplib::Response&);
 static void handle_last_edit(const httplib::Request&, httplib::Response&);
 static json pending_body();
 static std::string clip_pending_line(std::string text, size_t max);
@@ -1348,6 +1350,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_heal(req, res);
     });
+    server.Get("/api/sre", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_sre(req, res);
+    });
     server.Get("/api/doors", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
         handle_doors(req, res);
@@ -2196,6 +2202,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"brief", lb + "/api/brief"},
         {"vram", lb + "/api/vram"},
         {"heal", lb + "/api/heal"},
+        {"sre", lb + "/api/sre"},
         {"status", lb + "/api/status"},
         {"last", lb + "/api/last"},
         {"doors", lb + "/api/doors"},
@@ -2220,6 +2227,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["brief"] = base + "/api/brief";
         ts["vram"] = base + "/api/vram";
         ts["heal"] = base + "/api/heal";
+        ts["sre"] = base + "/api/sre";
         ts["status"] = base + "/api/status";
         ts["last"] = base + "/api/last";
         ts["doors"] = base + "/api/doors";
@@ -2473,6 +2481,54 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     res.set_content(heal.dump(), "application/json");
+}
+
+static void handle_sre(const httplib::Request&, httplib::Response& res) {
+    const json last = load_heal_last();
+    const json diagnose = last.value("diagnose", json::object());
+    std::ostringstream reply;
+    reply << "sre=diagnose-only (never --ask, never GO)\n"
+          << "layer=" << diagnose.value("layer", "?")
+          << " sre=" << last.value("sre_diagnose", "none")
+          << " heal_ok=" << (last.value("ok", false) ? "true" : "false")
+          << "\n";
+    const std::string snap_path =
+        get_exe_dir() + "\\..\\..\\logs\\last-sre-diagnose.txt";
+    std::ifstream in(snap_path, std::ios::binary);
+    std::string snap;
+    if (in) {
+        snap.assign(std::istreambuf_iterator<char>(in),
+                    std::istreambuf_iterator<char>());
+    }
+    if (snap.empty()) {
+        reply << "no last-sre-diagnose.txt (Heal only runs --diagnose when layer is down)";
+    } else {
+        if (snap.size() > 2500) {
+            snap.resize(2500);
+            snap += "\n[truncated]";
+        }
+        reply << snap;
+    }
+    const std::string text = reply.str();
+    json body = {
+        {"playbook", "sre-diagnose"},
+        {"layer", diagnose.value("layer", "")},
+        {"sre_diagnose", last.value("sre_diagnose", "")},
+        {"heal_ok", last.value("ok", false)},
+        {"response", text},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-sre.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 using ColiTokenFn = std::function<void(const std::string&)>;
@@ -3020,6 +3076,10 @@ int main() {
         set_cors(req, res);
         handle_heal(req, res);
     });
+    svr.Get("/api/sre", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_sre(req, res);
+    });
 
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
@@ -3258,6 +3318,13 @@ int main() {
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
                 handle_heal(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/sre") &&
+                (user_msg.size() == 4 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[4])) != 0)) {
+                handle_sre(req, res);
                 return;
             }
 

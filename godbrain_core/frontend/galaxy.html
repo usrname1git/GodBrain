@@ -195,6 +195,7 @@
             <button id="pending-btn">Pending</button>
             <button id="focus-last-btn">Focus last</button>
             <button id="heal-btn">Heal</button>
+            <button id="sre-btn">SRE</button>
             <button id="vram-btn">VRAM</button>
             <button id="last-edit-btn">Last edit</button>
         </div>
@@ -1009,7 +1010,7 @@
                     });
                 return;
             }
-            if (/^\/(brief|vram|doors|heal|last-edit|last|desk|pending)\b/i.test(text)) {
+            if (/^\/(brief|vram|doors|heal|sre|last-edit|last|desk|pending)\b/i.test(text)) {
                 const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
                 fetch(path)
                     .then(res => res.json())
@@ -1170,6 +1171,7 @@
                 'Pending is on the left. Click a line to open the star, or /reject <id> <why>. VERIFY LAST is only the newest turn.');
         });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));
+        document.getElementById('sre-btn').addEventListener('click', () => runSlash('/sre'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
         document.getElementById('last-edit-btn').addEventListener('click', () => runSlash('/last-edit'));
         document.getElementById('focus-last-btn').addEventListener('click', () => {

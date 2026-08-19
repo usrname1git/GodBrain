@@ -513,6 +513,12 @@ if ($after.kernel) {
         Write-Host "heal glance skipped: $_"
     }
     try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/sre" -TimeoutSec 3 | Out-Null
+        Write-Host "heal wrote last-sre"
+    } catch {
+        Write-Host "heal sre skipped: $_"
+    }
+    try {
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last" -TimeoutSec 3 | Out-Null
         Write-Host "heal wrote last-oracle"
     } catch {
