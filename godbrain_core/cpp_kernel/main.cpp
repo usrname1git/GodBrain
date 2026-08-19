@@ -1085,9 +1085,13 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
         if (job) AssignProcessToJobObject(job, pi.hProcess);
         ResumeThread(pi.hThread);
         const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
-        if (wait == WAIT_TIMEOUT && job) {
-            CloseHandle(job);
-            job = nullptr;
+        if (wait == WAIT_TIMEOUT) {
+            if (job) {
+                CloseHandle(job);
+                job = nullptr;
+            }
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
         }
         DWORD code = 1;
         GetExitCodeProcess(pi.hProcess, &code);
@@ -1281,6 +1285,24 @@ static void attach_shortcut_routes(httplib::Server& server) {
 static std::mutex g_tail_mu;
 static std::string g_tail_bound_ip;
 static std::atomic<bool> g_tail_bound{false};
+static httplib::Server* g_tail_door = nullptr;
+static std::thread g_tail_thread;
+
+static void stop_tailscale_door() {
+    httplib::Server* door = nullptr;
+    std::thread th;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        door = g_tail_door;
+        g_tail_door = nullptr;
+        g_tail_bound.store(false, std::memory_order_relaxed);
+        g_tail_bound_ip.clear();
+        if (g_tail_thread.joinable()) th = std::move(g_tail_thread);
+    }
+    if (door) door->stop();
+    if (th.joinable()) th.join();
+    delete door;
+}
 
 static bool tailscale_door_bound_to(const std::string& ip) {
     if (ip.empty() || !g_tail_bound.load(std::memory_order_relaxed)) return false;
@@ -1294,6 +1316,32 @@ static bool maybe_bind_tailscale_door() {
     if (!ts.value("up", false)) return false;
     const std::string ip = ts.value("ip", "");
     if (ip.empty()) return false;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        if (g_tail_bound.load(std::memory_order_relaxed) && g_tail_bound_ip == ip) {
+            return true;
+        }
+    }
+    std::thread reap;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        if (!g_tail_bound.load(std::memory_order_relaxed) &&
+            g_tail_thread.joinable()) {
+            reap = std::move(g_tail_thread);
+        }
+    }
+    if (reap.joinable()) reap.join();
+    bool rebind = false;
+    {
+        std::lock_guard<std::mutex> lock(g_tail_mu);
+        rebind = g_tail_bound.load(std::memory_order_relaxed) &&
+                 g_tail_bound_ip != ip;
+    }
+    if (rebind) {
+        std::cout << "[SYS] Tailscale door moving to " << ip << ":8083"
+                  << std::endl;
+        stop_tailscale_door();
+    }
     std::lock_guard<std::mutex> lock(g_tail_mu);
     if (g_tail_bound.load(std::memory_order_relaxed) && g_tail_bound_ip == ip) {
         return true;
@@ -1307,22 +1355,26 @@ static bool maybe_bind_tailscale_door() {
                   << std::endl;
         return false;
     }
+    g_tail_door = door;
     g_tail_bound_ip = ip;
     g_tail_bound.store(true, std::memory_order_relaxed);
-    std::thread([door, ip]() {
+    g_tail_thread = std::thread([door, ip]() {
         std::cout << "[SYS] Tailscale shortcuts door http://" << ip
                   << ":8083 (remember/librarian/observe/judge/status/last)"
                   << std::endl;
         door->listen_after_bind();
+        bool owned = false;
         {
             std::lock_guard<std::mutex> inner(g_tail_mu);
-            if (g_tail_bound_ip == ip) {
+            if (g_tail_door == door) {
+                g_tail_door = nullptr;
                 g_tail_bound.store(false, std::memory_order_relaxed);
                 g_tail_bound_ip.clear();
+                owned = true;
             }
         }
-        delete door;
-    }).detach();
+        if (owned) delete door;
+    });
     return true;
 }
 
@@ -3513,7 +3565,9 @@ int main() {
         std::cerr << "[SYS] FATAL: could not bind 127.0.0.1:8083 "
                      "(already running or port blocked)"
                   << std::endl;
+        stop_tailscale_door();
         return 1;
     }
+    stop_tailscale_door();
     return 0;
 }
