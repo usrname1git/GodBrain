@@ -241,6 +241,7 @@
         let fullData = { nodes: [], links: [], truncated: false, links_truncated: false, generation: '' };
         let graph = null;
         let openNode = { id: '', stableId: '', status: '' };
+        let lastStatus = {};
         let writesNeedToken = false;
 
         function writeHeaders() {
@@ -640,24 +641,70 @@
                 });
         }
 
+        function pendingItemBody(item) {
+            const id = String((item && item.stable_id) || '');
+            const turns = (lastStatus && lastStatus.last_oracle_turns) || [];
+            for (let i = 0; i < turns.length; i++) {
+                const t = turns[i];
+                if (String((t && t.stable_id) || '') === id) {
+                    return 'Q: ' + String((t && t.question) || '') +
+                        '\n\nA: ' + String((t && t.answer) || '');
+                }
+            }
+            return String((item && item.question) || '') +
+                (item && item.preview ? ('\n\n' + item.preview) : '');
+        }
+
         function selectPendingItem(item) {
             const id = String((item && item.stable_id) || '');
-            const shortId = id ? id.slice(0, 12) : '';
+            const shortId = id ? id.slice(0, 12) : 'pending';
             const node = id ? findGraphNode(id) : null;
             if (node) {
                 focusGraphNode(id);
                 openGraphNode(node);
                 return;
             }
-            if (shortId) {
-                chatInput.value = '/reject ' + shortId + ' ';
-                chatInput.focus();
-            }
-            appendChatMessage(
-                'sys-msg',
-                '[SYS]',
-                (shortId || 'this turn') +
-                    ' is not a star in the spiral yet. VERIFY LAST / REJECT LAST is only the newest turn. Type why after the id and send.');
+            document.getElementById('node-manual').style.display = 'flex';
+            document.getElementById('node-manual-title').innerText =
+                ((item && item.kind) || 'oracle') + ' ' + shortId;
+            document.getElementById('node-manual-meta').innerText =
+                'Type: ' + ((item && item.kind) || 'oracle') +
+                ' | Status: ' + ((item && item.status) || 'candidate') +
+                ' | ' + id;
+            document.getElementById('node-manual-content').innerText =
+                pendingItemBody(item) || 'No preview.';
+            document.getElementById('judge-result').innerText = '';
+            document.getElementById('judge-reason').value = '';
+            document.getElementById('judge-reason').focus();
+            openNode = {
+                id: id,
+                stableId: id,
+                status: (item && item.status) || 'candidate'
+            };
+            document.getElementById('node-judge').style.display = 'block';
+            if (!id) return;
+            fetch('/api/node?id=' + encodeURIComponent(id))
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    if (!data || data.error) return;
+                    document.getElementById('node-manual-title').innerText =
+                        data.title || shortId;
+                    document.getElementById('node-manual-meta').innerText =
+                        'Type: ' + (data.type || 'oracle') +
+                        ' | Sector: ' + (data.sector || 'none') +
+                        ' | Status: ' + (data.status || 'candidate') +
+                        ' | ' + (data.stable_id || id);
+                    if (data.content) {
+                        document.getElementById('node-manual-content').innerText =
+                            data.content;
+                    }
+                    openNode = {
+                        id: data.id || id,
+                        stableId: data.stable_id || id,
+                        status: data.status || 'candidate'
+                    };
+                })
+                .catch(function() {});
         }
 
         try {
@@ -1212,6 +1259,7 @@
                 stats.dataset.baseText = base;
                 stats.innerText = base + extra;
             }
+            lastStatus = status || {};
             const hostCard = document.getElementById('host-card');
             if (hostCard) {
                 while (hostCard.firstChild) hostCard.removeChild(hostCard.firstChild);
@@ -1285,6 +1333,8 @@
                         const row = document.createElement('div');
                         row.style.cursor = 'pointer';
                         row.style.marginTop = '4px';
+                        row.style.color = 'var(--ice)';
+                        row.title = 'Open verify/reject';
                         row.appendChild(document.createTextNode(
                             (index + 1) + '. ' +
                             ((item && item.kind) || '?') + ' ' + shortId +
