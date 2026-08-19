@@ -166,6 +166,8 @@
         <div id="stats">Initializing Galaxy...</div>
         <h3 style="margin-top: 15px;">This host</h3>
         <div id="host-card" style="font-size: 0.85em; line-height: 1.4;">Loading inventory...</div>
+        <h3 style="margin-top: 15px;">Pending</h3>
+        <div id="pending-card" style="font-size: 0.85em; line-height: 1.4;">Loading judge list...</div>
         
         <h3 style="margin-top: 15px;">Sector Filtering</h3>
         <div id="sector-filters" style="display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; max-height: 200px; overflow-y: auto;">
@@ -710,7 +712,7 @@
                     (pending.oracle ? (' oracle=' + pending.oracle) : '') +
                     (pending.host ? (' host=' + pending.host) : ''));
             }
-            items.slice(0, 5).forEach((item, index) => {
+            items.slice(0, 12).forEach((item, index) => {
                 const id = String((item && item.stable_id) || '');
                 const shortId = id ? id.slice(0, 12) : 'no id';
                 const q = String((item && (item.question || item.preview)) || '')
@@ -1191,15 +1193,6 @@
                             ? (' done=' + ((status.coli && status.coli.completed) || 0))
                             : ''),
                 ];
-                const lastCard = status.last_oracle || {};
-                if (lastCard.question) {
-                    lines.push(
-                        'Last: ' + (lastCard.status || 'candidate') +
-                        (lastCard.stable_id ? (' ' + String(lastCard.stable_id).slice(0, 12)) : ''));
-                }
-                pendingOverlayLines(status).forEach((line) => lines.push(line));
-                const healLine = formatHealLine(status.heal || {});
-                if (healLine) lines.push(healLine);
                 const deskCard = status.desk_test || {};
                 if (typeof deskCard.ok === 'boolean') {
                     lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
@@ -1228,6 +1221,19 @@
                     if (index > 0) hostCard.appendChild(document.createElement('br'));
                     hostCard.appendChild(document.createTextNode(line));
                 });
+            }
+            const pendingCard = document.getElementById('pending-card');
+            if (pendingCard) {
+                while (pendingCard.firstChild) pendingCard.removeChild(pendingCard.firstChild);
+                const judgeLines = pendingOverlayLines(status);
+                if (!judgeLines.length) {
+                    pendingCard.appendChild(document.createTextNode('none waiting'));
+                } else {
+                    judgeLines.forEach((line, index) => {
+                        if (index > 0) pendingCard.appendChild(document.createElement('br'));
+                        pendingCard.appendChild(document.createTextNode(line.replace(/^\s+/, '')));
+                    });
+                }
             }
             const boot = document.getElementById('sys-boot');
             if (boot && !boot.dataset.tokenNote) {
