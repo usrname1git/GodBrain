@@ -40,7 +40,7 @@ Implemented loops:
 
 | Loop | Discover | Execute | Verify |
 |---|---|---|---|
-| Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` + ICMP loopback | Start `MongoDB` service and `Start-GodBrain.ps1` allowlist | Ports up; remember only on act/fail |
+| Heal / Watch | Probe ports + HTTP `rag /health.ready` and mouth `/health`; count `inbox\*.txt` | Start allowlist; one flushdns; `rag-rebuild` if projection unready (cooldown); one inbox file when mouth is idle | Ports + ready; Librarian claims stay **candidate**; remember on act/fail |
 | Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
 | Librarian | Transcript | Distill claims (not a recap) | Schema/provenance; contradiction and open_question stay **candidate** |
 | Judgment | Last displayable Oracle turn or Galaxy Pending click | `set_godbrain_status` / `POST /api/judge` | Why string ≥ 4 chars; last-oracle inbox must flip with Mongo |
@@ -135,7 +135,7 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing and chat |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. |
-| Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, verify, remember on act/fail. Never kills. release / winsock / ip reset / DeviceCleanup / reboot need an operator GO; Heal does not run them. |
+| Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Detect TCP then HTTP ready, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, `rag-rebuild` if the projection is unready, drain one `inbox\*.txt` when the mouth is idle, verify, remember on act/fail. Never kills. Claims stay candidate. release / winsock / ip reset / DeviceCleanup / reboot need an operator GO; Heal does not run them. |
 | CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1`, `GodBrain-Cs2.ps1` | launch script + schtask backup | Pause coli, then launch Steam app 730. Resume 5 minutes after `CS2.exe` exits. Watcher covers Steam Play. |
 | Agent Factory control plane | Planned, **not next** | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. The next library brick is Librarian ingest, not a roster. |
 

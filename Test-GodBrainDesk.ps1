@@ -168,9 +168,15 @@ if (-not (Test-Path -LiteralPath $healFile)) {
 } else {
     try {
         $hl = Get-Content -LiteralPath $healFile -Raw | ConvertFrom-Json
-        if ([int]$hl.version -lt 3) { $fails.Add("heal-last.json version < 3") }
+        if ([int]$hl.version -lt 4) { $fails.Add("heal-last.json version < 4") }
         if (-not $hl.PSObject.Properties.Name.Contains("mouth")) {
             $fails.Add("heal-last.json missing mouth")
+        }
+        if (-not $hl.PSObject.Properties.Name.Contains("rag_ready")) {
+            $fails.Add("heal-last.json missing rag_ready")
+        }
+        if (-not $hl.PSObject.Properties.Name.Contains("inbox")) {
+            $fails.Add("heal-last.json missing inbox")
         }
     } catch {
         $fails.Add("heal-last.json unreadable")

@@ -41,6 +41,16 @@ if ($Inbox) {
     } catch {
         throw "mouth is down on :8000 — will not ingest. Start the mouth first."
     }
+    try {
+        $st = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8083/api/status"
+        $busy = [bool]($st.coli -and $st.coli.busy)
+        if ($st.mouth -and $st.mouth.PSObject.Properties.Name -contains "busy") {
+            $busy = $busy -or [bool]$st.mouth.busy
+        }
+        if ($busy) { throw "mouth is busy on :8000 — will not ingest during generate." }
+    } catch {
+        if ("$_" -match "will not ingest") { throw }
+    }
     $inboxDir = Join-Path $RepoRoot "inbox"
     $doneDir = Join-Path $inboxDir "done"
     if (-not (Test-Path -LiteralPath $inboxDir)) {

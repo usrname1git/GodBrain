@@ -1846,8 +1846,7 @@ static json pending_body() {
     if (items.empty()) {
         reply << " none waiting";
     } else {
-        reply << " oracle=" << oracle << " host=" << host
-              << "\n/verify <id> <why>  or  /verify last <why>";
+        reply << " oracle=" << oracle << " host=" << host;
         int index = 0;
         for (const auto& item : items) {
             ++index;
@@ -1866,6 +1865,7 @@ static json pending_body() {
             if (!preview.empty()) reply << "\n  " << preview;
         }
     }
+    reply << "\n/verify <id> <why>  or  /verify last <why>";
     json body = {
         {"total", static_cast<int>(items.size())},
         {"oracle", oracle},
@@ -2316,7 +2316,18 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                   << " dns_self="
                   << (diagnose.value("dns_self", false) ? "ok" : "fail")
                   << " nic_tcpip="
-                  << (diagnose.value("nic_tcpip", false) ? "ok" : "fail");
+                  << (diagnose.value("nic_tcpip", false) ? "ok" : "fail")
+                  << " rag="
+                  << (last.value("rag_ready", diagnose.value("rag_ready", false))
+                          ? "ready"
+                          : "unready");
+        }
+        if (last.contains("inbox") && last["inbox"].is_object()) {
+            const json inbox = last["inbox"];
+            reply << "\ninbox=" << inbox.value("waiting", 0);
+            if (inbox.value("acted", false)) reply << " acted";
+            const std::string skip = inbox.value("skip", "");
+            if (!skip.empty()) reply << " skip=" << skip;
         }
     }
     const std::string text = reply.str();
