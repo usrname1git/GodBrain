@@ -869,15 +869,39 @@ static bool write_authorized(const httplib::Request& req, httplib::Response& res
 bool colibri_serve_up();
 static json coli_serve_status();
 
+static bool is_host_inventory_text(const std::string& text) {
+    if (text.find("Windows host inventory") == std::string::npos) return false;
+    if (text.find("os_pin=") == std::string::npos) return false;
+    if (text.find("Playbook") != std::string::npos) return false;
+    return true;
+}
+
 static json host_record_from_rag() {
-    try {
-        const json recent = memory::get_recent(8);
-        for (const auto& thought : recent.value("thoughts", json::array())) {
-            if (thought.value("sector", "") == "windows-sre") {
-                return thought;
-            }
+    godbrain_rag::Client client;
+    json response;
+    std::string error;
+    if (client.search("Windows host inventory os_pin", response, error)) {
+        for (const auto& row : response.value("results", json::array())) {
+            const std::string text = row.value("snippet", row.value("label", ""));
+            if (!is_host_inventory_text(text)) continue;
+            return {
+                {"stable_id", row.value("stable_id", "")},
+                {"status", row.value("status", "verified")},
+                {"label", text},
+                {"kind", row.value("kind", "claim")},
+                {"sector", row.value("sector", "windows-sre")},
+            };
         }
-    } catch (const std::exception&) {
+    }
+    json graph;
+    if (client.graph(80, graph, error)) {
+        json fallback;
+        for (const auto& node : graph.value("nodes", json::array())) {
+            if (!is_host_inventory_text(node.value("label", ""))) continue;
+            if (node.value("status", "") == "verified") return node;
+            if (fallback.empty()) fallback = node;
+        }
+        if (!fallback.empty()) return fallback;
     }
     return json::object();
 }

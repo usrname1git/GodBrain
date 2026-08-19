@@ -63,6 +63,14 @@ try {
 }
 
 if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }
+if ($status -and $status.host_record) {
+    $hostLabel = [string]$status.host_record.label
+    if ($hostLabel -match "Playbook") {
+        $fails.Add("host_record is a playbook, not the os_pin inventory")
+    } elseif ($hostLabel -notmatch "os_pin=|Windows host inventory") {
+        $fails.Add("host_record missing os_pin inventory text")
+    }
+}
 if ($status -and $null -eq $status.pending_items) {
     $fails.Add("status missing pending_items")
 }
