@@ -229,7 +229,9 @@ cloud model to get it.
   waiting, Tailscale 100.x (detect-only), and cs2_sleep. Unready RAG is
   repaired with `rag-rebuild.exe` (30 min cooldown, never kills rag-service).
   Oldest `inbox\*.txt` is Librarian-ingested when the mouth is healthy and
-  not busy; claims stay candidate. Heal does not `tailscale up`. Watch-GodBrain runs
+  not busy; a failed extract moves to `inbox\failed\` so the next tick does
+  not steal the GPU. Claims stay candidate. Each Heal tick POSTs `/api/observe`
+  (idempotent host pin). `/brief` and Galaxy show live `inbox=N`. Heal does not `tailscale up`. Watch-GodBrain runs
   Heal-GodBrain.ps1; it never kills a process. Watch and Cs2Pause tasks
   launch `run_hidden` + `pwsh -File` (never a `.cmd`: `cmd.exe` flashes
   Windows Terminal). Register-ScheduledTask so the line is not truncated.

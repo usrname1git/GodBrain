@@ -5,7 +5,9 @@
 # up, and icmp_loopback is up. If rag listens but the projection is unready,
 # rag-rebuild.exe once (30 min cooldown, never kills rag-service).
 # Inbox: one oldest inbox\*.txt via Librarian when the mouth is healthy,
-# not busy, and CS2 is idle. Claims stay candidate. Empty inbox is a no-op.
+# not busy, and CS2 is idle. A failed extract is quarantined to inbox\failed\
+# so the next Watch tick does not steal the GPU. Claims stay candidate.
+# Empty inbox is a no-op. Each tick POSTs /api/observe (idempotent pin).
 # release, winsock reset, int ip reset, DeviceCleanup, and reboot need an
 # operator GO in chat — Heal must not run them unattended.
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
@@ -162,6 +164,13 @@ function Get-InboxWaiting {
     return @(Get-ChildItem -LiteralPath $inboxDir -File -Filter "*.txt" -ErrorAction SilentlyContinue)
 }
 
+function Get-InboxFailed {
+    $failDir = Join-Path $RepoRoot "inbox\failed"
+    if (-not (Test-Path -LiteralPath $failDir)) { return @() }
+    return @(Get-ChildItem -LiteralPath $failDir -File -Filter "*.txt" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '\.reason$' })
+}
+
 function Get-Probe {
     $mouth = Test-Port "127.0.0.1" 8000
     $rag = Test-Port "127.0.0.1" 8084
@@ -295,12 +304,16 @@ if ($after.mongo -and $after.rag -and -not $after.rag_ready -and -not $after.rag
 }
 
 $inbox = [ordered]@{
-    waiting = 0
-    acted   = $false
-    skip    = ""
+    waiting     = 0
+    failed      = 0
+    acted       = $false
+    skip        = ""
+    quarantined = ""
 }
 $waitingFiles = @(Get-InboxWaiting)
 $inbox.waiting = $waitingFiles.Count
+$inbox.failed = @(Get-InboxFailed).Count
+$inboxLock = Join-Path $logDir "heal-inbox.lock"
 if ($waitingFiles.Count -gt 0) {
     if ($coliSleep) {
         $inbox.skip = "cs2"
@@ -310,28 +323,40 @@ if ($waitingFiles.Count -gt 0) {
         $inbox.skip = "librarian-running"
     } elseif (Test-MouthBusy ([bool]$after.kernel)) {
         $inbox.skip = "mouth-busy"
+    } elseif ((Test-Path -LiteralPath $inboxLock) -and
+              (((Get-Date) - (Get-Item -LiteralPath $inboxLock).LastWriteTime).TotalMinutes -lt 20)) {
+        $inbox.skip = "in-progress"
     } else {
         $lib = Join-Path $RepoRoot "Invoke-Librarian.ps1"
         if (-not (Test-Path -LiteralPath $lib)) {
             $inbox.skip = "missing-invoke"
         } else {
             try {
+                [System.IO.File]::WriteAllText($inboxLock, "$PID $(Get-Date -Format o)")
+                $beforeName = $waitingFiles[0].Name
                 & $lib -Inbox -RepoRoot $RepoRoot
                 if ($LASTEXITCODE -eq 0) {
                     $inbox.acted = $true
                     $acted += "inbox:librarian"
-                    $inbox.waiting = @(Get-InboxWaiting).Count
                 } else {
                     $inbox.skip = "librarian-exit-$LASTEXITCODE"
+                    $inbox.quarantined = $beforeName
                 }
             } catch {
                 $inbox.skip = "librarian-throw"
                 Write-Host "heal inbox skipped: $_"
+            } finally {
+                Remove-Item -LiteralPath $inboxLock -Force -ErrorAction SilentlyContinue
+            }
+            $inbox.waiting = @(Get-InboxWaiting).Count
+            $inbox.failed = @(Get-InboxFailed).Count
+            if ($inbox.acted) {
+                $after = Get-Probe
             }
         }
     }
     if ($inbox.skip) {
-        Write-Host ("heal inbox waiting={0} skip={1}" -f $inbox.waiting, $inbox.skip)
+        Write-Host ("heal inbox waiting={0} failed={1} skip={2}" -f $inbox.waiting, $inbox.failed, $inbox.skip)
     }
 }
 
@@ -402,6 +427,19 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
 }
 
 if ($after.kernel) {
+    if ($env:GODBRAIN_API_TOKEN) {
+        try {
+            $obsHeaders = @{
+                "Content-Type"  = "application/json"
+                "Authorization" = "Bearer $($env:GODBRAIN_API_TOKEN)"
+            }
+            $observe = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/observe" `
+                -Method POST -Headers $obsHeaders -Body "{}" -TimeoutSec 8
+            Write-Host ("heal observed {0}" -f $observe.store_status)
+        } catch {
+            Write-Host "heal observe skipped: $_"
+        }
+    }
     try {
         Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/doors" -TimeoutSec 3 | Out-Null
         Write-Host "heal wrote last-doors"

@@ -104,6 +104,7 @@ static void retry_unstored_oracle_turns();
 static json load_mouth();
 static json load_last_edit();
 static json load_heal_last();
+static json inbox_desk();
 static json load_last_desk_test();
 static json gpu_desk();
 static bool maybe_restart_mouth();
@@ -948,6 +949,7 @@ static json kernel_status_body() {
         {"last_edit", load_last_edit()},
         {"desk_test", load_last_desk_test()},
         {"heal", heal},
+        {"inbox", inbox_desk()},
         {"cs2", cs2_desk()},
         {"pending_items", collect_pending_items(turns, host_record)},
         {"pending_judge", {
@@ -1641,6 +1643,12 @@ static std::string format_brief_text() {
             reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
         }
     }
+    {
+        const json inbox = st.value("inbox", json::object());
+        reply << " inbox=" << inbox.value("waiting", 0);
+        const int failed = inbox.value("failed", 0);
+        if (failed > 0) reply << " failed=" << failed;
+    }
     const json tail = st.value("tailscale", json::object());
     if (tail.value("up", false)) {
         if (tail.value("bound", false)) {
@@ -2196,6 +2204,27 @@ static json gpu_desk() {
     return plan;
 }
 
+static int count_txt_files(const std::string& dir) {
+    int n = 0;
+    WIN32_FIND_DATAA fd{};
+    const HANDLE find = FindFirstFileA((dir + "\\*.txt").c_str(), &fd);
+    if (find == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        ++n;
+    } while (FindNextFileA(find, &fd));
+    FindClose(find);
+    return n;
+}
+
+static json inbox_desk() {
+    const std::string root = get_exe_dir() + "\\..\\..\\inbox";
+    return {
+        {"waiting", count_txt_files(root)},
+        {"failed", count_txt_files(root + "\\failed")},
+    };
+}
+
 static json load_heal_last() {
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\heal-last.json";
     std::ifstream in(path, std::ios::binary);
@@ -2322,11 +2351,13 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                           ? "ready"
                           : "unready");
         }
+        const json inbox = inbox_desk();
+        reply << "\ninbox=" << inbox.value("waiting", 0);
+        const int failed = inbox.value("failed", 0);
+        if (failed > 0) reply << " failed=" << failed;
         if (last.contains("inbox") && last["inbox"].is_object()) {
-            const json inbox = last["inbox"];
-            reply << "\ninbox=" << inbox.value("waiting", 0);
-            if (inbox.value("acted", false)) reply << " acted";
-            const std::string skip = inbox.value("skip", "");
+            if (last["inbox"].value("acted", false)) reply << " acted";
+            const std::string skip = last["inbox"].value("skip", "");
             if (!skip.empty()) reply << " skip=" << skip;
         }
     }
@@ -2973,6 +3004,12 @@ int main() {
                         reply << " heal="
                               << (heal.value("ok", false) ? "ok" : "fail");
                     }
+                }
+                {
+                    const json inbox = st.value("inbox", json::object());
+                    reply << " inbox=" << inbox.value("waiting", 0);
+                    const int failed = inbox.value("failed", 0);
+                    if (failed > 0) reply << " failed=" << failed;
                 }
                 const json cs2 = st.value("cs2", json::object());
                 if (cs2.value("sleep", false)) {

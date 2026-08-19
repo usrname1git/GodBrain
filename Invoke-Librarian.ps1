@@ -6,14 +6,17 @@
 #   .\Invoke-Librarian.ps1 -Inbox
 #   .\Invoke-Librarian.ps1 -SessionId my-vs-session -Text "..."
 #
-# -Inbox takes the oldest *.txt in repo inbox\ (not done\). One GPU slot —
-# skip if :8000 is down or busy. Processed files move to inbox\done\.
+# -Inbox takes the oldest *.txt in repo inbox\ (not done\ or failed\).
+# One GPU slot — skip if :8000 is down or busy. Success moves to inbox\done\.
+# A failed extract moves to inbox\failed\ so Watch does not burn the GPU
+# retrying a poison file. -SelfTest checks that move without the mouth.
 
 [CmdletBinding()]
 param(
     [string]$File = "",
     [string]$Text = "",
     [switch]$Inbox,
+    [switch]$SelfTest,
     [string]$SessionId = "",
     [string]$RepoRoot = $PSScriptRoot
 )
@@ -32,8 +35,53 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "missing $exe — build with build_pipeline.ps1"
 }
 
+function Move-InboxQuarantine {
+    param(
+        [string]$SourcePath,
+        [string]$FailDir,
+        [string]$Why
+    )
+    if (-not (Test-Path -LiteralPath $FailDir)) {
+        New-Item -ItemType Directory -Path $FailDir | Out-Null
+    }
+    $name = [System.IO.Path]::GetFileName($SourcePath)
+    $dest = Join-Path $FailDir $name
+    if (Test-Path -LiteralPath $dest) {
+        $stamp = Get-Date -Format "yyyyMMddHHmmss"
+        $dest = Join-Path $FailDir (
+            [System.IO.Path]::GetFileNameWithoutExtension($name) +
+            "-" + $stamp + [System.IO.Path]::GetExtension($name))
+    }
+    Move-Item -LiteralPath $SourcePath -Destination $dest -Force
+    $reason = Join-Path $FailDir (
+        [System.IO.Path]::GetFileName($dest) + ".reason")
+    [System.IO.File]::WriteAllText($reason, $Why)
+    Write-Host "inbox quarantined to $dest"
+    return $dest
+}
+
+if ($SelfTest) {
+    $inboxDir = Join-Path $RepoRoot "inbox"
+    $failDir = Join-Path $inboxDir "failed"
+    if (-not (Test-Path -LiteralPath $inboxDir)) {
+        throw "missing $inboxDir"
+    }
+    $probe = Join-Path $inboxDir ("selftest-" + [guid]::NewGuid().ToString("n") + ".txt")
+    [System.IO.File]::WriteAllText($probe, "self-test quarantine")
+    $dest = Move-InboxQuarantine -SourcePath $probe -FailDir $failDir -Why "self-test"
+    if (-not (Test-Path -LiteralPath $dest)) { throw "SelfTest: quarantine dest missing" }
+    if (Test-Path -LiteralPath $probe) { throw "SelfTest: source still in inbox" }
+    Remove-Item -LiteralPath $dest -Force
+    $reason = $dest + ".reason"
+    if (Test-Path -LiteralPath $reason) { Remove-Item -LiteralPath $reason -Force }
+    Write-Host "SelfTest ok quarantine"
+    exit 0
+}
+
 $tmp = $null
 $inboxMove = $null
+$inboxDir = $null
+$failDir = $null
 if ($Inbox) {
     try {
         $probe = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8000/health"
@@ -53,6 +101,7 @@ if ($Inbox) {
     }
     $inboxDir = Join-Path $RepoRoot "inbox"
     $doneDir = Join-Path $inboxDir "done"
+    $failDir = Join-Path $inboxDir "failed"
     if (-not (Test-Path -LiteralPath $inboxDir)) {
         throw "missing $inboxDir — drop a .txt there"
     }
@@ -90,7 +139,13 @@ if ([string]::IsNullOrWhiteSpace($SessionId)) {
 try {
     Write-Host "Invoke-Librarian session=$SessionId mouth=:8000"
     & $exe $SessionId $inputPath
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        if ($inboxMove -and $failDir -and (Test-Path -LiteralPath $inputPath)) {
+            Move-InboxQuarantine -SourcePath $inputPath -FailDir $failDir -Why ("librarian-exit-" + $code)
+        }
+        exit $code
+    }
     if ($inboxMove) {
         Move-Item -LiteralPath $inputPath -Destination $inboxMove -Force
         Write-Host "inbox moved to $inboxMove"
