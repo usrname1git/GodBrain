@@ -43,7 +43,8 @@ Implemented loops:
 | Heal / Watch | Probe `:27017` `:8084` `:8000` `:8083` + ICMP loopback | Start `MongoDB` service and `Start-GodBrain.ps1` allowlist | Ports up; remember only on act/fail |
 | Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
 | Librarian | Transcript | Distill claims (not a recap) | Schema/provenance; contradiction and open_question stay **candidate** |
-| Judgment | Last displayable Oracle turn | `set_godbrain_status` | Why string ≥ 4 chars; humans use this for playbooks and fights |
+| Judgment | Last displayable Oracle turn or Galaxy Pending click | `set_godbrain_status` / `POST /api/judge` | Why string ≥ 4 chars; last-oracle inbox must flip with Mongo |
+| Named-card | 12-char id in chat | RAG `GET /v1/document` | Return that Golden Record; no GPU; do not mint a new Oracle turn |
 | Truth loop | Host pin / Learn quote / allowlisted probe | `observe` + `POST /api/truth` | Live read or quote match auto-`verified`; pin mismatch → `stale` |
 
 Do not introduce LangGraph, multi-agent meshes, or a second coli serve to
@@ -93,26 +94,24 @@ flowchart LR
     GoRouter[Go RAG Router :8082]
     RustRouter[Rust RAG Router :8082]
     Mongo[(MongoDB :27017)]
-    Colibri[Colibri inference]
     Librarian[Native Librarian]
     Memory[Go Memory Store]
     RAG[Golden Record RAG :8084]
-    Factory[Agent Factory]
+    Mouth[llama-server or coli :8000]
 
     Operator --> UI
     UI --> Kernel
     Kernel -->|search / graph / node| RAG
     Kernel -->|observe / remember / verify| Memory
-    Kernel --> Colibri
+    Kernel --> Mouth
     GoRouter -->|search / graph| RAG
-    GoRouter --> Colibri
+    GoRouter --> Mouth
     RustRouter -->|chat search only| RAG
-    RustRouter --> Colibri
+    RustRouter --> Mouth
+    Librarian --> Mouth
     Librarian --> Memory
     Memory --> Mongo
     RAG --> Mongo
-    Factory -.->|planned| Kernel
-    Factory -.->|planned| Librarian
 ```
 
 Nothing privileged talks to Mongo except the Memory Store and the RAG service.
@@ -125,7 +124,7 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 
 | Component | Status | Path | Interface | Responsibility |
 |---|---|---|---|---|
-| Colibri C engine | Implemented | `LLM/colibri_LLM/c/` | Child process and environment | Local model inference and memory-tiered model loading |
+| Mouth (`llama-server` or `coli serve`) | Implemented | `Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. This host's default mouth is Gemma 12B Q4 via llama-server. Colibri is the interchangeable engine, not the protocol. |
 | C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, Colibri invocation, privileged command dispatch |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and Colibri invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
@@ -138,16 +137,17 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. |
 | Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Discover listeners, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, verify, remember on act/fail. Never kills. release / winsock / ip reset / DeviceCleanup / reboot need an operator GO; Heal does not run them. |
 | CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1`, `GodBrain-Cs2.ps1` | launch script + schtask backup | Pause coli, then launch Steam app 730. Resume 5 minutes after `CS2.exe` exits. Watcher covers Steam Play. |
-| Agent Factory control plane | Planned | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Policy, scheduling, capability grants, verification, audit, and recovery |
+| Agent Factory control plane | Planned, **not next** | See `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. The next library brick is Librarian ingest, not a roster. |
 
 ## Runtime boundaries
 
 ### Inference boundary: Colibri
 
-Colibri is a child process, not an in-process library. Galaxy chat prefers a
-already-running `coli serve` on `127.0.0.1:8000` (`POST /v1/chat/completions`)
-so the model stays resident in VRAM. If serve is down the kernel **refuses**
-to cold-spawn on 16 GB. Heal/Watch/`GodBrainLogon` start `coli serve` instead.
+The mouth is a child process, not an in-process library. Galaxy chat prefers an
+already-running OpenAI door on `127.0.0.1:8000` (`POST /v1/chat/completions`)
+so the model stays resident in VRAM. On this host that is `llama-server` when
+`logs/mouth.txt` says llama. If `:8000` is down the kernel **refuses** to
+cold-spawn a 16 GB snapshot. Heal/Watch start the configured mouth instead.
 
 The Colibri React web UI (Chat/Brain/Profiling) is an engine workshop. It is
 not the GodBrain operator UI and must not be used for RAG, `/observe`, or
@@ -568,19 +568,14 @@ production control plane should standardize:
 Logs must redact bearer tokens, credentials, private keys, and sensitive prompt
 content.
 
-## Agent Factory integration
+## Agent Factory (later, not this host's next node)
 
-The planned Agent Factory wraps the existing runtime rather than replacing it:
+A factory is allowed only when a named signal pays for the node (see Default
+control loop). This host has one GPU slot and one `last_oracle.json`. Growing
+Alexandria is Librarian + `/verify`, not Architect/Surgeon/Verifier agents.
 
-- The Architect creates typed jobs.
-- The Policy Engine mints scoped capability grants.
-- The Scheduler invokes read-only agents or the Surgeon.
-- The Surgeon adapts approved operations to the authenticated C++ Kernel.
-- The Verifier evaluates evidence before completion.
-- The Recovery Manager applies approved rollback plans.
-
-See [`AGENT_FACTORY_ROSTER.md`](AGENT_FACTORY_ROSTER.md) for the job contracts,
-risk classes, lifecycle, and implementation phases.
+See [`AGENT_FACTORY_ROSTER.md`](AGENT_FACTORY_ROSTER.md) if that contract is
+ever staffed. Do not treat it as the backlog for Jarvis.
 
 ## Architectural decisions still required
 
@@ -591,4 +586,4 @@ risk classes, lifecycle, and implementation phases.
 4. Decide whether typed `knowledge_edges` should be written by the Librarian
    and replace the current provenance co-occurrence stars in Galaxy.
 5. Add structured audit storage and recovery semantics before enabling autonomous
-   privileged execution.
+   privileged execution. Not a standing allow on BIOS, DISM, or registry cocktails.

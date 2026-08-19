@@ -3,12 +3,17 @@
 #
 #   .\Invoke-Librarian.ps1 -Text "claim text"
 #   .\Invoke-Librarian.ps1 -File C:\path\transcript.txt
+#   .\Invoke-Librarian.ps1 -Inbox
 #   .\Invoke-Librarian.ps1 -SessionId my-vs-session -Text "..."
+#
+# -Inbox takes the oldest *.txt in repo inbox\ (not done\). One GPU slot —
+# skip if :8000 is down or busy. Processed files move to inbox\done\.
 
 [CmdletBinding()]
 param(
     [string]$File = "",
     [string]$Text = "",
+    [switch]$Inbox,
     [string]$SessionId = "",
     [string]$RepoRoot = $PSScriptRoot
 )
@@ -28,7 +33,32 @@ if (-not (Test-Path -LiteralPath $exe)) {
 }
 
 $tmp = $null
-if ($File) {
+$inboxMove = $null
+if ($Inbox) {
+    try {
+        $probe = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8000/health"
+        if ($probe.StatusCode -ne 200) { throw "mouth not healthy" }
+    } catch {
+        throw "mouth is down on :8000 — will not ingest. Start the mouth first."
+    }
+    $inboxDir = Join-Path $RepoRoot "inbox"
+    $doneDir = Join-Path $inboxDir "done"
+    if (-not (Test-Path -LiteralPath $inboxDir)) {
+        throw "missing $inboxDir — drop a .txt there"
+    }
+    $next = Get-ChildItem -LiteralPath $inboxDir -File -Filter "*.txt" |
+        Sort-Object LastWriteTime |
+        Select-Object -First 1
+    if (-not $next) {
+        Write-Host "inbox empty"
+        exit 0
+    }
+    $inputPath = $next.FullName
+    $inboxMove = Join-Path $doneDir $next.Name
+    if (-not (Test-Path -LiteralPath $doneDir)) {
+        New-Item -ItemType Directory -Path $doneDir | Out-Null
+    }
+} elseif ($File) {
     if (-not (Test-Path -LiteralPath $File)) { throw "missing file $File" }
     $inputPath = (Resolve-Path -LiteralPath $File).Path
 } elseif (-not [string]::IsNullOrWhiteSpace($Text)) {
@@ -36,17 +66,25 @@ if ($File) {
     [System.IO.File]::WriteAllText($tmp, $Text)
     $inputPath = $tmp
 } else {
-    throw "pass -Text or -File"
+    throw "pass -Text, -File, or -Inbox"
 }
 
 if ([string]::IsNullOrWhiteSpace($SessionId)) {
-    $SessionId = "cli-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+    if ($inboxMove) {
+        $SessionId = "inbox-" + [System.IO.Path]::GetFileNameWithoutExtension($inputPath)
+    } else {
+        $SessionId = "cli-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+    }
 }
 
 try {
     Write-Host "Invoke-Librarian session=$SessionId mouth=:8000"
     & $exe $SessionId $inputPath
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($inboxMove) {
+        Move-Item -LiteralPath $inputPath -Destination $inboxMove -Force
+        Write-Host "inbox moved to $inboxMove"
+    }
 } finally {
     if ($tmp -and (Test-Path -LiteralPath $tmp)) {
         Remove-Item -LiteralPath $tmp -Force
