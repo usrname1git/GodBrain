@@ -421,42 +421,7 @@
                 .linkColor(() => 'rgba(120,160,220,0.25)')
                 .backgroundColor('#05070c')
                 .onNodeClick(node => {
-                    // Fetch full node details and show manual
-                    document.getElementById('node-manual').style.display = 'flex';
-                    document.getElementById('node-manual-title').innerText = node.title || node.label || node.id;
-                    document.getElementById('node-manual-content').innerText = 'Loading...';
-                    document.getElementById('judge-result').innerText = '';
-                    document.getElementById('judge-reason').value = '';
-                    openNode = {
-                        id: node.id || '',
-                        stableId: node.stable_id || node.id || '',
-                        status: node.status || ''
-                    };
-                    document.getElementById('node-judge').style.display = 'block';
-                    
-                    fetch('/api/node?id=' + encodeURIComponent(node.id))
-                        .then(res => res.json())
-                        .then(data => {
-                            if (data.error) {
-                                document.getElementById('node-manual-content').innerText = data.error;
-                                return;
-                            }
-                            document.getElementById('node-manual-title').innerText = data.title;
-                            document.getElementById('node-manual-meta').innerText =
-                                'Type: ' + data.type +
-                                ' | Sector: ' + (data.sector || 'none') +
-                                ' | Status: ' + (data.status || 'unknown') +
-                                ' | ' + (data.stable_id || data.id || '');
-                            document.getElementById('node-manual-content').innerText = data.content;
-                            openNode = {
-                                id: data.id || node.id || '',
-                                stableId: data.stable_id || data.id || node.id || '',
-                                status: data.status || ''
-                            };
-                        })
-                        .catch(err => {
-                            document.getElementById('node-manual-content').innerText = 'Error loading content: ' + err;
-                        });
+                    openGraphNode(node);
                         
                     // Also focus camera
                     const distance = 40;
@@ -600,14 +565,30 @@
             }
         }
         
-        function focusGraphNode(query) {
-            if (!graph || !query) return false;
+        function findGraphNode(query) {
+            if (!graph || !query) return null;
+            const q = String(query).trim();
+            if (!q) return null;
+            const ql = q.toLowerCase();
             const nodes = graph.graphData().nodes || [];
-            const target = nodes.find(n =>
-                n.id === query ||
-                n.stable_id === query ||
-                n.label === query ||
-                n.title === query);
+            const prefixHits = [];
+            for (let i = 0; i < nodes.length; i++) {
+                const n = nodes[i];
+                const sid = String(n.stable_id || '');
+                const nid = String(n.id || '');
+                if (nid === q || sid === q || n.label === q || n.title === q) return n;
+                if (ql.length >= 8) {
+                    if (sid.toLowerCase().indexOf(ql) === 0 ||
+                        nid.toLowerCase().indexOf(ql) === 0) {
+                        prefixHits.push(n);
+                    }
+                }
+            }
+            return prefixHits.length === 1 ? prefixHits[0] : null;
+        }
+
+        function focusGraphNode(query) {
+            const target = findGraphNode(query);
             if (!target) return false;
             const distance = 40;
             const distRatio = 1 + distance / Math.hypot(target.x, target.y, target.z);
@@ -617,6 +598,66 @@
                 3000
             );
             return true;
+        }
+
+        function openGraphNode(node) {
+            if (!node) return;
+            document.getElementById('node-manual').style.display = 'flex';
+            document.getElementById('node-manual-title').innerText =
+                node.title || node.label || node.id;
+            document.getElementById('node-manual-content').innerText = 'Loading...';
+            document.getElementById('judge-result').innerText = '';
+            document.getElementById('judge-reason').value = '';
+            openNode = {
+                id: node.id || '',
+                stableId: node.stable_id || node.id || '',
+                status: node.status || ''
+            };
+            document.getElementById('node-judge').style.display = 'block';
+            fetch('/api/node?id=' + encodeURIComponent(node.id))
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('node-manual-content').innerText = data.error;
+                        return;
+                    }
+                    document.getElementById('node-manual-title').innerText = data.title;
+                    document.getElementById('node-manual-meta').innerText =
+                        'Type: ' + data.type +
+                        ' | Sector: ' + (data.sector || 'none') +
+                        ' | Status: ' + (data.status || 'unknown') +
+                        ' | ' + (data.stable_id || data.id || '');
+                    document.getElementById('node-manual-content').innerText = data.content;
+                    openNode = {
+                        id: data.id || node.id || '',
+                        stableId: data.stable_id || data.id || node.id || '',
+                        status: data.status || ''
+                    };
+                })
+                .catch(err => {
+                    document.getElementById('node-manual-content').innerText =
+                        'Error loading content: ' + err;
+                });
+        }
+
+        function selectPendingItem(item) {
+            const id = String((item && item.stable_id) || '');
+            const shortId = id ? id.slice(0, 12) : '';
+            const node = id ? findGraphNode(id) : null;
+            if (node) {
+                focusGraphNode(id);
+                openGraphNode(node);
+                return;
+            }
+            if (shortId) {
+                chatInput.value = '/reject ' + shortId + ' ';
+                chatInput.focus();
+            }
+            appendChatMessage(
+                'sys-msg',
+                '[SYS]',
+                (shortId || 'this turn') +
+                    ' is not a star in the spiral yet. VERIFY LAST / REJECT LAST is only the newest turn. Type why after the id and send.');
         }
 
         try {
@@ -1067,14 +1108,12 @@
                 });
         });
         document.getElementById('pending-btn').addEventListener('click', () => {
-            fetch('/api/pending')
-                .then(r => r.json())
-                .then(data => {
-                    appendChatMessage('sys-msg', '[SYS]', (data && data.response) || 'judge=?');
-                })
-                .catch(err => {
-                    appendChatMessage('sys-msg', '[ERR]', (err && err.message) || 'pending failed', 'red');
-                });
+            const card = document.getElementById('pending-card');
+            if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest' });
+            appendChatMessage(
+                'sys-msg',
+                '[SYS]',
+                'Pending is on the left. Click a line to open the star, or /reject <id> <why>. VERIFY LAST is only the newest turn.');
         });
         document.getElementById('heal-btn').addEventListener('click', () => runSlash('/heal'));
         document.getElementById('vram-btn').addEventListener('click', () => runSlash('/vram'));
@@ -1085,12 +1124,17 @@
                 .then(data => {
                     const last = data.last_oracle || {};
                     const id = last.stable_id || '';
-                    if (id && focusGraphNode(id)) return;
+                    const node = id ? findGraphNode(id) : null;
+                    if (node) {
+                        focusGraphNode(id);
+                        openGraphNode(node);
+                        return;
+                    }
                     if (last.question && focusGraphNode(last.question)) return;
                     appendChatMessage(
                         'sys-msg',
                         '[SYS]',
-                        'Last Oracle turn is not in the current graph projection yet. /recall or wait for RAG.');
+                        'Last turn is not a star yet. Use Pending on the left, or /reject last <why>.');
                 })
                 .catch(err => {
                     appendChatMessage(
@@ -1225,13 +1269,35 @@
             const pendingCard = document.getElementById('pending-card');
             if (pendingCard) {
                 while (pendingCard.firstChild) pendingCard.removeChild(pendingCard.firstChild);
-                const judgeLines = pendingOverlayLines(status);
-                if (!judgeLines.length) {
+                const pending = status.pending_judge || {};
+                const items = Array.isArray(status.pending_items)
+                    ? status.pending_items
+                    : [];
+                if (!items.length) {
                     pendingCard.appendChild(document.createTextNode('none waiting'));
                 } else {
-                    judgeLines.forEach((line, index) => {
-                        if (index > 0) pendingCard.appendChild(document.createElement('br'));
-                        pendingCard.appendChild(document.createTextNode(line.replace(/^\s+/, '')));
+                    const head = document.createElement('div');
+                    head.appendChild(document.createTextNode(
+                        'judge ' + (pending.total || items.length) + ' waiting' +
+                        (pending.oracle ? (' oracle=' + pending.oracle) : '') +
+                        (pending.host ? (' host=' + pending.host) : '') +
+                        '. Click a line to open it.'));
+                    pendingCard.appendChild(head);
+                    items.slice(0, 12).forEach((item, index) => {
+                        const id = String((item && item.stable_id) || '');
+                        const shortId = id ? id.slice(0, 12) : 'no id';
+                        const q = String((item && (item.question || item.preview)) || '')
+                            .replace(/\s+/g, ' ')
+                            .slice(0, 40);
+                        const row = document.createElement('div');
+                        row.style.cursor = 'pointer';
+                        row.style.marginTop = '4px';
+                        row.appendChild(document.createTextNode(
+                            (index + 1) + '. ' +
+                            ((item && item.kind) || '?') + ' ' + shortId +
+                            (q ? (' ' + q) : '')));
+                        row.addEventListener('click', () => selectPendingItem(item));
+                        pendingCard.appendChild(row);
                     });
                 }
             }
