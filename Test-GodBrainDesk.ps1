@@ -89,6 +89,11 @@ if ($brief -and [string]$brief.response -notmatch "desk=") {
 if ($brief -and [string]$brief.response -notmatch "inbox=") {
     $fails.Add("brief missing inbox=")
 }
+if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
+    if ($brief -and [string]$brief.response -notmatch "next=") {
+        $fails.Add("brief missing next= while judge waiting")
+    }
+}
 if ($status -and ($null -eq $status.inbox -or $null -eq $status.inbox.waiting)) {
     $fails.Add("status missing inbox.waiting")
 }

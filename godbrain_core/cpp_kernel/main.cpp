@@ -1627,10 +1627,8 @@ static std::string format_brief_text() {
           << (rag.value("ready", false) ? "ready" : "down")
           << " judge=" << pending.value("total", 0);
     {
-        const json turns = last_oracle_turns_json();
-        for (const auto& turn : turns) {
-            if (turn.value("status", "candidate") != "candidate") continue;
-            const std::string nid = turn.value("stable_id", "");
+        for (const auto& item : st.value("pending_items", json::array())) {
+            const std::string nid = item.value("stable_id", "");
             if (nid.empty()) continue;
             reply << " next=" << nid.substr(0, nid.size() < 12 ? nid.size() : 12);
             break;
