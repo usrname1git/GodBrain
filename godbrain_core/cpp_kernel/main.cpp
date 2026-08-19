@@ -85,6 +85,8 @@ static std::string clip_pending_line(std::string text, size_t max);
 static int file_age_minutes(const std::string& path);
 static json collect_pending_items(const json& turns, const json& host_rec);
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
+static bool ids_equal_ignore_case(const std::string& a, const std::string& b);
+static bool id_has_prefix(const std::string& id, const std::string& prefix);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -291,6 +293,23 @@ static void mark_oracle_stored(
         }
     }
     persist_oracle_turns_locked();
+}
+
+static bool mark_oracle_status(const std::string& id, const std::string& to) {
+    if (id.empty() || (to != "verified" && to != "rejected")) return false;
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    bool hit = false;
+    for (auto& turn : g_oracle_turns) {
+        if (turn.stable_id.empty()) continue;
+        if (ids_equal_ignore_case(turn.stable_id, id) ||
+            id_has_prefix(turn.stable_id, id) ||
+            id_has_prefix(id, turn.stable_id)) {
+            turn.status = to;
+            hit = true;
+        }
+    }
+    if (hit) persist_oracle_turns_locked();
+    return hit;
 }
 
 static void store_oracle_turn_async(
@@ -1222,11 +1241,32 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
             res.set_content(json({{"error", resolve_err}}).dump(), "application/json");
             return;
         }
-        json judged = memory::set_status({
-            {"id", resolved.empty() ? raw_id : resolved},
-            {"status", payload.value("status", "")},
-            {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
-        });
+        const std::string id = resolved.empty() ? raw_id : resolved;
+        const std::string to = payload.value("status", "");
+        json judged;
+        try {
+            judged = memory::set_status({
+                {"id", id},
+                {"status", to},
+                {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
+            });
+        } catch (const std::exception&) {
+            if (to == "rejected" && mark_oracle_status(id, "rejected")) {
+                pending_body();
+                res.set_content(
+                    json({{"from", "candidate"},
+                          {"to", "rejected"},
+                          {"stable_id", id},
+                          {"status", "judged"},
+                          {"local_only", true}})
+                        .dump(),
+                    "application/json");
+                return;
+            }
+            throw;
+        }
+        mark_oracle_status(judged.value("stable_id", id), judged.value("to", to));
+        mark_oracle_status(id, judged.value("to", to));
         pending_body();
         res.set_content(judged.dump(), "application/json");
     } catch (const json::exception&) {
@@ -1882,7 +1922,119 @@ static std::vector<std::string> known_judgment_ids() {
     const json rec = host_record_from_rag();
     const std::string host_id = rec.value("stable_id", "");
     if (!host_id.empty()) ids.push_back(host_id);
+    try {
+        const json recent = memory::get_recent(25);
+        for (const auto& thought : recent.value("thoughts", json::array())) {
+            const std::string id = thought.value("stable_id", "");
+            if (!id.empty()) ids.push_back(id);
+        }
+    } catch (const std::exception&) {
+    }
     return ids;
+}
+
+static bool looks_like_card_id(const std::string& tok) {
+    if (tok.size() < 8 || tok.size() > 64) return false;
+    for (unsigned char ch : tok) {
+        if (std::isxdigit(ch) == 0) return false;
+    }
+    return true;
+}
+
+static std::string extract_named_card_id(const std::string& text) {
+    std::string best;
+    std::string cur;
+    auto flush = [&]() {
+        if (looks_like_card_id(cur) && cur.size() >= best.size()) best = cur;
+        cur.clear();
+    };
+    for (unsigned char ch : text) {
+        if (std::isxdigit(ch) != 0) {
+            cur.push_back(static_cast<char>(std::tolower(ch)));
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return best;
+}
+
+static std::string render_named_card_note(const json& doc) {
+    std::ostringstream out;
+    out << "Named Golden Record (cite this; do not invent a name):\n";
+    out << "status=" << doc.value("status", "") << " sector="
+        << doc.value("sector", "") << " kind=" << doc.value("kind", "")
+        << "\nstable_id=" << doc.value("stable_id", "") << "\n";
+    std::string body = doc.value("content", doc.value("label", ""));
+    if (body.size() > 800) {
+        body.resize(800);
+        body += "...";
+    }
+    out << body;
+    return out.str();
+}
+
+static std::string lookup_named_card_note(
+    const std::string& id,
+    godbrain_rag::Client& client) {
+    if (id.empty()) return "";
+    json doc;
+    std::string err;
+    if (client.document(id, doc, err)) {
+        return render_named_card_note(doc);
+    }
+    json graph;
+    if (client.graph(250, graph, err)) {
+        std::vector<std::string> hits;
+        for (const auto& node : graph.value("nodes", json::array())) {
+            const std::string sid = node.value("stable_id", "");
+            if (sid.empty()) continue;
+            if (ids_equal_ignore_case(sid, id) || id_has_prefix(sid, id)) {
+                hits.push_back(sid);
+            }
+        }
+        std::sort(hits.begin(), hits.end());
+        hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+        if (hits.size() == 1 && !ids_equal_ignore_case(hits[0], id) &&
+            client.document(hits[0], doc, err)) {
+            return render_named_card_note(doc);
+        }
+    }
+    try {
+        const json recent = memory::get_recent(25);
+        for (const auto& thought : recent.value("thoughts", json::array())) {
+            const std::string sid = thought.value("stable_id", "");
+            if (!ids_equal_ignore_case(sid, id) && !id_has_prefix(sid, id)) {
+                continue;
+            }
+            json fake = {
+                {"status", thought.value("status", "")},
+                {"sector", thought.value("sector", "")},
+                {"kind", thought.value("kind", "")},
+                {"stable_id", sid},
+                {"content", thought.value("label", "")},
+            };
+            return render_named_card_note(fake);
+        }
+    } catch (const std::exception&) {
+    }
+    for (const auto& turn : last_oracle_turns_json()) {
+        const std::string sid = turn.value("stable_id", "");
+        if (!ids_equal_ignore_case(sid, id) && !id_has_prefix(sid, id)) {
+            continue;
+        }
+        json fake = {
+            {"status", turn.value("status", "candidate")},
+            {"sector", "oracle"},
+            {"kind", "oracle"},
+            {"stable_id", sid},
+            {"content",
+             std::string("Q: ") + turn.value("question", "") + "\nA: " +
+                 turn.value("answer", "")},
+        };
+        return render_named_card_note(fake);
+    }
+    return "";
 }
 
 static std::string resolve_judgment_id(const std::string& raw, std::string& error) {
@@ -1924,6 +2076,8 @@ static std::string resolve_judgment_id(const std::string& raw, std::string& erro
     for (const auto& known_id : known) {
         if (id_has_prefix(known_id, id)) matches.push_back(known_id);
     }
+    std::sort(matches.begin(), matches.end());
+    matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
     if (matches.size() == 1) return matches[0];
     if (matches.size() > 1) {
         error = "ambiguous id prefix " + id;
@@ -3149,18 +3303,9 @@ int main() {
                         {"status", status},
                         {"reasoning", reasoning},
                     });
-                    {
-                        const std::string judged_id =
-                            judged.value("stable_id", id);
-                        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-                        for (auto& turn : g_oracle_turns) {
-                            if (turn.stable_id == judged_id ||
-                                turn.stable_id == id) {
-                                turn.status = judged.value("to", status);
-                            }
-                        }
-                        persist_oracle_turns_locked();
-                    }
+                    mark_oracle_status(judged.value("stable_id", id),
+                                       judged.value("to", status));
+                    mark_oracle_status(id, judged.value("to", status));
                     pending_body();
                     res.set_content(
                         json({{"response",
@@ -3270,6 +3415,51 @@ int main() {
             }
 
             const bool continue_cmd = is_continue_command(user_msg);
+            std::string named_err;
+            const std::string named_raw = extract_named_card_id(user_msg);
+            std::string named_id;
+            std::string card_note;
+            if (!continue_cmd && !named_raw.empty()) {
+                named_id = resolve_judgment_id(named_raw, named_err);
+                if (named_id.empty() || !named_err.empty()) {
+                    named_id = named_raw;
+                }
+                card_note = lookup_named_card_note(named_id, rag_client);
+            }
+            if (!continue_cmd && !card_note.empty()) {
+                const bool want_stream =
+                    payload.value("stream", false) ||
+                    req.get_header_value("Accept").find("text/event-stream") !=
+                        std::string::npos;
+                if (want_stream) {
+                    res.set_header("Cache-Control", "no-cache");
+                    res.set_header("X-Accel-Buffering", "no");
+                    const std::string note = card_note;
+                    res.set_chunked_content_provider(
+                        "text/event-stream",
+                        [note](size_t, httplib::DataSink& sink) {
+                            const std::string tok =
+                                std::string("data: ") +
+                                json({{"type", "token"}, {"text", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(tok.data(), tok.size());
+                            const std::string done =
+                                std::string("data: ") +
+                                json({{"type", "done"}, {"response", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(done.data(), done.size());
+                            sink.done();
+                            return true;
+                        });
+                    return;
+                }
+                res.set_content(
+                    json({{"response", card_note}}).dump(),
+                    "application/json");
+                return;
+            }
             std::cout << "[RAG] Canonical search requested (" << user_msg.size()
                       << " bytes) continue=" << (continue_cmd ? "1" : "0")
                       << std::endl;
@@ -3406,9 +3596,10 @@ int main() {
                 const std::string sys = system_prompt;
                 const std::string usr = user_prompt;
                 const std::string asked_q = asked;
-                const std::string hist_q = follow_up ? prior_q : std::string();
+                const bool hist = follow_up;
+                const std::string hist_q = hist ? prior_q : std::string();
                 const std::string hist_a =
-                    follow_up
+                    hist
                         ? (continue_cmd ? continue_history_tail(prior_a)
                                         : prior_a)
                         : std::string();
@@ -3506,9 +3697,9 @@ int main() {
                 {},
                 {},
                 follow_up ? prior_q : std::string(),
-                follow_up ? (continue_cmd ? continue_history_tail(prior_a)
-                                          : prior_a)
-                          : std::string(),
+                follow_up
+                    ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
+                    : std::string(),
                 &spoken);
             std::string chunk = strip_coli_reply(combined);
             const std::string for_memory =
