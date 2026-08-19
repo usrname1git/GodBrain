@@ -2402,7 +2402,9 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                   << " rag="
                   << (last.value("rag_ready", diagnose.value("rag_ready", false))
                           ? "ready"
-                          : "unready");
+                          : "unready")
+                  << " sre="
+                  << last.value("sre_diagnose", "none");
         }
         const json inbox = inbox_desk();
         reply << "\ninbox=" << inbox.value("waiting", 0);

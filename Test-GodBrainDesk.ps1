@@ -169,6 +169,9 @@ if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false")
 if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
     $fails.Add("heal api missing last ok= text")
 }
+if ($heal -and $heal.last -and $heal.response -notmatch "sre=") {
+    $fails.Add("heal api missing sre=")
+}
 if ($heal -and $heal.last -and $null -eq $heal.age_min) {
     $fails.Add("heal api missing age_min")
 }
@@ -177,6 +180,8 @@ if (-not (Test-Path -LiteralPath $lastHealFile)) {
     $fails.Add("missing logs/last-heal.txt")
 } elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "last ok=|no heal run") {
     $fails.Add("last-heal.txt missing last ok=")
+} elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "sre=") {
+    $fails.Add("last-heal.txt missing sre=")
 }
 $healFile = Join-Path $RepoRoot "logs\heal-last.json"
 if (-not (Test-Path -LiteralPath $healFile)) {
