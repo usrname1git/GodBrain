@@ -330,11 +330,23 @@ static int run_diagnose(const std::string& issue) {
 
     print_block("ping 127.0.0.1",
                 exec_cmd("ping -n 1 -w 800 127.0.0.1"));
+    const std::string ping_up = exec_cmd("ping -n 1 -w 800 1.1.1.1");
+    print_block("ping 1.1.1.1", ping_up);
+    print_block("nslookup localhost", exec_cmd("nslookup localhost"));
     print_block("dns_self",
                 exec_cmd("powershell.exe -NoProfile -NonInteractive -Command "
                          "\"try { [Net.Dns]::GetHostEntry('localhost') | Out-Null; "
                          "[Net.Dns]::GetHostEntry($env:COMPUTERNAME) | Out-Null; "
                          "'ok '+$env:COMPUTERNAME } catch { 'FAIL '+$_.Exception.Message }\""));
+    const bool uplink_ok =
+        ping_up.find("TTL=") != std::string::npos ||
+        ping_up.find("ttl=") != std::string::npos;
+    if (!uplink_ok) {
+        print_block("tracert 1.1.1.1",
+                    exec_cmd("tracert -d -h 8 -w 800 1.1.1.1"));
+    } else {
+        print_block("tracert", "skipped (uplink ping ok)");
+    }
     print_block("nic_tcpip",
                 exec_cmd("powershell.exe -NoProfile -NonInteractive -Command "
                          "\"Get-NetAdapter -Physical | "

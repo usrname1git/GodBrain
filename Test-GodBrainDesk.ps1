@@ -63,6 +63,14 @@ try {
 }
 
 if ($status -and -not $status.kernel) { $fails.Add("status.kernel is false") }
+if ($status -and $status.host_record) {
+    $hostLabel = [string]$status.host_record.label
+    if ($hostLabel -match "Playbook") {
+        $fails.Add("host_record is a playbook, not the os_pin inventory")
+    } elseif ($hostLabel -notmatch "os_pin=|Windows host inventory") {
+        $fails.Add("host_record missing os_pin inventory text")
+    }
+}
 if ($status -and $null -eq $status.pending_items) {
     $fails.Add("status missing pending_items")
 }
@@ -88,6 +96,11 @@ if ($brief -and [string]$brief.response -notmatch "desk=") {
 }
 if ($brief -and [string]$brief.response -notmatch "inbox=") {
     $fails.Add("brief missing inbox=")
+}
+if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
+    if ($brief -and [string]$brief.response -notmatch "next=") {
+        $fails.Add("brief missing next= while judge waiting")
+    }
 }
 if ($status -and ($null -eq $status.inbox -or $null -eq $status.inbox.waiting)) {
     $fails.Add("status missing inbox.waiting")
@@ -153,6 +166,9 @@ if (-not (Test-Path -LiteralPath $pendingFile)) {
         if (-not $onPending.PSObject.Properties.Name.Contains("total")) {
             $fails.Add("last-pending.json missing total")
         }
+        if (-not $onPending.PSObject.Properties.Name.Contains("cards")) {
+            $fails.Add("last-pending.json missing cards")
+        }
     } catch {
         $fails.Add("last-pending.json unreadable")
     }
@@ -160,6 +176,9 @@ if (-not (Test-Path -LiteralPath $pendingFile)) {
 if ($heal -and -not $heal.live.kernel) { $fails.Add("heal.live.kernel is false") }
 if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
     $fails.Add("heal api missing last ok= text")
+}
+if ($heal -and $heal.last -and $heal.response -notmatch "sre=") {
+    $fails.Add("heal api missing sre=")
 }
 if ($heal -and $heal.last -and $null -eq $heal.age_min) {
     $fails.Add("heal api missing age_min")
@@ -169,6 +188,8 @@ if (-not (Test-Path -LiteralPath $lastHealFile)) {
     $fails.Add("missing logs/last-heal.txt")
 } elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "last ok=|no heal run") {
     $fails.Add("last-heal.txt missing last ok=")
+} elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "sre=") {
+    $fails.Add("last-heal.txt missing sre=")
 }
 $healFile = Join-Path $RepoRoot "logs\heal-last.json"
 if (-not (Test-Path -LiteralPath $healFile)) {
@@ -187,6 +208,9 @@ if (-not (Test-Path -LiteralPath $healFile)) {
             $fails.Add("heal-last.json missing inbox")
         } elseif ($null -eq $hl.inbox.failed) {
             $fails.Add("heal-last.json inbox missing failed")
+        }
+        if (-not $hl.PSObject.Properties.Name.Contains("sre_diagnose")) {
+            $fails.Add("heal-last.json missing sre_diagnose")
         }
     } catch {
         $fails.Add("heal-last.json unreadable")

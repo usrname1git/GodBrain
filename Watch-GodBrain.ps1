@@ -41,7 +41,8 @@ function Write-WatchLog([string]$Message) {
 }
 
 # Closed loop: detect → reason layer → allowlist patch (start / flushdns /
-# rag-rebuild / one inbox file) → verify. Never kills the mouth.
+# rag-rebuild / one inbox file) → verify. --diagnose only when layer is
+# not ok. Never --ask. Never kills the mouth.
 # Inbox only runs when inbox\*.txt is waiting and the mouth is idle.
 # Watch-Cs2Pause disables this task while CS2.exe is running.
 Write-WatchLog "start root=$RepoRoot"

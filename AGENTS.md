@@ -155,6 +155,8 @@ cloud model to get it.
   nic_tcpip. nic_tcpip is detect-only. Heal does not reboot.
   The SRE surgeon kit is `godbrain_core/sre_agent/sre_surgeon.exe
   --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
+  Heal runs `--diagnose` only when the layer is not ok (15 min cooldown)
+  and writes `logs/last-sre-diagnose.txt`. It never `--ask`.
   Do not `--ask` while `coli serve` holds the GPU slot.
   Local file edits: Galaxy can ask the mouth to change a repo file.
   The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a
@@ -206,15 +208,19 @@ cloud model to get it.
   do not touch Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
-  Live `/edit` works on the no-MTP Gemma 12B Q4 mouth. Do not pass
-  `Start-LlamaServer.ps1 -UseDraft` (MTP CUDA IMA on this 4080).
+  Live `/edit` works on the Gemma 12B Q4 mouth. Desk default is
+  `Start-LlamaServer.ps1` **with MTP** (draft GGUF, `--spec-type draft-mtp`).
+  Official IT Q4_0 + MTP drafted ~2x tok/s with no IMA on 512+512 tokens.
+  Pass `-NoDraft` to start without it. Aug 17 Hauhau long-gen IMA is still
+  in `llama-server.err.log`; that is not a never-MTP Golden Record.
   `GET /api/last-edit` and `/last-edit` return the last local-edit result
   (no GPU) and write `logs/last-edit.txt`.
   `GET /api/heal` is on the Tailscale door and now wraps the same
   `response` text as `/heal`, including `age=` minutes since
   `heal-last.json`. That text is also written to `logs/last-heal.txt`. `GET /api/doors` lists
   loopback and Tailscale URLs (chat stays loopback-only). `GET /api/pending`
-  lists the candidate Oracle turns and host card that `judge=N` is counting
+  lists candidate Oracle turns, a candidate host card, and the newest
+  unverified Golden Records (Librarian / remember), capped, that `judge=N` is counting
   and writes `logs/last-pending.json`. `/brief` also writes
   `logs/last-brief.txt` so the glance survives a dead kernel.
   When the Tailscale door is bound, `/brief` prints `tail=door/<100.x>` so

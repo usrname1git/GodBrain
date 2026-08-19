@@ -199,12 +199,12 @@
             <button id="last-edit-btn">Last edit</button>
         </div>
         <div class="toolbar">
-            <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)">
+            <input type="text" id="last-reason" placeholder="why verify/reject last (min 4 chars)" spellcheck="true" autocomplete="off" autocapitalize="off">
             <button id="verify-last-btn" type="button">Verify last</button>
             <button id="reject-last-btn" type="button">Reject last</button>
         </div>
         <div class="toolbar">
-            <input type="text" id="chat-input" placeholder="/idea ...  /remember ...  or ask GodBrain">
+            <input type="text" id="chat-input" placeholder="/idea ...  /remember ...  or ask GodBrain" spellcheck="true" autocomplete="off" autocapitalize="off">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
         </div>
     </div>
@@ -778,9 +778,12 @@
         function formatHealLine(heal) {
             if (!heal || typeof heal.ok !== 'boolean') return '';
             const age = healAgeMinutes(heal);
-            if (age == null) return 'heal ' + (heal.ok ? 'ok' : 'fail');
-            if (age > 20) return 'heal stale/' + age + 'm';
-            return 'heal ' + (heal.ok ? 'ok' : 'fail') + '/' + age + 'm';
+            let line;
+            if (age == null) line = 'heal ' + (heal.ok ? 'ok' : 'fail');
+            else if (age > 20) line = 'heal stale/' + age + 'm';
+            else line = 'heal ' + (heal.ok ? 'ok' : 'fail') + '/' + age + 'm';
+            if (heal.sre_diagnose) line += ' sre=' + heal.sre_diagnose;
+            return line;
         }
         function inboxOverlayLine(status) {
             const inbox = (status && status.inbox) || {};
@@ -799,7 +802,8 @@
                 lines.push(
                     'judge ' + pending.total + ' waiting' +
                     (pending.oracle ? (' oracle=' + pending.oracle) : '') +
-                    (pending.host ? (' host=' + pending.host) : ''));
+                    (pending.host ? (' host=' + pending.host) : '') +
+                    (pending.cards ? (' cards=' + pending.cards) : ''));
             }
             items.slice(0, 12).forEach((item, index) => {
                 const id = String((item && item.stable_id) || '');
@@ -1332,6 +1336,7 @@
                         'judge ' + (pending.total || items.length) + ' waiting' +
                         (pending.oracle ? (' oracle=' + pending.oracle) : '') +
                         (pending.host ? (' host=' + pending.host) : '') +
+                        (pending.cards ? (' cards=' + pending.cards) : '') +
                         '. Click a line to open it.'));
                     pendingCard.appendChild(head);
                     items.slice(0, 12).forEach((item, index) => {
