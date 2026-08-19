@@ -66,6 +66,18 @@ try {
     if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
     if ($pending.response -notmatch "/verify") { $fails.Add("pending api missing /verify hint") }
     if ($null -eq $pending.items) { $fails.Add("pending api missing items") }
+    if ($pending.items) {
+        foreach ($item in @($pending.items)) {
+            if ([string]$item.preview -match "^Heal loop") {
+                $fails.Add("pending includes Heal loop remember noise")
+                break
+            }
+            if ([string]$item.kind -eq "concept") {
+                $fails.Add("pending includes concept sludge")
+                break
+            }
+        }
+    }
 } catch {
     $fails.Add("pending: $_")
 }
