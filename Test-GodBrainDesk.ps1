@@ -153,6 +153,9 @@ if (-not (Test-Path -LiteralPath $pendingFile)) {
         if (-not $onPending.PSObject.Properties.Name.Contains("total")) {
             $fails.Add("last-pending.json missing total")
         }
+        if (-not $onPending.PSObject.Properties.Name.Contains("cards")) {
+            $fails.Add("last-pending.json missing cards")
+        }
     } catch {
         $fails.Add("last-pending.json unreadable")
     }

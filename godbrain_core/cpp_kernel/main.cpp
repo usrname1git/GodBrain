@@ -921,12 +921,16 @@ static json kernel_status_body() {
     host["ram_used_percent"] = live.value("system_ram_percent", 0);
     const json host_record = host_record_from_rag();
     const json turns = last_oracle_turns_json();
+    const json pending_items = collect_pending_items(turns, host_record);
     int oracle_pending = 0;
-    for (const auto& turn : turns) {
-        if (turn.value("status", "candidate") == "candidate") ++oracle_pending;
+    int host_pending = 0;
+    int card_pending = 0;
+    for (const auto& item : pending_items) {
+        const std::string kind = item.value("kind", "");
+        if (kind == "host") ++host_pending;
+        else if (kind == "oracle") ++oracle_pending;
+        else ++card_pending;
     }
-    const int host_pending =
-        host_record.value("status", "") == "candidate" ? 1 : 0;
     json heal = load_heal_last();
     if (!heal.empty()) {
         heal["age_min"] = file_age_minutes(
@@ -951,11 +955,12 @@ static json kernel_status_body() {
         {"heal", heal},
         {"inbox", inbox_desk()},
         {"cs2", cs2_desk()},
-        {"pending_items", collect_pending_items(turns, host_record)},
+        {"pending_items", pending_items},
         {"pending_judge", {
             {"oracle", oracle_pending},
             {"host", host_pending},
-            {"total", oracle_pending + host_pending},
+            {"cards", card_pending},
+            {"total", static_cast<int>(pending_items.size())},
         }},
     };
 }
@@ -1811,13 +1816,27 @@ static std::string clip_pending_line(std::string text, size_t max) {
     return text;
 }
 
+static std::string pending_id_key(std::string id) {
+    for (char& ch : id) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return id;
+}
+
 static json collect_pending_items(const json& turns, const json& host_rec) {
     json items = json::array();
+    std::set<std::string> seen;
+    auto remember = [&](const std::string& id) {
+        if (id.empty()) return false;
+        return seen.insert(pending_id_key(id)).second;
+    };
     for (const auto& turn : turns) {
         if (turn.value("status", "candidate") != "candidate") continue;
+        const std::string id = turn.value("stable_id", "");
+        remember(id);
         items.push_back({
             {"kind", "oracle"},
-            {"stable_id", turn.value("stable_id", "")},
+            {"stable_id", id},
             {"status", "candidate"},
             {"stored", turn.value("stored", false)},
             {"complete", turn.value("complete", true)},
@@ -1826,15 +1845,44 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
         });
     }
     if (host_rec.value("status", "") == "candidate") {
+        const std::string id = host_rec.value("stable_id", "");
+        remember(id);
         items.push_back({
             {"kind", "host"},
-            {"stable_id", host_rec.value("stable_id", "")},
+            {"stable_id", id},
             {"status", "candidate"},
             {"stored", true},
             {"complete", true},
             {"question", ""},
             {"preview", clip_pending_line(host_rec.value("label", ""), 120)},
         });
+    }
+    // Newest unverified Golden Records (Librarian / remember). Bounded.
+    // Fail closed: if RAG is down, skip cards and keep oracle/host.
+    constexpr int kMaxLibraryPending = 8;
+    json graph;
+    std::string graph_err;
+    int cards = 0;
+    if (godbrain_rag::Client{}.graph(40, graph, graph_err)) {
+        for (const auto& node : graph.value("nodes", json::array())) {
+            if (cards >= kMaxLibraryPending) break;
+            if (node.value("status", "") != "candidate") continue;
+            const std::string id = node.value("stable_id", "");
+            if (!remember(id)) continue;
+            std::string kind = node.value("kind", "card");
+            if (kind.empty()) kind = "card";
+            items.push_back({
+                {"kind", kind},
+                {"stable_id", id},
+                {"status", "candidate"},
+                {"stored", true},
+                {"complete", true},
+                {"sector", node.value("sector", "")},
+                {"question", ""},
+                {"preview", clip_pending_line(node.value("label", ""), 120)},
+            });
+            ++cards;
+        }
     }
     return items;
 }
@@ -1845,16 +1893,20 @@ static json pending_body() {
     json items = collect_pending_items(turns, rec);
     int oracle = 0;
     int host = 0;
+    int cards = 0;
     for (const auto& item : items) {
-        if (item.value("kind", "") == "host") ++host;
-        else ++oracle;
+        const std::string kind = item.value("kind", "");
+        if (kind == "host") ++host;
+        else if (kind == "oracle") ++oracle;
+        else ++cards;
     }
     std::ostringstream reply;
     reply << "judge=" << items.size();
     if (items.empty()) {
         reply << " none waiting";
     } else {
-        reply << " oracle=" << oracle << " host=" << host;
+        reply << " oracle=" << oracle << " host=" << host
+              << " cards=" << cards;
         int index = 0;
         for (const auto& item : items) {
             ++index;
@@ -1878,6 +1930,7 @@ static json pending_body() {
         {"total", static_cast<int>(items.size())},
         {"oracle", oracle},
         {"host", host},
+        {"cards", cards},
         {"items", items},
         {"response", reply.str()},
     };
@@ -1938,6 +1991,8 @@ static std::vector<std::string> known_judgment_ids() {
         }
     } catch (const std::exception&) {
     }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
     return ids;
 }
 

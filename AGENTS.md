@@ -214,7 +214,8 @@ cloud model to get it.
   `response` text as `/heal`, including `age=` minutes since
   `heal-last.json`. That text is also written to `logs/last-heal.txt`. `GET /api/doors` lists
   loopback and Tailscale URLs (chat stays loopback-only). `GET /api/pending`
-  lists the candidate Oracle turns and host card that `judge=N` is counting
+  lists candidate Oracle turns, a candidate host card, and the newest
+  unverified Golden Records (Librarian / remember), capped, that `judge=N` is counting
   and writes `logs/last-pending.json`. `/brief` also writes
   `logs/last-brief.txt` so the glance survives a dead kernel.
   When the Tailscale door is bound, `/brief` prints `tail=door/<100.x>` so

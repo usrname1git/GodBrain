@@ -799,7 +799,8 @@
                 lines.push(
                     'judge ' + pending.total + ' waiting' +
                     (pending.oracle ? (' oracle=' + pending.oracle) : '') +
-                    (pending.host ? (' host=' + pending.host) : ''));
+                    (pending.host ? (' host=' + pending.host) : '') +
+                    (pending.cards ? (' cards=' + pending.cards) : ''));
             }
             items.slice(0, 12).forEach((item, index) => {
                 const id = String((item && item.stable_id) || '');
@@ -1332,6 +1333,7 @@
                         'judge ' + (pending.total || items.length) + ' waiting' +
                         (pending.oracle ? (' oracle=' + pending.oracle) : '') +
                         (pending.host ? (' host=' + pending.host) : '') +
+                        (pending.cards ? (' cards=' + pending.cards) : '') +
                         '. Click a line to open it.'));
                     pendingCard.appendChild(head);
                     items.slice(0, 12).forEach((item, index) => {

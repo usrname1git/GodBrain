@@ -43,7 +43,7 @@ Implemented loops:
 | Heal / Watch | Probe ports + HTTP `rag /health.ready` and mouth `/health`; count `inbox\*.txt` | Start allowlist; one flushdns; `rag-rebuild` if projection unready (cooldown); one inbox file when mouth is idle; quarantine poison files; `POST /api/observe` | Ports + ready; live `inbox=N` on `/brief`; Librarian claims stay **candidate**; remember on act/fail |
 | Oracle chat | User question or CONTINUE | `coli serve` 160-token slices | Fail-closed RAG, loop abort, operator `/verify` `/reject` |
 | Librarian | Transcript | Distill claims (not a recap) | Schema/provenance; contradiction and open_question stay **candidate** |
-| Judgment | Last displayable Oracle turn or Galaxy Pending click | `set_godbrain_status` / `POST /api/judge` | Why string ≥ 4 chars; last-oracle inbox must flip with Mongo |
+| Judgment | Last Oracle turns, host card if candidate, and the newest unverified Golden Records | `set_godbrain_status` / `POST /api/judge` | Why string ≥ 4 chars; last-oracle inbox flips with Mongo; cards stay candidate until `/verify` |
 | Named-card | 12-char id in chat | RAG `GET /v1/document` | Return that Golden Record; no GPU; do not mint a new Oracle turn |
 | Truth loop | Host pin / Learn quote / allowlisted probe | `observe` + `POST /api/truth` | Live read or quote match auto-`verified`; pin mismatch → `stale` |
 
