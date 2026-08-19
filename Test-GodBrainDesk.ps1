@@ -73,6 +73,10 @@ $gateExe = Join-Path $RepoRoot "godbrain_core\cpp_tools\cs2_gate.exe"
 if (-not (Test-Path -LiteralPath $gateExe)) {
     $fails.Add("missing cs2_gate.exe")
 }
+$ask = Join-Path $RepoRoot "Ask-GodBrain.ps1"
+if (-not (Test-Path -LiteralPath $ask)) {
+    $fails.Add("missing Ask-GodBrain.ps1")
+}
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
     $fails.Add("vram.slots is not 1")
 }

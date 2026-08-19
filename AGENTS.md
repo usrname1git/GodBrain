@@ -197,7 +197,7 @@ cloud model to get it.
   themselves when a live probe or a Learn/support quote actually matches.
   `query_recent_thoughts` reads the active RAG graph. Oracle search is
   verified-only.
-  Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/verify`,
+  Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next worker size), `/remember`, `/idea`, `/ideas`, `/verify`,
   `/reject`, `/recall`, `/status`, `/last`, `/brief`, and `/pending`. `/verify last <why>`
   and `/reject last <why>` judge the newest on-disk Oracle turn.
   `/verify <12-char prefix> <why>` resolves against the `/pending` list.
@@ -279,6 +279,10 @@ cloud model to get it.
   `Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or shell.
   `trigger_librarian.ps1` still extracts the newest Copilot session.
   Any text file is a valid source. iPhone/Tailscale: POST `/api/remember`
+  `{text, sector:"idea"}` for an idea candidate (never auto-verified).
+  Loopback ask without Galaxy: `Ask-GodBrain.ps1` POSTs `/api/chat`.
+  Chat generate stays loopback-only. `/idea` and `/ideas` are the idea
+  category. iPhone/Tailscale: POST `/api/remember`
   to suggest a candidate, or POST `/api/librarian` `{text}` to classify
   (uses the GPU mouth; bearer required).
 - `godbrain_core/memory_store/` is the active Alexandria write boundary. It

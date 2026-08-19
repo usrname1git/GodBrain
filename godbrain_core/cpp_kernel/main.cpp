@@ -2995,6 +2995,70 @@ int main() {
                 }
                 return;
             }
+
+            if (starts_with_ignore_case(user_msg, "/idea") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                std::string thought = trim_view(user_msg.substr(5));
+                if (thought.empty()) {
+                    res.set_content(
+                        "{\"response\":\"Say /idea followed by the idea. Stored as sector=idea candidate.\"}",
+                        "application/json");
+                    return;
+                }
+                try {
+                    json stored = memory::save_thought(
+                        {{"content", thought}, {"sector", "idea"}});
+                    res.set_content(
+                        json({{"response",
+                               std::string("Idea stored (candidate, sector=idea). "
+                                           "Not verified. stable_id=") +
+                                   stored.value("stable_id", "")}}).dump(),
+                        "application/json");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    res.set_content(
+                        json({{"response",
+                               std::string("Could not store idea: ") + error.what()}})
+                            .dump(),
+                        "application/json");
+                }
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/ideas") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                try {
+                    std::ostringstream listing;
+                    listing << "Idea candidates (not verified):\n";
+                    int shown = 0;
+                    const json recent =
+                        memory::get_recent(25).value("thoughts", json::array());
+                    for (const auto& thought : recent) {
+                        if (thought.value("sector", "") != "idea") continue;
+                        ++shown;
+                        listing << "- [" << thought.value("status", "candidate")
+                                << "] "
+                                << thought.value("stable_id", thought.value("id", ""))
+                                << " | " << thought.value("label", "") << "\n";
+                    }
+                    if (shown == 0) {
+                        listing << "(none in the active projection yet)";
+                    }
+                    res.set_content(
+                        json({{"response", listing.str()}}).dump(),
+                        "application/json");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    res.set_content(
+                        json({{"response",
+                               std::string("Could not list ideas: ") + error.what()}})
+                            .dump(),
+                        "application/json");
+                }
+                return;
+            }
             auto handle_judgment = [&](const char* verb, const char* status, const std::string& rest) {
                 const std::string trimmed = trim_view(rest);
                 const size_t split = trimmed.find_first_of(" \t");
