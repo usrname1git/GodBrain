@@ -206,6 +206,8 @@ cloud model to get it.
   do not touch Colibri. `GET /api/brief`
   is the same one-glance string as `/brief` (no GPU; Tailscale door needs bearer).
   `GET /api/vram` is the same as `/vram` and writes `logs/last-vram.json`. `/edit` waits if CS2 is sleeping.
+  Live `/edit` works on the no-MTP Gemma 12B Q4 mouth. Do not pass
+  `Start-LlamaServer.ps1 -UseDraft` (MTP CUDA IMA on this 4080).
   `GET /api/last-edit` and `/last-edit` return the last local-edit result
   (no GPU) and write `logs/last-edit.txt`.
   `GET /api/heal` is on the Tailscale door and now wraps the same

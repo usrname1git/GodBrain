@@ -10,7 +10,8 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # MTP + Gemma4 hit CUDA illegal-memory-access twice on this 4080 Super.
+    # MTP + Gemma4 hit CUDA IMA on this 4080 Super. Leave -UseDraft off.
+    # Live /edit works on the no-MTP Gemma 12B Q4 mouth.
     [switch]$UseDraft
 )
 
