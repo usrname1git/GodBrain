@@ -155,6 +155,8 @@ cloud model to get it.
   nic_tcpip. nic_tcpip is detect-only. Heal does not reboot.
   The SRE surgeon kit is `godbrain_core/sre_agent/sre_surgeon.exe
   --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
+  Heal runs `--diagnose` only when the layer is not ok (15 min cooldown)
+  and writes `logs/last-sre-diagnose.txt`. It never `--ask`.
   Do not `--ask` while `coli serve` holds the GPU slot.
   Local file edits: Galaxy can ask the mouth to change a repo file.
   The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a

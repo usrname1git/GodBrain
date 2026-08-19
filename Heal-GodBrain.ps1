@@ -11,6 +11,8 @@
 # release, winsock reset, int ip reset, DeviceCleanup, and reboot need an
 # operator GO in chat — Heal must not run them unattended.
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
+# When layer is not ok, run sre_surgeon --diagnose (read-only, 15 min
+# cooldown). Never --ask (GPU). GO tools stay GO.
 # Skip coli / inbox while CS2.exe is running or has been gone under 5 minutes.
 # The verifier is the probe, not the model. Do not add extra nodes here.
 
@@ -236,6 +238,30 @@ function Invoke-AllowlistedRagRebuild {
     }
 }
 
+function Invoke-SreDiagnose([string]$Layer) {
+    $exe = Join-Path $RepoRoot "godbrain_core\sre_agent\sre_surgeon.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { return "skip:missing-exe" }
+    $stamp = Join-Path $logDir "heal-sre-diagnose.stamp"
+    if (Test-Path -LiteralPath $stamp) {
+        $age = ((Get-Date) - (Get-Item -LiteralPath $stamp).LastWriteTime).TotalMinutes
+        if ($age -lt 15) { return "skip:cooldown" }
+    }
+    Write-Host ("heal: sre_surgeon --diagnose layer={0}" -f $Layer)
+    try {
+        $raw = & $exe --diagnose 2>&1 | Out-String
+        if ($raw.Length -gt 32000) {
+            $raw = $raw.Substring(0, 32000) + "`n[truncated]"
+        }
+        $dest = Join-Path $logDir "last-sre-diagnose.txt"
+        $utf8diag = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($dest, $raw, $utf8diag)
+        [System.IO.File]::WriteAllText($stamp, (Get-Date).ToUniversalTime().ToString("o"))
+        return "ok"
+    } catch {
+        return "fail:throw"
+    }
+}
+
 $ServiceAllowlist = [ordered]@{
     mongo = "MongoDB"
     dns   = "Dnscache"
@@ -373,6 +399,12 @@ $diagnose = [ordered]@{
     mouth_ready   = [bool]$after.mouth_ready
     layer         = Get-DiagnoseLayer $after
 }
+$sreDiagnose = "skip:ok"
+if ($diagnose.layer -ne "ok") {
+    $sreDiagnose = Invoke-SreDiagnose $diagnose.layer
+    if ($sreDiagnose -eq "ok") { $acted += "sre-diagnose" }
+    else { Write-Host ("heal sre-diagnose {0}" -f $sreDiagnose) }
+}
 $result = [ordered]@{
     version     = 4
     at          = (Get-Date).ToUniversalTime().ToString("o")
@@ -388,9 +420,10 @@ $result = [ordered]@{
     mouth       = [bool]$after.mouth
     mouth_ready = [bool]$after.mouth_ready
     rag_ready   = [bool]$after.rag_ready
-    rag_rebuild = $ragRebuild
-    inbox       = $inbox
-    tailscale   = [bool]$after.tailscale
+    rag_rebuild  = $ragRebuild
+    inbox        = $inbox
+    sre_diagnose = $sreDiagnose
+    tailscale    = [bool]$after.tailscale
 }
 
 $json = $result | ConvertTo-Json -Depth 6

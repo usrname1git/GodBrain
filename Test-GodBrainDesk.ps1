@@ -196,6 +196,9 @@ if (-not (Test-Path -LiteralPath $healFile)) {
         } elseif ($null -eq $hl.inbox.failed) {
             $fails.Add("heal-last.json inbox missing failed")
         }
+        if (-not $hl.PSObject.Properties.Name.Contains("sre_diagnose")) {
+            $fails.Add("heal-last.json missing sre_diagnose")
+        }
     } catch {
         $fails.Add("heal-last.json unreadable")
     }
