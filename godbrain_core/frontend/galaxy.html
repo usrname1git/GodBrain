@@ -703,27 +703,20 @@
                 if (a.indexOf('Oracle Partition') >= 0) return false;
                 if ((a.match(/Verified Facts/g) || []).length >= 3) return false;
                 return true;
-            }).slice(-3);
+            }).slice(-1);
             if (!slice.length) return;
             if (boot) boot.dataset.replayed = '1';
             lastReplayedKey = slice.map(oracleKey).join('\n');
-            slice.forEach(function(turn) {
-                if (turn.question) {
-                    appendChatMessage('user-msg', '[USER]', turn.question);
-                }
-                const prefix = turn.complete === false ? '[PARTIAL]' : '[SYS]';
-                appendChatMessage(
-                    'sys-msg',
-                    prefix,
-                    turn.complete === false
-                        ? ('Interrupted: ' + turn.answer)
-                        : turn.answer);
-            });
+            const turn = slice[0];
+            const id = String(turn.stable_id || '').slice(0, 12);
+            const q = String(turn.question || '').replace(/\s+/g, ' ').slice(0, 60);
             appendChatMessage(
                 'sys-msg',
                 '[SYS]',
-                'Replayed last ' + slice.length +
-                    ' Oracle turn(s) from disk. Candidate, not verified.');
+                'Last on disk: ' + (turn.status || 'candidate') +
+                    (id ? (' ' + id) : '') +
+                    (q ? (' — ' + q) : '') +
+                    '. Pending is on the left. Do not replay essays here.');
         }
 
         function healAgeMinutes(heal) {
