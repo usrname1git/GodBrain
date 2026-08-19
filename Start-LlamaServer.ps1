@@ -10,10 +10,9 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is off. Official Google IT Q4_0 + MTP drafted ~2x tok/s
-    # with no IMA on two 512-token gens (2026-08-19). Aug 17 Hauhau long-gen
-    # still logged an IMA. Not a Golden Record ban; just the quiet default.
-    [switch]$UseDraft
+    # Desk default is MTP on. Official IT Q4_0 + draft: ~2x tok/s, no IMA
+    # on 512+512 (2026-08-19). Pass -NoDraft to start without the draft GGUF.
+    [switch]$NoDraft
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,7 +22,11 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
-if ($UseDraft -and -not (Test-Path -LiteralPath $Draft)) { throw "missing draft $Draft" }
+$useDraft = -not $NoDraft
+if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
+    Write-Host "Start-LlamaServer: draft missing $Draft — starting without MTP"
+    $useDraft = $false
+}
 
 $logDir = Join-Path $RepoRoot "logs"
 if (-not (Test-Path -LiteralPath $logDir)) {
@@ -71,7 +74,12 @@ foreach ($log in @($stdout, $stderr)) {
     }
 }
 # Mouth file first so Galaxy shows llama=down while weights load.
-[System.IO.File]::WriteAllText((Join-Path $logDir "mouth.txt"), "llama-server gemma4-12b-hauhau-q4_k_m`n")
+$mouthLine = if ($useDraft) {
+    "llama-server gemma4-12b-hauhau-q4_k_m mtp"
+} else {
+    "llama-server gemma4-12b-hauhau-q4_k_m"
+}
+[System.IO.File]::WriteAllText((Join-Path $logDir "mouth.txt"), $mouthLine + "`n")
 
 # Do not pass -ngl: --fit on only adjusts unset knobs. 999 packed the 16 GB card.
 # WMI Create so llama-server is not a child of this shell's Job Object.
@@ -88,12 +96,15 @@ $argParts = @(
     "-a Gemma4-12B-HauhauCS",
     "--log-file `"$stderr`""
 )
-if ($UseDraft) {
+if ($useDraft) {
+    Write-Host "Start-LlamaServer: MTP on draft=$Draft"
     $argParts += @(
         "-md `"$Draft`"",
         "--spec-type draft-mtp",
         "--spec-draft-n-max 3"
     )
+} else {
+    Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
 }
 # Launch llama-server.exe directly. A cmd wrapper is a console process and
 # Windows Terminal opens a tab for it (and for console children).

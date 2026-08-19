@@ -124,7 +124,7 @@ The three routers are alternatives, not a cluster. Go and Rust share port
 
 | Component | Status | Path | Interface | Responsibility |
 |---|---|---|---|---|
-| Mouth (`llama-server` or `coli serve`) | Implemented | `Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. This host's default mouth is Gemma 12B Q4 via llama-server. Colibri is the interchangeable engine, not the protocol. |
+| Mouth (`llama-server` or `coli serve`) | Implemented | `Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Default mouth is Gemma 12B Q4 via llama-server **with MTP** (`-NoDraft` to disable). Colibri is the interchangeable engine, not the protocol. |
 | C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, Colibri invocation, privileged command dispatch |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and Colibri invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
