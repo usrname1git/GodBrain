@@ -255,7 +255,7 @@
             if (!writesNeedToken) return true;
             if (sessionStorage.getItem('godbrain_write_token')) return true;
             const entered = window.prompt(
-                'GODBRAIN_API_TOKEN is set. Paste it once to Verify/Reject from this page.');
+                'Paste GODBRAIN_API_TOKEN once (this tab only). It is the same secret as Start-GodBrain. Cancel = writes stay closed.');
             if (!entered || !entered.trim()) return false;
             sessionStorage.setItem('godbrain_write_token', entered.trim());
             return true;
@@ -664,6 +664,7 @@
                 openGraphNode(node);
                 return;
             }
+            if (writesNeedToken) ensureWriteToken();
             document.getElementById('node-manual').style.display = 'flex';
             document.getElementById('node-manual-title').innerText =
                 ((item && item.kind) || 'oracle') + ' ' + shortId;
