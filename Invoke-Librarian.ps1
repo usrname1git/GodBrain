@@ -7,9 +7,11 @@
 #   .\Invoke-Librarian.ps1 -SessionId my-vs-session -Text "..."
 #
 # -Inbox takes the oldest *.txt in repo inbox\ (not done\ or failed\).
-# One GPU slot — skip if :8000 is down or busy. Success moves to inbox\done\.
-# A failed extract moves to inbox\failed\ so Watch does not burn the GPU
-# retrying a poison file. -SelfTest checks that move without the mouth.
+# One GPU slot — skip if :8000 is down or busy, or if /api/status is
+# unreachable (cannot tell busy). Success moves to inbox\done\ with a
+# stamped name if that dest already exists. A failed extract moves to
+# inbox\failed\ so Watch does not burn the GPU retrying a poison file.
+# -SelfTest checks quarantine and dest collision without the mouth.
 
 [CmdletBinding()]
 param(
@@ -35,6 +37,21 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "missing $exe — build with build_pipeline.ps1"
 }
 
+function Get-InboxUniqueDest {
+    param(
+        [string]$Dir,
+        [string]$Name
+    )
+    $dest = Join-Path $Dir $Name
+    if (Test-Path -LiteralPath $dest) {
+        $stamp = Get-Date -Format "yyyyMMddHHmmss"
+        $dest = Join-Path $Dir (
+            [System.IO.Path]::GetFileNameWithoutExtension($Name) +
+            "-" + $stamp + [System.IO.Path]::GetExtension($Name))
+    }
+    return $dest
+}
+
 function Move-InboxQuarantine {
     param(
         [string]$SourcePath,
@@ -44,15 +61,8 @@ function Move-InboxQuarantine {
     if (-not (Test-Path -LiteralPath $FailDir)) {
         New-Item -ItemType Directory -Path $FailDir | Out-Null
     }
-    $name = [System.IO.Path]::GetFileName($SourcePath)
-    $dest = Join-Path $FailDir $name
-    if (Test-Path -LiteralPath $dest) {
-        $stamp = Get-Date -Format "yyyyMMddHHmmss"
-        $dest = Join-Path $FailDir (
-            [System.IO.Path]::GetFileNameWithoutExtension($name) +
-            "-" + $stamp + [System.IO.Path]::GetExtension($name))
-    }
-    Move-Item -LiteralPath $SourcePath -Destination $dest -Force
+    $dest = Get-InboxUniqueDest -Dir $FailDir -Name ([System.IO.Path]::GetFileName($SourcePath))
+    Move-Item -LiteralPath $SourcePath -Destination $dest
     $reason = Join-Path $FailDir (
         [System.IO.Path]::GetFileName($dest) + ".reason")
     [System.IO.File]::WriteAllText($reason, $Why)
@@ -74,7 +84,16 @@ if ($SelfTest) {
     Remove-Item -LiteralPath $dest -Force
     $reason = $dest + ".reason"
     if (Test-Path -LiteralPath $reason) { Remove-Item -LiteralPath $reason -Force }
-    Write-Host "SelfTest ok quarantine"
+    $doneDir = Join-Path $inboxDir "done"
+    if (-not (Test-Path -LiteralPath $doneDir)) {
+        New-Item -ItemType Directory -Path $doneDir | Out-Null
+    }
+    $prior = Join-Path $doneDir "selftest-done.txt"
+    [System.IO.File]::WriteAllText($prior, "prior")
+    $unique = Get-InboxUniqueDest -Dir $doneDir -Name "selftest-done.txt"
+    if ($unique -eq $prior) { throw "SelfTest: done dest collided" }
+    Remove-Item -LiteralPath $prior -Force
+    Write-Host "SelfTest ok quarantine dest-collision"
     exit 0
 }
 
@@ -98,6 +117,7 @@ if ($Inbox) {
         if ($busy) { throw "mouth is busy on :8000 — will not ingest during generate." }
     } catch {
         if ("$_" -match "will not ingest") { throw }
+        throw "kernel status unavailable — will not ingest (cannot tell if the mouth is busy)."
     }
     $inboxDir = Join-Path $RepoRoot "inbox"
     $doneDir = Join-Path $inboxDir "done"
@@ -147,8 +167,9 @@ try {
         exit $code
     }
     if ($inboxMove) {
-        Move-Item -LiteralPath $inputPath -Destination $inboxMove -Force
-        Write-Host "inbox moved to $inboxMove"
+        $doneDest = Get-InboxUniqueDest -Dir $doneDir -Name ([System.IO.Path]::GetFileName($inputPath))
+        Move-Item -LiteralPath $inputPath -Destination $doneDest
+        Write-Host "inbox moved to $doneDest"
     }
 } finally {
     if ($tmp -and (Test-Path -LiteralPath $tmp)) {
