@@ -23,9 +23,11 @@ $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
 $useDraft = -not $NoDraft
+$draftMissing = $false
 if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
     Write-Host "Start-LlamaServer: draft missing $Draft — starting without MTP"
     $useDraft = $false
+    $draftMissing = $true
 }
 
 $logDir = Join-Path $RepoRoot "logs"
@@ -104,7 +106,13 @@ if ($useDraft) {
         "--spec-draft-n-max 3"
     )
 } else {
-    Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
+    if ($NoDraft) {
+        Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
+    } elseif ($draftMissing) {
+        Write-Host "Start-LlamaServer: MTP off (draft missing)"
+    } else {
+        Write-Host "Start-LlamaServer: MTP off"
+    }
 }
 # Launch llama-server.exe directly. A cmd wrapper is a console process and
 # Windows Terminal opens a tab for it (and for console children).

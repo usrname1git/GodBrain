@@ -876,30 +876,48 @@ static bool is_host_inventory_text(const std::string& text) {
     return true;
 }
 
+static std::string host_inventory_text(const json& row) {
+    for (const char* key : {"label", "snippet", "content"}) {
+        const std::string text = row.value(key, "");
+        if (is_host_inventory_text(text)) return text;
+    }
+    return "";
+}
+
+static json host_record_from_row(const json& row, const std::string& text) {
+    return {
+        {"stable_id", row.value("stable_id", "")},
+        {"status", row.value("status", "")},
+        {"label", text},
+        {"kind", row.value("kind", "claim")},
+        {"sector", row.value("sector", "windows-sre")},
+    };
+}
+
 static json host_record_from_rag() {
     godbrain_rag::Client client;
     json response;
     std::string error;
     if (client.search("Windows host inventory os_pin", response, error)) {
+        json fallback;
         for (const auto& row : response.value("results", json::array())) {
-            const std::string text = row.value("snippet", row.value("label", ""));
-            if (!is_host_inventory_text(text)) continue;
-            return {
-                {"stable_id", row.value("stable_id", "")},
-                {"status", row.value("status", "verified")},
-                {"label", text},
-                {"kind", row.value("kind", "claim")},
-                {"sector", row.value("sector", "windows-sre")},
-            };
+            const std::string text = host_inventory_text(row);
+            if (text.empty()) continue;
+            json rec = host_record_from_row(row, text);
+            if (rec.value("status", "") == "verified") return rec;
+            if (fallback.empty()) fallback = rec;
         }
+        if (!fallback.empty()) return fallback;
     }
     json graph;
     if (client.graph(80, graph, error)) {
         json fallback;
         for (const auto& node : graph.value("nodes", json::array())) {
-            if (!is_host_inventory_text(node.value("label", ""))) continue;
-            if (node.value("status", "") == "verified") return node;
-            if (fallback.empty()) fallback = node;
+            const std::string text = host_inventory_text(node);
+            if (text.empty()) continue;
+            json rec = host_record_from_row(node, text);
+            if (rec.value("status", "") == "verified") return rec;
+            if (fallback.empty()) fallback = rec;
         }
         if (!fallback.empty()) return fallback;
     }
@@ -1855,7 +1873,7 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
     for (const auto& turn : turns) {
         if (turn.value("status", "candidate") != "candidate") continue;
         const std::string id = turn.value("stable_id", "");
-        remember(id);
+        if (!remember(id)) continue;
         items.push_back({
             {"kind", "oracle"},
             {"stable_id", id},
@@ -1868,16 +1886,17 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
     }
     if (host_rec.value("status", "") == "candidate") {
         const std::string id = host_rec.value("stable_id", "");
-        remember(id);
-        items.push_back({
-            {"kind", "host"},
-            {"stable_id", id},
-            {"status", "candidate"},
-            {"stored", true},
-            {"complete", true},
-            {"question", ""},
-            {"preview", clip_pending_line(host_rec.value("label", ""), 120)},
-        });
+        if (remember(id)) {
+            items.push_back({
+                {"kind", "host"},
+                {"stable_id", id},
+                {"status", "candidate"},
+                {"stored", true},
+                {"complete", true},
+                {"question", ""},
+                {"preview", clip_pending_line(host_rec.value("label", ""), 120)},
+            });
+        }
     }
     // Newest unverified Golden Records (Librarian / remember). Bounded.
     // Fail closed: if RAG is down, skip cards and keep oracle/host.
