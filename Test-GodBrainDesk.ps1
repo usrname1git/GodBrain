@@ -105,6 +105,9 @@ if ($brief -and [string]$brief.response -notmatch "desk=") {
 if ($brief -and [string]$brief.response -notmatch "inbox=") {
     $fails.Add("brief missing inbox=")
 }
+if ($brief -and [string]$brief.response -notmatch "sre=") {
+    $fails.Add("brief missing sre=")
+}
 if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
     if ($brief -and [string]$brief.response -notmatch "next=") {
         $fails.Add("brief missing next= while judge waiting")
@@ -125,6 +128,8 @@ if (-not (Test-Path -LiteralPath $briefFile)) {
     $fails.Add("last-brief.txt missing mouth state")
 } elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "inbox=") {
     $fails.Add("last-brief.txt missing inbox=")
+} elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "sre=") {
+    $fails.Add("last-brief.txt missing sre=")
 }
 if ($vram -and [string]$vram.response -notmatch "1 slot") {
     $fails.Add("vram missing 1 slot")
@@ -295,6 +300,12 @@ if (-not $cs2sleep) {
         $lastHealAge = ((Get-Date) - (Get-Item -LiteralPath $lastHealFile).LastWriteTime).TotalMinutes
         if ($lastHealAge -gt 20) {
             $fails.Add(("last-heal.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastHealAge))
+        }
+    }
+    if (Test-Path -LiteralPath $lastSreFile) {
+        $lastSreAge = ((Get-Date) - (Get-Item -LiteralPath $lastSreFile).LastWriteTime).TotalMinutes
+        if ($lastSreAge -gt 20) {
+            $fails.Add(("last-sre.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastSreAge))
         }
     }
     if (Test-Path -LiteralPath $lastOracleFile) {

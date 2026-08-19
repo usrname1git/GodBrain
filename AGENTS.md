@@ -157,6 +157,8 @@ cloud model to get it.
   --toolkit` (inventory + gates) and `--diagnose` (read-only probes).
   Heal runs `--diagnose` only when the layer is not ok (15 min cooldown)
   and writes `logs/last-sre-diagnose.txt`. It never `--ask`.
+  `GET /api/sre` and `/sre` are the phone glance (no GPU): layer plus that
+  snapshot. Galaxy has an SRE button. Pending skips `kind=concept` sludge.
   Do not `--ask` while `coli serve` holds the GPU slot.
   Local file edits: Galaxy can ask the mouth to change a repo file.
   The kernel saves the plan in RAM (`logs/last-edit-plan.txt`), does a

@@ -1700,6 +1700,10 @@ static std::string format_brief_text() {
         const int failed = inbox.value("failed", 0);
         if (failed > 0) reply << " failed=" << failed;
     }
+    {
+        const std::string sre = heal.value("sre_diagnose", "");
+        if (!sre.empty()) reply << " sre=" << sre;
+    }
     const json tail = st.value("tailscale", json::object());
     if (tail.value("up", false)) {
         if (tail.value("bound", false)) {
@@ -1914,10 +1918,11 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
         for (const auto& node : graph.value("nodes", json::array())) {
             if (cards >= kMaxLibraryPending) break;
             if (node.value("status", "") != "candidate") continue;
-            const std::string id = node.value("stable_id", "");
-            if (!remember(id)) continue;
             std::string kind = node.value("kind", "card");
             if (kind.empty()) kind = "card";
+            if (kind == "concept") continue;
+            const std::string id = node.value("stable_id", "");
+            if (!remember(id)) continue;
             items.push_back({
                 {"kind", kind},
                 {"stable_id", id},
