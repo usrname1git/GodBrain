@@ -278,6 +278,10 @@ cloud model to get it.
   `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door), validates
   the result, and sends one JSON document over stdin to the Go Memory Store.
   It does not cold-spawn Colibri unless `GODBRAIN_LIBRARIAN_SPAWN=1`.
+  Mouth path uses a short extract prompt (`max_tokens` 768, thinking off).
+  The Hermes skill bible stays on disk for the spawn path; that prompt
+  IMA'd Gemma 12B Q4 on this 16 GB card. The parser coerces numeric
+  `claim_id` / spans so valid JSON is not rejected as `type_error`.
   `Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or shell.
   `trigger_librarian.ps1` still extracts the newest Copilot session.
   Any text file is a valid source. iPhone/Tailscale: POST `/api/remember`

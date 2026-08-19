@@ -149,7 +149,7 @@ static std::string chat_complete(
         {"model", model},
         {"stream", false},
         {"temperature", temperature},
-        {"max_tokens", 512},
+        {"max_tokens", 768},
         {"chat_template_kwargs", json{{"enable_thinking", false}}},
         {"messages",
          json::array(
@@ -372,11 +372,22 @@ public:
                     llm_input["system"] = llm_input["system"].get<std::string>() + "\n\nWARNING: Your previous attempt failed validation. Please fix this error:\n" + last_error;
                 }
                 
-                const std::string system = llm_input["system"].get<std::string>();
+                // Mouth path: short extract prompt. The full Hermes skill
+                // bible is ~2k tokens and IMA'd Gemma 12B Q4 on this 4080.
+                const std::string system =
+                    "You are Librarian-CPP. Extract at most 6 specific claims "
+                    "from the transcript. Output one JSON object only. "
+                    "schema_version 1.0, extractor Librarian-CPP, "
+                    "trust_tier raw_candidate, provenance "
+                    "{source_type session_transcript, language mixed}, "
+                    "claims[{claim_id, type factual|architecture|"
+                    "contradiction|open_question, content, confidence, "
+                    "evidence_spans}], core_concepts[], opsec_candidates[], "
+                    "skills_extracted[]. Empty arrays if none. "
+                    "Close every brace. No markdown. No thinking.";
                 const std::string user =
-                    std::string("Transcript (raw, immutable). Reply with one "
-                                "JSON object only. First character must be '{'. "
-                                "No markdown. No thinking. No prose.\n\n") +
+                    std::string("Transcript (raw, immutable). First character "
+                                "must be '{'.\n\n") +
                     envelope.content;
                 return execute_llm_call(
                     envelope, system, user, llm_input.dump(), prompt_version,
@@ -580,6 +591,13 @@ private:
         return output;
     }
 
+    static std::string json_as_string(const json& value) {
+        if (value.is_string()) return value.get<std::string>();
+        if (value.is_number() || value.is_boolean()) return value.dump();
+        if (value.is_null()) return "";
+        return value.dump();
+    }
+
     DistillationResult parse_distillation(
         const SourceEnvelope& envelope,
         std::string output,
@@ -599,14 +617,20 @@ private:
         
         if (extracted_json.contains("claims") && extracted_json["claims"].is_array()) {
             for (const auto& c : extracted_json["claims"]) {
+                if (!c.is_object()) continue;
                 Claim claim;
-                claim.claim_id = c.value("claim_id", "");
-                claim.type = c.value("type", "");
-                claim.content = c.value("content", "");
-                claim.confidence = c.value("confidence", 0.0);
+                claim.claim_id = c.contains("claim_id") ? json_as_string(c["claim_id"]) : "";
+                claim.type = c.contains("type") ? json_as_string(c["type"]) : "";
+                claim.content = c.contains("content") ? json_as_string(c["content"]) : "";
+                if (c.contains("confidence") && c["confidence"].is_number()) {
+                    claim.confidence = c["confidence"].get<double>();
+                } else {
+                    claim.confidence = 0.0;
+                }
                 if (c.contains("evidence_spans") && c["evidence_spans"].is_array()) {
                     for (const auto& s : c["evidence_spans"]) {
-                        claim.evidence_spans.push_back(s.get<std::string>());
+                        const std::string span = json_as_string(s);
+                        if (!span.empty()) claim.evidence_spans.push_back(span);
                     }
                 }
                 alexandria_payload.claims.push_back(claim);
@@ -615,13 +639,15 @@ private:
         
         if (extracted_json.contains("core_concepts") && extracted_json["core_concepts"].is_array()) {
             for (const auto& concept : extracted_json["core_concepts"]) {
-                alexandria_payload.core_concepts.push_back(concept.get<std::string>());
+                const std::string s = json_as_string(concept);
+                if (!s.empty()) alexandria_payload.core_concepts.push_back(s);
             }
         }
         
         if (extracted_json.contains("opsec_candidates") && extracted_json["opsec_candidates"].is_array()) {
             for (const auto& candidate : extracted_json["opsec_candidates"]) {
-                alexandria_payload.opsec_candidates.push_back(candidate.get<std::string>());
+                const std::string s = json_as_string(candidate);
+                if (!s.empty()) alexandria_payload.opsec_candidates.push_back(s);
             }
         }
         
