@@ -85,6 +85,8 @@ static std::string clip_pending_line(std::string text, size_t max);
 static int file_age_minutes(const std::string& path);
 static json collect_pending_items(const json& turns, const json& host_rec);
 static std::string resolve_judgment_id(const std::string& raw, std::string& error);
+static bool ids_equal_ignore_case(const std::string& a, const std::string& b);
+static bool id_has_prefix(const std::string& id, const std::string& prefix);
 static json heal_status_body();
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn);
 static LastOracleTurn display_oracle_turn(LastOracleTurn turn);
@@ -291,6 +293,23 @@ static void mark_oracle_stored(
         }
     }
     persist_oracle_turns_locked();
+}
+
+static bool mark_oracle_status(const std::string& id, const std::string& to) {
+    if (id.empty() || (to != "verified" && to != "rejected")) return false;
+    std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+    bool hit = false;
+    for (auto& turn : g_oracle_turns) {
+        if (turn.stable_id.empty()) continue;
+        if (ids_equal_ignore_case(turn.stable_id, id) ||
+            id_has_prefix(turn.stable_id, id) ||
+            id_has_prefix(id, turn.stable_id)) {
+            turn.status = to;
+            hit = true;
+        }
+    }
+    if (hit) persist_oracle_turns_locked();
+    return hit;
 }
 
 static void store_oracle_turn_async(
@@ -1222,11 +1241,32 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
             res.set_content(json({{"error", resolve_err}}).dump(), "application/json");
             return;
         }
-        json judged = memory::set_status({
-            {"id", resolved.empty() ? raw_id : resolved},
-            {"status", payload.value("status", "")},
-            {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
-        });
+        const std::string id = resolved.empty() ? raw_id : resolved;
+        const std::string to = payload.value("status", "");
+        json judged;
+        try {
+            judged = memory::set_status({
+                {"id", id},
+                {"status", to},
+                {"reasoning", payload.value("reasoning", payload.value("reason", ""))},
+            });
+        } catch (const std::exception&) {
+            if (to == "rejected" && mark_oracle_status(id, "rejected")) {
+                pending_body();
+                res.set_content(
+                    json({{"from", "candidate"},
+                          {"to", "rejected"},
+                          {"stable_id", id},
+                          {"status", "judged"},
+                          {"local_only", true}})
+                        .dump(),
+                    "application/json");
+                return;
+            }
+            throw;
+        }
+        mark_oracle_status(judged.value("stable_id", id), judged.value("to", to));
+        mark_oracle_status(id, judged.value("to", to));
         pending_body();
         res.set_content(judged.dump(), "application/json");
     } catch (const json::exception&) {
@@ -3263,18 +3303,9 @@ int main() {
                         {"status", status},
                         {"reasoning", reasoning},
                     });
-                    {
-                        const std::string judged_id =
-                            judged.value("stable_id", id);
-                        std::lock_guard<std::mutex> lock(g_last_oracle_mu);
-                        for (auto& turn : g_oracle_turns) {
-                            if (turn.stable_id == judged_id ||
-                                turn.stable_id == id) {
-                                turn.status = judged.value("to", status);
-                            }
-                        }
-                        persist_oracle_turns_locked();
-                    }
+                    mark_oracle_status(judged.value("stable_id", id),
+                                       judged.value("to", status));
+                    mark_oracle_status(id, judged.value("to", status));
                     pending_body();
                     res.set_content(
                         json({{"response",

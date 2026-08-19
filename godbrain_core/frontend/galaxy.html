@@ -1232,7 +1232,7 @@
                     const meta = document.getElementById('node-manual-meta');
                     meta.innerText = meta.innerText.replace(/Status: \w+/, 'Status: ' + to);
                 }
-                return loadGalaxy();
+                return loadGalaxy().then(function() { return refreshStatus(); });
             })
             .catch(err => {
                 result.innerText = (err && err.message) || 'Judge failed';
