@@ -5,13 +5,14 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$Model = "C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+    [string]$Model = "C:\nvme\gemma-4-12b-it-official\gemma-4-12b-it-qat-q4_0.gguf",
     [string]$Draft = "C:\nvme\gemma4-12b-hauhau\mtp-gemma-4-12B-it.gguf",
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is MTP on. Official IT Q4_0 + draft: ~2x tok/s, no IMA
-    # on 512+512 (2026-08-19). Pass -NoDraft to start without the draft GGUF.
+    # Desk default is official Google IT Q4_0 + MTP. Hauhau Q4_K_M + MTP IMA'd
+    # Librarian extract (2026-08-20). Pass -NoDraft to start without the draft.
+    # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
     [switch]$NoDraft
 )
 
@@ -73,11 +74,14 @@ foreach ($log in @($stdout, $stderr)) {
     }
 }
 # Mouth file first so Galaxy shows llama=down while weights load.
-$mouthLine = if ($useDraft) {
-    "llama-server gemma4-12b-hauhau-q4_k_m mtp"
+$mouthTag = if ($Model -match 'hauhau') {
+    "gemma4-12b-hauhau-q4_k_m"
+} elseif ($Model -match 'qat-q4_0|12b-it-qat') {
+    "gemma4-12b-it-q4_0"
 } else {
-    "llama-server gemma4-12b-hauhau-q4_k_m"
+    [System.IO.Path]::GetFileNameWithoutExtension($Model)
 }
+$mouthLine = "llama-server $mouthTag" + $(if ($useDraft) { " mtp" } else { "" })
 [System.IO.File]::WriteAllText((Join-Path $logDir "mouth.txt"), $mouthLine + "`n")
 
 # Do not pass -ngl: --fit on only adjusts unset knobs. 999 packed the 16 GB card.
@@ -92,7 +96,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a Gemma4-12B-HauhauCS",
+    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } else { 'Gemma4-12B-IT' })",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
