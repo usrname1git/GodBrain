@@ -99,3 +99,8 @@ are pointers into this split so old links still resolve.
 | `docs/` | Architecture parts plus research markdown (Factory roster, Oracle strategies, Polymarket notes). |
 | `godbrain_core/` | Kernel, Memory Store, RAG, Galaxy, SRE tools. |
 | `inbox/` | Raw drop for Librarian. Immutable after ingest. |
+
+Root is the operator contract: what you run at logon, what Watch `-File`s,
+what an agent reads first, what GitHub shows. Folders are implementation and
+research. Do not empty the root down to `README.md`. Do not move Start / Heal
+/ Watch into `scripts/` without a GO and a task re-register.

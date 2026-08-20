@@ -13,6 +13,12 @@
 - Do not edit generated outputs (`build/`, `target/`, `out/`, `cache/`, binaries,
   object files, or model snapshots). Do not modernize `archive/neo4j`; it is
   historical and is not an active runtime dependency.
+- Root is doors plus constitution, not a dump and not an empty lobby.
+  Keep `README.md`, `AGENTS.md`, `ARCHITECTURE.md`, `Start-GodBrain.ps1`,
+  Heal, Watch, Install, CS2, and `Test-GodBrainDesk.ps1` at the repo root.
+  Helpers live in `scripts/`; research markdown in `docs/`. Do not move the
+  logon/Watch/Heal doors into `scripts/` without an operator GO and a
+  scheduled-task cutover. An empty root is not a named signal.
 
 ## Default is one loop
 
