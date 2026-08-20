@@ -353,7 +353,7 @@ if ($waitingFiles.Count -gt 0) {
               (((Get-Date) - (Get-Item -LiteralPath $inboxLock).LastWriteTime).TotalMinutes -lt 20)) {
         $inbox.skip = "in-progress"
     } else {
-        $lib = Join-Path $RepoRoot "Invoke-Librarian.ps1"
+        $lib = Join-Path $RepoRoot "scripts\Invoke-Librarian.ps1"
         if (-not (Test-Path -LiteralPath $lib)) {
             $inbox.skip = "missing-invoke"
         } else {

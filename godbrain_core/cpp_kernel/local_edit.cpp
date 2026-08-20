@@ -72,6 +72,13 @@ bool path_ok(const std::string& rel) {
         return ends_with(lower, ".ps1") || ends_with(lower, ".cmd") ||
                ends_with(lower, ".md");
     }
+    if (lower.rfind("scripts\\", 0) == 0) {
+        return ends_with(lower, ".ps1") &&
+               lower.find('\\', 8) == std::string::npos;
+    }
+    if (lower.rfind("docs\\", 0) == 0) {
+        return ends_with(lower, ".md");
+    }
     return lower.rfind("godbrain_core\\", 0) == 0;
 }
 
@@ -206,7 +213,7 @@ std::string guess_file(const std::string& text) {
     };
     for (const char* name : names) {
         if (lower.find(name) != std::string::npos) {
-            if (std::string(name) == "start-llamaserver.ps1") return "Start-LlamaServer.ps1";
+            if (std::string(name) == "start-llamaserver.ps1") return "scripts\\Start-LlamaServer.ps1";
             if (std::string(name) == "start-godbrain.ps1") return "Start-GodBrain.ps1";
             if (std::string(name) == "heal-godbrain.ps1") return "Heal-GodBrain.ps1";
             if (std::string(name) == "watch-godbrain.ps1") return "Watch-GodBrain.ps1";

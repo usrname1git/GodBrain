@@ -1558,7 +1558,7 @@ static bool maybe_restart_mouth() {
     if (process_running_ci(L"llama-server.exe")) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
-    const std::string starter = repo + "\\Start-LlamaServer.ps1";
+    const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
     const std::string pwsh = path_exists("C:\\pwsh\\pwsh.exe")
                                  ? "C:\\pwsh\\pwsh.exe"
                                  : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -1688,7 +1688,10 @@ static std::string format_brief_text() {
             get_exe_dir() + "\\..\\..\\logs\\heal-last.json"));
         const bool cs2sleep = cs2.value("sleep", false);
         const bool live_rag = rag.value("ready", false);
-        const bool live_mouth = coli.value("up", false);
+        const bool live_mouth = coli.value("up", false) ||
+            st.value("mouth_restarting", false) ||
+            process_running_ci(L"llama-server.exe") ||
+            process_running_ci(L"coli.exe");
         const bool heal_ok = heal.value("ok", false);
         const bool heal_rag = heal.value("rag_ready", false);
         const bool heal_mouth = heal.value("mouth_ready", heal.value("mouth", false));
@@ -2489,9 +2492,12 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
             const bool last_rag = last.value("rag_ready", diagnose.value("rag_ready", false));
             const bool last_mouth = last.value("mouth_ready", last.value("mouth", false));
             const bool cs2sleep = last.value("cs2_sleep", false);
+            const bool mouth_alive = live.value("mouth", false) ||
+                process_running_ci(L"llama-server.exe") ||
+                process_running_ci(L"coli.exe");
             const bool lie = last_ok &&
                 ((last_rag && !live.value("rag_ready", live.value("rag", false))) ||
-                 (last_mouth && !live.value("mouth", false) && !cs2sleep));
+                 (last_mouth && !mouth_alive && !cs2sleep));
             reply << " match=" << (lie ? "lie" : "live");
         }
         const json inbox = inbox_desk();

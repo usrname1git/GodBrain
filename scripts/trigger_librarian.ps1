@@ -4,6 +4,7 @@
 # spawn Colibri unless GODBRAIN_LIBRARIAN_SPAWN=1.
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
 # 1. Locate the latest Copilot session directory
 $copilotStatePath = Join-Path $env:USERPROFILE ".copilot\session-state"
@@ -112,12 +113,12 @@ extract_transcript(r'$eventsFile', r'$tempTranscriptPath')
     Write-Host "[LIBRARIAN HOOK] Waking up the GodBrain Librarian (C++)..."
     
     $librarianExe = if ([string]::IsNullOrWhiteSpace($env:GODBRAIN_LIBRARIAN_PATH)) {
-        Join-Path $PSScriptRoot "godbrain_core\cpp_tools\librarian.exe"
+        Join-Path $RepoRoot "godbrain_core\cpp_tools\librarian.exe"
     } else {
         $env:GODBRAIN_LIBRARIAN_PATH
     }
     if (-Not (Test-Path -LiteralPath $librarianExe -PathType Leaf)) {
-        throw "Librarian executable not found at '$librarianExe'. Run build_pipeline.ps1 or set GODBRAIN_LIBRARIAN_PATH."
+        throw "Librarian executable not found at '$librarianExe'. Run .\scripts\build_pipeline.ps1 or set GODBRAIN_LIBRARIAN_PATH."
     }
     
     # Execute the native pipeline

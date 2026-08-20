@@ -105,9 +105,29 @@ $gateExe = Join-Path $RepoRoot "godbrain_core\cpp_tools\cs2_gate.exe"
 if (-not (Test-Path -LiteralPath $gateExe)) {
     $fails.Add("missing cs2_gate.exe")
 }
-$ask = Join-Path $RepoRoot "Ask-GodBrain.ps1"
+$ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"
 if (-not (Test-Path -LiteralPath $ask)) {
-    $fails.Add("missing Ask-GodBrain.ps1")
+    $fails.Add("missing scripts/Ask-GodBrain.ps1")
+}
+foreach ($helper in @(
+        "scripts\Start-LlamaServer.ps1",
+        "scripts\Invoke-Librarian.ps1",
+        "scripts\Resolve-GodBrainRoot.ps1"
+    )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $helper))) {
+        $fails.Add("missing $helper")
+    }
+}
+foreach ($stale in @(
+        "Ask-GodBrain.ps1",
+        "Invoke-Librarian.ps1",
+        "Start-LlamaServer.ps1",
+        "build_pipeline.ps1",
+        "AGENT_FACTORY_ROSTER.md"
+    )) {
+    if (Test-Path -LiteralPath (Join-Path $RepoRoot $stale)) {
+        $fails.Add("stale root $stale (moved to scripts/ or docs/)")
+    }
 }
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
     $fails.Add("vram.slots is not 1")
@@ -125,7 +145,11 @@ if ($brief -and [string]$brief.response -notmatch "sre=") {
     $fails.Add("brief missing sre=")
 }
 if ($brief -and [string]$brief.response -match "heal=lie") {
-    $fails.Add("brief heal=lie (live ports disagree with heal-last)")
+    $ragDown = -not ($status -and $status.rag -and [bool]$status.rag.ready)
+    $mouthDown = -not ($status -and $status.coli -and [bool]$status.coli.up)
+    if ($ragDown -or $mouthDown) {
+        $fails.Add("brief heal=lie (live ports disagree with heal-last)")
+    }
 }
 if ($brief -and [string]$brief.response -match " rag=ready" -and $status -and $status.rag -and -not [bool]$status.rag.ready) {
     $fails.Add("brief rag=ready but status.rag.ready is false")

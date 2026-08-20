@@ -74,7 +74,7 @@ privileged writes; do not start a kernel that fail-opens loopback writes.
 From the repo root:
 
 ```powershell
-.\build_pipeline.ps1
+.\scripts\build_pipeline.ps1
 .\godbrain_core\cpp_tools\librarian.exe --self-test
 ```
 
@@ -107,7 +107,7 @@ documentation-only check.
 One GPU slot. On this desk:
 
 ```powershell
-.\Start-LlamaServer.ps1
+.\scripts\Start-LlamaServer.ps1
 ```
 
 MTP is on by default. Pass `-NoDraft` to start without the draft GGUF. This
@@ -168,10 +168,10 @@ Browser: `http://127.0.0.1:8083/galaxy`
 Heal glance (no GPU): `http://127.0.0.1:8083/api/brief`
 
 Drop a `.txt` in `inbox\` when the mouth is idle; Heal ingests one file per
-tick. Or `.\Invoke-Librarian.ps1 -File path.txt`. Claims stay candidate until
+tick. Or `.\scripts\Invoke-Librarian.ps1 -File path.txt`. Claims stay candidate until
 `/verify`.
 
-Loopback ask without Galaxy: `.\Ask-GodBrain.ps1`.
+Loopback ask without Galaxy: `.\scripts\Ask-GodBrain.ps1`.
 
 If Tailscale has a 100.x and `GODBRAIN_API_TOKEN` is set, `/api/doors` lists
 the phone URLs. Those routes need the bearer. Chat stays loopback.

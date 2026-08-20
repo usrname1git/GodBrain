@@ -1,7 +1,7 @@
 # Pointer for the next loop. Not a wiki recap. Not a second brain.
 # Writes logs/where-we-are.md. Optional /api/remember so Galaxy can see it.
 # Usage:
-#   .\Write-SessionDigest.ps1 -Now "..." -Next "..." [-Blocked "..."] [-Remember]
+#   .\scripts\Write-SessionDigest.ps1 -Now "..." -Next "..." [-Blocked "..."] [-Remember]
 
 [CmdletBinding()]
 param(
@@ -15,10 +15,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 $logDir = Join-Path $RepoRoot "logs"
 if (-not (Test-Path -LiteralPath $logDir)) {
     New-Item -ItemType Directory -Path $logDir | Out-Null

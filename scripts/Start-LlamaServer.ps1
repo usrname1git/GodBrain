@@ -16,10 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
 $useDraft = -not $NoDraft

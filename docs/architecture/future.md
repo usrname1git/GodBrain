@@ -9,7 +9,7 @@ real parallelism, different runner, auditable branch, or an overloaded
 verifier). This host has one GPU slot and one `last_oracle.json`. Growing
 Alexandria is Librarian + `/verify`, not Architect/Surgeon/Verifier agents.
 
-See [`AGENT_FACTORY_ROSTER.md`](../../AGENT_FACTORY_ROSTER.md) if that contract
+See [`AGENT_FACTORY_ROSTER.md`](../AGENT_FACTORY_ROSTER.md) if that contract
 is ever staffed.
 
 ## Ranked later decisions

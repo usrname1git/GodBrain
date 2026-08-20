@@ -1,10 +1,10 @@
 # Ask the local mouth without opening Galaxy. Loopback only. One GPU slot.
 # Ideas are candidate Golden Records in sector=idea. Never auto-verified.
 #
-#   .\Ask-GodBrain.ps1 what is this PC named
-#   .\Ask-GodBrain.ps1 -Idea "store this thought"
-#   .\Ask-GodBrain.ps1 -Ideas
-#   .\Ask-GodBrain.ps1 /brief
+#   .\scripts\Ask-GodBrain.ps1 what is this PC named
+#   .\scripts\Ask-GodBrain.ps1 -Idea "store this thought"
+#   .\scripts\Ask-GodBrain.ps1 -Ideas
+#   .\scripts\Ask-GodBrain.ps1 /brief
 
 [CmdletBinding()]
 param(

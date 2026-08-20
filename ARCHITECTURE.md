@@ -89,3 +89,13 @@ bearer writes. It does not host `/api/chat`. Experimental Go/Rust routers on
 
 Earlier domain pages (`runtime`, `alexandria`, `security-and-ops`, `research`)
 are pointers into this split so old links still resolve.
+
+## Layout
+
+| Place | What lives there |
+|---|---|
+| Repo root | Operator doors: `Start-GodBrain`, Heal, Watch, Install, CS2, desk test. `README.md`, `AGENTS.md`, `ARCHITECTURE.md`. |
+| `scripts/` | Helpers: Librarian, llama mouth, Ask, digest, pipeline. Not scheduled-task entrypoints. |
+| `docs/` | Architecture parts plus research markdown (Factory roster, Oracle strategies, Polymarket notes). |
+| `godbrain_core/` | Kernel, Memory Store, RAG, Galaxy, SRE tools. |
+| `inbox/` | Raw drop for Librarian. Immutable after ingest. |
