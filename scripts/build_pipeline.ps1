@@ -1,13 +1,14 @@
-# build_pipeline.ps1
+# scripts/build_pipeline.ps1
 # Builds the C++ Librarian and Go Alexandria services to their expected locations
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
 Write-Host "Building Alexandria Pipeline..."
 
 # 1. Build Memory Store and canonical retrieval tools
 Write-Host "Building Memory Store and RAG tools (Go)..."
-Push-Location "$PSScriptRoot\godbrain_core\memory_store"
+Push-Location "$RepoRoot\godbrain_core\memory_store"
 try {
     go build -o memory-store.exe ./cmd/memory-store
     if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
@@ -24,7 +25,7 @@ try {
 
 # 2. Build Librarian
 Write-Host "Building Librarian (C++)..."
-Push-Location "$PSScriptRoot\godbrain_core\cpp_tools"
+Push-Location "$RepoRoot\godbrain_core\cpp_tools"
 try {
     # Check if cl is already in PATH
     $clOutput = (Get-Command cl -ErrorAction SilentlyContinue)

@@ -13,6 +13,12 @@
 - Do not edit generated outputs (`build/`, `target/`, `out/`, `cache/`, binaries,
   object files, or model snapshots). Do not modernize `archive/neo4j`; it is
   historical and is not an active runtime dependency.
+- Root is doors plus constitution, not a dump and not an empty lobby.
+  Keep `README.md`, `AGENTS.md`, `ARCHITECTURE.md`, `Start-GodBrain.ps1`,
+  Heal, Watch, Install, CS2, and `Test-GodBrainDesk.ps1` at the repo root.
+  Helpers live in `scripts/`; research markdown in `docs/`. Do not move the
+  logon/Watch/Heal doors into `scripts/` without an operator GO and a
+  scheduled-task cutover. An empty root is not a named signal.
 
 ## Default is one loop
 
@@ -96,7 +102,7 @@ plan step is skipped when the blast radius is a one-liner.
   `logs/where-we-are.md` first if it exists (session pointer: what
   changed, what is next). Then `last_oracle.json`, Heal last, git,
   Golden Records. Do not treat chat history as the source of truth.
-  End a working session with `Write-SessionDigest.ps1 -Now ... -Next
+  End a working session with `scripts\Write-SessionDigest.ps1 -Now ... -Next
   ...`. If the plan died, say so; do not continue from a hallucinated
   tree.
 
@@ -188,8 +194,9 @@ Galaxy can ask the mouth to change a repo file. The kernel saves the
 plan in RAM (`logs/last-edit-plan.txt`), does a second GPU pass for
 `*** APPLY` blocks (thinking off, spoken-only parse), writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and
-writes only root `.ps1` / `.cmd` / `.md` or `godbrain_core\` (not
-build / vendor / LLM / archive). `local_edit_test` applies a real
+writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
+or `godbrain_core\` (not build / vendor / LLM / archive). `local_edit_test`
+applies a real
 fixture file offline (no GPU). Never git push from the mouth.
 
 ### CS2 pause
@@ -267,7 +274,7 @@ worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
   a second fetch.
 
 If `logs/mouth.txt` says llama and `:8000` is down, `/api/status` and
-`/brief` kick `Start-LlamaServer.ps1` via `run_hidden` (skip CS2, skip a
+`/brief` kick `scripts\Start-LlamaServer.ps1` via `run_hidden` (skip CS2, skip a
 loading `llama-server.exe`, 5 min cooldown) and report `llama=starting`
 so Galaxy does not wait on the 5 min Watch tick.
 
@@ -277,10 +284,9 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 ### Mouth (llama-server / Colibri)
 
 Live `/edit` works on the Gemma 12B Q4 mouth. Desk default is
-`Start-LlamaServer.ps1` **with MTP** (draft GGUF, `--spec-type draft-mtp`).
-Official IT Q4_0 + MTP drafted ~2x tok/s with no IMA on 512+512 tokens.
-Pass `-NoDraft` to start without it. Aug 17 Hauhau long-gen IMA is still
-in `llama-server.err.log`; that is not a never-MTP Golden Record.
+`scripts\Start-LlamaServer.ps1` official Gemma 4 IT Q4_0 **without MTP**.
+MTP (Hauhau or official, b10453 and b10520) IMA'd Librarian extracts.
+Pass `-UseDraft` to enable the draft GGUF. `-NoDraft` keeps MTP off.
 
 Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored
@@ -355,19 +361,19 @@ live `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door),
 validates the result, and sends one JSON document over stdin to the Go
 Memory Store. It does not cold-spawn Colibri unless
 `GODBRAIN_LIBRARIAN_SPAWN=1`. Mouth path uses a short extract prompt
-(`max_tokens` 768, thinking off). The Hermes skill bible stays on disk
+(`max_tokens` 2048, thinking off). The Hermes skill bible stays on disk
 for the spawn path; that prompt IMA'd Gemma 12B Q4 on this 16 GB card.
 The parser coerces numeric `claim_id` / spans so valid JSON is not
 rejected as `type_error`.
 
-`Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or shell.
-`trigger_librarian.ps1` still extracts the newest Copilot session. Any
-text file is a valid source.
+`scripts\Invoke-Librarian.ps1 -Text` / `-File` is the door from any IDE or
+shell. `scripts\trigger_librarian.ps1` still extracts the newest Copilot
+session. Any text file is a valid source.
 
 iPhone / Tailscale: POST `/api/remember` `{text, sector:"idea"}` for an
 idea candidate (never auto-verified), or POST `/api/librarian` `{text}`
 to classify (uses the GPU mouth; bearer required). Loopback ask without
-Galaxy: `Ask-GodBrain.ps1` POSTs `/api/chat`. Chat generate stays
+Galaxy: `scripts\Ask-GodBrain.ps1` POSTs `/api/chat`. Chat generate stays
 loopback-only. `/idea` and `/ideas` are the idea category.
 
 `godbrain_core/memory_store/` is the active Alexandria write boundary. It
@@ -424,7 +430,7 @@ changes directory explicitly.
 ### Alexandria pipeline
 
 ```powershell
-.\build_pipeline.ps1
+.\scripts\build_pipeline.ps1
 .\godbrain_core\cpp_tools\librarian.exe --self-test
 
 Push-Location godbrain_core\memory_store
@@ -435,7 +441,7 @@ go build -o rag-rebuild.exe ./cmd/rag-rebuild
 Pop-Location
 ```
 
-`build_pipeline.ps1` builds `memory-store.exe`, `rag-service.exe`,
+`scripts\build_pipeline.ps1` builds `memory-store.exe`, `rag-service.exe`,
 `rag-rebuild.exe`, `rag-eval.exe`, and `librarian.exe`. The Librarian self-test is offline and
 uses its in-memory store. To exercise MongoDB integration tests, set
 `MONGODB_TEST_URI` to a disposable instance; tests use isolated temporary

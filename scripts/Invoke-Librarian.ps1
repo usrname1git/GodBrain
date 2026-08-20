@@ -1,10 +1,10 @@
 # Call Librarian from any IDE or shell. Classifies text via the live :8000 mouth.
 # Does not spawn Colibri. One GPU slot — do not run during a Galaxy generate.
 #
-#   .\Invoke-Librarian.ps1 -Text "claim text"
-#   .\Invoke-Librarian.ps1 -File C:\path\transcript.txt
-#   .\Invoke-Librarian.ps1 -Inbox
-#   .\Invoke-Librarian.ps1 -SessionId my-vs-session -Text "..."
+#   .\scripts\Invoke-Librarian.ps1 -Text "claim text"
+#   .\scripts\Invoke-Librarian.ps1 -File C:\path\transcript.txt
+#   .\scripts\Invoke-Librarian.ps1 -Inbox
+#   .\scripts\Invoke-Librarian.ps1 -SessionId my-vs-session -Text "..."
 #
 # -Inbox takes the oldest *.txt in repo inbox\ (not done\ or failed\).
 # One GPU slot — skip if :8000 is down or busy, or if /api/status is
@@ -24,17 +24,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) && $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 $exe = if ($env:GODBRAIN_LIBRARIAN_PATH) {
     $env:GODBRAIN_LIBRARIAN_PATH
 } else {
     Join-Path $RepoRoot "godbrain_core\cpp_tools\librarian.exe"
 }
 if (-not (Test-Path -LiteralPath $exe)) {
-    throw "missing $exe — build with build_pipeline.ps1"
+    throw "missing $exe — build with .\scripts\build_pipeline.ps1"
 }
 
 function Get-InboxUniqueDest {

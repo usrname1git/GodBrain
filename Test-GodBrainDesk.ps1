@@ -72,8 +72,20 @@ try {
                 $fails.Add("pending includes Heal loop remember noise")
                 break
             }
+            if ([string]$item.preview -match "^Session digest") {
+                $fails.Add("pending includes Session digest sludge")
+                break
+            }
             if ([string]$item.kind -eq "concept") {
                 $fails.Add("pending includes concept sludge")
+                break
+            }
+            if ([string]$item.kind -eq "opsec_candidate") {
+                $fails.Add("pending includes opsec_candidate sludge")
+                break
+            }
+            if ([string]$item.preview -match "^Golden Record ") {
+                $fails.Add("pending includes Golden Record id sludge")
                 break
             }
         }
@@ -101,9 +113,29 @@ $gateExe = Join-Path $RepoRoot "godbrain_core\cpp_tools\cs2_gate.exe"
 if (-not (Test-Path -LiteralPath $gateExe)) {
     $fails.Add("missing cs2_gate.exe")
 }
-$ask = Join-Path $RepoRoot "Ask-GodBrain.ps1"
+$ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"
 if (-not (Test-Path -LiteralPath $ask)) {
-    $fails.Add("missing Ask-GodBrain.ps1")
+    $fails.Add("missing scripts/Ask-GodBrain.ps1")
+}
+foreach ($helper in @(
+        "scripts\Start-LlamaServer.ps1",
+        "scripts\Invoke-Librarian.ps1",
+        "scripts\Resolve-GodBrainRoot.ps1"
+    )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $helper))) {
+        $fails.Add("missing $helper")
+    }
+}
+foreach ($stale in @(
+        "Ask-GodBrain.ps1",
+        "Invoke-Librarian.ps1",
+        "Start-LlamaServer.ps1",
+        "build_pipeline.ps1",
+        "AGENT_FACTORY_ROSTER.md"
+    )) {
+    if (Test-Path -LiteralPath (Join-Path $RepoRoot $stale)) {
+        $fails.Add("stale root $stale (moved to scripts/ or docs/)")
+    }
 }
 if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
     $fails.Add("vram.slots is not 1")
@@ -119,6 +151,19 @@ if ($brief -and [string]$brief.response -notmatch "inbox=") {
 }
 if ($brief -and [string]$brief.response -notmatch "sre=") {
     $fails.Add("brief missing sre=")
+}
+if ($brief -and [string]$brief.response -match "heal=lie") {
+    $ragDown = -not ($status -and $status.rag -and [bool]$status.rag.ready)
+    $mouthDown = -not ($status -and $status.coli -and [bool]$status.coli.up)
+    if ($ragDown -or $mouthDown) {
+        $fails.Add("brief heal=lie (live ports disagree with heal-last)")
+    }
+}
+if ($brief -and [string]$brief.response -match " rag=ready" -and $status -and $status.rag -and -not [bool]$status.rag.ready) {
+    $fails.Add("brief rag=ready but status.rag.ready is false")
+}
+if ($brief -and [string]$brief.response -match "=(serve|busy) " -and $status -and $status.coli -and -not [bool]$status.coli.up) {
+    $fails.Add("brief mouth serve/busy but coli.up is false")
 }
 if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
     if ($brief -and [string]$brief.response -notmatch "next=") {
@@ -206,6 +251,12 @@ if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
 if ($heal -and $heal.last -and $heal.response -notmatch "sre=") {
     $fails.Add("heal api missing sre=")
 }
+if ($heal -and $heal.last -and $heal.response -notmatch "match=") {
+    $fails.Add("heal api missing match=live|lie")
+}
+if ($heal -and [string]$heal.response -match "match=lie") {
+    $fails.Add("heal match=lie (live ports disagree with heal-last)")
+}
 if ($heal -and $heal.last -and $null -eq $heal.age_min) {
     $fails.Add("heal api missing age_min")
 }
@@ -216,6 +267,8 @@ if (-not (Test-Path -LiteralPath $lastHealFile)) {
     $fails.Add("last-heal.txt missing last ok=")
 } elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "sre=") {
     $fails.Add("last-heal.txt missing sre=")
+} elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "match=") {
+    $fails.Add("last-heal.txt missing match=")
 }
 $lastSreFile = Join-Path $RepoRoot "logs\last-sre.txt"
 if (-not (Test-Path -LiteralPath $lastSreFile)) {

@@ -10,13 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
-    throw "Switch-ColibriSnapshot: RepoRoot is empty."
-}
-$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
 function Test-ColibriSnapshot([string]$Path) {
     $need = @(

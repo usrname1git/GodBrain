@@ -17,12 +17,12 @@ service named `MongoDB`.
 ## Mouth (`:8000`)
 
 One GPU generate slot. Desk default is Gemma 12B Q4 via `llama-server` **with
-MTP** (`Start-LlamaServer.ps1`; `-NoDraft` disables the draft GGUF).
+no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft` enables the draft GGUF).
 `logs/mouth.txt` says which engine is up.
 
 Galaxy chat POSTs the live OpenAI door (`/v1/chat/completions`). If `:8000` is
 down the kernel **refuses** to cold-spawn a 16 GB snapshot. Heal/status may kick
-`Start-LlamaServer.ps1` (skip CS2, skip a loading server, 5 min cooldown) and
+`scripts/Start-LlamaServer.ps1` (skip CS2, skip a loading server, 5 min cooldown) and
 report `llama=starting`.
 
 Librarian uses that same mouth. It does not hold VRAM. It does not cold-spawn

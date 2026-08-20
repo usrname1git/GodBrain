@@ -5,24 +5,24 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$Model = "C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf",
+    [string]$Model = "C:\nvme\gemma-4-12b-it-official\gemma-4-12b-it-qat-q4_0.gguf",
     [string]$Draft = "C:\nvme\gemma4-12b-hauhau\mtp-gemma-4-12B-it.gguf",
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is MTP on. Official IT Q4_0 + draft: ~2x tok/s, no IMA
-    # on 512+512 (2026-08-19). Pass -NoDraft to start without the draft GGUF.
+    # Desk default is official Google IT Q4_0 **without MTP**. MTP (Hauhau or
+    # official) IMA'd Librarian extracts on b10453 and b10520. Pass -UseDraft
+    # to enable the draft GGUF. -NoDraft is accepted and keeps MTP off.
+    # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+    [switch]$UseDraft,
     [switch]$NoDraft
 )
 
 $ErrorActionPreference = "Stop"
-if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
-    $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
-$useDraft = -not $NoDraft
+$useDraft = $UseDraft -and -not $NoDraft
 $draftMissing = $false
 if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
     Write-Host "Start-LlamaServer: draft missing $Draft — starting without MTP"
@@ -76,11 +76,14 @@ foreach ($log in @($stdout, $stderr)) {
     }
 }
 # Mouth file first so Galaxy shows llama=down while weights load.
-$mouthLine = if ($useDraft) {
-    "llama-server gemma4-12b-hauhau-q4_k_m mtp"
+$mouthTag = if ($Model -match 'hauhau') {
+    "gemma4-12b-hauhau-q4_k_m"
+} elseif ($Model -match 'qat-q4_0|12b-it-qat') {
+    "gemma4-12b-it-q4_0"
 } else {
-    "llama-server gemma4-12b-hauhau-q4_k_m"
+    [System.IO.Path]::GetFileNameWithoutExtension($Model)
 }
+$mouthLine = "llama-server $mouthTag" + $(if ($useDraft) { " mtp" } else { "" })
 [System.IO.File]::WriteAllText((Join-Path $logDir "mouth.txt"), $mouthLine + "`n")
 
 # Do not pass -ngl: --fit on only adjusts unset knobs. 999 packed the 16 GB card.
@@ -95,7 +98,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a Gemma4-12B-HauhauCS",
+    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } else { 'Gemma4-12B-IT' })",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
@@ -106,12 +109,12 @@ if ($useDraft) {
         "--spec-draft-n-max 3"
     )
 } else {
-    if ($NoDraft) {
-        Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
-    } elseif ($draftMissing) {
+    if ($draftMissing) {
         Write-Host "Start-LlamaServer: MTP off (draft missing)"
+    } elseif ($UseDraft -and $NoDraft) {
+        Write-Host "Start-LlamaServer: MTP off (-NoDraft wins over -UseDraft)"
     } else {
-        Write-Host "Start-LlamaServer: MTP off"
+        Write-Host "Start-LlamaServer: MTP off (desk default; pass -UseDraft to enable)"
     }
 }
 # Launch llama-server.exe directly. A cmd wrapper is a console process and

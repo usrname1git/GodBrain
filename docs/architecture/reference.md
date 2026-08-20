@@ -30,20 +30,20 @@ never changes; only status does.
 
 | Component | Status | Path | Interface | Responsibility |
 |---|---|---|---|---|
-| Mouth (`llama-server` or `coli serve`) | Implemented | `Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Desk default is Gemma 12B Q4 via llama-server **with MTP** (`-NoDraft` to disable). Colibri is the interchangeable engine, not the protocol. |
+| Mouth (`llama-server` or `coli serve`) | Implemented | `scripts/Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Desk default is official Gemma 12B IT Q4_0 **without MTP** (`-UseDraft` to enable). Colibri is the interchangeable engine, not the protocol. |
 | C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, mouth invocation, privileged command dispatch, no-GPU GET doors |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and mouth invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
 | Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
 | Golden Record RAG service | Implemented retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search, graph, and document reads with source-resolved citations |
-| Native Librarian | Implemented | `godbrain_core/cpp_tools/librarian.cpp` | CLI, `Invoke-Librarian.ps1`, Heal inbox, `POST /api/librarian` | Derive a bounded Golden Record from a transcript and invoke the Memory Store. Uses the live `:8000` mouth; does not hold VRAM. |
+| Native Librarian | Implemented | `godbrain_core/cpp_tools/librarian.cpp` | CLI, `scripts/Invoke-Librarian.ps1`, Heal inbox, `POST /api/librarian` | Derive a bounded Golden Record from a transcript and invoke the Memory Store. Uses the live `:8000` mouth; does not hold VRAM. |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing, chat, This host vs Pending, SRE glance |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. Heal never `--ask`. |
 | Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Detect TCP then HTTP ready, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, `rag-rebuild` if unready, drain one inbox file, verify, remember on act/fail. Never kills. |
 | CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1` | launch script + schtask backup | Pause mouth and Tailscale, launch Steam app 730, resume 5 minutes after `CS2.exe` exits. |
-| Agent Factory control plane | Planned, **not next** | `AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. |
+| Agent Factory control plane | Planned, **not next** | `docs/AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. |
 
 ## C++ Kernel HTTP (`127.0.0.1:8083`)
 
@@ -164,7 +164,7 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `GODBRAIN_SNAPSHOT_PATH` | Routers and SRE tools | Override model snapshot directory |
 | `GODBRAIN_CUDA_EXPERT_GB` | C++ Kernel | Override Colibri VRAM expert budget |
 | `GODBRAIN_COLI_OVERCOMMIT` | C++ Kernel | `1` allows experts to spill into RAM. Default off |
-| `GODBRAIN_LIBRARIAN_PATH` | `trigger_librarian.ps1` | Override `librarian.exe` |
+| `GODBRAIN_LIBRARIAN_PATH` | `scripts/trigger_librarian.ps1` | Override `librarian.exe` |
 | `GODBRAIN_LIBRARIAN_SPAWN` | Native Librarian | `1` allows Librarian to cold-spawn Colibri. Default off |
 | `LLM_RUNNER_PATH` | Native Librarian | Override Colibri executable for framed inference |
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
@@ -251,7 +251,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant T as trigger_librarian.ps1
+    participant T as scripts/trigger_librarian.ps1
     participant L as librarian.exe
     participant G as memory-store.exe
     participant M as MongoDB
@@ -268,7 +268,7 @@ sequenceDiagram
     L-->>T: Process exit status
 ```
 
-Heal inbox and `Invoke-Librarian.ps1` use the same Librarian → Memory Store
+Heal inbox and `scripts/Invoke-Librarian.ps1` use the same Librarian → Memory Store
 path, with the live `:8000` mouth.
 
 ## Trust zones and controls
@@ -312,7 +312,7 @@ execution — which this host is not doing.
 | `logs/last-oracle.txt` | `/last` |
 | `logs/last-edit.txt` | `/last-edit` |
 | `logs/heal-last.json` | Heal |
-| `logs/where-we-are.md` | `Write-SessionDigest.ps1` |
+| `logs/where-we-are.md` | `scripts/Write-SessionDigest.ps1` |
 | `logs/mouth.txt` | mouth starter |
 
 Logs must redact bearer tokens, credentials, private keys, and sensitive

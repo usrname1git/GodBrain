@@ -1235,8 +1235,28 @@ static std::string format_last_text() {
     if (turns.empty()) {
         reply << "No Oracle turns on disk yet.";
     } else {
-        reply << turns.size() << " Oracle turn(s) on disk "
-                 "(candidate, not verified):\n";
+        int n_cand = 0, n_ver = 0, n_rej = 0, n_stale = 0;
+        for (const auto& turn : turns) {
+            const std::string st = turn.value("status", "candidate");
+            if (st == "verified") ++n_ver;
+            else if (st == "rejected") ++n_rej;
+            else if (st == "stale") ++n_stale;
+            else ++n_cand;
+        }
+        reply << turns.size() << " Oracle turn(s) on disk (";
+        bool first = true;
+        auto part = [&](const char* name, int n) {
+            if (n <= 0) return;
+            if (!first) reply << " ";
+            first = false;
+            reply << name << "=" << n;
+        };
+        part("verified", n_ver);
+        part("rejected", n_rej);
+        part("stale", n_stale);
+        part("candidate", n_cand);
+        if (first) reply << "none";
+        reply << "):\n";
         int index = 0;
         for (const auto& turn : turns) {
             ++index;
@@ -1558,7 +1578,7 @@ static bool maybe_restart_mouth() {
     if (process_running_ci(L"llama-server.exe")) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
-    const std::string starter = repo + "\\Start-LlamaServer.ps1";
+    const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
     const std::string pwsh = path_exists("C:\\pwsh\\pwsh.exe")
                                  ? "C:\\pwsh\\pwsh.exe"
                                  : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -1669,6 +1689,7 @@ static std::string format_brief_text() {
         : (coli.value("busy", false) ? "busy" : "serve");
     const json pending = st.value("pending_judge", json::object());
     const json heal = st.value("heal", json::object());
+    const json cs2 = st.value("cs2", json::object());
     reply << host.value("computer_name", "?") << " | "
           << mouth_label << "=" << mouth_state
           << " rag="
@@ -1685,13 +1706,27 @@ static std::string format_brief_text() {
     if (heal.contains("ok")) {
         const int heal_age = heal.value("age_min", file_age_minutes(
             get_exe_dir() + "\\..\\..\\logs\\heal-last.json"));
-        if (heal_age > 20) {
+        const bool cs2sleep = cs2.value("sleep", false);
+        const bool live_rag = rag.value("ready", false);
+        const bool live_mouth = coli.value("up", false) ||
+            st.value("mouth_restarting", false) ||
+            process_running_ci(L"llama-server.exe") ||
+            process_running_ci(L"coli.exe");
+        const bool heal_ok = heal.value("ok", false);
+        const bool heal_rag = heal.value("rag_ready", false);
+        const bool heal_mouth = heal.value("mouth_ready", heal.value("mouth", false));
+        const bool lie = heal_ok && heal_age >= 0 && heal_age <= 20 &&
+            ((heal_rag && !live_rag) ||
+             (heal_mouth && !live_mouth && !cs2sleep));
+        if (lie) {
+            reply << " heal=lie/" << heal_age << "m";
+        } else if (heal_age > 20) {
             reply << " heal=stale/" << heal_age << "m";
         } else if (heal_age >= 0) {
-            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail")
+            reply << " heal=" << (heal_ok ? "ok" : "fail")
                   << "/" << heal_age << "m";
         } else {
-            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+            reply << " heal=" << (heal_ok ? "ok" : "fail");
         }
     }
     {
@@ -1716,7 +1751,6 @@ static std::string format_brief_text() {
     } else if (tail.value("reason", "") == "needs_login") {
         reply << " tail=login";
     }
-    const json cs2 = st.value("cs2", json::object());
     if (cs2.value("sleep", false)) {
         reply << " cs2="
               << (cs2.value("running", false) ? "play" : "sleep");
@@ -1921,8 +1955,11 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
             std::string kind = node.value("kind", "card");
             if (kind.empty()) kind = "card";
             if (kind == "concept") continue;
+            if (kind == "opsec_candidate") continue;
             const std::string label = node.value("label", "");
             if (label.rfind("Heal loop", 0) == 0) continue;
+            if (label.rfind("Session digest", 0) == 0) continue;
+            if (label.rfind("Golden Record ", 0) == 0) continue;
             const std::string id = node.value("stable_id", "");
             if (!remember(id)) continue;
             items.push_back({
@@ -2374,7 +2411,16 @@ static json heal_status_body() {
     httplib::Client rag_client("127.0.0.1", 8084);
     rag_client.set_connection_timeout(0, 200000);
     rag_client.set_read_timeout(1, 0);
-    const bool rag_up = static_cast<bool>(rag_client.Get("/health"));
+    bool rag_up = false;
+    bool rag_ready = false;
+    if (const auto probe = rag_client.Get("/health")) {
+        rag_up = true;
+        try {
+            rag = json::parse(probe->body);
+            rag_ready = rag.value("ready", false);
+        } catch (const json::exception&) {
+        }
+    }
     const json coli = coli_serve_status();
     const json last = load_heal_last();
     const int age_min = file_age_minutes(
@@ -2384,6 +2430,7 @@ static json heal_status_body() {
         {"live",
          {{"kernel", true},
           {"rag", rag_up},
+          {"rag_ready", rag_ready},
           {"coli", coli.value("up", false)},
           {"coli_busy", coli.value("busy", false)},
           {"mouth", coli.value("up", false)},
@@ -2463,6 +2510,17 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                           : "unready")
                   << " sre="
                   << last.value("sre_diagnose", "none");
+            const bool last_ok = last.value("ok", false);
+            const bool last_rag = last.value("rag_ready", diagnose.value("rag_ready", false));
+            const bool last_mouth = last.value("mouth_ready", last.value("mouth", false));
+            const bool cs2sleep = last.value("cs2_sleep", false);
+            const bool mouth_alive = live.value("mouth", false) ||
+                process_running_ci(L"llama-server.exe") ||
+                process_running_ci(L"coli.exe");
+            const bool lie = last_ok &&
+                ((last_rag && !live.value("rag_ready", live.value("rag", false))) ||
+                 (last_mouth && !mouth_alive && !cs2sleep));
+            reply << " match=" << (lie ? "lie" : "live");
         }
         const json inbox = inbox_desk();
         reply << "\ninbox=" << inbox.value("waiting", 0);

@@ -149,7 +149,7 @@ static std::string chat_complete(
         {"model", model},
         {"stream", false},
         {"temperature", temperature},
-        {"max_tokens", 768},
+        {"max_tokens", 2048},
         {"chat_template_kwargs", json{{"enable_thinking", false}}},
         {"messages",
          json::array(
@@ -384,6 +384,8 @@ public:
                     "contradiction|open_question, content, confidence, "
                     "evidence_spans}], core_concepts[], opsec_candidates[], "
                     "skills_extracted[]. Empty arrays if none. "
+                    "opsec_candidates only for secrets/credentials/tokens "
+                    "in the source, never Golden Record ids or file paths. "
                     "Close every brace. No markdown. No thinking.";
                 const std::string user =
                     std::string("Transcript (raw, immutable). First character "
