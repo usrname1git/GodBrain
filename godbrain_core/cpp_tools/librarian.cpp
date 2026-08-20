@@ -149,7 +149,7 @@ static std::string chat_complete(
         {"model", model},
         {"stream", false},
         {"temperature", temperature},
-        {"max_tokens", 768},
+        {"max_tokens", 2048},
         {"chat_template_kwargs", json{{"enable_thinking", false}}},
         {"messages",
          json::array(
