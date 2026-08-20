@@ -1955,9 +1955,11 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
             std::string kind = node.value("kind", "card");
             if (kind.empty()) kind = "card";
             if (kind == "concept") continue;
+            if (kind == "opsec_candidate") continue;
             const std::string label = node.value("label", "");
             if (label.rfind("Heal loop", 0) == 0) continue;
             if (label.rfind("Session digest", 0) == 0) continue;
+            if (label.rfind("Golden Record ", 0) == 0) continue;
             const std::string id = node.value("stable_id", "");
             if (!remember(id)) continue;
             items.push_back({

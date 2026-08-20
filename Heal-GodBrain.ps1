@@ -449,7 +449,7 @@ function Write-HealFallbackGlance {
     $healState = if ($ok) { "ok" } else { "fail" }
     $brief = "{0} | {1}={2} rag={3} heal={4}/0m inbox={5} sre={6} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
         $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $healState, $inbox.waiting, $sreDiagnose
-    $healTxt = "playbook=host-listeners (never kills)`nlive kernel=down rag={0} mouth={1}`nlast ok={2} mouth={3} tail={4} cs2={5} age=0m`nneeded={6}`nacted={7}`nlayer={8} sre={9}`ninbox={10}" -f `
+    $healTxt = "playbook=host-listeners (never kills)`nlive kernel=down rag={0} mouth={1}`nlast ok={2} mouth={3} tail={4} cs2={5} age=0m`nneeded={6}`nacted={7}`nlayer={8} sre={9} match=unknown`ninbox={10}" -f `
         $(if ($after.rag) { "up" } else { "down" }),
         $mouthState,
         $(if ($ok) { "true" } else { "false" }),

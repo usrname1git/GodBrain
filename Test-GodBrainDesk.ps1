@@ -80,6 +80,14 @@ try {
                 $fails.Add("pending includes concept sludge")
                 break
             }
+            if ([string]$item.kind -eq "opsec_candidate") {
+                $fails.Add("pending includes opsec_candidate sludge")
+                break
+            }
+            if ([string]$item.preview -match "^Golden Record ") {
+                $fails.Add("pending includes Golden Record id sludge")
+                break
+            }
         }
     }
 } catch {
