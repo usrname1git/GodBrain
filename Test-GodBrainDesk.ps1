@@ -72,6 +72,10 @@ try {
                 $fails.Add("pending includes Heal loop remember noise")
                 break
             }
+            if ([string]$item.preview -match "^Session digest") {
+                $fails.Add("pending includes Session digest sludge")
+                break
+            }
             if ([string]$item.kind -eq "concept") {
                 $fails.Add("pending includes concept sludge")
                 break
@@ -119,6 +123,15 @@ if ($brief -and [string]$brief.response -notmatch "inbox=") {
 }
 if ($brief -and [string]$brief.response -notmatch "sre=") {
     $fails.Add("brief missing sre=")
+}
+if ($brief -and [string]$brief.response -match "heal=lie") {
+    $fails.Add("brief heal=lie (live ports disagree with heal-last)")
+}
+if ($brief -and [string]$brief.response -match " rag=ready" -and $status -and $status.rag -and -not [bool]$status.rag.ready) {
+    $fails.Add("brief rag=ready but status.rag.ready is false")
+}
+if ($brief -and [string]$brief.response -match "=(serve|busy) " -and $status -and $status.coli -and -not [bool]$status.coli.up) {
+    $fails.Add("brief mouth serve/busy but coli.up is false")
 }
 if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
     if ($brief -and [string]$brief.response -notmatch "next=") {
@@ -206,6 +219,12 @@ if ($heal -and [string]$heal.response -notmatch "last ok=|no heal run") {
 if ($heal -and $heal.last -and $heal.response -notmatch "sre=") {
     $fails.Add("heal api missing sre=")
 }
+if ($heal -and $heal.last -and $heal.response -notmatch "match=") {
+    $fails.Add("heal api missing match=live|lie")
+}
+if ($heal -and [string]$heal.response -match "match=lie") {
+    $fails.Add("heal match=lie (live ports disagree with heal-last)")
+}
 if ($heal -and $heal.last -and $null -eq $heal.age_min) {
     $fails.Add("heal api missing age_min")
 }
@@ -216,6 +235,8 @@ if (-not (Test-Path -LiteralPath $lastHealFile)) {
     $fails.Add("last-heal.txt missing last ok=")
 } elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "sre=") {
     $fails.Add("last-heal.txt missing sre=")
+} elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "match=") {
+    $fails.Add("last-heal.txt missing match=")
 }
 $lastSreFile = Join-Path $RepoRoot "logs\last-sre.txt"
 if (-not (Test-Path -LiteralPath $lastSreFile)) {

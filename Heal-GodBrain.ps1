@@ -437,6 +437,38 @@ Add-Content -LiteralPath (Join-Path $logDir "heal.jsonl") -Value (($json -replac
 Write-Host ("heal needed=[{0}] acted=[{1}] layer={2} rag_ready={3} inbox={4} ok={5}" -f `
     ($needed -join ","), ($acted -join ","), $diagnose.layer, $after.rag_ready, $inbox.waiting, $ok)
 
+function Write-HealFallbackGlance {
+    $mouthLabel = "coli"
+    $mouthFile = Join-Path $logDir "mouth.txt"
+    if (Test-Path -LiteralPath $mouthFile) {
+        $line = [string](Get-Content -LiteralPath $mouthFile -TotalCount 1 -ErrorAction SilentlyContinue)
+        if ($line -match "llama") { $mouthLabel = "llama" }
+    }
+    $mouthState = if ($coliSleep) { "sleep" } elseif ($after.mouth_ready) { "serve" } else { "down" }
+    $ragState = if ($after.rag_ready) { "ready" } else { "down" }
+    $healState = if ($ok) { "ok" } else { "fail" }
+    $brief = "{0} | {1}={2} rag={3} heal={4}/0m inbox={5} sre={6} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
+        $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $healState, $inbox.waiting, $sreDiagnose
+    $healTxt = "playbook=host-listeners (never kills)`nlive kernel=down rag={0} mouth={1}`nlast ok={2} mouth={3} tail={4} cs2={5} age=0m`nneeded={6}`nacted={7}`nlayer={8} sre={9}`ninbox={10}" -f `
+        $(if ($after.rag) { "up" } else { "down" }),
+        $mouthState,
+        $(if ($ok) { "true" } else { "false" }),
+        $(if ($after.mouth) { "up" } else { "down" }),
+        $(if ($after.tailscale) { "100.x" } else { "off" }),
+        $(if ($coliSleep) { "sleep" } else { "idle" }),
+        $(if ($needed.Count -eq 0) { "(none)" } else { ($needed -join ",") }),
+        $(if ($acted.Count -eq 0) { "(none)" } else { ($acted -join ",") }),
+        $diagnose.layer,
+        $sreDiagnose,
+        $inbox.waiting
+    [System.IO.File]::WriteAllText((Join-Path $logDir "last-brief.txt"), $brief, $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $logDir "last-heal.txt"), $healTxt, $utf8)
+    $sreTxt = "sre=diagnose-only (never --ask, never GO)`nlayer={0} sre={1} heal_ok={2}`nkernel=down (Heal fallback)" -f `
+        $diagnose.layer, $sreDiagnose, $(if ($ok) { "true" } else { "false" })
+    [System.IO.File]::WriteAllText((Join-Path $logDir "last-sre.txt"), $sreTxt, $utf8)
+    Write-Host "heal wrote fallback last-brief/last-heal/last-sre (kernel down)"
+}
+
 # Remember only a failed or acted loop. Success-every-5-min is wiki noise.
 $shouldRemember = $needed.Count -gt 0 -or $acted.Count -gt 0 -or -not $ok `
     -or -not $after.icmp_loopback -or -not $after.dns_self -or -not $after.nic_tcpip `
@@ -459,6 +491,7 @@ if ($env:GODBRAIN_API_TOKEN -and $after.kernel -and $shouldRemember) {
     }
 }
 
+$deskFailed = $false
 if ($after.kernel) {
     if ($env:GODBRAIN_API_TOKEN) {
         try {
@@ -473,64 +506,40 @@ if ($after.kernel) {
             Write-Host "heal observe skipped: $_"
         }
     }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/doors" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-doors"
-    } catch {
-        Write-Host "heal doors skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/pending" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-pending"
-    } catch {
-        Write-Host "heal pending skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/vram" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-vram"
-    } catch {
-        Write-Host "heal vram skipped: $_"
+    # Refresh on-disk glances BEFORE the desk verifier so this tick is what it checks.
+    foreach ($pair in @(
+            @{ Name = "doors"; Path = "/api/doors" },
+            @{ Name = "pending"; Path = "/api/pending" },
+            @{ Name = "vram"; Path = "/api/vram" },
+            @{ Name = "brief"; Path = "/api/brief" },
+            @{ Name = "heal"; Path = "/api/heal" },
+            @{ Name = "sre"; Path = "/api/sre" },
+            @{ Name = "oracle"; Path = "/api/last" },
+            @{ Name = "edit"; Path = "/api/last-edit" }
+        )) {
+        try {
+            Invoke-RestMethod -Uri ("http://127.0.0.1:8083" + $pair.Path) -TimeoutSec 3 | Out-Null
+            Write-Host ("heal wrote last-{0}" -f $pair.Name)
+        } catch {
+            Write-Host ("heal {0} skipped: {1}" -f $pair.Name, $_)
+        }
     }
     $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
     if (Test-Path -LiteralPath $desk) {
         try {
             & $desk -RepoRoot $RepoRoot
-            if ($LASTEXITCODE -ne 0) { Write-Host "heal desk self-check failed" }
+            if ($LASTEXITCODE -ne 0) {
+                $deskFailed = $true
+                Write-Host "heal desk self-check failed"
+            }
         } catch {
+            $deskFailed = $true
             Write-Host "heal desk self-check skipped: $_"
         }
     }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/brief" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-brief"
-    } catch {
-        Write-Host "heal brief skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/heal" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-heal"
-    } catch {
-        Write-Host "heal glance skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/sre" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-sre"
-    } catch {
-        Write-Host "heal sre skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-oracle"
-    } catch {
-        Write-Host "heal last skipped: $_"
-    }
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last-edit" -TimeoutSec 3 | Out-Null
-        Write-Host "heal wrote last-edit"
-    } catch {
-        Write-Host "heal last-edit skipped: $_"
-    }
+} else {
+    Write-HealFallbackGlance
 }
 
-if (-not $ok) { exit 1 }
+if (-not $ok -or $deskFailed) { exit 1 }
 exit 0

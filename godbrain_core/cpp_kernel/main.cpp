@@ -1669,6 +1669,7 @@ static std::string format_brief_text() {
         : (coli.value("busy", false) ? "busy" : "serve");
     const json pending = st.value("pending_judge", json::object());
     const json heal = st.value("heal", json::object());
+    const json cs2 = st.value("cs2", json::object());
     reply << host.value("computer_name", "?") << " | "
           << mouth_label << "=" << mouth_state
           << " rag="
@@ -1685,13 +1686,24 @@ static std::string format_brief_text() {
     if (heal.contains("ok")) {
         const int heal_age = heal.value("age_min", file_age_minutes(
             get_exe_dir() + "\\..\\..\\logs\\heal-last.json"));
-        if (heal_age > 20) {
+        const bool cs2sleep = cs2.value("sleep", false);
+        const bool live_rag = rag.value("ready", false);
+        const bool live_mouth = coli.value("up", false);
+        const bool heal_ok = heal.value("ok", false);
+        const bool heal_rag = heal.value("rag_ready", false);
+        const bool heal_mouth = heal.value("mouth_ready", heal.value("mouth", false));
+        const bool lie = heal_ok && heal_age >= 0 && heal_age <= 20 &&
+            ((heal_rag && !live_rag) ||
+             (heal_mouth && !live_mouth && !cs2sleep));
+        if (lie) {
+            reply << " heal=lie/" << heal_age << "m";
+        } else if (heal_age > 20) {
             reply << " heal=stale/" << heal_age << "m";
         } else if (heal_age >= 0) {
-            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail")
+            reply << " heal=" << (heal_ok ? "ok" : "fail")
                   << "/" << heal_age << "m";
         } else {
-            reply << " heal=" << (heal.value("ok", false) ? "ok" : "fail");
+            reply << " heal=" << (heal_ok ? "ok" : "fail");
         }
     }
     {
@@ -1716,7 +1728,6 @@ static std::string format_brief_text() {
     } else if (tail.value("reason", "") == "needs_login") {
         reply << " tail=login";
     }
-    const json cs2 = st.value("cs2", json::object());
     if (cs2.value("sleep", false)) {
         reply << " cs2="
               << (cs2.value("running", false) ? "play" : "sleep");
@@ -1923,6 +1934,7 @@ static json collect_pending_items(const json& turns, const json& host_rec) {
             if (kind == "concept") continue;
             const std::string label = node.value("label", "");
             if (label.rfind("Heal loop", 0) == 0) continue;
+            if (label.rfind("Session digest", 0) == 0) continue;
             const std::string id = node.value("stable_id", "");
             if (!remember(id)) continue;
             items.push_back({
@@ -2374,7 +2386,16 @@ static json heal_status_body() {
     httplib::Client rag_client("127.0.0.1", 8084);
     rag_client.set_connection_timeout(0, 200000);
     rag_client.set_read_timeout(1, 0);
-    const bool rag_up = static_cast<bool>(rag_client.Get("/health"));
+    bool rag_up = false;
+    bool rag_ready = false;
+    if (const auto probe = rag_client.Get("/health")) {
+        rag_up = true;
+        try {
+            rag = json::parse(probe->body);
+            rag_ready = rag.value("ready", false);
+        } catch (const json::exception&) {
+        }
+    }
     const json coli = coli_serve_status();
     const json last = load_heal_last();
     const int age_min = file_age_minutes(
@@ -2384,6 +2405,7 @@ static json heal_status_body() {
         {"live",
          {{"kernel", true},
           {"rag", rag_up},
+          {"rag_ready", rag_ready},
           {"coli", coli.value("up", false)},
           {"coli_busy", coli.value("busy", false)},
           {"mouth", coli.value("up", false)},
@@ -2463,6 +2485,14 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
                           : "unready")
                   << " sre="
                   << last.value("sre_diagnose", "none");
+            const bool last_ok = last.value("ok", false);
+            const bool last_rag = last.value("rag_ready", diagnose.value("rag_ready", false));
+            const bool last_mouth = last.value("mouth_ready", last.value("mouth", false));
+            const bool cs2sleep = last.value("cs2_sleep", false);
+            const bool lie = last_ok &&
+                ((last_rag && !live.value("rag_ready", live.value("rag", false))) ||
+                 (last_mouth && !live.value("mouth", false) && !cs2sleep));
+            reply << " match=" << (lie ? "lie" : "live");
         }
         const json inbox = inbox_desk();
         reply << "\ninbox=" << inbox.value("waiting", 0);
