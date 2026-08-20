@@ -1235,8 +1235,28 @@ static std::string format_last_text() {
     if (turns.empty()) {
         reply << "No Oracle turns on disk yet.";
     } else {
-        reply << turns.size() << " Oracle turn(s) on disk "
-                 "(candidate, not verified):\n";
+        int n_cand = 0, n_ver = 0, n_rej = 0, n_stale = 0;
+        for (const auto& turn : turns) {
+            const std::string st = turn.value("status", "candidate");
+            if (st == "verified") ++n_ver;
+            else if (st == "rejected") ++n_rej;
+            else if (st == "stale") ++n_stale;
+            else ++n_cand;
+        }
+        reply << turns.size() << " Oracle turn(s) on disk (";
+        bool first = true;
+        auto part = [&](const char* name, int n) {
+            if (n <= 0) return;
+            if (!first) reply << " ";
+            first = false;
+            reply << name << "=" << n;
+        };
+        part("verified", n_ver);
+        part("rejected", n_rej);
+        part("stale", n_stale);
+        part("candidate", n_cand);
+        if (first) reply << "none";
+        reply << "):\n";
         int index = 0;
         for (const auto& turn : turns) {
             ++index;
