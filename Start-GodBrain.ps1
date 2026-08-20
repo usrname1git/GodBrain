@@ -387,6 +387,12 @@ try {
     Write-Log "heal persist skipped: $_"
 }
 try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/sre" -TimeoutSec 3 | Out-Null
+    Write-Log "wrote logs/last-sre.txt"
+} catch {
+    Write-Log "sre persist skipped: $_"
+}
+try {
     Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/last" -TimeoutSec 3 | Out-Null
     Write-Log "wrote logs/last-oracle.txt"
 } catch {

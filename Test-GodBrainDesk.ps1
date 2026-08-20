@@ -24,6 +24,14 @@ try { $vram = Get-Json "/api/vram" } catch { $fails.Add("vram: $_"); $vram = $nu
 try { $doors = Get-Json "/api/doors" } catch { $fails.Add("doors: $_"); $doors = $null }
 try { $heal = Get-Json "/api/heal" } catch { $fails.Add("heal: $_"); $heal = $null }
 try {
+    $sre = Get-Json "/api/sre"
+    if ($sre.response -notmatch "sre=diagnose-only") { $fails.Add("sre api missing diagnose-only") }
+    if ($sre.response -notmatch "layer=") { $fails.Add("sre api missing layer=") }
+} catch {
+    $fails.Add("sre: $_")
+    $sre = $null
+}
+try {
     $deskApi = Get-Json "/api/desk"
     if ($deskApi.response -notmatch "desk=") { $fails.Add("desk api missing desk=") }
 } catch {
@@ -58,6 +66,18 @@ try {
     if ($pending.response -notmatch "judge=") { $fails.Add("pending api missing judge=") }
     if ($pending.response -notmatch "/verify") { $fails.Add("pending api missing /verify hint") }
     if ($null -eq $pending.items) { $fails.Add("pending api missing items") }
+    if ($pending.items) {
+        foreach ($item in @($pending.items)) {
+            if ([string]$item.preview -match "^Heal loop") {
+                $fails.Add("pending includes Heal loop remember noise")
+                break
+            }
+            if ([string]$item.kind -eq "concept") {
+                $fails.Add("pending includes concept sludge")
+                break
+            }
+        }
+    }
 } catch {
     $fails.Add("pending: $_")
 }
@@ -97,6 +117,9 @@ if ($brief -and [string]$brief.response -notmatch "desk=") {
 if ($brief -and [string]$brief.response -notmatch "inbox=") {
     $fails.Add("brief missing inbox=")
 }
+if ($brief -and [string]$brief.response -notmatch "sre=") {
+    $fails.Add("brief missing sre=")
+}
 if ($status -and $status.pending_judge -and [int]$status.pending_judge.total -gt 0) {
     if ($brief -and [string]$brief.response -notmatch "next=") {
         $fails.Add("brief missing next= while judge waiting")
@@ -117,6 +140,8 @@ if (-not (Test-Path -LiteralPath $briefFile)) {
     $fails.Add("last-brief.txt missing mouth state")
 } elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "inbox=") {
     $fails.Add("last-brief.txt missing inbox=")
+} elseif ((Get-Content -LiteralPath $briefFile -Raw) -notmatch "sre=") {
+    $fails.Add("last-brief.txt missing sre=")
 }
 if ($vram -and [string]$vram.response -notmatch "1 slot") {
     $fails.Add("vram missing 1 slot")
@@ -141,6 +166,7 @@ if ($doors) {
     if (-not $doors.loopback.pending) { $fails.Add("doors.loopback.pending missing") }
     if (-not $doors.loopback.vram) { $fails.Add("doors.loopback.vram missing") }
     if (-not $doors.loopback.last_edit) { $fails.Add("doors.loopback.last_edit missing") }
+    if (-not $doors.loopback.sre) { $fails.Add("doors.loopback.sre missing") }
     if ($doors.tailscale.chat) { $fails.Add("chat must not be on Tailscale doors") }
     if ([int]$doors.slots -ne 1) { $fails.Add("doors.slots is not 1") }
 }
@@ -190,6 +216,12 @@ if (-not (Test-Path -LiteralPath $lastHealFile)) {
     $fails.Add("last-heal.txt missing last ok=")
 } elseif ((Get-Content -LiteralPath $lastHealFile -Raw) -notmatch "sre=") {
     $fails.Add("last-heal.txt missing sre=")
+}
+$lastSreFile = Join-Path $RepoRoot "logs\last-sre.txt"
+if (-not (Test-Path -LiteralPath $lastSreFile)) {
+    $fails.Add("missing logs/last-sre.txt")
+} elseif ((Get-Content -LiteralPath $lastSreFile -Raw) -notmatch "sre=diagnose-only") {
+    $fails.Add("last-sre.txt missing diagnose-only")
 }
 $healFile = Join-Path $RepoRoot "logs\heal-last.json"
 if (-not (Test-Path -LiteralPath $healFile)) {
@@ -282,6 +314,12 @@ if (-not $cs2sleep) {
             $fails.Add(("last-heal.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastHealAge))
         }
     }
+    if (Test-Path -LiteralPath $lastSreFile) {
+        $lastSreAge = ((Get-Date) - (Get-Item -LiteralPath $lastSreFile).LastWriteTime).TotalMinutes
+        if ($lastSreAge -gt 20) {
+            $fails.Add(("last-sre.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastSreAge))
+        }
+    }
     if (Test-Path -LiteralPath $lastOracleFile) {
         $lastOracleAge = ((Get-Date) - (Get-Item -LiteralPath $lastOracleFile).LastWriteTime).TotalMinutes
         if ($lastOracleAge -gt 20) {
@@ -323,10 +361,11 @@ try {
     if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
     if ($html -notmatch "pending-btn") { $fails.Add("galaxy missing Pending button") }
     if ($html -notmatch "last-edit-btn") { $fails.Add("galaxy missing Last edit button") }
+    if ($html -notmatch "sre-btn") { $fails.Add("galaxy missing SRE button") }
     if ($html -notmatch "pendingOverlayLines") { $fails.Add("galaxy overlay missing pending list") }
     if ($html -notmatch "healAgeMinutes") { $fails.Add("galaxy overlay missing heal age") }
     if ($html -notmatch "inboxOverlayLine") { $fails.Add("galaxy overlay missing inbox") }
-    if ($html -notmatch "brief\|vram\|doors\|heal\|last-edit\|last\|desk\|pending") {
+    if ($html -notmatch "brief\|vram\|doors\|heal\|sre\|last-edit\|last\|desk\|pending") {
         $fails.Add("galaxy chat still sends /pending through generate")
     }
 } catch {
