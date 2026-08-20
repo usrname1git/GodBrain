@@ -10,9 +10,11 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is official Google IT Q4_0 + MTP. Hauhau Q4_K_M + MTP IMA'd
-    # Librarian extract (2026-08-20). Pass -NoDraft to start without the draft.
+    # Desk default is official Google IT Q4_0 **without MTP**. MTP (Hauhau or
+    # official) IMA'd Librarian extracts on b10453 and b10520. Pass -UseDraft
+    # to enable the draft GGUF. -NoDraft is accepted and keeps MTP off.
     # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+    [switch]$UseDraft,
     [switch]$NoDraft
 )
 
@@ -20,7 +22,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
-$useDraft = -not $NoDraft
+$useDraft = $UseDraft -and -not $NoDraft
 $draftMissing = $false
 if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
     Write-Host "Start-LlamaServer: draft missing $Draft — starting without MTP"
@@ -107,12 +109,12 @@ if ($useDraft) {
         "--spec-draft-n-max 3"
     )
 } else {
-    if ($NoDraft) {
-        Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
-    } elseif ($draftMissing) {
+    if ($draftMissing) {
         Write-Host "Start-LlamaServer: MTP off (draft missing)"
+    } elseif ($UseDraft -and $NoDraft) {
+        Write-Host "Start-LlamaServer: MTP off (-NoDraft wins over -UseDraft)"
     } else {
-        Write-Host "Start-LlamaServer: MTP off"
+        Write-Host "Start-LlamaServer: MTP off (desk default; pass -UseDraft to enable)"
     }
 }
 # Launch llama-server.exe directly. A cmd wrapper is a console process and

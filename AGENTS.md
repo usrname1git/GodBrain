@@ -284,10 +284,9 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 ### Mouth (llama-server / Colibri)
 
 Live `/edit` works on the Gemma 12B Q4 mouth. Desk default is
-`scripts\Start-LlamaServer.ps1` **with MTP** (draft GGUF, `--spec-type draft-mtp`).
-Official IT Q4_0 + MTP drafted ~2x tok/s with no IMA on 512+512 tokens.
-Pass `-NoDraft` to start without it. Aug 17 Hauhau long-gen IMA is still
-in `llama-server.err.log`; that is not a never-MTP Golden Record.
+`scripts\Start-LlamaServer.ps1` official Gemma 4 IT Q4_0 **without MTP**.
+MTP (Hauhau or official, b10453 and b10520) IMA'd Librarian extracts.
+Pass `-UseDraft` to enable the draft GGUF. `-NoDraft` keeps MTP off.
 
 Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored

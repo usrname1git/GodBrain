@@ -110,7 +110,7 @@ One GPU slot. On this desk:
 .\scripts\Start-LlamaServer.ps1
 ```
 
-MTP is on by default. Pass `-NoDraft` to start without the draft GGUF. This
+MTP is **off** by default. Pass `-UseDraft` to start with the draft GGUF. This
 host's default model/server paths are machine-local under `C:\nvme\` — point
 `-Model`, `-Draft`, and `-Server` at your copies, or set the same layout.
 
