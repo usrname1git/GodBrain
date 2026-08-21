@@ -47,8 +47,10 @@ not a dump of the vault.
 `/brief`, `/sre`, `/pending`, `/last`, `/doors` on Tailscale with bearer. Chat
 generate stays loopback.
 
-Glance text is the host one-liner (`inbox=`, `sre=`, `next=`).
-`where-we-are.md` is an agent pointer, not prepended onto `/brief`.
+Glance **first line** is the host one-liner (`inbox=`, `sre=`, `next=`).
+`/brief` may still append `last` / `edit` clips under that line; the phone
+Shortcut should use the first line only. `where-we-are.md` is an agent
+pointer, not prepended onto `/brief`.
 
 Keep:
 
