@@ -29,7 +29,7 @@ Cloud models do the heavy context lifting; your local sovereign models pull from
 ## See it running
 
 <p align="center">
-  <img src="docs/media/galaxy-manual.png" width="900" alt="GodBrain Sovereign Node Galaxy UI">
+  <img src="docs/media/GodBrainUI.png" width="900" alt="GodBrain Sovereign Node Galaxy UI">
 </p>
 <p align="center"><em>The Web Dashboard: A fully interactable 3D force-directed galaxy representing the knowledge graph. Click on any node to open the Sovereign Manual and read the raw documentation, while the RAG uplink stands by on the right.</em></p>
 
