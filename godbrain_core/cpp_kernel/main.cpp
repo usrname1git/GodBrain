@@ -1655,20 +1655,6 @@ static json coli_serve_status() {
     return result;
 }
 
-static std::string load_where_we_are() {
-    const std::string path = get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return "";
-    std::ostringstream out;
-    out << in.rdbuf();
-    std::string text = out.str();
-    if (text.size() > 900) {
-        text.resize(900);
-        text += "\n...";
-    }
-    return text;
-}
-
 static std::string format_brief_text() {
     const json st = kernel_status_body();
     const json host = st.value("host", json::object());
@@ -1676,12 +1662,6 @@ static std::string format_brief_text() {
     const json rag = st.value("rag", json::object());
     const json last = st.value("last_oracle", json::object());
     std::ostringstream reply;
-    const std::string where = load_where_we_are();
-    if (!where.empty()) {
-        reply << where;
-        if (where.back() != '\n') reply << '\n';
-        reply << "---\n";
-    }
     const json mouth = st.value("mouth", json::object());
     const std::string mouth_label = mouth.value("label", "coli");
     const char* mouth_state = !coli.value("up", false)

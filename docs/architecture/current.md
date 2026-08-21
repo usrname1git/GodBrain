@@ -94,7 +94,9 @@ GETs. Chat generate is **not** on that door.
 
 Glances: `/brief`, `/heal`, `/sre`, `/pending`, `/last`, `/vram`, `/doors`,
 `/desk`, `/last-edit`, `/status`. Writes: `remember`, `librarian`, `observe`,
-`truth`, `judge`. `/brief` prints `tail=door/<100.x>` when bound.
+`truth`, `judge`. `/brief` is the host one-liner (`inbox=`, `sre=`, `next=`,
+`tail=door/<100.x>` when bound). It does not prepend `logs/where-we-are.md`;
+that file is the next-loop pointer, not the phone glance.
 
 Pending lists candidate Oracle turns, a candidate host card, and newest
 unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
