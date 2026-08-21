@@ -47,9 +47,13 @@ not a dump of the vault.
 `/brief`, `/sre`, `/pending`, `/last`, `/doors` on Tailscale with bearer. Chat
 generate stays loopback.
 
-Next work:
+Glance **first line** is the host one-liner (`inbox=`, `sre=`, `next=`).
+`/brief` may still append `last` / `edit` clips under that line; the phone
+Shortcut should use the first line only. `where-we-are.md` is an agent
+pointer, not prepended onto `/brief`.
 
-- Glance text stays one line a phone can use (`inbox=`, `sre=`, `next=`).
+Keep:
+
 - Tailscale door late-binds if the adapter logs in after kernel boot.
 - Writes from the phone (`remember` / `librarian` / `judge`) still need bearer.
 

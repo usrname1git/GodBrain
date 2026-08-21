@@ -28,6 +28,35 @@ actually moves this desk:
 If a sixth node is ever justified: a **candidate-vs-verified conflict queue**
 (overloaded verifier), not Architect / Surgeon / a capability-grant service.
 
+## Steal from graph-engineering lectures (not the merch)
+
+Influencer threads (Claude Code “dynamic workflows,” “uninstall the IDE,”
+1000 subagents, “85% of Google PRs”) are **not** a Jarvis ticket. One GPU
+slot. Coordination in a second process is latency. The lecture underneath is
+still useful if a graph is ever justified.
+
+Copy these, not the fleet:
+
+| Idea | Meaning on this desk | When |
+|---|---|---|
+| Edge = data actually moves | “And then” is not a dependency. Heal is already diagnose → one allowlist patch → verify. Do not chain independent work just because you typed it in order. | Now as a rail; never a new process to look like a diamond. |
+| Node contract | Bounded in/out, fail-closed shape. Librarian JSON, `trust_tier=candidate`, `/pending` as a judge list. Next node consumes a schema, not vibes. | Already ships. Do not add a schema repo (rank 5). |
+| Verifier on the edge | `/verify` `/reject`, desk fail-closed, `heal=lie`, `inbox\failed\`. Kill the finding before it becomes truth. Automating the winner is forbidden. | Strengthen this before any fan-out. |
+| Isolate failure | One poison extract does not retry forever. Parallel writers (if they ever exist) get separate worktrees, not one shared tree. | Already: quarantine. Worktree isolation only if two writers share a repo. |
+| Converging cycle | Loop-until-dry with a stop condition. Dedupe against everything seen, not only confirmed hits, or the loop rediscovers dead ends. Heal’s 5 min tick is this shape. | Do not spawn until the GPU bill dies. |
+| Cheap vs expensive node | Extract on the local mouth; human crowns. If a heavier runner ever exists, it is for a flagged contradiction or high-stakes synthesis the loop itself marked — still one chat door. | Volume vs depth in `AGENTS.md`. Not a second `:8000`. |
+| Fan-in / barrier only when needed | Merge only if the next step needs the whole set (dedupe, rank, empty-exit). Otherwise pipeline, don’t wait for the slowest. | Relevant only if true parallel fan-out exists that does **not** share the GPU slot. |
+| Route in code, judge in the model | `if` on a validated status (`verified` / `rejected` / `stale`), not “the mouth decided to skip `/verify`.” | Already the judge door. |
+
+Do **not** copy: uninstall the IDE, don’t look at the code, Claude writes the
+graph, ultracode self-routing, 1000 subagents on this 4080, a second
+starter racing `:8000`, or any Factory roster (Architect / Surgeon /
+research-plan-execute-review).
+
+The only graph with a named signal later is still the **conflict queue**:
+two nodes (candidate vs verified), human on the merge. If deleting a node
+leaves the same result, delete it.
+
 ## README end-goal items that are not this host
 
 The public README still lists a sovereign autonomous operator (CVE ingest,
