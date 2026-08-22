@@ -111,13 +111,32 @@ type KnowledgeEdge struct {
 // Skill represents a verified capability for Hermes.
 // Invariant: Skills can ONLY be derived/created from verified KnowledgeNodes.
 type Skill struct {
-	ID            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name          string             `bson:"name" json:"name"`
-	Version       string             `bson:"version" json:"version"`
-	Content       string             `bson:"content" json:"content"`
-	OriginNodeID  string             `bson:"origin_node_id" json:"origin_node_id"` // Reference to the immutable verified node
-	OriginVersion string             `bson:"origin_version" json:"origin_version"` // Node version snapshot
-	OriginHash    string             `bson:"origin_hash" json:"origin_hash"`       // Hash of the origin node content
-	SchemaVersion string             `bson:"schema_version" json:"schema_version"`
-	CreatedAt     time.Time          `bson:"created_at" json:"created_at"`
+	ID                  primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Name                string             `bson:"name" json:"name"`
+	Version             string             `bson:"version" json:"version"`
+	Content             string             `bson:"content" json:"content"`
+	OriginNodeID        string             `bson:"origin_node_id" json:"origin_node_id"` // Reference to the immutable verified node
+	OriginVersion       string             `bson:"origin_version" json:"origin_version"` // Node version snapshot
+	OriginHash          string             `bson:"origin_hash" json:"origin_hash"`
+	SchemaVersion       string             `bson:"schema_version" json:"schema_version"`
+	VerificationProfile string             `bson:"verification_profile,omitempty" json:"verification_profile,omitempty"`
+	VerificationRunID   string             `bson:"verification_run_id,omitempty" json:"verification_run_id,omitempty"`
+	CreatedAt           time.Time          `bson:"created_at" json:"created_at"`
+}
+
+// SkillVerificationRun is append-only harness evidence for a candidate skill node.
+type SkillVerificationRun struct {
+	ID                  primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	RunID               string             `bson:"run_id" json:"run_id"`
+	SkillName           string             `bson:"skill_name" json:"skill_name"`
+	OriginNodeID        string             `bson:"origin_node_id" json:"origin_node_id"`
+	FixtureID           string             `bson:"fixture_id" json:"fixture_id"`
+	VerificationProfile string             `bson:"verification_profile" json:"verification_profile"`
+	EnvironmentHash     string             `bson:"environment_hash,omitempty" json:"environment_hash,omitempty"`
+	Result              string             `bson:"result" json:"result"`
+	Checks              map[string]string  `bson:"checks,omitempty" json:"checks,omitempty"`
+	ArtifactHash        string             `bson:"artifact_hash,omitempty" json:"artifact_hash,omitempty"`
+	LogExcerpt          string             `bson:"log_excerpt,omitempty" json:"log_excerpt,omitempty"`
+	Reasoning           string             `bson:"reasoning,omitempty" json:"reasoning,omitempty"`
+	CreatedAt           time.Time          `bson:"created_at" json:"created_at"`
 }

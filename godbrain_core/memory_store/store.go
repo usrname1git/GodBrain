@@ -22,6 +22,15 @@ import (
 var (
 	ErrSkillOriginNotVerified    = errors.New("skill origin node is not verified")
 	ErrSkillOriginHashMismatch   = errors.New("skill origin node hash mismatch")
+	ErrSkillVerificationRequired = errors.New("skill has no passing verification run")
+	ErrSkillVerificationStale    = errors.New("latest skill verification run is not passed")
+	ErrInvalidSkillExtracted     = errors.New("skills_extracted entry is invalid")
+	ErrInvalidSkillRun           = errors.New("skill verification run is invalid")
+	ErrInvalidSkillProfile       = errors.New("verification_profile is not an allowlisted GodBrain profile")
+	ErrSkillApplyOnlyProfile     = errors.New("apply-only verification cannot promote a skill")
+	ErrSkillContentMismatch      = errors.New("promoted content must match the origin node")
+	ErrSkillProfileMismatch      = errors.New("verification_profile does not match the passing run")
+	ErrTooManyExtractedSkills    = errors.New("skills_extracted exceeds the cap")
 	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
 	ErrJudgmentIDRequired        = errors.New("judgment id is required")
 	ErrJudgmentReasoningRequired = errors.New("judgment reasoning is required")
@@ -451,6 +460,42 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 			"status":         payload.Payload.TrustTier,
 			"confidence":     1.0,
 			"created_at":     now,
+		}
+	}
+
+	extractedSkills := payload.Payload.SkillsExtracted
+	if len(extractedSkills) > MaxExtractedSkills {
+		extractedSkills = extractedSkills[:MaxExtractedSkills]
+	}
+	for _, skill := range extractedSkills {
+		skill = normalizeSkillExtracted(skill)
+		if err := validateSkillExtracted(skill); err != nil {
+			continue
+		}
+		content := skillProcedureText(skill)
+		stableID := skillStableID(skill.Name, content)
+		sector := skill.TaskKind
+		if sector == "" {
+			sector = "skill"
+		}
+		candidateDocuments[stableID] = bson.M{
+			"stable_id":            stableID,
+			"version":              "v1",
+			"kind":                 "skill",
+			"sector":               sector,
+			"content":              content,
+			"skill_name":           skill.Name,
+			"verification_profile": skill.VerificationProfile,
+			"framework":            skill.Framework,
+			"required_inputs":      skill.RequiredInputs,
+			"schema_version":       payload.SchemaVersion,
+			"status":               payload.Payload.TrustTier,
+			"confidence":           skill.Confidence,
+			"evidence_spans":       skill.EvidenceSpans,
+			"created_at":           now,
+		}
+		if len(skill.EvidenceSpans) > 0 {
+			evidenceSpansByStableID[stableID] = skill.EvidenceSpans
 		}
 	}
 
@@ -960,7 +1005,7 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 }
 
 // Ensures that the origin node exists, is verified, and the hash matches exactly.
-func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer string) (*Skill, error) {
+func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer, expectedProfile string) (*Skill, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
 
 	// 1. Fetch the origin node
@@ -1025,18 +1070,40 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 		return nil, ErrSkillOriginHashMismatch
 	}
 
+	if content != "" && content != node.Content {
+		return nil, ErrSkillContentMismatch
+	}
+	content = node.Content
+	run, err := s.requirePassingSkillRun(ctx, originNodeID, name)
+	if err != nil {
+		return nil, err
+	}
+	if expectedProfile != "" && expectedProfile != run.VerificationProfile {
+		return nil, ErrSkillProfileMismatch
+	}
+	again, err := s.requirePassingSkillRun(ctx, originNodeID, name)
+	if err != nil {
+		return nil, err
+	}
+	if again.RunID != run.RunID || again.Result != SkillRunPassed {
+		return nil, ErrSkillVerificationStale
+	}
+	run = again
+
 	// 3. Upsert Skill
 	skillsColl := s.db.Collection("skills")
 	now := time.Now().UTC()
 
 	update := bson.M{
 		"$set": bson.M{
-			"version":        "v1", // Simplified
-			"content":        content,
-			"origin_node_id": originNodeID,
-			"origin_version": originVer,
-			"origin_hash":    originHash,
-			"schema_version": schemaVer,
+			"version":              "v1",
+			"content":              content,
+			"origin_node_id":       originNodeID,
+			"origin_version":       originVer,
+			"origin_hash":          originHash,
+			"schema_version":       schemaVer,
+			"verification_profile": run.VerificationProfile,
+			"verification_run_id":  run.RunID,
 		},
 		"$setOnInsert": bson.M{
 			"name":       name,

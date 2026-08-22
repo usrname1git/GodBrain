@@ -33,6 +33,10 @@ func (script *scriptedAPI) Health(context.Context) (HealthResponse, error) {
 	return response, nil
 }
 
+func (script *scriptedAPI) SearchSkills(context.Context, SkillSearchRequest) (SkillSearchResponse, error) {
+	return SkillSearchResponse{}, errors.New("unexpected skills call")
+}
+
 func (script *scriptedAPI) Search(_ context.Context, _ SearchRequest) (SearchResponse, error) {
 	if script.searchCalls >= len(script.searchResponses) {
 		return SearchResponse{}, errors.New("unexpected search call")
@@ -75,6 +79,10 @@ func searchRecorder(t *testing.T, api API) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	NewHandler(api).ServeHTTP(response, request)
 	return response
+}
+
+func (fake *fakeAPI) SearchSkills(_ context.Context, request SkillSearchRequest) (SkillSearchResponse, error) {
+	return SkillSearchResponse{Query: request.Query, Skills: []SkillHit{}}, nil
 }
 
 func (fake *fakeAPI) Search(_ context.Context, request SearchRequest) (SearchResponse, error) {
@@ -464,5 +472,18 @@ func TestDocumentHandlerReturnsContent(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"content":"Bearer authentication protects privileged actions."`) {
 		t.Fatalf("document response missing content: %s", response.Body.String())
+	}
+}
+
+func TestSkillsHandlerReturnsUntrustedHits(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/skills", strings.NewReader(`{"query":"dashboard"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewHandler(&fakeAPI{health: HealthResponse{Ready: true, ReadinessReasons: []string{}}}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"query":"dashboard"`) {
+		t.Fatalf("skills response missing query: %s", response.Body.String())
 	}
 }

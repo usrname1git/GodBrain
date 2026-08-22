@@ -9,7 +9,10 @@ GodBrainKernel::GodBrainKernel() {
 }
 
 bool GodBrainKernel::validate_sovereignty(const std::string& command_type, const json& payload) {
-    if (command_type == "execute_godbrain_script" || command_type == "propose_sovereign_architect_change") {
+    if (command_type == "execute_godbrain_script" ||
+        command_type == "propose_sovereign_architect_change" ||
+        command_type == "record_godbrain_skill_run" ||
+        command_type == "promote_godbrain_skill") {
         if (!payload.contains("reasoning") || !payload["reasoning"].is_string()) {
             std::cout << "[KERNEL SECURITY] High risk command rejected: No reasoning provided." << std::endl;
             return false;
@@ -41,6 +44,12 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = memory::get_recent(payload.value("limit", 5));
         } else if (command_type == "set_godbrain_status") {
             result = memory::set_status(payload);
+        } else if (command_type == "record_godbrain_skill_run") {
+            result = memory::record_skill_run(payload);
+        } else if (command_type == "promote_godbrain_skill") {
+            result = memory::promote_skill(payload);
+        } else if (command_type == "query_godbrain_skills") {
+            result = memory::query_skills(payload);
         } else if (command_type == "get_system_telemetry") {
             result = telemetry::get_current_state();
         } else if (command_type == "observe_godbrain_host") {

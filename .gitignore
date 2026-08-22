@@ -23,6 +23,11 @@ GodBrainService.xml
 # Generated build artifacts (previous review: stray compiled objects)
 *.obj
 
+# Skill lab gym scratch (fixtures stay; installs and builds do not)
+godbrain_core/skill_lab/work/
+godbrain_core/skill_lab/**/node_modules/
+godbrain_core/skill_lab/**/dist/
+
 # Python bytecode caches
 __pycache__/
 *.pyc

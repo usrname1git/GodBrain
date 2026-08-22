@@ -234,23 +234,59 @@ struct Claim {
     }
 };
 
+struct SkillExtracted {
+    std::string name;
+    std::string content;
+    std::string task_kind;
+    std::string framework;
+    std::string verification_profile;
+    std::vector<std::string> required_inputs;
+    std::vector<std::string> procedure;
+    double confidence = 0.0;
+    std::vector<std::string> evidence_spans;
+
+    json to_json() const {
+        json inputs = json::array();
+        for (const auto& input : required_inputs) inputs.push_back(input);
+        json steps = json::array();
+        for (const auto& step : procedure) steps.push_back(step);
+        json spans = json::array();
+        for (const auto& span : evidence_spans) spans.push_back(span);
+        return {
+            {"name", name},
+            {"content", content},
+            {"task_kind", task_kind},
+            {"framework", framework},
+            {"verification_profile", verification_profile},
+            {"required_inputs", inputs},
+            {"procedure", steps},
+            {"confidence", confidence},
+            {"evidence_spans", spans}
+        };
+    }
+};
+
 struct AlexandriaPayload {
     std::string trust_tier;
     Provenance provenance;
     std::vector<Claim> claims;
     std::vector<std::string> core_concepts;
     std::vector<std::string> opsec_candidates;
+    std::vector<SkillExtracted> skills_extracted;
 
     json to_json() const {
         json claims_arr = json::array();
         for (const auto& c : claims) claims_arr.push_back(c.to_json());
+        json skills_arr = json::array();
+        for (const auto& skill : skills_extracted) skills_arr.push_back(skill.to_json());
         
         return {
             {"trust_tier", trust_tier},
             {"provenance", provenance.to_json()},
             {"claims", claims_arr},
             {"core_concepts", core_concepts},
-            {"opsec_candidates", opsec_candidates}
+            {"opsec_candidates", opsec_candidates},
+            {"skills_extracted", skills_arr}
         };
     }
 };
@@ -383,7 +419,9 @@ public:
                     "claims[{claim_id, type factual|architecture|"
                     "contradiction|open_question, content, confidence, "
                     "evidence_spans}], core_concepts[], opsec_candidates[], "
-                    "skills_extracted[]. Empty arrays if none. "
+                    "skills_extracted[{name, content, task_kind, "
+                    "verification_profile, procedure[], evidence_spans}]. "
+                    "Empty arrays if none. At most 8 skills. "
                     "opsec_candidates only for secrets/credentials/tokens "
                     "in the source, never Golden Record ids or file paths. "
                     "Close every brace. No markdown. No thinking.";
@@ -652,6 +690,49 @@ private:
                 if (!s.empty()) alexandria_payload.opsec_candidates.push_back(s);
             }
         }
+
+        if (extracted_json.contains("skills_extracted") && extracted_json["skills_extracted"].is_array()) {
+            for (const auto& raw : extracted_json["skills_extracted"]) {
+                if (!raw.is_object()) continue;
+                if (alexandria_payload.skills_extracted.size() >= 8) break;
+                SkillExtracted skill;
+                skill.name = raw.contains("name") ? json_as_string(raw["name"]) : "";
+                skill.content = raw.contains("content") ? json_as_string(raw["content"]) : "";
+                skill.task_kind = raw.contains("task_kind") ? json_as_string(raw["task_kind"]) : "";
+                skill.framework = raw.contains("framework") ? json_as_string(raw["framework"]) : "";
+                skill.verification_profile = raw.contains("verification_profile")
+                    ? json_as_string(raw["verification_profile"]) : "";
+                if (raw.contains("confidence") && raw["confidence"].is_number()) {
+                    skill.confidence = raw["confidence"].get<double>();
+                }
+                if (raw.contains("required_inputs") && raw["required_inputs"].is_array()) {
+                    for (const auto& input : raw["required_inputs"]) {
+                        const std::string s = json_as_string(input);
+                        if (!s.empty()) skill.required_inputs.push_back(s);
+                    }
+                }
+                if (raw.contains("procedure") && raw["procedure"].is_array()) {
+                    for (const auto& step : raw["procedure"]) {
+                        const std::string s = json_as_string(step);
+                        if (!s.empty()) skill.procedure.push_back(s);
+                    }
+                }
+                if (raw.contains("evidence_spans") && raw["evidence_spans"].is_array()) {
+                    for (const auto& span : raw["evidence_spans"]) {
+                        const std::string s = json_as_string(span);
+                        if (!s.empty()) skill.evidence_spans.push_back(s);
+                    }
+                }
+                if (skill.content.empty() && !skill.procedure.empty()) {
+                    for (size_t i = 0; i < skill.procedure.size(); ++i) {
+                        if (i) skill.content += "\n";
+                        skill.content += skill.procedure[i];
+                    }
+                }
+                if (skill.name.empty() || skill.content.empty()) continue;
+                alexandria_payload.skills_extracted.push_back(skill);
+            }
+        }
         
         // Attach provenance
         alexandria_payload.provenance = Provenance{
@@ -682,6 +763,11 @@ public:
     void validate(const DistillationResult& result) const override {
         if (result.payload.claims.empty()) {
             std::cout << "[LIBRARIAN WARN] Payload has no claims." << std::endl;
+        }
+        for (const auto& skill : result.payload.skills_extracted) {
+            if (skill.name.empty() || skill.content.empty()) {
+                throw std::runtime_error("Schema validation failed: Skill name or content is empty.");
+            }
         }
         for (const auto& claim : result.payload.claims) {
             if (claim.content.empty()) {
@@ -913,6 +999,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (argc >= 2 && std::string(argv[1]) == "--self-test") {
+        SkillExtracted skill;
+        skill.name = "build-galaxy-glance";
+        skill.content = "Keep /brief first line as the phone glance.";
+        skill.task_kind = "frontend";
+        skill.verification_profile = "galaxy-html-v1";
+        AlexandriaPayload payload;
+        payload.trust_tier = "candidate";
+        payload.skills_extracted.push_back(skill);
+        const json emitted = payload.to_json();
+        if (!emitted.contains("skills_extracted") ||
+            !emitted["skills_extracted"].is_array() ||
+            emitted["skills_extracted"].size() != 1 ||
+            emitted["skills_extracted"][0].value("name", "") != "build-galaxy-glance") {
+            std::cerr << "[LIBRARIAN ERR] skills_extracted was not emitted" << std::endl;
+            return 1;
+        }
         LibrarianConfig test_config{
             "", "", "", "mouth", "N/A", "127.0.0.1", 8000, 0.1, true};
         bool success = commit_to_brain("session_test_alexandria", "User: We need a C++ Librarian with provenance. AI: Executing native protocol.", std::make_unique<InMemoryMemoryStore>(), test_config);

@@ -1,0 +1,55 @@
+:root {
+  color: #e8eef6;
+  background: #111827;
+  font-family: Segoe UI, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  display: grid;
+  min-height: 100vh;
+  grid-template-columns: 12rem 1fr;
+}
+
+.nav {
+  background: #1f2937;
+  padding: 1rem;
+}
+
+.brand {
+  font-weight: 700;
+  margin-top: 0;
+}
+
+.nav a {
+  color: #93c5fd;
+}
+
+main {
+  padding: 1.5rem;
+}
+
+.hint {
+  color: #9ca3af;
+}
+
+.cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.card {
+  background: #1f2937;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+@media (max-width: 40rem) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}

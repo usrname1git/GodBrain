@@ -52,12 +52,28 @@ type Claim struct {
 	EvidenceSpans []string `json:"evidence_spans"` // Byte offset strings "[start:end]"
 }
 
+// SkillExtracted is a candidate procedure distilled from a source.
+// It becomes a knowledge node with kind=skill. It is not executable until
+// PromoteSkill after a passing verification run and operator judgment.
+type SkillExtracted struct {
+	Name                string   `json:"name"`
+	Content             string   `json:"content"`
+	TaskKind            string   `json:"task_kind,omitempty"`
+	Framework           string   `json:"framework,omitempty"`
+	VerificationProfile string   `json:"verification_profile,omitempty"`
+	RequiredInputs      []string `json:"required_inputs,omitempty"`
+	Procedure           []string `json:"procedure,omitempty"`
+	Confidence          float64  `json:"confidence,omitempty"`
+	EvidenceSpans       []string `json:"evidence_spans,omitempty"`
+}
+
 type AlexandriaPayload struct {
-	TrustTier       string     `json:"trust_tier"` // Expected: "candidate"
-	Provenance      Provenance `json:"provenance"`
-	Claims          []Claim    `json:"claims"`
-	CoreConcepts    []string   `json:"core_concepts"`
-	OpsecCandidates []string   `json:"opsec_candidates"`
+	TrustTier       string           `json:"trust_tier"` // Expected: "candidate"
+	Provenance      Provenance       `json:"provenance"`
+	Claims          []Claim          `json:"claims"`
+	CoreConcepts    []string         `json:"core_concepts"`
+	OpsecCandidates []string         `json:"opsec_candidates"`
+	SkillsExtracted []SkillExtracted `json:"skills_extracted"`
 }
 
 // DistillationPayload is the master envelope sent on stdin
@@ -91,14 +107,20 @@ type ErrorEnvelope struct {
 }
 
 const (
-	JudgmentCommand   = "set_status"
-	StalePinsCommand  = "stale_pins"
-	StatusCandidate   = "candidate"
-	StatusVerified    = "verified"
-	StatusRejected    = "rejected"
-	StatusStale       = "stale"
-	MaxJudgmentReason = 2048
-	MinJudgmentReason = 4
+	JudgmentCommand       = "set_status"
+	StalePinsCommand      = "stale_pins"
+	RecordSkillRunCommand = "record_skill_run"
+	PromoteSkillCommand   = "promote_skill"
+	QuerySkillsCommand    = "query_skills"
+	StatusCandidate       = "candidate"
+	StatusVerified        = "verified"
+	StatusRejected        = "rejected"
+	StatusStale           = "stale"
+	MaxJudgmentReason     = 2048
+	MinJudgmentReason     = 4
+	MaxExtractedSkills    = 8
+	SkillRunPassed        = "passed"
+	SkillRunFailed        = "failed"
 )
 
 // StatusJudgment is an operator verdict on an existing knowledge node.
@@ -134,5 +156,63 @@ type StalePinsReceipt struct {
 	Sector    string    `json:"sector"`
 	Pin       string    `json:"pin"`
 	Stale     int       `json:"stale"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// RecordSkillRunRequest appends harness evidence. Commands are not accepted
+// from the model; verification_profile selects a compiled GodBrain profile.
+type RecordSkillRunRequest struct {
+	Command             string            `json:"command"`
+	SkillName           string            `json:"skill_name"`
+	OriginNodeID        string            `json:"origin_node_id"`
+	FixtureID           string            `json:"fixture_id"`
+	VerificationProfile string            `json:"verification_profile"`
+	EnvironmentHash     string            `json:"environment_hash"`
+	Result              string            `json:"result"`
+	Checks              map[string]string `json:"checks"`
+	ArtifactHash        string            `json:"artifact_hash"`
+	LogExcerpt          string            `json:"log_excerpt"`
+	Reasoning           string            `json:"reasoning"`
+}
+
+type SkillRunReceipt struct {
+	RunID        string    `json:"run_id"`
+	SkillName    string    `json:"skill_name"`
+	OriginNodeID string    `json:"origin_node_id"`
+	Result       string    `json:"result"`
+	Status       string    `json:"status"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+type PromoteSkillRequest struct {
+	Command             string `json:"command"`
+	Name                string `json:"name"`
+	Content             string `json:"content"`
+	OriginNodeID        string `json:"origin_node_id"`
+	OriginVersion       string `json:"origin_version"`
+	OriginHash          string `json:"origin_hash"`
+	SchemaVersion       string `json:"schema_version"`
+	VerificationProfile string `json:"verification_profile"`
+	Reasoning           string `json:"reasoning"`
+}
+
+type PromoteSkillReceipt struct {
+	SkillID      string    `json:"skill_id"`
+	Name         string    `json:"name"`
+	OriginNodeID string    `json:"origin_node_id"`
+	Status       string    `json:"status"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+type QuerySkillsRequest struct {
+	Command string `json:"command"`
+	Query   string `json:"query"`
+	Limit   int    `json:"limit"`
+}
+
+type QuerySkillsReceipt struct {
+	Status    string    `json:"status"`
+	Count     int       `json:"count"`
+	Skills    []Skill   `json:"skills"`
 	Timestamp time.Time `json:"timestamp"`
 }

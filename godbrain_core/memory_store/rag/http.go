@@ -23,6 +23,7 @@ var ErrSearchSnapshotChanged = errors.New("RAG search snapshot is unstable or un
 
 type API interface {
 	Search(context.Context, SearchRequest) (SearchResponse, error)
+	SearchSkills(context.Context, SkillSearchRequest) (SkillSearchResponse, error)
 	Health(context.Context) (HealthResponse, error)
 	Graph(context.Context, int) (GraphResponse, error)
 	Document(context.Context, string) (DocumentResponse, error)
@@ -118,6 +119,45 @@ func NewHandler(api API) http.Handler {
 				return
 			}
 			writeAPIError(writer, http.StatusServiceUnavailable, "graph_unavailable")
+			return
+		}
+		writeJSON(writer, http.StatusOK, response)
+	})
+	mux.HandleFunc("/v1/skills", func(writer http.ResponseWriter, request *http.Request) {
+		setResponseHeaders(writer)
+		if request.Method != http.MethodPost {
+			writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+		mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			writeAPIError(writer, http.StatusUnsupportedMediaType, "content_type_must_be_application_json")
+			return
+		}
+		var skillRequest SkillSearchRequest
+		if err = decodeStrictJSON(writer, request, &skillRequest); err != nil {
+			writeAPIError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		healthCtx, healthCancel := context.WithTimeout(request.Context(), HealthTimeout)
+		health, err := api.Health(healthCtx)
+		healthCancel()
+		if err != nil || !health.Ready {
+			writeAPIError(writer, http.StatusServiceUnavailable, "skills_unavailable")
+			return
+		}
+		ctx, cancel := context.WithTimeout(request.Context(), SearchTimeout)
+		defer cancel()
+		response, err := api.SearchSkills(ctx, skillRequest)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrSkillQueryRequired),
+				errors.Is(err, ErrSkillQueryTooLarge),
+				errors.Is(err, ErrInvalidSkillLimit):
+				writeAPIError(writer, http.StatusBadRequest, err.Error())
+			default:
+				writeAPIError(writer, http.StatusServiceUnavailable, "skills_unavailable")
+			}
 			return
 		}
 		writeJSON(writer, http.StatusOK, response)

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <initializer_list>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
@@ -937,6 +938,47 @@ json set_status(const json& payload) {
         }
     }
     return receipt;
+}
+
+json copy_store_fields(const json& payload, const char* command,
+                       std::initializer_list<const char*> keys) {
+    json document = {{"command", command}};
+    for (const char* key : keys) {
+        if (payload.contains(key)) {
+            document[key] = payload[key];
+        }
+    }
+    return document;
+}
+
+json record_skill_run(const json& payload) {
+    return run_memory_store(copy_store_fields(
+        payload, "record_skill_run",
+        {"skill_name", "origin_node_id", "fixture_id", "verification_profile",
+         "environment_hash", "result", "checks", "artifact_hash", "log_excerpt",
+         "reasoning"}));
+}
+
+json promote_skill(const json& payload) {
+    const std::string reasoning = trim_copy(payload.value("reasoning", ""));
+    if (reasoning.size() < 4) {
+        throw std::runtime_error("promote_skill requires a why (harness passed / look is right)");
+    }
+    json document = copy_store_fields(
+        payload, "promote_skill",
+        {"name", "content", "origin_node_id", "origin_version", "origin_hash",
+         "schema_version", "verification_profile"});
+    document["reasoning"] = reasoning;
+    return run_memory_store(document);
+}
+
+json query_skills(const json& payload) {
+    json document = {
+        {"command", "query_skills"},
+        {"query", payload.value("query", "")},
+        {"limit", payload.value("limit", 5)},
+    };
+    return run_memory_store(document);
 }
 
 json get_recent(int limit) {
