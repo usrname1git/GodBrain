@@ -7,24 +7,15 @@ The most genius part of GodBrain is that it's both **model and tool agnostic**: 
 
 The GodBrain turns local models into a shared, sovereign cognitive system. The core idea:
 
-- **🧠 Model-agnostic** — Plug in *any* LLM (Gemma, etc.). No model is special; they're interchangeable nodes in one collective brain.
-- **📚 Models teach models** — Past models become **teachings**. Their thoughts and analysis are saved permanently and queried later, so newer models inherit prior reasoning instead of starting from scratch.
-- **🛠️ Tools that aren't possible by default** — Native MCP tool use that a stock `llama-server` won't give you: permanent memory, local filesystem read/write/execute, code-graph self-analysis, and more.
+- **🧠 Model-agnostic mouth** — Plug in *any* LLM behind one kernel door (desk default: Gemma 12B on `llama-server`). No model is special; they inherit the same teachings.
+- **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
+- **🛠️ Tools a stock `llama-server` will not give you** — Kernel `command_type`s: save/recall thoughts, bounded `/edit`, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`.
 
-## The Compute Cheat Code (Local + Cloud Synergy)
+## The Compute Cheat Code (vault ≠ GPU)
 
-Because the "brain" (MongoDB) is completely decoupled from the compute, GodBrain unlocks a massive hardware cheat code:
+Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is one generate slot on a 4080 (Gemma 12B, MTP off). A 3090 is an optional playground on another port, not a second GodBrain mouth.
 
-- **Massive Local Context — it scales infinitely with your hardware:** As if running *any* model wasn't enough, the shared mind just gets better the more you throw at it.
-
-- On a PC with a 3090, 4090, or 5090? Great — bigger card, better local LLMs, more headroom. But here's where it gets silly: Apple Silicon's unified memory breaks the matrix. A Mac with 128GB+ UMA (think M5 Max and up) runs **100B+ parameter models locally** without paying the insane dedicated-VRAM tax. At that point you're not running a chatbot — you're basically a droid from Star Wars walking around with a sovereign brain in your bag.
-
-- **Hybrid Intelligence:** You aren't limited to local models. Hook up APIs for Grok, Gemini, Codex, or anything else. Let them crunch the massive datasets and commit their insights directly into the GodBrain Memory Engine.
-- **Unrestricted Execution:** Your local, uncensored models read those teachings from the shared MongoDB and execute the highly-privileged, unrestricted OS-level operations (like running `wsudo` scripts) that heavily-censored corporate APIs refuse to do.
-
-Trying to match a 128GB Mac on a PC means stacking $10k+ of pro GPUs and a power bill that needs its own reactor. The Mac does it on a laptop, fanless-quiet, for a fraction of the watts — which is exactly the point: It scales infinitely with whatever you've got, so the only ceiling is your hardware budget, not the software.
-
-Cloud models do the heavy context lifting; your local sovereign models pull from the shared memory to execute with God-level permissions.
+Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them. Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
 ## See it running
 
@@ -90,9 +81,9 @@ fake provider, not real-model quality claims. Privileged `command_type` dispatch
 remains a separate C++ request path protected by the configured bearer token and
 sovereignty checks.
 
-### GodBrain-native MCP tools
+### Kernel `command_type`s
 
-These are the first-class commands the C++ Kernel currently validates and dispatches:
+These are the first-class commands the C++ kernel currently validates and dispatches (JSON on `:8083`, not an IDE MCP server):
 
 | Tool | Purpose |
 |------|---------|
@@ -108,43 +99,53 @@ Any model can emit these tool calls, but `execute_godbrain_script` and `propose_
 
 ## The bigger picture
 
-The GodBrain is like 2nd brain by Karpathy's, one of OpenAI founder's, his version is cute for taking notes.
-GodBrain is designed to replace web developers and bend the Windows kernel to its will a **Distributed Cognitive OS**: intelligence is decoupled from hardware.
-The "mind" lives in shared brain-wires; models contribute sensing, compute, and local agency, and high-leverage teachings persist for every model that follows.
+Karpathy's second brain is cute for taking notes. GodBrain is the same idea with a **judge**: raw sources stay immutable, Librarian extracts claims as candidates, you `/verify` or `/reject`, and the next model inherits the processed Golden Records — not the transcript pile.
 
-## The End Goal: A Sovereign Autonomous Operator
+Two product wants that are not notes:
 
-The destination is an AI that owns the full loop — brainstorm a problem, understand it, and *fix it* across every machine you run, with no hand-holding.
+- **Replace the web-dev loop on this repo.** Galaxy, Tailscale glances, Shortcuts, and allowlisted `/edit` should grow until you do not hire someone to ship GodBrain UI. That is a destination, not "no sandbox, write anything."
+- **Models teach models over time.** Chat already retrieves committed teachings through rag-service (`:8084`). `query_recent_thoughts` and `/recall` are that door. Richer query later is still that API (filters, more of the graph) — not `mongosh`, not a MongoDB IDE/MCP plugin against the live vault.
 
-**Working today** — these are shipped and live in the build, not slideware:
+On this host it is **one Windows loop**, not Ring 0, not a Distributed Cognitive OS across Devuan/macOS, and not zero permission-begging. The vault is decoupled from the GPU. The operator is not.
 
-- **Self-command** — the agent issues and chains its own commands.
-- **Sequential thinking** — multi-step reasoning instead of one-shot guesses.
-- **MongoDB query / index / update** — full read-write access to the shared brain.
-- **Full local filesystem read/write** — real files, real changes, no sandbox theater.
-- **Privileged execution** — `wsudo` scripts and Visual Studio access to actually build and repair.
+## Working today
 
-Put together, that already means GodBrain can reason about a problem, dig through its own memory and code graph, and execute privileged fixes on the local machine — the hard part is done.
+Shipped on this desk, not slideware:
 
-**The end goal** — the trajectory these capabilities are converging on:
+- **One loop** — Heal/Watch keep `:27017` / `:8084` / `:8000` / `:8083` up. Discover → allowlist start → verify. Heal does not kill, reboot, DISM, or run the repair cocktail.
+- **Teachings in and out of Mongo** — Librarian → `memory-store` (candidate only, fail-closed JSON). Chat/Oracle retrieve through rag-service, never by giving the model a Mongo shell. Oracle search is verified-only.
+- **Judge** — `/verify` `/reject` for playbooks and fights. Host probes and Learn quotes auto-verify when the evidence actually matches.
+- **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth.
+- **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not `wsudo`, not Visual Studio as a tool.
 
-> A fully autonomous operator that scans the internet for the latest CVEs, *understands* the threat, and auto-patches it across **any** of your machines — Devuan, macOS, or Windows alike. It picks up where tools like DISM fall short, repairs what they should have fixed (registry included), and closes the loop end-to-end because it has both the reasoning and the privileged tooling (`wsudo`, Visual Studio, local execution) to do it.
+The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
 
-Cloud models can do the heavy context lifting; your local sovereign models pull from the shared memory and pull the trigger. That's the whole point: **one collective brain, infinite hardware, zero permission-begging.**
+## The end goal
+
+Wanted on this product (still gated):
+
+- A mouth that ships real UI and host work the way a web dev would — kernel allowlist, then you judge.
+- Models that keep inheriting each other's **verified** teachings, including richer rag-service query. Writes stay candidate until `/verify`.
+
+Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
+
+- Autonomous CVE ingest and auto-patch across Devuan / macOS / Windows.
+- Self-directed DISM or registry repair. Named GO, one tool, never a standing allow.
+- Closed-loop patch with zero hand-holding. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated.
 
 ### Roadmap
 
-- [x] Self-command + sequential thinking
-- [x] MongoDB query / index / update
-- [x] Full local filesystem read/write
-- [x] Privileged execution (`wsudo`, Visual Studio)
 - [x] Host-listener loop (Heal/Watch: detect → start allowlist → verify → remember)
-- [x] Oracle judge loop (`/verify last` / `/reject last` — verifier, not the model)
+- [x] Oracle judge loop (`/verify last` / `/reject last`)
 - [x] Truth loop (host probe / Learn quote auto-verify; playbooks stay candidate)
+- [x] Teachings: Librarian candidates + rag-service retrieve (models inherit committed records)
+- [x] Bounded `/edit` + privileged `pwsh` behind bearer + `reasoning`
+- [ ] Mouth ships web-dev class GodBrain UI/product work (allowlist grows on purpose, still no mouth `git push`)
+- [ ] Richer teaching query for the mouth (still `:8084` / kernel recall, not Mongo MCP)
 - [ ] Candidate-vs-verified conflict queue (smallest extra node: overloaded verifier)
-- [ ] Autonomous CVE ingestion (scan + understand latest threats)
-- [ ] Cross-fleet patch orchestration (Devuan / macOS / Windows)
-- [ ] Self-directed DISM/registry repair beyond stock tooling
-- [ ] Closed-loop: detect → reason → patch → verify, zero hand-holding
+- [ ] Autonomous CVE ingestion — not b-line
+- [ ] Cross-fleet patch (Devuan / macOS / Windows) — not this machine
+- [ ] Self-directed DISM/registry — **no** standing allow
+- [ ] Detect → reason → patch → verify with zero hand-holding — Heal is the loop; extra patch stays GO-gated
 
-Current b-line is **this host’s OS/network stack** (services, TCP/IP, ICMP, SCM), not tanks or AppX eviction. Heal starts MongoDB, Dnscache, iphlpsvc, nsi, plus rag/coli/kernel. ICMP loopback is detect-only. Patch grows only from a named, verified signal.
+Current b-line is **this host's OS/network stack** (services, TCP/IP, ICMP, SCM), not tanks or AppX eviction. Heal starts MongoDB, Dnscache, iphlpsvc, nsi, plus rag/mouth/kernel. ICMP loopback is detect-only. Patch grows only from a named, verified signal.
