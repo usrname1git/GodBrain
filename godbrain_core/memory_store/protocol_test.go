@@ -10,6 +10,63 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+func TestValidateSkillExtractedAndRuns(t *testing.T) {
+	valid := SkillExtracted{
+		Name:       "build-galaxy-glance",
+		Content:    "Keep /brief first line as the phone glance.",
+		TaskKind:   "frontend",
+		Confidence: 0.8,
+	}
+	if err := validateSkillExtracted(normalizeSkillExtracted(valid)); err != nil {
+		t.Fatalf("valid skill rejected: %v", err)
+	}
+	if err := ValidateRecordSkillRun(RecordSkillRunRequest{
+		Command:             RecordSkillRunCommand,
+		SkillName:           valid.Name,
+		OriginNodeID:        "0123456789abcdef01234567",
+		FixtureID:           "galaxy-brief-v1",
+		VerificationProfile: "galaxy-html-v1",
+		Result:              SkillRunPassed,
+		Reasoning:           "desk test passed on loopback",
+	}); err != nil {
+		t.Fatalf("valid skill run rejected: %v", err)
+	}
+	if err := ValidateRecordSkillRun(RecordSkillRunRequest{
+		Command:             RecordSkillRunCommand,
+		SkillName:           "build-dashboard-shell",
+		OriginNodeID:        "0123456789abcdef01234567",
+		FixtureID:           "dashboard-shell-v1",
+		VerificationProfile: "frontend-spa-v1",
+		Result:              SkillRunPassed,
+		Reasoning:           "skill lab npm run build",
+	}); err != nil {
+		t.Fatalf("spa lab profile rejected: %v", err)
+	}
+	badProfile := RecordSkillRunRequest{
+		Command:             RecordSkillRunCommand,
+		SkillName:           valid.Name,
+		OriginNodeID:        "0123456789abcdef01234567",
+		FixtureID:           "galaxy-brief-v1",
+		VerificationProfile: "npm-audit-force",
+		Result:              SkillRunPassed,
+		Reasoning:           "audit claimed success",
+	}
+	if err := ValidateRecordSkillRun(badProfile); !errors.Is(err, ErrInvalidSkillProfile) {
+		t.Fatalf("npm audit profile = %v", err)
+	}
+	if err := ValidatePromoteSkillRequest(PromoteSkillRequest{
+		Command:       PromoteSkillCommand,
+		Name:          valid.Name,
+		OriginNodeID:  "0123456789abcdef01234567",
+		OriginVersion: "v1",
+		OriginHash:    strings.Repeat("a", 64),
+		SchemaVersion: "1.0",
+		Reasoning:     "harness passed and glance looks right",
+	}); err != nil {
+		t.Fatalf("valid promote rejected: %v", err)
+	}
+}
+
 func TestValidateStatusJudgmentAndTransitions(t *testing.T) {
 	valid := StatusJudgment{
 		Command: JudgmentCommand, ID: "claim:auth", Status: StatusVerified,

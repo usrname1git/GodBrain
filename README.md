@@ -89,6 +89,9 @@ These are the first-class commands the C++ kernel currently validates and dispat
 |------|---------|
 | `save_godbrain_thought` | Permanent memory — write reasoning the next model can learn from |
 | `query_recent_thoughts` | Recall prior models' thinking |
+| `query_godbrain_skills` | Promoted skills only (untrusted procedure + evidence profile) |
+| `record_godbrain_skill_run` | Append harness evidence (`skill_verification_runs`) |
+| `promote_godbrain_skill` | Promote after origin is verified **and** a passing run exists |
 | `execute_godbrain_script` | Direct script execution / control (requires `reasoning` + `GODBRAIN_API_TOKEN`) |
 | `get_system_telemetry` | Hardware/system awareness |
 | `propose_sovereign_architect_change` | Evolve the system's own rules (requires `reasoning` + `GODBRAIN_API_TOKEN`) |

@@ -22,6 +22,12 @@ import (
 var (
 	ErrSkillOriginNotVerified    = errors.New("skill origin node is not verified")
 	ErrSkillOriginHashMismatch   = errors.New("skill origin node hash mismatch")
+	ErrSkillVerificationRequired = errors.New("skill has no passing verification run")
+	ErrSkillVerificationStale    = errors.New("latest skill verification run is not passed")
+	ErrInvalidSkillExtracted     = errors.New("skills_extracted entry is invalid")
+	ErrInvalidSkillRun           = errors.New("skill verification run is invalid")
+	ErrInvalidSkillProfile       = errors.New("verification_profile is not an allowlisted GodBrain profile")
+	ErrTooManyExtractedSkills    = errors.New("skills_extracted exceeds the cap")
 	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
 	ErrJudgmentIDRequired        = errors.New("judgment id is required")
 	ErrJudgmentReasoningRequired = errors.New("judgment reasoning is required")
@@ -451,6 +457,42 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 			"status":         payload.Payload.TrustTier,
 			"confidence":     1.0,
 			"created_at":     now,
+		}
+	}
+
+	extractedSkills := payload.Payload.SkillsExtracted
+	if len(extractedSkills) > MaxExtractedSkills {
+		extractedSkills = extractedSkills[:MaxExtractedSkills]
+	}
+	for _, skill := range extractedSkills {
+		skill = normalizeSkillExtracted(skill)
+		if err := validateSkillExtracted(skill); err != nil {
+			continue
+		}
+		content := skillProcedureText(skill)
+		stableID := skillStableID(skill.Name, content)
+		sector := skill.TaskKind
+		if sector == "" {
+			sector = "skill"
+		}
+		candidateDocuments[stableID] = bson.M{
+			"stable_id":            stableID,
+			"version":              "v1",
+			"kind":                 "skill",
+			"sector":               sector,
+			"content":              content,
+			"skill_name":           skill.Name,
+			"verification_profile": skill.VerificationProfile,
+			"framework":            skill.Framework,
+			"required_inputs":      skill.RequiredInputs,
+			"schema_version":       payload.SchemaVersion,
+			"status":               payload.Payload.TrustTier,
+			"confidence":           skill.Confidence,
+			"evidence_spans":       skill.EvidenceSpans,
+			"created_at":           now,
+		}
+		if len(skill.EvidenceSpans) > 0 {
+			evidenceSpansByStableID[stableID] = skill.EvidenceSpans
 		}
 	}
 
@@ -1025,18 +1067,28 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 		return nil, ErrSkillOriginHashMismatch
 	}
 
+	if err := s.requirePassingSkillRun(ctx, originNodeID); err != nil {
+		return nil, err
+	}
+
+	if content == "" {
+		content = node.Content
+	}
+	profile := s.latestSkillProfile(ctx, originNodeID)
+
 	// 3. Upsert Skill
 	skillsColl := s.db.Collection("skills")
 	now := time.Now().UTC()
 
 	update := bson.M{
 		"$set": bson.M{
-			"version":        "v1", // Simplified
-			"content":        content,
-			"origin_node_id": originNodeID,
-			"origin_version": originVer,
-			"origin_hash":    originHash,
-			"schema_version": schemaVer,
+			"version":              "v1",
+			"content":              content,
+			"origin_node_id":       originNodeID,
+			"origin_version":       originVer,
+			"origin_hash":          originHash,
+			"schema_version":       schemaVer,
+			"verification_profile": profile,
 		},
 		"$setOnInsert": bson.M{
 			"name":       name,

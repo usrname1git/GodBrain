@@ -939,6 +939,32 @@ json set_status(const json& payload) {
     return receipt;
 }
 
+json record_skill_run(const json& payload) {
+    json document = payload;
+    document["command"] = "record_skill_run";
+    return run_memory_store(document);
+}
+
+json promote_skill(const json& payload) {
+    const std::string reasoning = trim_copy(payload.value("reasoning", ""));
+    if (reasoning.size() < 4) {
+        throw std::runtime_error("promote_skill requires a why (harness passed / look is right)");
+    }
+    json document = payload;
+    document["command"] = "promote_skill";
+    document["reasoning"] = reasoning;
+    return run_memory_store(document);
+}
+
+json query_skills(const json& payload) {
+    json document = {
+        {"command", "query_skills"},
+        {"query", payload.value("query", "")},
+        {"limit", payload.value("limit", 5)},
+    };
+    return run_memory_store(document);
+}
+
 json get_recent(int limit) {
     if (limit <= 0) limit = 5;
     if (limit > 25) limit = 25;

@@ -572,7 +572,9 @@ not be treated as baseline validation.
   append-only `run_node_links`; do not mutate shared nodes to attach a new run.
 - Retrieval must expose only nodes linked to committed runs. Skill promotion
   must keep requiring a verified origin node linked to a committed run plus
-  matching origin version and content hash.
+  matching origin version and content hash, and at least one passing
+  `skill_verification_runs` row whose latest result is `passed`. Apply-only
+  `/edit` (`local-edit-apply-v1`) is not enough to promote.
 - A committed ingestion is acknowledged only after its active
   `rag_documents`/`rag_provenance` projection is confirmed. Projection failure
   leaves the run committed, returns an explicit failure, and is repaired by an

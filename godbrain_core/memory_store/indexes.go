@@ -162,6 +162,17 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
+	_, err = db.Collection("skill_verification_runs").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "origin_node_id", Value: 1},
+			{Key: "created_at", Value: -1},
+		},
+		Options: options.Index().SetName("skill_runs_origin_created"),
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

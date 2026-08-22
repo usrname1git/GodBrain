@@ -54,6 +54,10 @@ func (api *hookedSearchAPI) Document(ctx context.Context, id string) (rag.Docume
 	return api.engine.Document(ctx, id)
 }
 
+func (api *hookedSearchAPI) SearchSkills(ctx context.Context, request rag.SkillSearchRequest) (rag.SkillSearchResponse, error) {
+	return api.engine.SearchSkills(ctx, request)
+}
+
 func setupRAGTestDB(t *testing.T) *mongo.Database {
 	t.Helper()
 	uri := os.Getenv("MONGODB_TEST_URI")

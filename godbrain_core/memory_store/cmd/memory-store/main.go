@@ -140,6 +140,15 @@ func run() error {
 	if route.Command == memorystore.StalePinsCommand {
 		return runStalePins(ctx, db, inputData)
 	}
+	if route.Command == memorystore.RecordSkillRunCommand {
+		return runRecordSkillRun(ctx, db, inputData)
+	}
+	if route.Command == memorystore.PromoteSkillCommand {
+		return runPromoteSkill(ctx, db, inputData)
+	}
+	if route.Command == memorystore.QuerySkillsCommand {
+		return runQuerySkills(ctx, db, inputData)
+	}
 
 	var payload memorystore.DistillationPayload
 	decoder := json.NewDecoder(bytes.NewReader(inputData))
@@ -301,6 +310,101 @@ func runJudgment(ctx context.Context, db *mongo.Database, inputData []byte) erro
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
 		return failWithEnvelope("Failed to write judgment receipt", err)
+	}
+	return nil
+}
+
+func decodeOne(inputData []byte, dest interface{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(inputData))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("Multiple JSON documents or trailing garbage found in input")
+	}
+	return nil
+}
+
+func runRecordSkillRun(ctx context.Context, db *mongo.Database, inputData []byte) error {
+	var request memorystore.RecordSkillRunRequest
+	if err := decodeOne(inputData, &request); err != nil {
+		return failWithEnvelope("Failed to parse record_skill_run payload", err)
+	}
+	store := memorystore.NewStore(db)
+	run, err := store.RecordSkillVerificationRun(ctx, request)
+	if err != nil {
+		return failWithEnvelope("RecordSkillVerificationRun failed", err)
+	}
+	receipt := memorystore.SkillRunReceipt{
+		RunID:        run.RunID,
+		SkillName:    run.SkillName,
+		OriginNodeID: run.OriginNodeID,
+		Result:       run.Result,
+		Status:       "recorded",
+		Timestamp:    run.CreatedAt,
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
+		return failWithEnvelope("Failed to write skill run receipt", err)
+	}
+	return nil
+}
+
+func runPromoteSkill(ctx context.Context, db *mongo.Database, inputData []byte) error {
+	var request memorystore.PromoteSkillRequest
+	if err := decodeOne(inputData, &request); err != nil {
+		return failWithEnvelope("Failed to parse promote_skill payload", err)
+	}
+	if err := memorystore.ValidatePromoteSkillRequest(request); err != nil {
+		return failWithEnvelope("PromoteSkill validation failed", err)
+	}
+	store := memorystore.NewStore(db)
+	skill, err := store.PromoteSkill(
+		ctx,
+		request.Name,
+		request.Content,
+		request.OriginNodeID,
+		request.OriginVersion,
+		request.OriginHash,
+		request.SchemaVersion,
+	)
+	if err != nil {
+		return failWithEnvelope("PromoteSkill failed", err)
+	}
+	receipt := memorystore.PromoteSkillReceipt{
+		SkillID:      skill.ID.Hex(),
+		Name:         skill.Name,
+		OriginNodeID: skill.OriginNodeID,
+		Status:       "promoted",
+		Timestamp:    skill.CreatedAt,
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
+		return failWithEnvelope("Failed to write promote_skill receipt", err)
+	}
+	return nil
+}
+
+func runQuerySkills(ctx context.Context, db *mongo.Database, inputData []byte) error {
+	var request memorystore.QuerySkillsRequest
+	if err := decodeOne(inputData, &request); err != nil {
+		return failWithEnvelope("Failed to parse query_skills payload", err)
+	}
+	if err := memorystore.ValidateQuerySkillsRequest(request); err != nil {
+		return failWithEnvelope("query_skills validation failed", err)
+	}
+	store := memorystore.NewStore(db)
+	skills, err := store.QueryPromotedSkills(ctx, request.Query, request.Limit)
+	if err != nil {
+		return failWithEnvelope("QueryPromotedSkills failed", err)
+	}
+	receipt := memorystore.QuerySkillsReceipt{
+		Status:    "ok",
+		Count:     len(skills),
+		Skills:    skills,
+		Timestamp: time.Now().UTC(),
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(receipt); err != nil {
+		return failWithEnvelope("Failed to write query_skills receipt", err)
 	}
 	return nil
 }

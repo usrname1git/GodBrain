@@ -191,6 +191,8 @@ void save_result(bool applied, const std::string& report) {
     const std::string path = repo_root() + "\\logs\\last-edit-result.json";
     std::ostringstream json;
     json << "{\"applied\":" << (applied ? "true" : "false")
+         << ",\"verification_profile\":\"local-edit-apply-v1\""
+         << ",\"skill_promote_eligible\":false"
          << ",\"report\":\"";
     for (char ch : report) {
         if (ch == '\\' || ch == '"') json << '\\';

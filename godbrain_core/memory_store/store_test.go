@@ -140,6 +140,97 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	}
 }
 
+func seedVerifiedSkillOrigin(t *testing.T, db *mongo.Database, content string) (primitive.ObjectID, string) {
+	t.Helper()
+	ctx := context.Background()
+	nodeID := primitive.NewObjectID()
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(content))
+	originHash := hex.EncodeToString(hash.Sum(nil))
+	_, err := db.Collection("knowledge_nodes").InsertOne(ctx, memorystore.KnowledgeNode{
+		ID:        nodeID,
+		StableID:  "skill-origin",
+		Version:   "v1",
+		Kind:      "skill",
+		Status:    "verified",
+		Content:   content,
+		CreatedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	_, err = db.Collection("ingestion_runs").InsertOne(ctx, memorystore.IngestionRun{
+		RunID:  "skill-run",
+		Status: memorystore.StatusCommitted,
+	})
+	if err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	_, err = db.Collection("run_node_links").InsertOne(ctx, memorystore.RunNodeLink{
+		RunID:       "skill-run",
+		NodeID:      nodeID,
+		StableID:    "skill-origin",
+		NodeVersion: "v1",
+		CreatedAt:   time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
+	return nodeID, originHash
+}
+
+func TestPromoteSkillRequiresPassingRun(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+	content := "Keep /brief first line as the phone glance."
+	nodeID, originHash := seedVerifiedSkillOrigin(t, db, content)
+
+	_, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	if !errors.Is(err, memorystore.ErrSkillVerificationRequired) {
+		t.Fatalf("expected verification required, got %v", err)
+	}
+
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "build-galaxy-glance",
+		OriginNodeID:        nodeID.Hex(),
+		FixtureID:           "galaxy-brief-v1",
+		VerificationProfile: "galaxy-html-v1",
+		Result:              memorystore.SkillRunFailed,
+		Reasoning:           "build failed on fixture",
+	})
+	if err != nil {
+		t.Fatalf("record failed run: %v", err)
+	}
+	_, err = store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	if !errors.Is(err, memorystore.ErrSkillVerificationStale) {
+		t.Fatalf("expected stale verification, got %v", err)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "build-galaxy-glance",
+		OriginNodeID:        nodeID.Hex(),
+		FixtureID:           "galaxy-brief-v1",
+		VerificationProfile: "galaxy-html-v1",
+		Result:              memorystore.SkillRunPassed,
+		Checks:              map[string]string{"build": "passed"},
+		Reasoning:           "desk test passed on loopback",
+	})
+	if err != nil {
+		t.Fatalf("record passing run: %v", err)
+	}
+	skill, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	if err != nil {
+		t.Fatalf("promote after passing run: %v", err)
+	}
+	if skill.Name != "build-galaxy-glance" || skill.VerificationProfile != "galaxy-html-v1" {
+		t.Fatalf("unexpected skill: %+v", skill)
+	}
+}
+
 func TestPromoteSkillMissingNodeError(t *testing.T) {
 	db := setupTestDB(t)
 	store := memorystore.NewStore(db)

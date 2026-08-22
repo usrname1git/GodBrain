@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "product_ui": "godbrain_core/frontend/galaxy.html",
+  "defaults": {
+    "spa_or_dashboard": "vite-react-typescript",
+    "ssr_or_public_site": "nextjs-typescript",
+    "separate_api": "not-in-v1",
+    "godbrain_operator_ui": "galaxy-html-not-lab"
+  },
+  "profiles": {
+    "frontend-spa-v1": {
+      "when": "browser app or operations dashboard without an SSR requirement",
+      "commands": ["npm ci", "npm run build"],
+      "docs": ["README.md with Brief, Stack, Run, Check, Not Galaxy"]
+    }
+  },
+  "not": [
+    "replace galaxy.html",
+    "linux kernel",
+    "bios flash",
+    "nest-by-default",
+    "mouth git push"
+  ]
+}

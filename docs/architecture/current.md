@@ -107,7 +107,20 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
 blocks. Writes only root `.ps1` / `.cmd` / `.md` or `godbrain_core\` (not
-build / vendor / LLM / archive). Never git push from the mouth.
+build / vendor / LLM / archive). Never git push from the mouth. Apply
+records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
+enough to promote a skill.
+
+Librarian may extract `skills_extracted`; they land as candidate knowledge
+nodes (`kind=skill`). `PromoteSkill` requires a verified origin node, a
+committed run, matching hash, and a passing `skill_verification_runs` row.
+`POST http://127.0.0.1:8084/v1/skills` returns promoted skills only.
+
+`godbrain_core/skill_lab/` is a gym, not Galaxy. First canvas is a Vite+React
+dashboard fixture (`frontend-spa-v1`). `scripts\Verify-SkillLab.ps1` runs
+`npm` off the GPU and **fails if the fixture README is missing** (Brief,
+Stack, Run, Check). A green build without docs is not a product. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain UI
+stays `galaxy.html`). Not a kernel factory.
 
 `Start-CS2.ps1` pauses the mouth and Tailscale, launches Steam app 730, waits
 until `CS2.exe` exits, waits 5 minutes, then `tailscale up --unattended` and

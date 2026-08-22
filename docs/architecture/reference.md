@@ -102,6 +102,9 @@ turn. `/verify <12-char prefix> <why>` resolves against `/pending`.
 |---|---|
 | `save_godbrain_thought` | Candidate Golden Record via `memory-store.exe` |
 | `query_recent_thoughts` | Newest active-generation `rag_documents` |
+| `query_godbrain_skills` | Promoted `skills` only; untrusted procedure text |
+| `record_godbrain_skill_run` | Append-only `skill_verification_runs` |
+| `promote_godbrain_skill` | Requires verified origin + latest run `passed` |
 | `set_godbrain_status` | `verified` / `rejected` / `stale` with reasoning |
 | `get_system_telemetry` | Hardware/system awareness |
 | `observe_godbrain_host` | Windows inventory + `os_pin`; auto-verified sensor |
@@ -117,6 +120,7 @@ turn. `/verify <12-char prefix> <why>` resolves against `/pending`.
 | `POST` | `/v1/search` | None | Bounded lexical or measured hybrid retrieval |
 | `GET` | `/v1/graph` | None | Bounded active-generation node list (`limit` default 250, max 500) |
 | `GET` | `/v1/document` | None | One active-generation document by `id` (`node_id` hex or `stable_id`) |
+| `POST` | `/v1/skills` | None | Promoted skills only; procedure text is untrusted. Not mixed into `/v1/search`. |
 
 Unready corpus → `503`. Graph links are a bounded star of nodes that share a
 `source_hash` (or `run_id`) in `rag_provenance`, not semantic edges. Default
