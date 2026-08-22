@@ -13,7 +13,7 @@ Vite vs Next vs Node. Do not Exa Wikipedia for that table.
 
 | Job | Lab default |
 |---|---|
-| Simple browser app / dashboard | Vite + React + TypeScript (`frontend-spa-v1`) |
+| Simple browser app / dashboard | Vite + React (`frontend-spa-v1`) |
 | SSR / public site (only if the brief says so) | Next.js (`frontend-nextjs-v1`) — not scaffolded in v1 |
 | GodBrain operator UI | **Out of lab.** `godbrain_core/frontend/galaxy.html` |
 | Separate API, OS kernel, BIOS | **Not this gym.** |

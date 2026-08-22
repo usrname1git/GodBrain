@@ -22,6 +22,14 @@ var allowedSkillProfiles = map[string]struct{}{
 	"desk-v1":             {},
 }
 
+var applyOnlySkillProfiles = map[string]struct{}{
+	"local-edit-apply-v1": {},
+}
+
+func latestSkillRunSort() bson.D {
+	return bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}
+}
+
 func normalizeSkillExtracted(skill SkillExtracted) SkillExtracted {
 	skill.Name = strings.TrimSpace(skill.Name)
 	skill.Content = strings.TrimSpace(skill.Content)
@@ -199,35 +207,26 @@ func (s *Store) RecordSkillVerificationRun(ctx context.Context, request RecordSk
 	return &run, nil
 }
 
-func (s *Store) requirePassingSkillRun(ctx context.Context, originNodeID string) error {
-	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
+func (s *Store) requirePassingSkillRun(ctx context.Context, originNodeID, skillName string) (*SkillVerificationRun, error) {
+	opts := options.FindOne().SetSort(latestSkillRunSort())
 	var latest SkillVerificationRun
 	err := s.db.Collection("skill_verification_runs").FindOne(ctx, bson.M{
 		"origin_node_id": originNodeID,
+		"skill_name":     skillName,
 	}, opts).Decode(&latest)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return ErrSkillVerificationRequired
+			return nil, ErrSkillVerificationRequired
 		}
-		return err
+		return nil, err
 	}
 	if latest.Result != SkillRunPassed {
-		return ErrSkillVerificationStale
+		return nil, ErrSkillVerificationStale
 	}
-	return nil
-}
-
-func (s *Store) latestSkillProfile(ctx context.Context, originNodeID string) string {
-	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	var latest SkillVerificationRun
-	err := s.db.Collection("skill_verification_runs").FindOne(ctx, bson.M{
-		"origin_node_id": originNodeID,
-		"result":         SkillRunPassed,
-	}, opts).Decode(&latest)
-	if err != nil {
-		return ""
+	if _, applyOnly := applyOnlySkillProfiles[latest.VerificationProfile]; applyOnly {
+		return nil, ErrSkillApplyOnlyProfile
 	}
-	return latest.VerificationProfile
+	return &latest, nil
 }
 
 func (s *Store) QueryPromotedSkills(ctx context.Context, query string, limit int) ([]Skill, error) {

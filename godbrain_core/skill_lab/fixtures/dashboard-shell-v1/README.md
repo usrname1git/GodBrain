@@ -12,8 +12,8 @@ width. No authentication in v1 (mocked data).
 ## Stack
 
 Inferred from `godbrain_core/skill_lab/stack-policy.json`, not operator
-choice: **Vite + React** (`frontend-spa-v1`). SPA/dashboard without an
-SSR requirement. GodBrain's own UI stays `galaxy.html`.
+choice: **Vite + React** (`frontend-spa-v1`, JavaScript sources). SPA
+without an SSR requirement. GodBrain's own UI stays `galaxy.html`.
 
 ## Run
 

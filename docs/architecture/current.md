@@ -113,14 +113,17 @@ enough to promote a skill.
 
 Librarian may extract `skills_extracted`; they land as candidate knowledge
 nodes (`kind=skill`). `PromoteSkill` requires a verified origin node, a
-committed run, matching hash, and a passing `skill_verification_runs` row.
-`POST http://127.0.0.1:8084/v1/skills` returns promoted skills only.
+committed run, matching hash, origin content (not a caller rewrite), and a
+passing latest `skill_verification_runs` row for that skill name whose
+profile is not `local-edit-apply-v1`. `POST http://127.0.0.1:8084/v1/skills`
+returns promoted skills only.
 
 `godbrain_core/skill_lab/` is a gym, not Galaxy. First canvas is a Vite+React
 dashboard fixture (`frontend-spa-v1`). `scripts\Verify-SkillLab.ps1` runs
-`npm` off the GPU and **fails if the fixture README is missing** (Brief,
-Stack, Run, Check). A green build without docs is not a product. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain UI
-stays `galaxy.html`). Not a kernel factory.
+`npm ci` off the GPU under `skill_lab/fixtures`, fails without a lockfile
+or README (Brief, Stack, Run, Check, Not Galaxy), and does not mark the
+skill promotable. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain
+UI stays `galaxy.html`). Not a kernel factory.
 
 `Start-CS2.ps1` pauses the mouth and Tailscale, launches Steam app 730, waits
 until `CS2.exe` exits, waits 5 minutes, then `tailscale up --unattended` and

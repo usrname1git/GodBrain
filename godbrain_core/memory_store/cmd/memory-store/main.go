@@ -367,6 +367,7 @@ func runPromoteSkill(ctx context.Context, db *mongo.Database, inputData []byte) 
 		request.OriginVersion,
 		request.OriginHash,
 		request.SchemaVersion,
+		request.VerificationProfile,
 	)
 	if err != nil {
 		return failWithEnvelope("PromoteSkill failed", err)

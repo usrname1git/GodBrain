@@ -16,17 +16,25 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
-$allowed = @("frontend-spa-v1", "frontend-nextjs-v1")
+$allowed = @("frontend-spa-v1")
 if ($allowed -notcontains $Profile) {
     throw "Verify-SkillLab: profile $Profile is not a lab harness"
 }
-if ($Profile -eq "frontend-nextjs-v1") {
-    throw "Verify-SkillLab: frontend-nextjs-v1 is reserved; v1 gym is frontend-spa-v1"
+if ($Fixture -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+    throw "Verify-SkillLab: fixture id is not allowlisted"
 }
-
-$fixtureDir = Join-Path $RepoRoot "godbrain_core\skill_lab\fixtures\$Fixture"
+$fixturesRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "godbrain_core\skill_lab\fixtures"))
+$fixtureDir = [System.IO.Path]::GetFullPath((Join-Path $fixturesRoot $Fixture))
+$prefix = $fixturesRoot.TrimEnd('\') + '\'
+if (-not $fixtureDir.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and
+    $fixtureDir -ne $fixturesRoot) {
+    throw "Verify-SkillLab: fixture escaped the lab"
+}
 if (-not (Test-Path -LiteralPath (Join-Path $fixtureDir "package.json"))) {
     throw "Verify-SkillLab: missing fixture $fixtureDir"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fixtureDir "package-lock.json"))) {
+    throw "Verify-SkillLab: missing package-lock.json (npm install is not evidence)"
 }
 
 function Test-FixtureReadme([string]$Dir) {
@@ -70,11 +78,7 @@ $build = "failed"
 try {
     Test-FixtureReadme $fixtureDir
     $doc = "passed"
-    if (Test-Path -LiteralPath (Join-Path $fixtureDir "package-lock.json")) {
-        Invoke-Npm @("ci", "--no-audit", "--no-fund")
-    } else {
-        Invoke-Npm @("install", "--no-audit", "--no-fund")
-    }
+    Invoke-Npm @("ci", "--no-audit", "--no-fund")
     Invoke-Npm @("run", "build")
     $build = "passed"
 } catch {
@@ -89,7 +93,8 @@ $report = [ordered]@{
     verification_profile    = $Profile
     result                  = $result
     checks                  = @{ build = $build; docs = $doc }
-    skill_promote_eligible  = ($result -eq "passed")
+    harness_passed          = ($result -eq "passed")
+    skill_promote_eligible  = $false
     error                   = $err
     recorded                = $false
     at                      = [DateTime]::UtcNow.ToString("o")

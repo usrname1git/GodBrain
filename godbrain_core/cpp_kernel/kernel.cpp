@@ -9,7 +9,10 @@ GodBrainKernel::GodBrainKernel() {
 }
 
 bool GodBrainKernel::validate_sovereignty(const std::string& command_type, const json& payload) {
-    if (command_type == "execute_godbrain_script" || command_type == "propose_sovereign_architect_change") {
+    if (command_type == "execute_godbrain_script" ||
+        command_type == "propose_sovereign_architect_change" ||
+        command_type == "record_godbrain_skill_run" ||
+        command_type == "promote_godbrain_skill") {
         if (!payload.contains("reasoning") || !payload["reasoning"].is_string()) {
             std::cout << "[KERNEL SECURITY] High risk command rejected: No reasoning provided." << std::endl;
             return false;

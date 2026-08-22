@@ -27,6 +27,9 @@ var (
 	ErrInvalidSkillExtracted     = errors.New("skills_extracted entry is invalid")
 	ErrInvalidSkillRun           = errors.New("skill verification run is invalid")
 	ErrInvalidSkillProfile       = errors.New("verification_profile is not an allowlisted GodBrain profile")
+	ErrSkillApplyOnlyProfile     = errors.New("apply-only verification cannot promote a skill")
+	ErrSkillContentMismatch      = errors.New("promoted content must match the origin node")
+	ErrSkillProfileMismatch      = errors.New("verification_profile does not match the passing run")
 	ErrTooManyExtractedSkills    = errors.New("skills_extracted exceeds the cap")
 	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
 	ErrJudgmentIDRequired        = errors.New("judgment id is required")
@@ -1002,7 +1005,7 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 }
 
 // Ensures that the origin node exists, is verified, and the hash matches exactly.
-func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer string) (*Skill, error) {
+func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer, expectedProfile string) (*Skill, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
 
 	// 1. Fetch the origin node
@@ -1067,14 +1070,25 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 		return nil, ErrSkillOriginHashMismatch
 	}
 
-	if err := s.requirePassingSkillRun(ctx, originNodeID); err != nil {
+	if content != "" && content != node.Content {
+		return nil, ErrSkillContentMismatch
+	}
+	content = node.Content
+	run, err := s.requirePassingSkillRun(ctx, originNodeID, name)
+	if err != nil {
 		return nil, err
 	}
-
-	if content == "" {
-		content = node.Content
+	if expectedProfile != "" && expectedProfile != run.VerificationProfile {
+		return nil, ErrSkillProfileMismatch
 	}
-	profile := s.latestSkillProfile(ctx, originNodeID)
+	again, err := s.requirePassingSkillRun(ctx, originNodeID, name)
+	if err != nil {
+		return nil, err
+	}
+	if again.RunID != run.RunID || again.Result != SkillRunPassed {
+		return nil, ErrSkillVerificationStale
+	}
+	run = again
 
 	// 3. Upsert Skill
 	skillsColl := s.db.Collection("skills")
@@ -1088,7 +1102,8 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 			"origin_version":       originVer,
 			"origin_hash":          originHash,
 			"schema_version":       schemaVer,
-			"verification_profile": profile,
+			"verification_profile": run.VerificationProfile,
+			"verification_run_id":  run.RunID,
 		},
 		"$setOnInsert": bson.M{
 			"name":       name,

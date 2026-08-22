@@ -120,6 +120,7 @@ type Skill struct {
 	OriginHash          string             `bson:"origin_hash" json:"origin_hash"`
 	SchemaVersion       string             `bson:"schema_version" json:"schema_version"`
 	VerificationProfile string             `bson:"verification_profile,omitempty" json:"verification_profile,omitempty"`
+	VerificationRunID   string             `bson:"verification_run_id,omitempty" json:"verification_run_id,omitempty"`
 	CreatedAt           time.Time          `bson:"created_at" json:"created_at"`
 }
 

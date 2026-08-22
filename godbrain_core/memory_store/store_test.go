@@ -134,7 +134,7 @@ func TestPromoteSkillHashMismatch(t *testing.T) {
 	})
 
 	// Attempt promotion with WRONG hash
-	_, err := store.PromoteSkill(ctx, "test-skill", "skill data", nodeID.Hex(), "v1", "wrong_hash", "1.0")
+	_, err := store.PromoteSkill(ctx, "test-skill", "skill data", nodeID.Hex(), "v1", "wrong_hash", "1.0", "")
 	if err != memorystore.ErrSkillOriginHashMismatch {
 		t.Fatalf("Expected hash mismatch error, got: %v", err)
 	}
@@ -147,9 +147,11 @@ func seedVerifiedSkillOrigin(t *testing.T, db *mongo.Database, content string) (
 	hash := sha3.NewLegacyKeccak256()
 	hash.Write([]byte(content))
 	originHash := hex.EncodeToString(hash.Sum(nil))
+	stable := "skill-origin-" + nodeID.Hex()
+	runID := "skill-run-" + nodeID.Hex()
 	_, err := db.Collection("knowledge_nodes").InsertOne(ctx, memorystore.KnowledgeNode{
 		ID:        nodeID,
-		StableID:  "skill-origin",
+		StableID:  stable,
 		Version:   "v1",
 		Kind:      "skill",
 		Status:    "verified",
@@ -160,16 +162,16 @@ func seedVerifiedSkillOrigin(t *testing.T, db *mongo.Database, content string) (
 		t.Fatalf("seed node: %v", err)
 	}
 	_, err = db.Collection("ingestion_runs").InsertOne(ctx, memorystore.IngestionRun{
-		RunID:  "skill-run",
+		RunID:  runID,
 		Status: memorystore.StatusCommitted,
 	})
 	if err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	_, err = db.Collection("run_node_links").InsertOne(ctx, memorystore.RunNodeLink{
-		RunID:       "skill-run",
+		RunID:       runID,
 		NodeID:      nodeID,
-		StableID:    "skill-origin",
+		StableID:    stable,
 		NodeVersion: "v1",
 		CreatedAt:   time.Now(),
 	})
@@ -186,7 +188,7 @@ func TestPromoteSkillRequiresPassingRun(t *testing.T) {
 	content := "Keep /brief first line as the phone glance."
 	nodeID, originHash := seedVerifiedSkillOrigin(t, db, content)
 
-	_, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	_, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0", "")
 	if !errors.Is(err, memorystore.ErrSkillVerificationRequired) {
 		t.Fatalf("expected verification required, got %v", err)
 	}
@@ -203,7 +205,7 @@ func TestPromoteSkillRequiresPassingRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record failed run: %v", err)
 	}
-	_, err = store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	_, err = store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0", "")
 	if !errors.Is(err, memorystore.ErrSkillVerificationStale) {
 		t.Fatalf("expected stale verification, got %v", err)
 	}
@@ -222,12 +224,69 @@ func TestPromoteSkillRequiresPassingRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record passing run: %v", err)
 	}
-	skill, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0")
+	skill, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0", "galaxy-html-v1")
 	if err != nil {
 		t.Fatalf("promote after passing run: %v", err)
 	}
-	if skill.Name != "build-galaxy-glance" || skill.VerificationProfile != "galaxy-html-v1" {
+	if skill.Name != "build-galaxy-glance" || skill.VerificationProfile != "galaxy-html-v1" || skill.VerificationRunID == "" {
 		t.Fatalf("unexpected skill: %+v", skill)
+	}
+
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "other-skill",
+		OriginNodeID:        nodeID.Hex(),
+		FixtureID:           "unrelated",
+		VerificationProfile: "desk-v1",
+		Result:              memorystore.SkillRunPassed,
+		Reasoning:           "unrelated skill passing run",
+	})
+	if err != nil {
+		t.Fatalf("record other skill: %v", err)
+	}
+	_, err = store.PromoteSkill(ctx, "missing-lab-skill", content, nodeID.Hex(), "v1", originHash, "1.0", "")
+	if !errors.Is(err, memorystore.ErrSkillVerificationRequired) {
+		t.Fatalf("other skill run must not promote missing-lab-skill, got %v", err)
+	}
+
+	applyNode, applyHash := seedVerifiedSkillOrigin(t, db, "apply only")
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "apply-only",
+		OriginNodeID:        applyNode.Hex(),
+		FixtureID:           "edit",
+		VerificationProfile: "local-edit-apply-v1",
+		Result:              memorystore.SkillRunPassed,
+		Reasoning:           "hunks applied to disk",
+	})
+	if err != nil {
+		t.Fatalf("record apply-only: %v", err)
+	}
+	_, err = store.PromoteSkill(ctx, "apply-only", "apply only", applyNode.Hex(), "v1", applyHash, "1.0", "")
+	if !errors.Is(err, memorystore.ErrSkillApplyOnlyProfile) {
+		t.Fatalf("apply-only must not promote, got %v", err)
+	}
+
+	mismatchNode, mismatchHash := seedVerifiedSkillOrigin(t, db, "origin procedure text")
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "content-lock",
+		OriginNodeID:        mismatchNode.Hex(),
+		FixtureID:           "lab",
+		VerificationProfile: "frontend-spa-v1",
+		Result:              memorystore.SkillRunPassed,
+		Reasoning:           "fixture build passed with docs",
+	})
+	if err != nil {
+		t.Fatalf("record content-lock run: %v", err)
+	}
+	_, err = store.PromoteSkill(ctx, "content-lock", "unrelated published text", mismatchNode.Hex(), "v1", mismatchHash, "1.0", "")
+	if !errors.Is(err, memorystore.ErrSkillContentMismatch) {
+		t.Fatalf("promoted content must match origin, got %v", err)
+	}
+	_, err = store.PromoteSkill(ctx, "content-lock", "origin procedure text", mismatchNode.Hex(), "v1", mismatchHash, "1.0", "galaxy-html-v1")
+	if !errors.Is(err, memorystore.ErrSkillProfileMismatch) {
+		t.Fatalf("expected profile must match passing run, got %v", err)
 	}
 }
 
@@ -243,6 +302,7 @@ func TestPromoteSkillMissingNodeError(t *testing.T) {
 		"v1",
 		"unused",
 		"1.0",
+		"",
 	)
 	if !errors.Is(err, memorystore.ErrKnowledgeNodeNotFound) {
 		t.Fatalf("expected ErrKnowledgeNodeNotFound, got %v", err)

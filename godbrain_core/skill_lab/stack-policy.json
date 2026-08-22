@@ -2,7 +2,7 @@
   "version": "1",
   "product_ui": "godbrain_core/frontend/galaxy.html",
   "defaults": {
-    "spa_or_dashboard": "vite-react-typescript",
+    "spa_or_dashboard": "vite-react",
     "ssr_or_public_site": "nextjs-typescript",
     "separate_api": "not-in-v1",
     "godbrain_operator_ui": "galaxy-html-not-lab"
