@@ -57,11 +57,15 @@ The only graph with a named signal later is still the **conflict queue**:
 two nodes (candidate vs verified), human on the merge. If deleting a node
 leaves the same result, delete it.
 
-## README end-goal items that are not this host
+## README wants vs standing nos
 
-The public README still lists a sovereign autonomous operator (CVE ingest,
-cross-fleet patch, self-directed DISM/registry). On **this** host those are
-not next and several are standing nos:
+The public README names two **wanted** later items that stay on the kernel
+path: mouth-as-web-dev (`/edit` allowlist grows on purpose, never mouth
+`git push`) and richer teaching query (still rag-service / `query_recent_thoughts`,
+never `mongosh` or a MongoDB IDE/MCP against the live vault). Do not add
+`.vscode` Mongo MCP to make an agent task easier.
+
+These remain **not this host**; several are standing nos:
 
 | README item | This host |
 |---|---|
