@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -37,6 +38,7 @@ var (
 	ErrInvalidJudgmentStatus     = errors.New("judgment status must be verified, rejected, or stale")
 	ErrInvalidStalePin           = errors.New("stale_pins requires windows-sre sector and a pin")
 	ErrInvalidStatusTransition   = errors.New("status transition is not allowed")
+	ErrInvalidEvidenceSpan       = errors.New("evidence_spans must be [start:end] byte ranges on the source")
 )
 
 var forbiddenDocumentPatterns = []*regexp.Regexp{
@@ -77,6 +79,22 @@ func claimStableID(claim Claim) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+func parseNonNegInt(text string) (int, bool) {
+	if text == "" {
+		return 0, false
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
+			return 0, false
+		}
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
 func parseEvidenceSpan(span string) (int, int, bool) {
 	if len(span) < 5 || span[0] != '[' || span[len(span)-1] != ']' {
 		return 0, 0, false
@@ -85,12 +103,32 @@ func parseEvidenceSpan(span string) (int, int, bool) {
 	if !found {
 		return 0, 0, false
 	}
-	start, startErr := strconv.Atoi(startText)
-	end, endErr := strconv.Atoi(endText)
-	if startErr != nil || endErr != nil || start < 0 || end < start {
+	start, startOK := parseNonNegInt(startText)
+	end, endOK := parseNonNegInt(endText)
+	if !startOK || !endOK || end <= start {
 		return 0, 0, false
 	}
 	return start, end, true
+}
+
+func validateEvidenceSpans(spans []string, source string) error {
+	for _, span := range spans {
+		span = strings.TrimSpace(span)
+		if span == "" {
+			return ErrInvalidEvidenceSpan
+		}
+		start, end, ok := parseEvidenceSpan(span)
+		if !ok {
+			return ErrInvalidEvidenceSpan
+		}
+		if end > len(source) {
+			return ErrInvalidEvidenceSpan
+		}
+		if !utf8.ValidString(source[start:end]) {
+			return ErrInvalidEvidenceSpan
+		}
+	}
+	return nil
 }
 
 func mergeClaims(existing, incoming Claim) Claim {
@@ -422,6 +460,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 
 	for _, claim := range payload.Payload.Claims {
 		claim = normalizeClaim(claim)
+		if err = validateEvidenceSpans(claim.EvidenceSpans, sourceNode.Content); err != nil {
+			return err
+		}
 		stableID := claimStableID(claim)
 		if existing, ok := claimsByStableID[stableID]; ok {
 			claim = mergeClaims(existing, claim)
@@ -430,6 +471,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 	}
 
 	for stableID, claim := range claimsByStableID {
+		if err = validateEvidenceSpans(claim.EvidenceSpans, sourceNode.Content); err != nil {
+			return err
+		}
 		candidateDocuments[stableID] = bson.M{
 			"stable_id":      stableID,
 			"version":        "v1",
@@ -471,6 +515,9 @@ func (s *Store) StageDistillation(ctx context.Context, runID string, leaseToken 
 		skill = normalizeSkillExtracted(skill)
 		if err := validateSkillExtracted(skill); err != nil {
 			continue
+		}
+		if err := validateEvidenceSpans(skill.EvidenceSpans, sourceNode.Content); err != nil {
+			return err
 		}
 		content := skillProcedureText(skill)
 		stableID := skillStableID(skill.Name, content)

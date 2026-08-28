@@ -3609,9 +3609,19 @@ int main() {
                                     << thought.value("label", "") << "\n";
                         }
                     }
-                    listing << "\nProjected Golden Records:\n";
+                    const std::string recall_query = trim_copy(user_msg.substr(7));
+                    listing << "\n";
+                    if (recall_query.empty()) {
+                        listing << "Projected Golden Records (newest):\n";
+                    } else {
+                        listing << "Verified recall for " << recall_query << ":\n";
+                    }
                     try {
-                        const json recent = memory::get_recent(8).value("thoughts", json::array());
+                        const json recent =
+                            recall_query.empty()
+                                ? memory::get_recent(8).value("thoughts", json::array())
+                                : memory::search_verified(recall_query, 8)
+                                      .value("thoughts", json::array());
                         if (recent.empty()) {
                             listing << "(none in the active projection)";
                         } else {

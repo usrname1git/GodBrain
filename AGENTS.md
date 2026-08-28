@@ -251,7 +251,7 @@ reads the active RAG graph. Oracle search is verified-only.
 
 Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next
 worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
-`/recall`, `/status`, `/last`, `/brief`, and `/pending`.
+`/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, and `/pending`.
 
 - `/verify last <why>` and `/reject last <why>` judge the newest on-disk
   Oracle turn.

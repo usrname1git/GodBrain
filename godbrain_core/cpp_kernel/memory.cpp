@@ -981,6 +981,33 @@ json query_skills(const json& payload) {
     return run_memory_store(document);
 }
 
+json search_verified(const std::string& query, int limit) {
+    if (limit <= 0) limit = 8;
+    if (limit > 25) limit = 25;
+    json response;
+    std::string error;
+    if (!godbrain_rag::Client{}.search(query, limit, response, error)) {
+        if (error.find("no usable context") != std::string::npos) {
+            return {{"status", "success"},
+                    {"thoughts", json::array()},
+                    {"query", query}};
+        }
+        throw std::runtime_error(error);
+    }
+    json thoughts = json::array();
+    for (const auto& hit : response.at("results")) {
+        thoughts.push_back({
+            {"id", hit.value("stable_id", hit.value("node_id", ""))},
+            {"stable_id", hit.value("stable_id", "")},
+            {"label", hit.value("snippet", "")},
+            {"kind", hit.value("kind", "claim")},
+            {"sector", hit.value("sector", "")},
+            {"status", hit.value("status", "verified")},
+        });
+    }
+    return {{"status", "success"}, {"thoughts", thoughts}, {"query", query}};
+}
+
 json get_recent(int limit) {
     if (limit <= 0) limit = 5;
     if (limit > 25) limit = 25;

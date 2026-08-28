@@ -41,7 +41,12 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
         } else if (command_type == "save_godbrain_thought") {
             result = memory::save_thought(payload);
         } else if (command_type == "query_recent_thoughts") {
-            result = memory::get_recent(payload.value("limit", 5));
+            const std::string query = payload.value("query", "");
+            if (!query.empty()) {
+                result = memory::search_verified(query, payload.value("limit", 8));
+            } else {
+                result = memory::get_recent(payload.value("limit", 5));
+            }
         } else if (command_type == "set_godbrain_status") {
             result = memory::set_status(payload);
         } else if (command_type == "record_godbrain_skill_run") {
