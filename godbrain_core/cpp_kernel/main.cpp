@@ -2755,12 +2755,11 @@ std::string run_colibri_serve(
         if (heading_loop) break;
         if (finish_reason != "length") break;
         if (chunk + 1 >= max_chunks) break;
-        // /edit: stop after one chunk unless APPLY started and is still open.
+        // /edit: stop after one chunk unless the last APPLY is still open
+        // (last *** APPLY after last >>>>, so a finished hunk does not
+        // hide a truncated second hunk).
         if (wants_apply_continue(system, user)) {
-            const bool open_apply =
-                assembled.find("*** APPLY") != std::string::npos &&
-                assembled.find(">>>>") == std::string::npos;
-            if (!open_apply) break;
+            if (!local_edit::apply_still_open(assembled)) break;
             messages.push_back(json{{"role", "assistant"}, {"content", piece}});
             messages.push_back(json{
                 {"role", "user"},

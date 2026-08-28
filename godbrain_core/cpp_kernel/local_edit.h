@@ -24,6 +24,7 @@ struct Preview {
 };
 
 bool looks_like_edit_request(const std::string& user_msg);
+bool apply_still_open(const std::string& text);
 Preview preview_apply_blocks(const std::string& text);
 std::string check_profile_for(const std::string& rel);
 

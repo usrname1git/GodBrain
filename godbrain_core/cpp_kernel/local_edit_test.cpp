@@ -85,6 +85,29 @@ int main() {
         return 1;
     }
 
+    const std::string one_closed =
+        "*** APPLY\npath: a.txt\n<<<<\nold\n====\nnew\n>>>>\n*** END\n";
+    const std::string one_open =
+        "*** APPLY\npath: a.txt\n<<<<\nold\n====\nnew\n";
+    const std::string two_second_open =
+        one_closed + "*** APPLY\npath: b.txt\n<<<<\nsecond old\n====\n";
+    const std::string two_closed =
+        one_closed +
+        "*** APPLY\npath: b.txt\n<<<<\nsecond old\n====\nsecond new\n>>>>\n";
+    if (!expect(!local_edit::apply_still_open(""), "empty is closed") ||
+        !expect(!local_edit::apply_still_open("no markers"),
+                "prose is closed") ||
+        !expect(!local_edit::apply_still_open(one_closed),
+                "finished hunk is closed") ||
+        !expect(local_edit::apply_still_open(one_open),
+                "truncated first hunk is open") ||
+        !expect(local_edit::apply_still_open(two_second_open),
+                "finished hunk plus truncated second is open") ||
+        !expect(!local_edit::apply_still_open(two_closed),
+                "two finished hunks are closed")) {
+        return 1;
+    }
+
     if (!expect(local_edit::check_profile_for("scripts\\Show-SystemFlex.ps1") ==
                     "powershell-parse-v1",
                 "ps1 profile") ||
