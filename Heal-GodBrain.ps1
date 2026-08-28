@@ -13,7 +13,7 @@
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
 # When layer is not ok, run sre_surgeon --diagnose (read-only, 15 min
 # cooldown). Never --ask (GPU). GO tools stay GO.
-# Skip coli / inbox while CS2.exe is running or has been gone under 5 minutes.
+# Skip coli / inbox while CS2.exe is running or has been gone under 10 minutes.
 # The verifier is the probe, not the model. Do not add extra nodes here.
 
 [CmdletBinding()]

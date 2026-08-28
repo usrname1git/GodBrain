@@ -133,9 +133,9 @@ skill promotable. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain
 UI stays `galaxy.html`). Not a kernel factory.
 
 `Start-CS2.ps1` pauses the mouth and Tailscale, launches Steam app 730, waits
-until `CS2.exe` exits, waits 5 minutes, then `tailscale up --unattended` and
+until `CS2.exe` exits, waits 10 minutes, then `tailscale up --unattended` and
 Start-GodBrain. Never logout, `--reset`, or uninstall Tailscale. Start/Heal
-skip the mouth while CS2 is running or has been gone under 5 minutes.
+skip the mouth while CS2 is running or has been gone under 10 minutes.
 
 ## Also in the tree, not the Jarvis path
 

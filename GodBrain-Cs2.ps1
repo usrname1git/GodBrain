@@ -1,6 +1,12 @@
 # Shared CS2 gate. Dot-source from Start / Heal / Start-CS2 / Watch-Cs2Pause.
-# Primary path is Start-CS2.ps1 (pause, then launch, then resume after 5 min).
-# Watch-Cs2Pause is the Steam Play-button safety net.
+# Primary path is Start-CS2.ps1 (pause, then launch, then resume after
+# Get-Cs2ResumeDelayMinutes). Watch-Cs2Pause is the Steam Play-button safety net.
+# Between-match quit/relaunch is common; keep the mouth down long enough that a
+# slow pause does not fight Start-GodBrain. Not the Watch 5 min Heal tick.
+
+function Get-Cs2ResumeDelayMinutes {
+    return 10
+}
 
 function Test-Cs2Running {
     # Do not use Get-Process here: the PowerShell host can steal focus
@@ -71,7 +77,7 @@ function Test-GodBrainColiShouldSleep([string]$RepoRoot) {
     if (Test-Cs2Running) { return $true }
     $gone = Get-Cs2GoneMinutes $RepoRoot
     if ($null -eq $gone) { return $false }
-    return ($gone -lt 5)
+    return ($gone -lt (Get-Cs2ResumeDelayMinutes))
 }
 
 function Get-GodBrainCs2PauseTasks {

@@ -3676,7 +3676,7 @@ int main() {
                     json({{"response",
                            "CS2 owns the box. Mouth stays down. "
                            "Desk slashes still work. Ask again after "
-                           "the 5 min window."}})
+                           "the 10 min window."}})
                         .dump(),
                     "application/json");
                 return;
