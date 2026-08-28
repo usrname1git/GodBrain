@@ -2755,8 +2755,18 @@ std::string run_colibri_serve(
         if (heading_loop) break;
         if (finish_reason != "length") break;
         if (chunk + 1 >= max_chunks) break;
-        // /edit: one plan chunk, then local_edit second pass.
-        if (wants_apply_continue(system, user)) break;
+        // /edit: stop after one chunk unless APPLY started and is still open.
+        if (wants_apply_continue(system, user)) {
+            const bool open_apply =
+                assembled.find("*** APPLY") != std::string::npos &&
+                assembled.find(">>>>") == std::string::npos;
+            if (!open_apply) break;
+            messages.push_back(json{{"role", "assistant"}, {"content", piece}});
+            messages.push_back(json{
+                {"role", "user"},
+                {"content", make_edit_continue_prompt(assembled)}});
+            continue;
+        }
         if (llama_mouth) {
             const std::string tail =
                 (spoken && !spoken->empty()) ? *spoken : assembled;

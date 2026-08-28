@@ -326,6 +326,37 @@ bool write_all(const std::string& path, const std::string& body) {
     return MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
+std::string strip_cr(std::string text) {
+    std::string out;
+    out.reserve(text.size());
+    for (char ch : text) {
+        if (ch != '\r') out.push_back(ch);
+    }
+    return out;
+}
+
+std::string to_crlf(const std::string& text) {
+    const std::string lf = strip_cr(text);
+    std::string out;
+    out.reserve(lf.size() + 8);
+    for (char ch : lf) {
+        if (ch == '\n') out += "\r\n";
+        else out.push_back(ch);
+    }
+    return out;
+}
+
+void match_file_newlines(std::string& old_text, std::string& new_text,
+                         const std::string& body) {
+    if (body.find("\r\n") != std::string::npos) {
+        old_text = to_crlf(old_text);
+        new_text = to_crlf(new_text);
+    } else {
+        old_text = strip_cr(old_text);
+        new_text = strip_cr(new_text);
+    }
+}
+
 struct Hunk {
     std::string path;
     std::string old_text;
@@ -361,8 +392,13 @@ std::vector<Hunk> parse_apply_blocks(const std::string& text) {
     while (hunks.size() < 6) {
         const size_t start = find_marker(text, pos, "*** APPLY", "***APPLY");
         if (start == std::string::npos) break;
-        const size_t stop = find_marker(text, start, "*** END", "***END");
-        if (stop == std::string::npos) break;
+        size_t stop = find_marker(text, start, "*** END", "***END");
+        if (stop == std::string::npos) {
+            // Mouth often drops *** END. Inner markers are the hunk.
+            const size_t gt = text.find(">>>>", start);
+            if (gt == std::string::npos) break;
+            stop = gt + 4;
+        }
         const std::string block = text.substr(start, stop - start);
         Hunk hunk;
         const size_t path_at = block.find("path:");
@@ -402,12 +438,24 @@ std::mutex g_plan_mu;
 std::string g_plan;
 
 void save_plan(const std::string& user_msg, const std::string& first_answer) {
-    g_plan = first_answer;
-    if (g_plan.size() > 4000) g_plan.resize(4000);
+    const size_t apply = first_answer.rfind("*** APPLY");
+    if (apply != std::string::npos) {
+        g_plan = first_answer.substr(apply);
+    } else {
+        g_plan = first_answer;
+    }
+    if (g_plan.size() > 8000) g_plan.resize(8000);
     const std::string path = repo_root() + "\\logs\\last-edit-plan.txt";
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return;
     out << "USER\n" << user_msg << "\n\nPLAN\n" << g_plan << "\n";
+}
+
+void append_plan_section(const std::string& title, const std::string& body) {
+    const std::string path = repo_root() + "\\logs\\last-edit-plan.txt";
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    if (!out) return;
+    out << "\n" << title << "\n" << body << "\n";
 }
 
 void save_result(
@@ -431,8 +479,59 @@ void save_result(
     out << payload.str();
 }
 
+bool looks_rel_path(const std::string& path) {
+    if (!path_ok(path)) return false;
+    const std::string lower = ascii_lower(path);
+    return ends_with(lower, ".ps1") || ends_with(lower, ".cpp") ||
+           ends_with(lower, ".h") || ends_with(lower, ".go") ||
+           ends_with(lower, ".html") || ends_with(lower, ".md") ||
+           ends_with(lower, ".cmd") || ends_with(lower, ".txt");
+}
+
+std::string take_path_token(const std::string& text, size_t from) {
+    size_t i = from;
+    while (i < text.size() &&
+           (text[i] == ' ' || text[i] == '\t' || text[i] == '`' ||
+            text[i] == '"' || text[i] == '\'')) {
+        ++i;
+    }
+    size_t j = i;
+    while (j < text.size()) {
+        const unsigned char ch = static_cast<unsigned char>(text[j]);
+        if (ch <= 32 || ch == '`' || ch == '"' || ch == '\'' || ch == '<' ||
+            ch == '*' || ch == ',') {
+            break;
+        }
+        ++j;
+    }
+    return trim_path_token(text.substr(i, j - i));
+}
+
 std::string guess_file(const std::string& text) {
     const std::string lower = ascii_lower(text);
+    const size_t path_at = lower.find("path:");
+    if (path_at != std::string::npos) {
+        const std::string p = take_path_token(text, path_at + 5);
+        if (looks_rel_path(p)) return replace_slashes(p);
+    }
+    const size_t edit_at = lower.find("/edit");
+    if (edit_at != std::string::npos) {
+        const std::string p = take_path_token(text, edit_at + 5);
+        if (looks_rel_path(p)) return replace_slashes(p);
+    }
+    static const char* prefixes[] = {
+        "godbrain_core/", "godbrain_core\\", "scripts/", "scripts\\",
+        "docs/", "docs\\",
+    };
+    for (const char* prefix : prefixes) {
+        const size_t at = lower.find(prefix);
+        if (at == std::string::npos) continue;
+        const std::string p = take_path_token(text, at);
+        if (looks_rel_path(p)) return replace_slashes(p);
+    }
+    if (lower.find("galaxy.html") != std::string::npos) {
+        return "godbrain_core\\frontend\\galaxy.html";
+    }
     static const char* names[] = {
         "start-llamaserver.ps1", "start-godbrain.ps1", "heal-godbrain.ps1",
         "watch-godbrain.ps1", "watch-cs2pause.ps1", "godbrain-cs2.ps1",
@@ -489,8 +588,11 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks) {
             report << "skip missing " << hunk.path << "\n";
             continue;
         }
-        if (body.empty() && hunk.old_text.empty()) {
-            if (!write_all(full, hunk.new_text)) {
+        std::string old_text = hunk.old_text;
+        std::string new_text = hunk.new_text;
+        match_file_newlines(old_text, new_text, body);
+        if (body.empty() && old_text.empty()) {
+            if (!write_all(full, new_text)) {
                 report << "skip write failed " << hunk.path << "\n";
                 continue;
             }
@@ -499,16 +601,16 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks) {
             report << "edited " << hunk.path << "\n";
             continue;
         }
-        const size_t at = body.find(hunk.old_text);
+        const size_t at = body.find(old_text);
         if (at == std::string::npos) {
             report << "skip no match " << hunk.path << "\n";
             continue;
         }
-        if (body.find(hunk.old_text, at + 1) != std::string::npos) {
+        if (body.find(old_text, at + 1) != std::string::npos) {
             report << "skip ambiguous " << hunk.path << "\n";
             continue;
         }
-        body.replace(at, hunk.old_text.size(), hunk.new_text);
+        body.replace(at, old_text.size(), new_text);
         if (!write_all(full, body)) {
             report << "skip write failed " << hunk.path << "\n";
             continue;
@@ -539,7 +641,9 @@ bool looks_like_edit_request(const std::string& user_msg) {
         lower.find(".ps1") != std::string::npos ||
         lower.find(".cpp") != std::string::npos ||
         lower.find(".h") != std::string::npos ||
-        lower.find(".go") != std::string::npos;
+        lower.find(".go") != std::string::npos ||
+        lower.find(".html") != std::string::npos ||
+        lower.find(".md") != std::string::npos;
     if (!named) return false;
     return lower.find("edit") != std::string::npos ||
            lower.find("add") != std::string::npos ||
@@ -562,6 +666,7 @@ Result maybe_apply(
     save_plan(user_msg, first_answer);
 
     std::vector<Hunk> hunks = parse_apply_blocks(first_answer);
+    if (hunks.empty()) hunks = parse_apply_blocks(user_msg);
     if (hunks.empty() && generate) {
         const std::string file = guess_file(user_msg + "\n" + first_answer);
         std::ostringstream usr;
@@ -570,7 +675,7 @@ Result maybe_apply(
         if (!file.empty()) {
             usr << "File " << file << " excerpt:\n" << excerpt(file) << "\n\n";
         }
-        usr << "Emit ONLY apply blocks, no prose, no thinking:\n"
+        usr << "Close any truncated APPLY. Emit ONLY apply blocks, no prose:\n"
                "*** APPLY\n"
                "path: relative/from/repo\n"
                "<<<<\n"
@@ -583,6 +688,7 @@ Result maybe_apply(
             "You are a local file editor. Output apply blocks only. "
             "No git. No push. No extra files.";
         const std::string second = generate(sys, usr.str());
+        append_plan_section("SECOND", second.empty() ? "(empty)" : second);
         hunks = parse_apply_blocks(second);
         if (hunks.empty()) {
             result.report =

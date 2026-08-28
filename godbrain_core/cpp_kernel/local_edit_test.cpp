@@ -59,8 +59,29 @@ int main() {
 
     if (!expect(local_edit::looks_like_edit_request("/edit Start-GodBrain.ps1 add a log"),
                 "/edit is an edit") ||
+        !expect(local_edit::looks_like_edit_request(
+                    "/edit godbrain_core/frontend/galaxy.html add inbox"),
+                "/edit galaxy.html is an edit") ||
+        !expect(local_edit::looks_like_edit_request(
+                    "change galaxy.html host card"),
+                "html named change is an edit") ||
         !expect(!local_edit::looks_like_edit_request("what is the hostname"),
                 "chat is not an edit")) {
+        return 1;
+    }
+
+    preview = local_edit::preview_apply_blocks(
+        "*** APPLY\n"
+        "path: godbrain_core/frontend/galaxy.html\n"
+        "<<<<\n"
+        "old html\n"
+        "====\n"
+        "new html\n"
+        ">>>>\n");
+    if (!expect(preview.count == 1, "unclosed END still a hunk") ||
+        !expect(preview.first_path == "godbrain_core\\frontend\\galaxy.html",
+                "unclosed END keeps galaxy path") ||
+        !expect(preview.first_new == "new html\n", "unclosed END new text")) {
         return 1;
     }
 
@@ -122,6 +143,119 @@ int main() {
         !expect(result.applied, "apply wrote") ||
         !expect(body == "EDIT_FIXTURE=new\n", "fixture became new")) {
         std::cerr << "report=" << result.report << " body=" << body << std::endl;
+        return 1;
+    }
+
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    bool second_called = false;
+    const std::string user_hunk =
+        "/edit godbrain_core/cpp_kernel/local_edit_fixture.txt flip marker\n"
+        "*** APPLY\n"
+        "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+        "<<<<\n"
+        "EDIT_FIXTURE=old\n"
+        "====\n"
+        "EDIT_FIXTURE=from-user\n"
+        ">>>>\n"
+        "*** END\n";
+    result = local_edit::maybe_apply(
+        user_hunk,
+        "*** APPLY\npath: godbrain_core/cpp_kernel/local_edit_fixture.txt\n<<<<\n",
+        [&](const std::string&, const std::string&) {
+            second_called = true;
+            return std::string();
+        });
+    {
+        std::ifstream in(fixture, std::ios::binary);
+        body.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    }
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(!second_called, "user APPLY skips second pass") ||
+        !expect(result.applied, "user APPLY wrote") ||
+        !expect(body == "EDIT_FIXTURE=from-user\n", "fixture from user hunk")) {
+        std::cerr << "user hunk report=" << result.report << " body=" << body
+                  << std::endl;
+        return 1;
+    }
+
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    std::string second_user;
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/frontend/galaxy.html add inbox glance",
+        "I will patch the host card.\n",
+        [&](const std::string&, const std::string& usr) {
+            second_user = usr;
+            return "*** APPLY\n"
+                   "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+                   "<<<<\n"
+                   "EDIT_FIXTURE=old\n"
+                   "====\n"
+                   "EDIT_FIXTURE=from-second\n"
+                   ">>>>\n"
+                   "*** END\n";
+        });
+    {
+        std::ifstream in(fixture, std::ios::binary);
+        body.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    }
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(second_user.find("galaxy.html") != std::string::npos,
+                "second pass names galaxy.html") ||
+        !expect(result.applied, "second pass wrote") ||
+        !expect(body == "EDIT_FIXTURE=from-second\n",
+                "fixture from second pass")) {
+        std::cerr << "second report=" << result.report
+                  << " usr_has=" << (second_user.size()) << std::endl;
+        return 1;
+    }
+
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\r\n";
+    }
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/cpp_kernel/local_edit_fixture.txt crlf",
+        "*** APPLY\n"
+        "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+        "<<<<\n"
+        "EDIT_FIXTURE=old\n"
+        "====\n"
+        "EDIT_FIXTURE=crlf\n"
+        ">>>>\n"
+        "*** END\n",
+        {});
+    {
+        std::ifstream in(fixture, std::ios::binary);
+        body.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    }
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(result.applied, "crlf apply wrote") ||
+        !expect(body == "EDIT_FIXTURE=crlf\r\n", "lf hunk matches crlf file")) {
+        std::cerr << "crlf report=" << result.report << " body=";
+        for (unsigned char ch : body) {
+            if (ch == '\r') std::cerr << "<CR>";
+            else if (ch == '\n') std::cerr << "<LF>";
+            else std::cerr << ch;
+        }
+        std::cerr << std::endl;
         return 1;
     }
 

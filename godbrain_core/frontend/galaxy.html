@@ -1314,6 +1314,12 @@
                 } else {
                     lines.push('Heal: none');
                 }
+                const inboxHost = inboxOverlayLine(status);
+                if (inboxHost) {
+                    lines.push('Inbox: ' + inboxHost.replace(/^inbox /, ''));
+                } else {
+                    lines.push('Inbox: none');
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(
