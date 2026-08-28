@@ -80,6 +80,7 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch 'id="host-card"') { throw "galaxy.html missing host card" }
     if ($text -notmatch "CS2: idle") { throw "galaxy.html missing CS2 idle glance" }
     if ($text -notmatch "Heal: none") { throw "galaxy.html missing Heal glance" }
+    if ($text -notmatch "Inbox: none") { throw "galaxy.html missing Inbox glance" }
 }
 
 function Test-MemoryStoreGo {

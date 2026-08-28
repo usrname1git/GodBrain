@@ -116,7 +116,10 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 ## Local edits and CS2
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
-blocks. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
+blocks. A complete hunk in the `/edit` message is applied if the mouth
+truncates; LF hunks match CRLF files. The second pass gets a file excerpt
+(including `galaxy.html`) and is logged under `SECOND` in
+`logs/last-edit-plan.txt`. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
 `docs\*.md`, or `godbrain_core\` (not build / vendor / LLM / archive). Never
 git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**

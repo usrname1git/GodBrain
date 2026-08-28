@@ -192,7 +192,10 @@ Do not `--ask` while the mouth holds the GPU slot.
 
 Galaxy can ask the mouth to change a repo file. The kernel writes the
 plan to `logs/last-edit-plan.txt`, does a second GPU pass for
-`*** APPLY` blocks (thinking off, spoken-only parse), writes
+`*** APPLY` blocks (thinking off, spoken-only parse; file excerpt from
+the `/edit` path, including `galaxy.html`), and applies a complete hunk
+from the user message if the mouth truncates. The second pass is appended
+as `SECOND` in that plan file. It writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
 or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
