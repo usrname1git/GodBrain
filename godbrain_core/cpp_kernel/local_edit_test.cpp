@@ -339,6 +339,33 @@ int main() {
         return 1;
     }
 
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+        "*** APPLY\n"
+        "path: godbrain_core/frontend/galaxy.html\n"
+        "<<<<\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        "====\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        ">>>>\n"
+        "*** END\n",
+        [&](const std::string&, const std::string&) { return std::string(); });
+    if (!expect(!result.applied, "empty second after miss") ||
+        !expect(result.report.find("not in excerpt") != std::string::npos,
+                "keeps first skip") ||
+        !expect(result.report.find("Second pass had no apply blocks") !=
+                    std::string::npos,
+                "names empty second pass") ||
+        !expect(result.report.find("excerptSecond") == std::string::npos,
+                "does not glue skip to Second")) {
+        std::cerr << "glue report=" << result.report << std::endl;
+        return 1;
+    }
+
     {
         std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
         out << "EDIT_FIXTURE=old\n";
