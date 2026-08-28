@@ -786,7 +786,7 @@ Result maybe_apply(
             << (g_plan.empty() ? first_answer : g_plan) << "\n\n";
         if (!file.empty()) {
             usr << "File " << file << " excerpt:\n"
-                << excerpt(file, user_msg + "\n" + first_answer) << "\n\n";
+                << excerpt(file, user_msg) << "\n\n";
         }
         usr << "Copy old text from the excerpt only. Close any truncated APPLY. "
                "Emit ONLY apply blocks, no prose:\n"
