@@ -121,7 +121,7 @@ mouth off APPLY) and does not persist as an Oracle candidate. First pass
 gets a window around a marker named in the `/edit` text (not the first
 Galaxy glance in the file), not the first 4 KB. Apply skips
 an old-text hunk that is not in that excerpt (wrong site, e.g. overlay vs
-host-card). A complete
+host-card). A first-pass hunk that misses still gets the second GPU pass. A complete
 hunk in the `/edit` message is applied if the mouth
 truncates; LF hunks match CRLF files. The second pass uses that same operator-hint excerpt
 (including `galaxy.html`) and does not replay the truncated first answer

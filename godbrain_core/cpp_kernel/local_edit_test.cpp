@@ -340,6 +340,54 @@ int main() {
     }
 
     {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    bool retried = false;
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+        "*** APPLY\n"
+        "path: godbrain_core/frontend/galaxy.html\n"
+        "<<<<\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        "====\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        ">>>>\n"
+        "*** END\n",
+        [&](const std::string&, const std::string&) {
+            retried = true;
+            return "*** APPLY\n"
+                   "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+                   "<<<<\n"
+                   "EDIT_FIXTURE=old\n"
+                   "====\n"
+                   "EDIT_FIXTURE=after-miss\n"
+                   ">>>>\n"
+                   "*** END\n";
+        });
+    {
+        std::ifstream in(fixture, std::ios::binary);
+        body.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    }
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(retried, "missed first hunk retries second pass") ||
+        !expect(result.applied, "second pass after miss wrote") ||
+        !expect(body == "EDIT_FIXTURE=after-miss\n",
+                "fixture from retry")) {
+        std::cerr << "retry report=" << result.report << " body=" << body
+                  << std::endl;
+        return 1;
+    }
+
+    {
         std::string second_excerpt_user;
         result = local_edit::maybe_apply(
             "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
