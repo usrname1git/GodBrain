@@ -299,7 +299,9 @@ Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 1.1.1 tree under `LLM/colibri_LLM`. Cold-spawn of the GLM snapshot on
 16 GB is disabled. Do not set both `COLI_GPU` and `COLI_GPUS`. Colibri
 VRAM budget is derived from DXGI dedicated memory and does not overcommit
-into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`.
+into system RAM unless `GODBRAIN_COLI_OVERCOMMIT=1`. GLM-5.x MoE is not the
+desk default even on a 3090; it is a GO-gated research mouth. Do not run it
+beside Gemma. Librarian stays on the mouth that already extracts JSON.
 
 ### Heal, Watch, inbox
 

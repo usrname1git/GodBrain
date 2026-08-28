@@ -16,7 +16,7 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 
 ## The Compute Cheat Code (vault ≠ GPU)
 
-Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is one generate slot on a 4080 (Gemma 12B, MTP off). A 3090 is an optional playground on another port, not a second GodBrain mouth.
+Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Gemma 12B Q4, MTP off). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE.
 
 Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them. Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 

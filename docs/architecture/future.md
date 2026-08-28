@@ -49,9 +49,9 @@ Copy these, not the fleet:
 | Route in code, judge in the model | `if` on a validated status (`verified` / `rejected` / `stale`), not “the mouth decided to skip `/verify`.” | Already the judge door. |
 
 Do **not** copy: uninstall the IDE, don’t look at the code, Claude writes the
-graph, ultracode self-routing, 1000 subagents on this 4080, a second
-starter racing `:8000`, or any Factory roster (Architect / Surgeon /
-research-plan-execute-review).
+graph, ultracode self-routing, 1000 subagents on this one GPU slot, a second
+starter racing `:8000`, GLM-as-default because it spills into RAM, or any
+Factory roster (Architect / Surgeon / research-plan-execute-review).
 
 The only graph with a named signal later is still the **conflict queue**:
 two nodes (candidate vs verified), human on the merge. If deleting a node

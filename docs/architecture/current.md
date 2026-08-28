@@ -18,7 +18,10 @@ service named `MongoDB`.
 
 One GPU generate slot. Desk default is Gemma 12B Q4 via `llama-server` **with
 no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft` enables the draft GGUF).
-`logs/mouth.txt` says which engine is up.
+Heal/Watch kick that door, not Colibri. A GLM MoE snapshot (5.2-uncensored on
+disk, or a later 5.3 GGUF) is **research**: RAM-offload, named GO, never the
+thing `/brief` cold-starts. One card in the slot (4080 now; 3090 when the 4080
+leaves) does not make GLM the default. `logs/mouth.txt` says which engine is up.
 
 Galaxy chat POSTs the live OpenAI door (`/v1/chat/completions`). If `:8000` is
 down the kernel **refuses** to cold-spawn a 16 GB snapshot. Heal/status may kick
