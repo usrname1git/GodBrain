@@ -133,9 +133,9 @@ $env:MONGODB_DB_NAME = "godbrain" # default
 
 `GODBRAIN_RAG_PORT` changes the numeric port only; the service always binds to
 `127.0.0.1` and defaults to `8084`.
-Layer 2 routers intentionally accept only the default port and exact
-`/v1/search` path, so changing the service port makes router retrieval fail
-closed.
+The C++ kernel and the experimental Go/Rust routers are pinned to
+`127.0.0.1:8084/v1/search`. Changing the service port makes retrieval fail
+closed. Start-GodBrain does not pass this variable to `rag-service.exe`.
 `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` adds a deterministic ranking preference
 for the configured node schema without hiding older schemas.
 

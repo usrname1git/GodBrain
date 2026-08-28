@@ -174,9 +174,9 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temp script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
-| `MONGODB_URI` | Memory Store and RAG tools | Required MongoDB connection string |
-| `MONGODB_DB_NAME` | Memory Store and RAG tools | Override database `godbrain` |
-| `GODBRAIN_RAG_PORT` | RAG service | Override loopback port `8084`; bind address is not configurable |
+| `MONGODB_URI` | Memory Store and RAG tools | Required MongoDB connection string. Start-GodBrain copies this into the child env (default `mongodb://127.0.0.1:27017`). |
+| `MONGODB_DB_NAME` | Memory Store and RAG tools | Override database `godbrain`. Not in the Start-GodBrain WMI keep-list. |
+| `GODBRAIN_RAG_PORT` | RAG service only | Numeric bind port. **Do not set on this desk.** The C++ kernel is hardcoded to `127.0.0.1:8084`. Changing the port desyncs Galaxy/chat. |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
 | `GODBRAIN_EMBEDDING_ENDPOINT` | RAG service | Optional exact-loopback embedding HTTP origin |
 | `GODBRAIN_EMBEDDING_MODEL` | RAG service | Optional embedding model id (with revision, sha256, dimension) |
@@ -190,6 +190,12 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 This table is the operator set, not every env a nested tree reads. Embedding
 identity also needs `GODBRAIN_EMBEDDING_MODEL_REVISION`,
 `GODBRAIN_EMBEDDING_MODEL_SHA256`, and `GODBRAIN_EMBEDDING_DIMENSION` together.
+
+Start-GodBrain launches children through WMI with a **keep-list**: `PATH` and
+friends, `MONGODB_URI`, `GODBRAIN_API_TOKEN`. It does **not** copy User
+`GODBRAIN_RAG_*` or embedding vars into `rag-service.exe`. Those only apply if
+that process already has them (interactive shell, or you add them to the
+keep-list). The desk default is lexical RAG on `:8084`.
 
 Secrets must not be committed, logged, inserted into prompts, or stored in
 graph records.
@@ -340,6 +346,11 @@ execution — which this host is not doing.
 | `logs/last-skill-lab.json` | `Verify-SkillLab.ps1` |
 | `logs/coli-model.txt` | Colibri snapshot pin |
 | `logs/cs2-pause.json` | CS2 pause gate |
+| `logs/godbrain-logon.log` | `Start-GodBrain.ps1` |
+| `logs/watch.log` | Watch tick |
+| `logs/heal.jsonl` | Heal (one JSON line per tick) |
+| `logs/<name>.out.log` / `<name>.err.log` | `Start-LoggedProcess` (rag-service, kernel, mouth, …) |
 
 Logs must redact bearer tokens, credentials, private keys, and sensitive
-prompt content. This list is the glance/Heal set, not every file under `logs/`.
+prompt content. This list is the glance/Heal/start set, not every file under
+`logs/`.
