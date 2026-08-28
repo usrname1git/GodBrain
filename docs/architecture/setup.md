@@ -90,6 +90,15 @@ layer:
 
 Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`.
 
+Optional live desk eval (from `godbrain_core\memory_store`, RAG must be ready).
+Verified-only plus each query's sector. A miss means that claim is not a
+verified Golden Record yet. `-strict` fails on any miss:
+
+```powershell
+.\rag-eval.exe -live
+.\rag-eval.exe -live -strict
+```
+
 ## 4. Build the kernel
 
 No committed CMake project. From the repo root:

@@ -36,10 +36,10 @@ to count how many nodes the problem actually has. Usually one.
   check before adding nodes. Half of "we need more agents" is a weak verifier.
 - **Name the signal before a second node.** Allowed signals: distinct
   specialty (Architect vs Surgeon), true parallel fan-out that does not share
-  the GPU slot, a different model/tool per step (Colibri vs a future
-  llama-server runner — still one chat door), auditable branch (verify vs
-  reject), or an overloaded verifier (a future candidate-vs-verified conflict
-  queue). If you cannot name which signal paid for the node, delete it.
+  the GPU slot, a different runner behind the same chat door (llama-server vs
+  Colibri), auditable branch (verify vs reject), or an overloaded verifier
+  (a future candidate-vs-verified conflict queue). If you cannot name which
+  signal paid for the node, delete it.
 - **One node per real specialty, not per imagined step.** Do not spawn
   research/plan/execute/review agents for a kernel one-liner.
 - **Keep it collapsible.** If deleting a node leaves the same result, delete
@@ -234,8 +234,11 @@ may still go to the mouth without a fresh Golden Record hit.
 `kernel.cpp` is the command dispatcher. It requires a non-blank `reasoning`
 string for `execute_godbrain_script`,
 `propose_sovereign_architect_change`, `record_godbrain_skill_run`, and
-`promote_godbrain_skill`. `surgery.cpp` executes the PowerShell commands
-(Job Object, 60s timeout, capped output). `save_godbrain_thought` writes a candidate Golden Record through
+`promote_godbrain_skill`. `surgery.cpp` runs `pwsh` with a 60s wait, capped
+concurrent pipes, and `TerminateJobObject` plus `TerminateProcess` on
+timeout. Job setup can fail; then it kills the `pwsh` process it created, not
+an arbitrary image name. A grandchild that ignores the job can outlive that
+wait. `save_godbrain_thought` writes a candidate Golden Record through
 `memory-store.exe`. `set_godbrain_status` is the only status door
 (`verified` / `rejected` / `stale`).
 
@@ -468,9 +471,10 @@ It does not start the kernel. Equivalent Developer-shell one-liner from
 cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
-Starting the kernel is an integration action: it may invoke local `mongosh`,
-Colibri, and authenticated PowerShell commands. Do not use startup as a routine
-documentation-only validation.
+Starting the kernel is an integration action: it may talk to Mongo via
+`memory-store` / rag-service, to the mouth on `:8000`, and to authenticated
+PowerShell (`surgery.cpp`). It does not invoke `mongosh`. Do not use startup as
+a routine documentation-only validation.
 
 ### Alternative routers
 
