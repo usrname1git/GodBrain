@@ -3745,9 +3745,13 @@ int main() {
                     "application/json");
                 return;
             }
-            std::cout << "[RAG] Canonical search requested (" << user_msg.size()
-                      << " bytes) continue=" << (continue_cmd ? "1" : "0")
-                      << std::endl;
+            if (local_edit::looks_like_edit_request(user_msg) && !continue_cmd) {
+                std::cout << "[RAG] skipped (/edit)" << std::endl;
+            } else {
+                std::cout << "[RAG] Canonical search requested (" << user_msg.size()
+                          << " bytes) continue=" << (continue_cmd ? "1" : "0")
+                          << std::endl;
+            }
             std::string session_text;
             std::string session_error;
             std::string rag_text;
