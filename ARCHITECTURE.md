@@ -83,7 +83,7 @@ cluster; this host runs the C++ kernel.
 | Category | File | Read it for |
 |---|---|---|
 | Currently in place | [`docs/architecture/current.md`](docs/architecture/current.md) | What ships and is exercised on this desk |
-| Next phase | [`docs/architecture/next.md`](docs/architecture/next.md) | The b-line: strengthen the loop, grow the library, glance, SRE diagnose |
+| Next phase | [`docs/architecture/next.md`](docs/architecture/next.md) | Pointer: b-line shipped. Snapshot [`b-line.md`](docs/architecture/b-line.md). Remaining later is [`future.md`](docs/architecture/future.md) |
 | Future planned | [`docs/architecture/future.md`](docs/architecture/future.md) | Factory, later library policy, experimental trees — ranked, not a backlog |
 | Setup and replication | [`docs/architecture/setup.md`](docs/architecture/setup.md) | MongoDB, builds, logon, Watch, mouth, token, first desk check |
 | Advanced details | [`docs/architecture/reference.md`](docs/architecture/reference.md) | HTTP tables, inventory, env vars, sequence diagrams, collections |

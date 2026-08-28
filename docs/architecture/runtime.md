@@ -8,6 +8,6 @@ The architecture docs are now split by category:
 |---|---|
 | Summary | [`ARCHITECTURE.md`](../../ARCHITECTURE.md) |
 | Currently in place | [`current.md`](current.md) |
-| Next phase | [`next.md`](next.md) |
+| Next phase (b-line shipped) | [`next.md`](next.md) |
 | HTTP tables, slash commands, sequence diagrams | [`reference.md`](reference.md) |
 | MongoDB, builds, logon, Watch | [`setup.md`](setup.md) |
