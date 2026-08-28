@@ -15,6 +15,8 @@
 #include <cmath>
 #include <cstring>
 #include <sstream>
+#include <charconv>
+#include <system_error>
 
 // Include JSON support
 #include "../cpp_kernel/json.hpp"
@@ -758,6 +760,38 @@ private:
     }
 };
 
+static bool parse_non_neg_int(const std::string& text, int& out) {
+    if (text.empty()) return false;
+    int value = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value < 0) {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+static bool parse_evidence_span(const std::string& span, int& start, int& end) {
+    if (span.size() < 5 || span.front() != '[' || span.back() != ']') return false;
+    const auto colon = span.find(':');
+    if (colon == std::string::npos || colon < 2 || colon + 2 >= span.size()) return false;
+    const std::string start_text = span.substr(1, colon - 1);
+    const std::string end_text = span.substr(colon + 1, span.size() - colon - 2);
+    return parse_non_neg_int(start_text, start) &&
+           parse_non_neg_int(end_text, end) &&
+           end > start;
+}
+
+static void require_evidence_spans(const std::vector<std::string>& spans) {
+    for (const auto& span : spans) {
+        int start = 0;
+        int end = 0;
+        if (!parse_evidence_span(span, start, end)) {
+            throw std::runtime_error("Schema validation failed: evidence_spans must be [start:end]");
+        }
+    }
+}
+
 class StrictSchemaValidator : public SchemaValidator {
 public:
     void validate(const DistillationResult& result) const override {
@@ -768,6 +802,7 @@ public:
             if (skill.name.empty() || skill.content.empty()) {
                 throw std::runtime_error("Schema validation failed: Skill name or content is empty.");
             }
+            require_evidence_spans(skill.evidence_spans);
         }
         for (const auto& claim : result.payload.claims) {
             if (claim.content.empty()) {
@@ -776,7 +811,7 @@ public:
             if (!std::isfinite(claim.confidence) || claim.confidence < 0.0 || claim.confidence > 1.0) {
                 throw std::runtime_error("Schema validation failed: Claim confidence out of bounds or NaN.");
             }
-            // TODO: Proper UTF-8 validation and cross-checking evidence_spans against chunk lengths
+            require_evidence_spans(claim.evidence_spans);
         }
         std::cout << "[LIBRARIAN] Schema validation passed." << std::endl;
     }
@@ -999,6 +1034,35 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (argc >= 2 && std::string(argv[1]) == "--self-test") {
+        {
+            StrictSchemaValidator validator;
+            DistillationResult ok;
+            Claim good;
+            good.content = "ok";
+            good.confidence = 1.0;
+            good.evidence_spans = {"[0:4]"};
+            ok.payload.claims.push_back(good);
+            validator.validate(ok);
+
+            const auto must_reject = [&](const std::string& span, const char* why) {
+                DistillationResult bad;
+                Claim claim;
+                claim.content = "ok";
+                claim.confidence = 1.0;
+                claim.evidence_spans = {span};
+                bad.payload.claims.push_back(claim);
+                try {
+                    validator.validate(bad);
+                    std::cerr << "[LIBRARIAN ERR] " << why << std::endl;
+                    return false;
+                } catch (const std::runtime_error&) {
+                    return true;
+                }
+            };
+            if (!must_reject("[4:1]", "inverted evidence span was accepted")) return 1;
+            if (!must_reject("[0:4x]", "leftover evidence span was accepted")) return 1;
+            if (!must_reject("[2:2]", "empty evidence span was accepted")) return 1;
+        }
         SkillExtracted skill;
         skill.name = "build-galaxy-glance";
         skill.content = "Keep /brief first line as the phone glance.";

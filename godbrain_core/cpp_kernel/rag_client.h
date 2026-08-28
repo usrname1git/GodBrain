@@ -245,7 +245,8 @@ inline bool validate_result(const json& result) {
 inline bool validate_response(
     const json& response,
     const std::string& query,
-    std::string& error) {
+    std::string& error,
+    int top_k = kTopK) {
     if (!has_exact_keys(
             response,
             {"query", "normalized_query", "generation", "projection_version",
@@ -299,7 +300,9 @@ inline bool validate_response(
         error = "canonical RAG returned no usable context";
         return false;
     }
-    if (results.size() > static_cast<size_t>(kTopK) ||
+    if (top_k < 1) top_k = kTopK;
+    if (top_k > 25) top_k = 25;
+    if (results.size() > static_cast<size_t>(top_k) ||
         context_bytes_used < 1 || context_bytes_used > kContextBytes ||
         !std::all_of(results.begin(), results.end(), validate_result)) {
         error = "canonical RAG result bounds or schema are invalid";
@@ -807,6 +810,14 @@ public:
         const std::string& query,
         json& response,
         std::string& error) const {
+        return search(query, kTopK, response, error);
+    }
+
+    bool search(
+        const std::string& query,
+        int top_k,
+        json& response,
+        std::string& error) const {
         if (!validate_endpoint(kEndpoint)) {
             error = "canonical RAG endpoint validation failed";
             return false;
@@ -815,9 +826,11 @@ public:
             error = "RAG query is empty or oversized";
             return false;
         }
+        if (top_k < 1) top_k = kTopK;
+        if (top_k > 25) top_k = 25;
         const json request = {
             {"query", query},
-            {"top_k", kTopK},
+            {"top_k", top_k},
             {"context_bytes", kContextBytes},
             {"retrieval_mode", kRetrievalMode},
             {"status", "verified"},
@@ -859,7 +872,7 @@ public:
             error = "canonical RAG response is malformed";
             return false;
         }
-        return validate_response(response, query, error);
+        return validate_response(response, query, error, top_k);
     }
 
     bool graph(int limit, json& response, std::string& error) const {

@@ -90,7 +90,7 @@ POST: `/api/remember`, `/api/librarian`, `/api/observe`, `/api/truth`,
 ### Galaxy slash commands (loopback)
 
 `/observe`, `/vram`, `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
-`/recall`, `/status`, `/last`, `/brief`, `/pending`, `/heal`, `/sre`, `/edit`,
+`/recall` (optional query searches verified records), `/status`, `/last`, `/brief`, `/pending`, `/heal`, `/sre`, `/edit`,
 `/last-edit`, `/doors`.
 
 `/verify last <why>` and `/reject last <why>` judge the newest on-disk Oracle

@@ -129,7 +129,7 @@ Karpathy's second brain is cute for taking notes. GodBrain is the same idea with
 Two product wants that are not notes:
 
 - **Replace the web-dev loop on this repo.** Galaxy, Tailscale glances, Shortcuts, and allowlisted `/edit` should grow until you do not hire someone to ship GodBrain UI. That is a destination, not "no sandbox, write anything."
-- **Models teach models over time.** Chat already retrieves committed teachings through rag-service (`:8084`). `query_recent_thoughts` and `/recall` are that door. Richer query later is still that API (filters, more of the graph) — not `mongosh`, not a MongoDB IDE/MCP plugin against the live vault.
+- **Models teach models over time.** Chat already retrieves committed teachings through rag-service (`:8084`). `query_recent_thoughts` and `/recall` list newest projected nodes; `/recall <query>` searches **verified** Golden Records through that same API — not `mongosh`, not a MongoDB IDE/MCP plugin against the live vault.
 
 On this host it is **one Windows loop**, not Ring 0, not a Distributed Cognitive OS across Devuan/macOS, and not zero permission-begging. The vault is decoupled from the GPU. The operator is not.
 

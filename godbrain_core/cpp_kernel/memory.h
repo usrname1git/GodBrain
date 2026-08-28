@@ -11,6 +11,7 @@ namespace memory {
     json promote_claim(const json& payload);
     json stale_mismatched_pins(const std::string& pin, const std::string& reasoning);
     json get_recent(int limit);
+    json search_verified(const std::string& query, int limit);
     json set_status(const json& payload);
     json record_skill_run(const json& payload);
     json promote_skill(const json& payload);

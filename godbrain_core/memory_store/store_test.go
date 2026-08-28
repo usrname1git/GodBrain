@@ -458,7 +458,7 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 					Type:          " fact ",
 					Content:       "The  same semantic claim",
 					Confidence:    0.9,
-					EvidenceSpans: []string{"invalid", "[8:11]", "[10:12]"},
+					EvidenceSpans: []string{"[8:11]", "[10:12]"},
 				},
 			},
 			CoreConcepts:    []string{"Semantic identity"},
@@ -486,7 +486,7 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 	if claimNode.Sector != "fact" || claimNode.Content != "The same semantic claim" {
 		t.Fatalf("Expected normalized claim fields, got sector=%q content=%q", claimNode.Sector, claimNode.Content)
 	}
-	expectedSpans := []string{"[2:4]", "[8:11]", "[10:12]", "invalid"}
+	expectedSpans := []string{"[2:4]", "[8:11]", "[10:12]"}
 	if len(claimNode.EvidenceSpans) != len(expectedSpans) {
 		t.Fatalf("Expected merged evidence spans %v, got %v", expectedSpans, claimNode.EvidenceSpans)
 	}
@@ -502,6 +502,50 @@ func TestClaimStableIDDeduplicatesProviderIDs(t *testing.T) {
 	}
 	if linkCount != 3 {
 		t.Fatalf("Expected three unique run-node links, got %d", linkCount)
+	}
+}
+
+func TestStageDistillationRejectsInvalidEvidenceSpans(t *testing.T) {
+	db := setupTestDB(t)
+	store := memorystore.NewStore(db)
+	ctx := context.Background()
+
+	transcript := "span reject transcript"
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(transcript))
+	sourceHash := hex.EncodeToString(hash.Sum(nil))
+	run, _, err := store.StartIngestion(ctx, sourceHash, "session_span", "extractor", "v1", "s1", nil)
+	if err != nil {
+		t.Fatalf("StartIngestion failed: %v", err)
+	}
+
+	payload := memorystore.DistillationPayload{
+		RawTranscript:    transcript,
+		ExtractorID:      "extractor",
+		ExtractorVersion: "v1",
+		SchemaVersion:    "s1",
+		Payload: memorystore.AlexandriaPayload{
+			TrustTier: "candidate",
+			Provenance: memorystore.Provenance{
+				SourceID:   "session_span",
+				SourceType: "copilot_session",
+				SourceHash: sourceHash,
+				Language:   "en",
+			},
+			Claims: []memorystore.Claim{
+				{
+					ClaimID:       "bad-span",
+					Type:          "fact",
+					Content:       "Malformed evidence must fail closed",
+					Confidence:    0.9,
+					EvidenceSpans: []string{"[0:4]", "invalid"},
+				},
+			},
+		},
+	}
+	err = store.StageDistillation(ctx, run.RunID, run.LeaseToken, payload)
+	if !errors.Is(err, memorystore.ErrInvalidEvidenceSpan) {
+		t.Fatalf("expected ErrInvalidEvidenceSpan, got %v", err)
 	}
 }
 
