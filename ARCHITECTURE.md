@@ -27,7 +27,7 @@ phone glance, SRE diagnose-only, one Gemma mouth) **shipped** — see
 
 This desk: mouth is bartowski Gemma 12B IT **Q6_K_L**, MTP **off**; Colibri/GLM
 is research, not the Heal default. `/edit` writes allowlisted repo files
-(apply-only, no RAG, no Oracle persist; Galaxy This host shows
+(apply-only, no RAG, no Oracle persistence; Galaxy This host shows
 `Edit: ok|fail|none`). Librarian distills transcripts into **candidate**
 Golden Records. The operator `/verify` or `/reject` crowns truth. Playbooks
 stay candidate until a human judges. Host inventory and Learn-backed facts
