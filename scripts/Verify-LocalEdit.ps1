@@ -77,10 +77,10 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch '(?i)<html') { throw "galaxy.html missing html" }
     if ($text -notmatch '(?i)godbrain') { throw "galaxy.html missing GodBrain" }
     if ($text -notmatch '(?i)3d-graph') { throw "galaxy.html missing graph root" }
-    if ($text -notmatch 'id="host-card"') { throw "galaxy.html missing host card" }
-    if ($text -notmatch "CS2: idle") { throw "galaxy.html missing CS2 idle glance" }
-    if ($text -notmatch "Heal: none") { throw "galaxy.html missing Heal glance" }
-    if ($text -notmatch "Inbox: none") { throw "galaxy.html missing Inbox glance" }
+    if ($text -notmatch 'id\s*=\s*(["''])host-card\1') { throw "galaxy.html missing host card" }
+    if ($text -notmatch 'CS2:\s*idle') { throw "galaxy.html missing CS2 idle glance" }
+    if ($text -notmatch 'Heal:\s*none') { throw "galaxy.html missing Heal glance" }
+    if ($text -notmatch 'Inbox:\s*none') { throw "galaxy.html missing Inbox glance" }
 }
 
 function Test-MemoryStoreGo {
@@ -155,6 +155,11 @@ if ($SelfTest) {
     Remove-Item -LiteralPath $bad -Force
     if (-not $threw) { throw "broken ps1 must fail parse" }
     Test-GalaxyHtml (Join-Path $RepoRoot "godbrain_core\frontend\galaxy.html")
+    $alt = "id = 'host-card'`nCS2:idle`nHeal: none`nInbox:none"
+    if ($alt -notmatch 'id\s*=\s*(["''])host-card\1') { throw "host-card single quote" }
+    if ($alt -notmatch 'CS2:\s*idle') { throw "cs2 whitespace" }
+    if ($alt -notmatch 'Heal:\s*none') { throw "heal whitespace" }
+    if ($alt -notmatch 'Inbox:\s*none') { throw "inbox whitespace" }
     $listed = Invoke-EditChecks @('README.md','AGENTS.md')
     if ($listed.profile -ne 'local-edit-apply-v1') { throw "pathlist classify" }
     $split = Split-EditPathList ' README.md ; AGENTS.md ; '
