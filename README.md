@@ -155,6 +155,7 @@ Wanted on this product (still gated):
 
 Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
 
+- Candidate-vs-verified conflict queue — later, and only if `/pending` is actually overloaded. `/verify` / `/reject` is enough now.
 - Autonomous CVE ingest and auto-patch across Devuan / macOS / Windows.
 - Self-directed DISM or registry repair. Named GO, one tool, never a standing allow.
 - Closed-loop patch with zero hand-holding. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated.
@@ -168,13 +169,10 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 - [x] Bounded `/edit` + privileged `pwsh` behind bearer + `reasoning`
 - [ ] Mouth ships web-dev class GodBrain UI/product work (allowlist grows on purpose, still no mouth `git push`)
 - [x] Richer teaching query for the mouth (`/recall <query>` and `query_recent_thoughts` search verified records through `:8084`, not Mongo MCP)
-- [ ] Candidate-vs-verified conflict queue (smallest extra node: overloaded verifier)
 - [ ] Autonomous CVE ingestion — not b-line
 - [ ] Cross-fleet patch (Devuan / macOS / Windows) — not this machine
 - [ ] Self-directed DISM/registry — **no** standing allow
 - [ ] Detect → reason → patch → verify with zero hand-holding — Heal is the loop; extra patch stays GO-gated
-
-Current b-line is **this host's OS/network stack** (services, TCP/IP, ICMP, SCM), not tanks or AppX eviction. Heal starts MongoDB, Dnscache, iphlpsvc, nsi, plus rag/mouth/kernel. ICMP loopback is detect-only. Patch grows only from a named, verified signal.
 
 ## Credits
 
