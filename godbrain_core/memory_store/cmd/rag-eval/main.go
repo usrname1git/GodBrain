@@ -123,6 +123,7 @@ func runLiveDesk(path, origin string, strict bool) error {
 		body, err := json.Marshal(rag.SearchRequest{
 			Query:  query.Query,
 			TopK:   file.TopK,
+			Sector: query.Sector,
 			Status: verified,
 		})
 		if err != nil {

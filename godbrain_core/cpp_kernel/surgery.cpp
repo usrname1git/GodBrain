@@ -100,7 +100,10 @@ std::string execute_self_command(const std::string& command) {
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
         jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        if (!SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+            close_handle(job);
+        }
     }
 
     const BOOL started = CreateProcessA(
@@ -168,10 +171,11 @@ std::string execute_self_command(const std::string& command) {
     const DWORD wait = WaitForSingleObject(pi.hProcess, kTimeoutMs);
     if (wait == WAIT_TIMEOUT) {
         if (job) {
-            CloseHandle(job);
-            job = nullptr;
-        } else {
-            TerminateProcess(pi.hProcess, 1);
+            TerminateJobObject(job, 1);
+        }
+        TerminateProcess(pi.hProcess, 1);
+        if (writer.joinable()) {
+            CancelSynchronousIo(writer.native_handle());
         }
         WaitForSingleObject(pi.hProcess, 5000);
         if (out_reader.joinable()) out_reader.join();
@@ -182,6 +186,7 @@ std::string execute_self_command(const std::string& command) {
         close_handle(out_rd);
         close_handle(err_rd);
         close_handle(in_wr);
+        close_handle(job);
         return "CRITICAL FAILURE: surgery timed out (60s).";
     }
 

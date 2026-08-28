@@ -294,8 +294,9 @@ nondeterministic wall-clock distribution. Threshold tests fail on regression.
 These measurements validate the fake provider and retrieval invariants only;
 they are not a quality or performance claim for any real embedding model.
 `-live` is opt-in: it posts `rag/testdata/desk_eval_queries.json` at
-`http://127.0.0.1:8084/v1/search` (verified-only) and reports needle hits
-against the running vault. Fail-closed if RAG is unready or every query misses.
+`http://127.0.0.1:8084/v1/search` (verified-only, plus each query's `sector`)
+and reports needle hits against the running vault. Fail-closed if RAG is
+unready or every query misses.
 A miss means that claim is not a verified Golden Record yet, not that the
 engine is broken. `-strict` fails on any miss.
 
