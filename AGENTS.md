@@ -299,6 +299,8 @@ MTP (Hauhau or official, b10453 and b10520) IMA'd Librarian extracts.
 Pass `-UseDraft` to enable the draft GGUF. `-NoDraft` keeps MTP off.
 OBLITERATUS Gemma 4 12B is a named lab switch (`-Obliterated`, v2 Q8_0 on
 `C:\nvme`). Hub has no Q6_K. It is not the Watch default. Keep MTP off.
+yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
+`C:\nvme`). Coding/tool fine-tune, not Watch default. Keep MTP off.
 
 Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored

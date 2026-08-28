@@ -16,15 +16,24 @@ param(
     # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
     # Obliterated: -Obliterated (Q6_K is not on the Hub; v2 Q8_0 is the quality
     # pack). Named lab switch, not Watch default. Keep MTP off.
+    # Agentic gym: -Agentic (yuxinlu1 v2 Q6_K coding/tool fine-tune). Gym bro,
+    # not Watch default. Do not enable this model's MTP draft.
     [switch]$Obliterated,
+    [switch]$Agentic,
     [switch]$UseDraft,
     [switch]$NoDraft
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
+if ($Obliterated -and $Agentic) {
+    throw "Start-LlamaServer: pass only one of -Obliterated or -Agentic"
+}
 if ($Obliterated -and -not $PSBoundParameters.ContainsKey('Model')) {
     $Model = "C:\nvme\gemma-4-12b-obliterated\Gemma-4-12B-OBLITERATED-v2-Q8_0.gguf"
+}
+if ($Agentic -and -not $PSBoundParameters.ContainsKey('Model')) {
+    $Model = "C:\nvme\gemma-4-12b-agentic\gemma4-v2-Q6_K.gguf"
 }
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
@@ -86,6 +95,8 @@ $mouthTag = if ($Model -match 'hauhau') {
     "gemma4-12b-hauhau-q4_k_m"
 } elseif ($Model -match 'obliterat') {
     "gemma4-12b-obliterated-q8_0"
+} elseif ($Model -match 'agentic|gemma4-v2-Q6') {
+    "gemma4-12b-agentic-q6_k"
 } elseif ($Model -match 'qat-q4_0|12b-it-qat') {
     "gemma4-12b-it-q4_0"
 } else {
@@ -106,7 +117,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } elseif ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } else { 'Gemma4-12B-IT' })",
+    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } elseif ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } elseif ($Model -match 'agentic|gemma4-v2-Q6') { 'Gemma4-12B-Agentic' } else { 'Gemma4-12B-IT' })",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
