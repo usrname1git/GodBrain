@@ -1338,6 +1338,8 @@
                 const editHost = (status && status.last_edit) || {};
                 if (editHost.applied === true) {
                     lines.push('Edit: ok');
+                } else if (editHost.applied === false) {
+                    lines.push('Edit: fail');
                 } else {
                     lines.push('Edit: none');
                 }

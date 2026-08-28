@@ -113,6 +113,9 @@ phone glance. The iPhone Shortcut should show the first line.
 Pending lists candidate Oracle turns, a candidate host card, and newest
 unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 
+Galaxy This host shows `Edit: ok` / `Edit: fail` / `Edit: none` from
+`last_edit.applied` (missing result is none; `applied=false` is fail).
+
 ## Local edits and CS2
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
