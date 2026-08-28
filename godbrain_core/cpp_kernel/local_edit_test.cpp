@@ -84,8 +84,9 @@ int main() {
                     "Inbox hint excerpt still reaches GPU") ||
             !expect((gpu_at_gpu - gpu_ex) < (gpu_at_inbox - in_ex),
                     "GPU hint windows closer to GPU than Inbox hint")) {
-            std::cerr << "gpu_off=" << (gpu_at_gpu - gpu_ex)
-                      << " inbox_off=" << (gpu_at_inbox - in_ex) << std::endl;
+            std::cerr << "gpu_ex=" << gpu_ex << " in_ex=" << in_ex
+                      << " gpu_at_gpu=" << gpu_at_gpu
+                      << " gpu_at_inbox=" << gpu_at_inbox << std::endl;
             return 1;
         }
     }
