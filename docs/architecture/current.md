@@ -123,7 +123,8 @@ an old-text hunk that is not in that excerpt (wrong site, e.g. overlay vs
 host-card). A complete
 hunk in the `/edit` message is applied if the mouth
 truncates; LF hunks match CRLF files. The second pass uses that same operator-hint excerpt
-(including `galaxy.html`) and is logged under `SECOND` in
+(including `galaxy.html`) and does not replay the truncated first answer
+(wrong-site sludge). It is logged under `SECOND` in
 `logs/last-edit-plan.txt`. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
 `docs\*.md`, or `godbrain_core\` (not build / vendor / LLM / archive). Never
 git push from the mouth. Apply
