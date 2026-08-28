@@ -297,6 +297,8 @@ Live `/edit` works on the Gemma 12B Q4 mouth. Desk default is
 `scripts\Start-LlamaServer.ps1` official Gemma 4 IT Q4_0 **without MTP**.
 MTP (Hauhau or official, b10453 and b10520) IMA'd Librarian extracts.
 Pass `-UseDraft` to enable the draft GGUF. `-NoDraft` keeps MTP off.
+OBLITERATUS Gemma 4 12B is a named lab switch (`-Obliterated`, v2 Q8_0 on
+`C:\nvme`). Hub has no Q6_K. It is not the Watch default. Keep MTP off.
 
 Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored

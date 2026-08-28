@@ -18,7 +18,9 @@ service named `MongoDB`.
 
 One GPU generate slot. Desk default is Gemma 12B Q4 via `llama-server` **with
 no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft` enables the draft GGUF).
-Heal/Watch kick that door, not Colibri. A GLM MoE snapshot (5.2-uncensored on
+Heal/Watch kick that door, not Colibri. `-Obliterated` loads the local
+OBLITERATUS Gemma 4 12B v2 Q8_0 (Q6_K is not on the Hub); named GO, not the
+Watch default. A GLM MoE snapshot (5.2-uncensored on
 disk, or a later 5.3 GGUF) is **research**: RAM-offload, named GO, never the
 thing `/brief` cold-starts. One card in the slot (4080 now; 3090 when the 4080
 leaves) does not make GLM the default. `logs/mouth.txt` says which engine is up.

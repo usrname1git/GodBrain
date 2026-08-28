@@ -14,12 +14,18 @@ param(
     # official) IMA'd Librarian extracts on b10453 and b10520. Pass -UseDraft
     # to enable the draft GGUF. -NoDraft is accepted and keeps MTP off.
     # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+    # Obliterated: -Obliterated (Q6_K is not on the Hub; v2 Q8_0 is the quality
+    # pack). Named lab switch, not Watch default. Keep MTP off.
+    [switch]$Obliterated,
     [switch]$UseDraft,
     [switch]$NoDraft
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
+if ($Obliterated -and -not $PSBoundParameters.ContainsKey('Model')) {
+    $Model = "C:\nvme\gemma-4-12b-obliterated\Gemma-4-12B-OBLITERATED-v2-Q8_0.gguf"
+}
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
 $useDraft = $UseDraft -and -not $NoDraft
@@ -78,6 +84,8 @@ foreach ($log in @($stdout, $stderr)) {
 # Mouth file first so Galaxy shows llama=down while weights load.
 $mouthTag = if ($Model -match 'hauhau') {
     "gemma4-12b-hauhau-q4_k_m"
+} elseif ($Model -match 'obliterat') {
+    "gemma4-12b-obliterated-q8_0"
 } elseif ($Model -match 'qat-q4_0|12b-it-qat') {
     "gemma4-12b-it-q4_0"
 } else {
@@ -98,7 +106,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } else { 'Gemma4-12B-IT' })",
+    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } elseif ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } else { 'Gemma4-12B-IT' })",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
