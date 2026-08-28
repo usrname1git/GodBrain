@@ -1,0 +1,78 @@
+{
+  "version": "godbrain-desk-eval-v1",
+  "top_k": 8,
+  "queries": [
+    {
+      "id": "heal-never-kills",
+      "query": "Heal never kills a process Watch tick",
+      "needles": ["Heal", "Watch"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "one-gpu-slot",
+      "query": "one GPU generate slot llama-server",
+      "needles": ["GPU"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "os-pin",
+      "query": "windows host inventory os_pin",
+      "needles": ["os_pin"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "candidate-verified",
+      "query": "Golden Records candidate verified rejected",
+      "needles": ["candidate", "verified"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "loopback-kernel",
+      "query": "C++ kernel Galaxy loopback 8083",
+      "needles": ["8083"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "rag-service",
+      "query": "rag-service Golden Records 8084",
+      "needles": ["8084"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "brief-glance",
+      "query": "brief first line phone glance",
+      "needles": ["brief"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "skill-lab-gym",
+      "query": "skill lab gym not Galaxy",
+      "needles": ["skill", "Galaxy"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "edit-cannot-promote",
+      "query": "local-edit-apply cannot promote a skill",
+      "needles": ["skill"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "cs2-pause",
+      "query": "CS2 pause Tailscale mouth",
+      "needles": ["CS2"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "inbox-librarian",
+      "query": "inbox Librarian candidate claims",
+      "needles": ["Librarian"],
+      "sector": "windows-sre"
+    },
+    {
+      "id": "mtp-off",
+      "query": "llama-server Gemma MTP off desk default",
+      "needles": ["llama"],
+      "sector": "windows-sre"
+    }
+  ]
+}

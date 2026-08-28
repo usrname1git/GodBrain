@@ -92,8 +92,14 @@ Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`.
 
 ## 4. Build the kernel
 
-No committed CMake project. From `godbrain_core\cpp_kernel` in a Visual Studio
-x64 Developer shell:
+No committed CMake project. From the repo root:
+
+```powershell
+.\scripts\Build-Kernel.ps1
+```
+
+That compiles without starting GodBrain. Backups go outside git. Equivalent
+Developer-shell one-liner from `godbrain_core\cpp_kernel`:
 
 ```powershell
 cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib

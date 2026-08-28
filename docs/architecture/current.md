@@ -38,8 +38,9 @@ non-empty `reasoning` string.
 
 Ordinary loopback chat and GET glances are unauthenticated. Privileged
 PowerShell (`execute_godbrain_script`, `propose_sovereign_architect_change`) is
-an intentional high-risk capability, not a sandbox. Mouth text is never scanned
-and executed.
+an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` under a
+Job Object with a 60s timeout, capped output, and concurrent pipe drain. Mouth
+text is never scanned and executed.
 
 Galaxy: graph, chat, This host vs Pending, SRE button. Brave extension talks to
 the same loopback API.

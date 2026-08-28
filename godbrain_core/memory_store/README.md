@@ -280,6 +280,7 @@ and no-result behavior:
 ```powershell
 .\rag-eval.exe
 .\rag-eval.exe -measure-latency
+.\rag-eval.exe -live
 ```
 
 The default JSON is byte-for-byte deterministic. Current fixture-only metrics
@@ -287,11 +288,16 @@ are Recall@K `1.0`, MRR `1.0`, nDCG@K `1.0`, citation
 correctness/coverage `1.0`, generation correctness `1.0`, and hidden-record
 leakage `0`. Uncommitted, stale-generation, missing-citation, and wrong-citation
 records remain adversarial inputs to the evaluated pipeline instead of being
-removed before measurement. Deterministic work p50/p95/max are `24/24/24`
+removed before measurement. Deterministic work p50/p95/max are `32/32/32`
 bounded document comparisons against an `8192` budget. `-measure-latency` adds a separate
 nondeterministic wall-clock distribution. Threshold tests fail on regression.
 These measurements validate the fake provider and retrieval invariants only;
 they are not a quality or performance claim for any real embedding model.
+`-live` is opt-in: it posts `rag/testdata/desk_eval_queries.json` at
+`http://127.0.0.1:8084/v1/search` (verified-only) and reports needle hits
+against the running vault. Fail-closed if RAG is unready or every query misses.
+A miss means that claim is not a verified Golden Record yet, not that the
+engine is broken. `-strict` fails on any miss.
 
 ## Known limitations
 
