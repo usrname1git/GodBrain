@@ -77,6 +77,8 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch '(?i)<html') { throw "galaxy.html missing html" }
     if ($text -notmatch '(?i)godbrain') { throw "galaxy.html missing GodBrain" }
     if ($text -notmatch '(?i)3d-graph') { throw "galaxy.html missing graph root" }
+    if ($text -notmatch 'id="host-card"') { throw "galaxy.html missing host card" }
+    if ($text -notmatch "CS2: idle") { throw "galaxy.html missing CS2 idle glance" }
 }
 
 function Test-MemoryStoreGo {

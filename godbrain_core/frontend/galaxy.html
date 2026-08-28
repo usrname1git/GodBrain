@@ -897,10 +897,12 @@
             const inboxLine = inboxOverlayLine(status);
             if (inboxLine) lines.push(inboxLine);
             const cs2 = (status && status.cs2) || {};
-            if (cs2.sleep) {
-                lines.push(
-                    'cs2 ' + (cs2.running ? 'play' : 'sleep') +
-                    ' — mouth and Tailscale stay down');
+            if (cs2.running) {
+                lines.push('cs2 play — mouth and Tailscale stay down');
+            } else if (cs2.sleep) {
+                lines.push('cs2 sleep — mouth and Tailscale stay down');
+            } else {
+                lines.push('cs2 idle');
             }
             const vram = (status && status.vram) || {};
             if (typeof vram.dedicated_gb === 'number') {
@@ -1299,8 +1301,12 @@
                     lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
                 }
                 const cs2 = status.cs2 || {};
-                if (cs2.sleep) {
-                    lines.push('CS2: ' + (cs2.running ? 'playing' : 'sleep window'));
+                if (cs2.running) {
+                    lines.push('CS2: play');
+                } else if (cs2.sleep) {
+                    lines.push('CS2: sleep');
+                } else {
+                    lines.push('CS2: idle');
                 }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
