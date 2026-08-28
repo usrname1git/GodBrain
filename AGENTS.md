@@ -203,13 +203,13 @@ fixture file offline (no GPU). Never git push from the mouth.
 
 Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause the mouth (coli
 and `llama-server`) and `tailscale down` first, launch Steam app 730,
-wait until `CS2.exe` exits, wait 5 minutes, then
+wait until `CS2.exe` exits, wait 10 minutes, then
 `tailscale up --unattended` and Start-GodBrain. Never logout,
 `--reset`, or uninstall Tailscale.
 
 `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is only the backup if CS2 is
 started from Steam Play. Start/Heal skip the mouth while CS2 is running
-or has been gone under 5 minutes.
+or has been gone under 10 minutes.
 
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   mouth (desk default `llama-server`; Colibri is interchangeable). Reserve a

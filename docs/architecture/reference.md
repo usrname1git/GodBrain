@@ -42,7 +42,7 @@ never changes; only status does.
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. Heal never `--ask`. |
 | Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Detect TCP then HTTP ready, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, `rag-rebuild` if unready, drain one inbox file, verify, remember on act/fail. Never kills. |
-| CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1` | launch script + schtask backup | Pause mouth and Tailscale, launch Steam app 730, resume 5 minutes after `CS2.exe` exits. |
+| CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1` | launch script + schtask backup | Pause mouth and Tailscale, launch Steam app 730, resume 10 minutes after `CS2.exe` exits. |
 | Agent Factory control plane | Planned, **not next** | `docs/AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. |
 
 ## C++ Kernel HTTP (`127.0.0.1:8083`)

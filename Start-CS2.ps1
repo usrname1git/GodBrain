@@ -1,12 +1,12 @@
 # Play CS2 with the 4080 free and Tailscale off. Pause GodBrain first,
-# launch via Steam, wait until CS2.exe exits, wait 5 more minutes, then
+# launch via Steam, wait until CS2.exe exits, wait 10 more minutes, then
 # wake the mouth and bring Tailscale back. Never uninstall or --reset.
 # Prefer this over clicking Play in Steam. Watch-Cs2Pause is the backup.
 
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [int]$ResumeDelayMinutes = 5,
+    [int]$ResumeDelayMinutes = 0,
     [int]$AppearTimeoutMinutes = 10,
     [string]$SteamExe = "C:\Program Files (x86)\Steam\steam.exe",
     [int]$AppId = 730
@@ -26,6 +26,9 @@ if (-not (Test-Path -LiteralPath $helper)) {
     throw "Start-CS2: missing $helper"
 }
 . $helper
+if ($ResumeDelayMinutes -le 0) {
+    $ResumeDelayMinutes = Get-Cs2ResumeDelayMinutes
+}
 
 if (-not (Test-Path -LiteralPath $SteamExe)) {
     throw "Start-CS2: Steam not at $SteamExe"

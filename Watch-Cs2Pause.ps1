@@ -40,7 +40,7 @@ if ($cs2) {
 }
 
 $gone = Get-Cs2GoneMinutes $RepoRoot
-if ($state.paused -and ($null -ne $gone) -and $gone -ge 5) {
+if ($state.paused -and ($null -ne $gone) -and $gone -ge (Get-Cs2ResumeDelayMinutes)) {
     Resume-GodBrainAfterCs2 $RepoRoot
     exit 0
 }

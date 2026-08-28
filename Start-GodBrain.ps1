@@ -277,7 +277,7 @@ if (Test-Path -LiteralPath $cs2Helper) {
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
 if ($coliSleep) {
-    Write-Log "skip mouth (CS2.exe running or gone < 5 min)"
+    Write-Log "skip mouth (CS2.exe running or gone < 10 min)"
 } elseif (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip mouth (:8000 already listening)"
 } elseif (Test-LlamaMouth) {
