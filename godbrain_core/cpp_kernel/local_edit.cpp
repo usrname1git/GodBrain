@@ -634,6 +634,22 @@ std::string check_profile_for(const std::string& rel) {
     return check_profile_for_impl(rel);
 }
 
+bool apply_still_open(const std::string& text) {
+    const size_t apply_sp = text.rfind("*** APPLY");
+    const size_t apply_t = text.rfind("***APPLY");
+    size_t apply = std::string::npos;
+    if (apply_sp == std::string::npos) {
+        apply = apply_t;
+    } else if (apply_t == std::string::npos) {
+        apply = apply_sp;
+    } else {
+        apply = apply_sp > apply_t ? apply_sp : apply_t;
+    }
+    if (apply == std::string::npos) return false;
+    const size_t gt = text.rfind(">>>>");
+    return gt == std::string::npos || apply > gt;
+}
+
 bool looks_like_edit_request(const std::string& user_msg) {
     const std::string lower = ascii_lower(user_msg);
     if (lower.rfind("/edit", 0) == 0) return true;
