@@ -194,7 +194,7 @@ Galaxy can ask the mouth to change a repo file. `/edit` skips RAG search
 and does not store an Oracle candidate. The kernel writes the
 plan to `logs/last-edit-plan.txt`, does a second GPU pass for
 `*** APPLY` blocks (thinking off, spoken-only parse; file excerpt from
-the `/edit` path, a window around the named text, including `galaxy.html`), and applies a complete hunk
+the `/edit` path, a window around the named text, including `galaxy.html`). Old text that is not in that excerpt is skipped (wrong site). It applies a complete hunk
 from the user message if the mouth truncates. The second pass is appended
 as `SECOND` in that plan file. It writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and

@@ -636,7 +636,7 @@ struct ApplyOutcome {
     std::vector<std::string> edited;
 };
 
-ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks) {
+ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint) {
     ApplyOutcome out;
     const std::string root = repo_root();
     if (root.empty()) {
@@ -676,6 +676,12 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks) {
         }
         if (body.find(old_text, at + 1) != std::string::npos) {
             report << "skip ambiguous " << hunk.path << "\n";
+            continue;
+        }
+        const std::string bound = excerpt(hunk.path, hint);
+        if (!bound.empty() &&
+            strip_cr(bound).find(strip_cr(old_text)) == std::string::npos) {
+            report << "skip old not in excerpt " << hunk.path << "\n";
             continue;
         }
         body.replace(at, old_text.size(), new_text);
@@ -726,7 +732,9 @@ std::string edit_user_with_excerpt(const std::string& user_msg) {
         usr << "File " << file << " excerpt:\n" << excerpt(file, user_msg)
             << "\n\n";
     }
-    usr << "This message is the operator, not RAG. Emit ONLY apply blocks:\n"
+    usr << "This message is the operator, not RAG. "
+           "Copy old text from the excerpt only. Do not patch a different "
+           "occurrence. Emit ONLY apply blocks:\n"
            "*** APPLY\n"
            "path: relative/from/repo\n"
            "<<<<\n"
@@ -780,7 +788,8 @@ Result maybe_apply(
             usr << "File " << file << " excerpt:\n"
                 << excerpt(file, user_msg + "\n" + first_answer) << "\n\n";
         }
-        usr << "Close any truncated APPLY. Emit ONLY apply blocks, no prose:\n"
+        usr << "Copy old text from the excerpt only. Close any truncated APPLY. "
+               "Emit ONLY apply blocks, no prose:\n"
                "*** APPLY\n"
                "path: relative/from/repo\n"
                "<<<<\n"
@@ -808,7 +817,7 @@ Result maybe_apply(
         return result;
     }
 
-    const ApplyOutcome applied = apply_hunks(hunks);
+    const ApplyOutcome applied = apply_hunks(hunks, user_msg);
     result.report = applied.report;
     result.applied = applied.ok;
     CheckOutcome check;
