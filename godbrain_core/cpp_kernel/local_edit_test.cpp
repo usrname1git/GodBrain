@@ -68,7 +68,7 @@ int main() {
                     "powershell-parse-v1",
                 "ps1 profile") ||
         !expect(local_edit::check_profile_for("godbrain_core/cpp_kernel/main.cpp") ==
-                    "kernel-syntax-v1",
+                    "kernel-file-v1",
                 "kernel profile") ||
         !expect(local_edit::check_profile_for("godbrain_core\\memory_store\\store.go") ==
                     "memory-store-go-v1",
