@@ -178,9 +178,9 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `MONGODB_DB_NAME` | Mongo-backed commands default to `godbrain`. Not in the Start-GodBrain WMI keep-list. |
 | `GODBRAIN_RAG_PORT` | RAG service only | Numeric bind port. **Do not set on this desk.** The C++ kernel is hardcoded to `127.0.0.1:8084`. Changing the port desyncs Galaxy/chat. |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
-| `GODBRAIN_EMBEDDING_ENDPOINT` | RAG service | Optional exact-loopback embedding HTTP origin |
-| `GODBRAIN_EMBEDDING_MODEL` | RAG service | Optional embedding model id (with revision, sha256, dimension) |
-| `GODBRAIN_RAG_EMBEDDING_REQUIRED` | RAG service | `1` fail-closes hybrid when the embedding provider is down |
+| `GODBRAIN_EMBEDDING_ENDPOINT` | `memory-store.exe`, `rag-rebuild.exe`, `rag-service.exe` | Optional exact-loopback embedding HTTP origin. All three call `rag.EmbeddingRuntimeFromEnvironment()`. |
+| `GODBRAIN_EMBEDDING_MODEL` | same three | Optional embedding model id (with revision, sha256, dimension) |
+| `GODBRAIN_RAG_EMBEDDING_REQUIRED` | same three | `1` fail-closes when the embedding provider is down or incomplete |
 | `GODBRAIN_LIBRARIAN_MODEL` | Native Librarian | Mouth model id override |
 | `GODBRAIN_MOUTH_HOST` | Native Librarian | Mouth host (default `127.0.0.1`) |
 | `GODBRAIN_MOUTH_PORT` | Native Librarian | Mouth port (default `8000`) |
@@ -189,7 +189,8 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 
 This table is the operator set, not every env a nested tree reads. Embedding
 identity also needs `GODBRAIN_EMBEDDING_MODEL_REVISION`,
-`GODBRAIN_EMBEDDING_MODEL_SHA256`, and `GODBRAIN_EMBEDDING_DIMENSION` together.
+`GODBRAIN_EMBEDDING_MODEL_SHA256`, and `GODBRAIN_EMBEDDING_DIMENSION` together;
+invalid or incomplete identity fails those three executables, not only search.
 
 Start-GodBrain launches children through WMI with a **keep-list**: `PATH` and
 friends, `MONGODB_URI`, `GODBRAIN_API_TOKEN`. It does **not** copy User
