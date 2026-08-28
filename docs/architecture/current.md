@@ -116,7 +116,10 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 ## Local edits and CS2
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
-blocks. A complete hunk in the `/edit` message is applied if the mouth
+blocks. `/edit` does not search RAG (the untrusted-notes wrapper jailed the
+mouth off APPLY) and does not persist as an Oracle candidate. First pass
+gets a window around the named file text, not the first 4 KB. A complete
+hunk in the `/edit` message is applied if the mouth
 truncates; LF hunks match CRLF files. The second pass gets a file excerpt
 (including `galaxy.html`) and is logged under `SECOND` in
 `logs/last-edit-plan.txt`. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,

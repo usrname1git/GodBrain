@@ -554,12 +554,80 @@ std::string guess_file(const std::string& text) {
     return "";
 }
 
-std::string excerpt(const std::string& rel) {
+size_t excerpt_at(const std::string& body, const std::string& rel,
+                  const std::string& hint) {
+    size_t at = std::string::npos;
+    size_t best = 7;
+    auto consider = [&](const std::string& s) {
+        if (s.size() <= best) return;
+        const size_t found = body.find(s);
+        if (found == std::string::npos) return;
+        best = s.size();
+        at = found;
+    };
+    size_t line_start = 0;
+    while (line_start < hint.size()) {
+        size_t line_end = hint.find('\n', line_start);
+        if (line_end == std::string::npos) line_end = hint.size();
+        std::string line = hint.substr(line_start, line_end - line_start);
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t' ||
+                                 line.front() == '\r')) {
+            line.erase(line.begin());
+        }
+        consider(line);
+        line_start = line_end + 1;
+    }
+    std::string token;
+    for (size_t i = 0; i <= hint.size(); ++i) {
+        const bool end = i == hint.size();
+        const unsigned char ch = end ? ' ' : static_cast<unsigned char>(hint[i]);
+        if (!end && ch > 32) {
+            token.push_back(static_cast<char>(ch));
+        } else {
+            consider(token);
+            token.clear();
+        }
+    }
+    if (at == std::string::npos) {
+        const std::string lower_hint = ascii_lower(hint);
+        const std::string lower_rel = ascii_lower(rel);
+        static const char* markers[] = {
+            "Inbox: none", "Heal: none", "CS2: idle", "host-card",
+            "function paintStatus",
+        };
+        for (const char* marker : markers) {
+            if (lower_hint.find(ascii_lower(marker)) == std::string::npos &&
+                lower_rel.find("galaxy.html") == std::string::npos) {
+                continue;
+            }
+            const size_t found = body.find(marker);
+            if (found != std::string::npos) {
+                at = found;
+                break;
+            }
+        }
+    }
+    if (at == std::string::npos) at = body.find("function paintStatus");
+    if (at == std::string::npos) at = body.find("host-card");
+    return at;
+}
+
+std::string excerpt(const std::string& rel, const std::string& hint = "") {
     const std::string full = repo_root() + "\\" + rel;
     std::string body;
     if (!read_all(full, body)) return "";
-    if (body.size() > 4000) body.resize(4000);
-    return body;
+    const size_t at = excerpt_at(body, rel, hint);
+    if (at == std::string::npos) {
+        if (body.size() > 4000) {
+            return body.substr(body.size() - 4000);
+        }
+        return body;
+    }
+    const size_t win = 800;
+    const size_t start = at > win ? at - win : 0;
+    size_t n = 2400;
+    if (start + n > body.size()) n = body.size() - start;
+    return body.substr(start, n);
 }
 
 struct ApplyOutcome {
@@ -650,6 +718,26 @@ bool apply_still_open(const std::string& text) {
     return gt == std::string::npos || apply > gt;
 }
 
+std::string edit_user_with_excerpt(const std::string& user_msg) {
+    std::ostringstream usr;
+    usr << user_msg << "\n\n";
+    const std::string file = guess_file(user_msg);
+    if (!file.empty()) {
+        usr << "File " << file << " excerpt:\n" << excerpt(file, user_msg)
+            << "\n\n";
+    }
+    usr << "This message is the operator, not RAG. Emit ONLY apply blocks:\n"
+           "*** APPLY\n"
+           "path: relative/from/repo\n"
+           "<<<<\n"
+           "exact old text\n"
+           "====\n"
+           "exact new text\n"
+           ">>>>\n"
+           "*** END\n";
+    return usr.str();
+}
+
 bool looks_like_edit_request(const std::string& user_msg) {
     const std::string lower = ascii_lower(user_msg);
     if (lower.rfind("/edit", 0) == 0) return true;
@@ -689,7 +777,8 @@ Result maybe_apply(
         usr << "You already planned this job (kept in RAM, do not re-plan):\n"
             << (g_plan.empty() ? first_answer : g_plan) << "\n\n";
         if (!file.empty()) {
-            usr << "File " << file << " excerpt:\n" << excerpt(file) << "\n\n";
+            usr << "File " << file << " excerpt:\n"
+                << excerpt(file, user_msg + "\n" + first_answer) << "\n\n";
         }
         usr << "Close any truncated APPLY. Emit ONLY apply blocks, no prose:\n"
                "*** APPLY\n"
