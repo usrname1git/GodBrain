@@ -293,12 +293,12 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 
 ### Mouth (llama-server / Colibri)
 
-Live `/edit` works on the Gemma 12B Q4 mouth. Desk default is
-`scripts\Start-LlamaServer.ps1` official Gemma 4 IT Q4_0 **without MTP**.
-MTP (Hauhau or official, b10453 and b10520) IMA'd Librarian extracts.
-Pass `-UseDraft` to enable the draft GGUF. `-NoDraft` keeps MTP off.
+Live `/edit` works on the Gemma 12B IT mouth. Desk default is
+`scripts\Start-LlamaServer.ps1` bartowski Gemma 4 IT **Q6_K_L** without MTP.
+Hauhau QAT+MTP IMA'd Librarian extracts and was removed. Pass `-UseDraft`
+only if a draft GGUF is present. `-NoDraft` keeps MTP off.
 OBLITERATUS Gemma 4 12B is a named lab switch (`-Obliterated`, v2 Q8_0 on
-`C:\nvme`). Hub has no Q6_K. It is not the Watch default. Keep MTP off.
+`C:\nvme`). Not the Watch default. Keep MTP off.
 yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
 `C:\nvme`). Coding/tool fine-tune, not Watch default. Keep MTP off.
 

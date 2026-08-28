@@ -16,8 +16,9 @@ service named `MongoDB`.
 
 ## Mouth (`:8000`)
 
-One GPU generate slot. Desk default is Gemma 12B Q4 via `llama-server` **with
-no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft` enables the draft GGUF).
+One GPU generate slot. Desk default is bartowski Gemma 12B IT **Q6_K_L** via
+`llama-server` **with no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft`
+enables a draft GGUF only if that file exists).
 Heal/Watch kick that door, not Colibri. `-Obliterated` loads the local
 OBLITERATUS Gemma 4 12B v2 Q8_0 (Q6_K is not on the Hub); named GO, not the
 Watch default. `-Agentic` loads the local yuxinlu1 Gemma 4 12B v2 Q6_K
