@@ -9,11 +9,70 @@ $ErrorActionPreference = 'Stop'
 
 $os = Get-CimInstance Win32_OperatingSystem
 $computer = Get-CimInstance Win32_ComputerSystem
+$memoryModules = @(Get-CimInstance Win32_PhysicalMemory)
 $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
 $board = Get-CimInstance Win32_BaseBoard | Select-Object -First 1
 $video = Get-CimInstance Win32_VideoController |
     Where-Object CurrentHorizontalResolution |
     Select-Object -First 1
+
+$displayModeApiAvailable = $true
+if (-not ('SystemFlexDisplayMode' -as [type])) {
+    try {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+
+public static class SystemFlexDisplayMode
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmDeviceName;
+        public ushort dmSpecVersion;
+        public ushort dmDriverVersion;
+        public ushort dmSize;
+        public ushort dmDriverExtra;
+        public uint dmFields;
+        public int dmPositionX;
+        public int dmPositionY;
+        public uint dmDisplayOrientation;
+        public uint dmDisplayFixedOutput;
+        public short dmColor;
+        public short dmDuplex;
+        public short dmYResolution;
+        public short dmTTOption;
+        public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmFormName;
+        public ushort dmLogPixels;
+        public uint dmBitsPerPel;
+        public uint dmPelsWidth;
+        public uint dmPelsHeight;
+        public uint dmDisplayFlags;
+        public uint dmDisplayFrequency;
+        public uint dmICMMethod;
+        public uint dmICMIntent;
+        public uint dmMediaType;
+        public uint dmDitherType;
+        public uint dmReserved1;
+        public uint dmReserved2;
+        public uint dmPanningWidth;
+        public uint dmPanningHeight;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool EnumDisplaySettings(
+        string deviceName,
+        int modeNumber,
+        ref DEVMODE mode
+    );
+}
+'@
+    } catch {
+        $displayModeApiAvailable = $false
+    }
+}
 
 $useAnsi = $null -ne $PSStyle
 if ($useAnsi) {
@@ -60,17 +119,49 @@ if ($nvidiaSmi) {
 }
 
 $memoryGiB = [math]::Round(($computer.TotalPhysicalMemory / 1GB), 1)
+$memoryKitSpeed = @($memoryModules.PartNumber |
+    ForEach-Object {
+        if ($_ -match '(?<!\d)(\d{4,5})\s+Series') {
+            $Matches[1]
+        }
+    } |
+    Sort-Object -Unique) -join '/'
+$memoryDetail = "$memoryGiB GiB"
+if ($memoryKitSpeed) {
+    $memoryDetail += " | Patriot Viper Xtreme DDR5-$memoryKitSpeed"
+}
 $uptime = (Get-Date) - $os.LastBootUpTime
 $uptimeText = '{0}d {1}h {2}m' -f (
     [math]::Floor($uptime.TotalDays),
     $uptime.Hours,
     $uptime.Minutes
 )
-$display = if ($video.CurrentHorizontalResolution) {
-    '{0}x{1} @ {2} Hz' -f
-        $video.CurrentHorizontalResolution,
-        $video.CurrentVerticalResolution,
-        $video.CurrentRefreshRate
+$display = $null
+Add-Type -AssemblyName System.Windows.Forms
+$screens = @([System.Windows.Forms.Screen]::AllScreens)
+$primaryScreen = $screens | Where-Object Primary | Select-Object -First 1
+if ($primaryScreen) {
+    if ($displayModeApiAvailable) {
+        $displayMode = New-Object SystemFlexDisplayMode+DEVMODE
+        $displayMode.dmSize = [Runtime.InteropServices.Marshal]::SizeOf($displayMode)
+        if ([SystemFlexDisplayMode]::EnumDisplaySettings(
+                $primaryScreen.DeviceName,
+                -1,
+                [ref]$displayMode
+            )) {
+            $display = 'Primary {0}x{1} @ {2} Hz | {3} active' -f
+                $displayMode.dmPelsWidth,
+                $displayMode.dmPelsHeight,
+                $displayMode.dmDisplayFrequency,
+                $screens.Count
+        }
+    }
+    if (-not $display) {
+        $display = 'Primary {0}x{1} | {2} active' -f
+            $primaryScreen.Bounds.Width,
+            $primaryScreen.Bounds.Height,
+            $screens.Count
+    }
 }
 
 $writeRow = {
@@ -110,7 +201,7 @@ if ($useAnsi) {
 & $writeRow 'Privilege' $securityContext
 & $writeRow 'Board' "$($board.Manufacturer) $($board.Product)"
 & $writeRow 'CPU' "$($processor.Name) | $($processor.NumberOfCores)C / $($processor.NumberOfLogicalProcessors)T"
-& $writeRow 'Memory' "$memoryGiB GiB"
+& $writeRow 'Memory' $memoryDetail
 & $writeRow 'GPU' $gpuName
 if ($gpuDetail) {
     & $writeRow 'Graphics' $gpuDetail
