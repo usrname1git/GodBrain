@@ -13,7 +13,7 @@ rate alone is not sufficient evidence for allocating capital.
 ## Target Strategies
 
 ### 1. Prediction Market Latency (Polymarket / Kalshi)
-*   **Target:** Physical events with absolute certainty but delayed market resolution.
+*   **Target:** Physical events with public data and delayed market prices. Not certain.
 *   **Examples:**
     *   **Weather Events:** API data (NOAA, local radar) shows rain is actively falling. Market closes in 2 minutes but still prices "Will it rain?" at 80%. Oracle buys the 20% margin.
     *   **Flight Delays:** FAA/FlightAware API confirms a plane has been diverted or delayed. Oracle buys the "Flight delayed" contract before market makers parse the data.
@@ -36,11 +36,11 @@ execution. Even an atomic backrun can lose its bid, fail simulation, be
 outcompeted, be invalidated by a reorg, or earn less than modeled costs.
 
 The paper-only Polygon searcher lives in
-[`godbrain_core/polygon_searcher`](godbrain_core/polygon_searcher/README.md).
+[`godbrain_core/polygon_searcher`](../godbrain_core/polygon_searcher/README.md).
 The confirmed-chain boundary lives in
-[`godbrain_core/polygon_observer`](godbrain_core/polygon_observer/README.md).
+[`godbrain_core/polygon_observer`](../godbrain_core/polygon_observer/README.md).
 The read-only adapter and replay boundary lives in
-[`godbrain_core/polygon_pipeline`](godbrain_core/polygon_pipeline/README.md).
+[`godbrain_core/polygon_pipeline`](../godbrain_core/polygon_pipeline/README.md).
 Polygon's supported local stack is Bor plus Heimdall v2.
 
 The observer accepts only loopback Bor JSON-RPC, requires chain ID 137, a

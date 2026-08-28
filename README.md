@@ -1,7 +1,10 @@
 # GodBrain
 
-Use **any** AI model — be it a commercial model through your favorite `-cli` or an LLM of any type.
-The most genius part of GodBrain is that it's both **model and tool agnostic**: everything can get boosted by it, and everything can contribute. Train them as a **collective brain & memory**, and unlock tools that default `llama-server` can't do.
+Local-first Jarvis on this Windows desk. The mouth is an **OpenAI-compatible
+loopback** server on `:8000` (desk default: `llama-server`; Colibri is the
+interchangeable alternative). Not a commercial `-cli` wrapper and not MCP.
+Models inherit the same Golden Records, and the kernel adds tools a stock
+`llama-server` will not give you.
 
 ## TLDR
 
@@ -9,7 +12,7 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 
 - **🧠 Model-agnostic mouth** — Plug in *any* LLM behind one kernel door (desk default: Gemma 12B on `llama-server`). No model is special; they inherit the same teachings.
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
-- **🛠️ Tools a stock `llama-server` will not give you** — Kernel `command_type`s: save/recall thoughts, bounded `/edit`, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`.
+- **🛠️ Tools a stock `llama-server` will not give you** — Kernel `command_type`s: save/recall, skills, host observe, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
 
 ## The Compute Cheat Code (vault ≠ GPU)
 

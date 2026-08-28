@@ -38,8 +38,9 @@ non-empty `reasoning` string.
 
 Ordinary loopback chat and GET glances are unauthenticated. Privileged
 PowerShell (`execute_godbrain_script`, `propose_sovereign_architect_change`) is
-an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` under a
-Job Object with a 60s timeout, capped output, and concurrent pipe drain. Mouth
+an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` with a
+60s wait, capped concurrent pipes, and explicit job/process kill on timeout.
+If Job Object setup fails it still terminates the `pwsh` it created. Mouth
 text is never scanned and executed.
 
 Galaxy: graph, chat, This host vs Pending, SRE button. Brave extension talks to
@@ -108,9 +109,9 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 ## Local edits and CS2
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
-blocks. Writes only root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, or
-`godbrain_core\` (not build / vendor / LLM / archive). Never git push from
-the mouth. Apply
+blocks. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
+`docs\*.md`, or `godbrain_core\` (not build / vendor / LLM / archive). Never
+git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
 enough to promote a skill.
 

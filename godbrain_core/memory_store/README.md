@@ -282,7 +282,7 @@ corpus (same watermarks as search). Body is one JSON object:
 }
 ```
 
-`query` is required (max 512 characters). `limit` defaults to 5 and is rejected
+`query` is required (max 512 UTF-8 bytes). `limit` defaults to 5 and is rejected
 outside 1–25. Each hit includes name, origin node/hash, optional verification
 profile, procedure `content`, and `untrusted: true`. Apply-only
 `local-edit-apply-v1` evidence cannot appear here because it cannot promote.

@@ -10,7 +10,7 @@ import (
 
 var (
 	ErrSkillQueryRequired = errors.New("skill query is required")
-	ErrSkillQueryTooLarge = errors.New("skill query exceeds 512 characters")
+	ErrSkillQueryTooLarge = errors.New("skill query exceeds 512 UTF-8 bytes")
 	ErrInvalidSkillLimit  = errors.New("skill limit must be between 1 and 25")
 )
 
