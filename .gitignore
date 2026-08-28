@@ -20,6 +20,9 @@ godbrain_core/rust_router/target/
 
 GodBrainService.xml
 
+# Kernel relink backups live outside git (Build-Kernel.ps1 / C:\nvme\godbrain-kernel-bak)
+godbrain_core/cpp_kernel/*.exe.bak_*
+
 # Generated build artifacts (previous review: stray compiled objects)
 *.obj
 

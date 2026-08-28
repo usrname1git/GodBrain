@@ -183,6 +183,66 @@
       "committed": true,
       "citation_state": "valid",
       "expected_visible": true
+    },
+    {
+      "id": "heal-never-kills",
+      "stable_id": "claim:heal-never-kills",
+      "version": "v1",
+      "content": "Heal never kills a process. Watch calls Heal every five minutes.",
+      "kind": "claim",
+      "sector": "windows-sre",
+      "status": "verified",
+      "confidence": 0.97,
+      "source_id": "source-windows-sre-a",
+      "generation": "eval-generation-v1",
+      "committed": true,
+      "citation_state": "valid",
+      "expected_visible": true
+    },
+    {
+      "id": "skill-lab-gym",
+      "stable_id": "claim:skill-lab-gym",
+      "version": "v1",
+      "content": "The skill lab is a gym, not Galaxy. A green build without docs is not a product.",
+      "kind": "claim",
+      "sector": "windows-sre",
+      "status": "verified",
+      "confidence": 0.95,
+      "source_id": "source-windows-sre-b",
+      "generation": "eval-generation-v1",
+      "committed": true,
+      "citation_state": "valid",
+      "expected_visible": true
+    },
+    {
+      "id": "one-gpu-slot",
+      "stable_id": "claim:one-gpu-slot",
+      "version": "v1",
+      "content": "This desk has one GPU generate slot for llama-server or coli serve.",
+      "kind": "claim",
+      "sector": "windows-sre",
+      "status": "verified",
+      "confidence": 0.96,
+      "source_id": "source-windows-sre-c",
+      "generation": "eval-generation-v1",
+      "committed": true,
+      "citation_state": "valid",
+      "expected_visible": true
+    },
+    {
+      "id": "brief-phone-glance",
+      "stable_id": "claim:brief-phone-glance",
+      "version": "v1",
+      "content": "The /brief first line is the phone glance and must not prepend where-we-are.",
+      "kind": "claim",
+      "sector": "windows-sre",
+      "status": "verified",
+      "confidence": 0.94,
+      "source_id": "source-windows-sre-d",
+      "generation": "eval-generation-v1",
+      "committed": true,
+      "citation_state": "valid",
+      "expected_visible": true
     }
   ],
   "queries": [
@@ -251,6 +311,30 @@
       "sector": "nonexistent",
       "relevant_ids": [],
       "expect_no_results": true
+    },
+    {
+      "id": "desk-heal",
+      "text": "Heal never kills a process",
+      "sector": "windows-sre",
+      "relevant_ids": ["heal-never-kills"]
+    },
+    {
+      "id": "desk-skill-lab",
+      "text": "skill lab is a gym not Galaxy",
+      "sector": "windows-sre",
+      "relevant_ids": ["skill-lab-gym"]
+    },
+    {
+      "id": "desk-one-gpu",
+      "text": "one GPU generate slot",
+      "sector": "windows-sre",
+      "relevant_ids": ["one-gpu-slot"]
+    },
+    {
+      "id": "desk-brief",
+      "text": "brief first line phone glance",
+      "sector": "windows-sre",
+      "relevant_ids": ["brief-phone-glance"]
     }
   ]
 }

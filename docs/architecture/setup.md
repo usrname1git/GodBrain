@@ -62,12 +62,12 @@ Set at least:
 
 | Variable | Required for | Notes |
 |---|---|---|
-| `MONGODB_URI` | rag-service, memory-store, Librarian | Default `mongodb://127.0.0.1:27017` |
-| `GODBRAIN_API_TOKEN` | Privileged `command_type`, Tailscale door | High-entropy. User env, not a file in the repo. WMI child env gets it; `*.launch.cmd` must not. |
+| `MONGODB_URI` | `memory-store.exe`, `rag-service.exe`, `rag-rebuild.exe` | Default `mongodb://127.0.0.1:27017`. Kernel and Librarian do not read Mongo; they talk to those processes. |
+| `GODBRAIN_API_TOKEN` | Every `command_type`; every Tailscale route | High-entropy. User env, not a file in the repo. WMI child env gets it; `*.launch.cmd` must not. Missing token fail-closes `command_type` and keeps the Tailscale door unbound. Loopback GET glances and loopback chat stay unauthenticated. |
 
 Optional overrides (mouth path, snapshot, frontend, RAG port) are in
-[`reference.md`](reference.md#configuration). Missing server token fail-closes
-privileged writes; do not start a kernel that fail-opens loopback writes.
+[`reference.md`](reference.md#configuration). Do not start a kernel that
+fail-opens privileged writes.
 
 ## 3. Build Alexandria
 
@@ -92,8 +92,14 @@ Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`.
 
 ## 4. Build the kernel
 
-No committed CMake project. From `godbrain_core\cpp_kernel` in a Visual Studio
-x64 Developer shell:
+No committed CMake project. From the repo root:
+
+```powershell
+.\scripts\Build-Kernel.ps1
+```
+
+That compiles without starting GodBrain. Backups go outside git. Equivalent
+Developer-shell one-liner from `godbrain_core\cpp_kernel`:
 
 ```powershell
 cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
