@@ -174,8 +174,8 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temp script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
-| `MONGODB_URI` | Memory Store and RAG tools | Required MongoDB connection string. Start-GodBrain copies this into the child env (default `mongodb://127.0.0.1:27017`). |
-| `MONGODB_DB_NAME` | Memory Store and RAG tools | Override database `godbrain`. Not in the Start-GodBrain WMI keep-list. |
+| `MONGODB_URI` | `memory-store.exe`, `rag-rebuild.exe` require it. `rag-service.exe` defaults to `mongodb://127.0.0.1:27017` if unset. `rag-eval.exe` does not use it. Start-GodBrain copies URI into WMI children (keep-list default is that loopback string). |
+| `MONGODB_DB_NAME` | Mongo-backed commands default to `godbrain`. Not in the Start-GodBrain WMI keep-list. |
 | `GODBRAIN_RAG_PORT` | RAG service only | Numeric bind port. **Do not set on this desk.** The C++ kernel is hardcoded to `127.0.0.1:8084`. Changing the port desyncs Galaxy/chat. |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
 | `GODBRAIN_EMBEDDING_ENDPOINT` | RAG service | Optional exact-loopback embedding HTTP origin |
@@ -349,7 +349,7 @@ execution — which this host is not doing.
 | `logs/godbrain-logon.log` | `Start-GodBrain.ps1` |
 | `logs/watch.log` | Watch tick |
 | `logs/heal.jsonl` | Heal (one JSON line per tick) |
-| `logs/<name>.out.log` / `<name>.err.log` | `Start-LoggedProcess` (rag-service, kernel, mouth, …) |
+| `logs/<name>.launch.cmd` | `Start-LoggedProcess` writes a wrapper (stdio redirect + local `MONGODB_URI`). Canonical Start launches the **exe via WMI**, not this cmd, so Windows Terminal does not flash. `<name>.out.log` / `.err.log` are **not** filled by that path. |
 
 Logs must redact bearer tokens, credentials, private keys, and sensitive
 prompt content. This list is the glance/Heal/start set, not every file under
