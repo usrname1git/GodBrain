@@ -55,10 +55,11 @@ Golden Records through `rag-service`, never by querying `nodes` from C++.
 
 Librarian extracts **claims**, not a recap, and writes only
 `trust_tier=candidate` through `memory-store.exe`. Contradictions and open
-questions stay candidate. Sectors do not contaminate each other; b-line on this
-host is Windows SRE / OS-network, not tanks.
-
-Oracle search is **verified-only**. `/verify` and `/reject` are the human door
+questions stay candidate. **Ingest** keeps sectors apart (do not dump Abrams
+hardware into a Windows SRE digest unless the operator asks). Oracle **search**
+is verified-only and does not lock a sector unless the caller sends one; b-line
+on this host is still Windows SRE / OS-network, not tanks.
+`/verify` and `/reject` are the human door
 for playbooks and fights. `rejected` is terminal. Content never changes; only
 status does. When `os_pin` moves, verified `windows-sre` cards with a different
 pin become `stale` (not deleted).
@@ -107,8 +108,9 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 ## Local edits and CS2
 
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
-blocks. Writes only root `.ps1` / `.cmd` / `.md` or `godbrain_core\` (not
-build / vendor / LLM / archive). Never git push from the mouth. Apply
+blocks. Writes only root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, or
+`godbrain_core\` (not build / vendor / LLM / archive). Never git push from
+the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
 enough to promote a skill.
 

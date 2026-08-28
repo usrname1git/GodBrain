@@ -39,19 +39,11 @@ the venue, router/quoter ABI, route, token metadata, response block, and quote
 provenance. The searcher continues to represent venue/route identities
 opaquely and invents no deployment address.
 
-The future observer should target the local Polygon-native node stack and use
-standard Ethereum execution APIs exposed by Bor. The currently provisioned
-node directories are configuration inputs to that separate observer, not paths
-baked into this search library:
-
-- `C:\Polygon_Bor`
-- `C:\Polygon_Heimdall`
-- `C:\Polygon_Heimdall_v2`
-
-Bor is the read-only execution/quote boundary; Heimdall provides Polygon PoS
-consensus coordination and is not a DEX quoter. The observer must select and
-validate the operational Heimdall generation separately. This component has no
-node-process lifecycle, IPC, HTTP, or client-specific integration.
+Confirmed-chain observation is
+[`polygon_observer`](../polygon_observer/README.md) (Bor JSON-RPC + Heimdall v2
+Comet `127.0.0.1:26657/status`). Node directories are observer configuration,
+not paths baked into this search library. This component has no node-process
+lifecycle, IPC, HTTP, or client-specific integration.
 
 References:
 

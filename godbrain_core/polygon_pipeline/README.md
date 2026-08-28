@@ -43,7 +43,7 @@ State JSON has exactly these fields:
 {
   "schema_version": 1,
   "rpc_endpoint": "http://127.0.0.1:8545/",
-  "heimdall_endpoint": "http://127.0.0.1:1317/status",
+  "heimdall_endpoint": "http://127.0.0.1:26657/status",
   "amount_in": 100000,
   "audit_directory": "C:\\absolute\\normalized\\paper-audit"
 }

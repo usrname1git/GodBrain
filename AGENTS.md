@@ -28,7 +28,7 @@ to count how many nodes the problem actually has. Usually one.
 
 - **Default to the loop.** Heal, Watch, Oracle CONTINUE, and Librarian are
   loops. Do not add a second process, subagent, or framework because a diagram
-  looks more serious. This host has one Colibri GPU slot and one
+  looks more serious. This host has one GPU generate slot and one
   `last_oracle.json`.
 - **The verifier is the bottleneck, not the model.** Generation is cheap and
   often wrong. Value is the check: port probes after Start, fail-closed RAG,
@@ -186,12 +186,12 @@ when the layer is not ok (15 min cooldown) and writes
 
 `GET /api/sre` and `/sre` are the phone glance (no GPU): layer plus that
 snapshot. Galaxy has an SRE button. Pending skips `kind=concept` sludge.
-Do not `--ask` while `coli serve` holds the GPU slot.
+Do not `--ask` while the mouth holds the GPU slot.
 
 ### Local file edits
 
-Galaxy can ask the mouth to change a repo file. The kernel saves the
-plan in RAM (`logs/last-edit-plan.txt`), does a second GPU pass for
+Galaxy can ask the mouth to change a repo file. The kernel writes the
+plan to `logs/last-edit-plan.txt`, does a second GPU pass for
 `*** APPLY` blocks (thinking off, spoken-only parse), writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
@@ -212,9 +212,9 @@ started from Steam Play. Start/Heal skip the mouth while CS2 is running
 or has been gone under 5 minutes.
 
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
-  runner (Colibri on this host). Reserve a heavier runner (future
-  llama-server / a larger model) for a flagged contradiction or a
-  high-stakes synthesis the loop itself marked as worth extra scrutiny.
+  mouth (desk default `llama-server`; Colibri is interchangeable). Reserve a
+  heavier runner for a flagged contradiction or a high-stakes synthesis the
+  loop itself marked as worth extra scrutiny.
 - **A digest, if anyone writes one, is a pointer.** Only what changed in
   the processed layer, plus new conflicts and open questions. Under 500
   words. Never re-summarize the entire wiki. Never pull from raw.
@@ -225,14 +225,17 @@ or has been gone under 5 minutes.
 
 `godbrain_core/cpp_kernel/` is the canonical privileged runtime. `main.cpp`
 serves the Galaxy UI and HTTP API on loopback port 8083, retrieves committed
-Golden Records from the canonical loopback RAG service, invokes Colibri,
-authenticates privileged `command_type` requests, and delegates recognized
-commands to `GodBrainKernel`.
+Golden Records from the canonical loopback RAG service, talks to the mouth on
+`:8000`, authenticates privileged `command_type` requests, and delegates
+recognized commands to `GodBrainKernel`. Chat fails closed when RAG is
+unavailable **and** this process has no session notes; non-empty session notes
+may still go to the mouth without a fresh Golden Record hit.
 
 `kernel.cpp` is the command dispatcher. It requires a non-blank `reasoning`
-string for `execute_godbrain_script` and
-`propose_sovereign_architect_change`. `surgery.cpp` executes their
-PowerShell. `save_godbrain_thought` writes a candidate Golden Record through
+string for `execute_godbrain_script`,
+`propose_sovereign_architect_change`, `record_godbrain_skill_run`, and
+`promote_godbrain_skill`. `surgery.cpp` executes the PowerShell commands
+(Job Object, 60s timeout, capped output). `save_godbrain_thought` writes a candidate Golden Record through
 `memory-store.exe`. `set_godbrain_status` is the only status door
 (`verified` / `rejected` / `stale`).
 

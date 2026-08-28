@@ -3,7 +3,9 @@
 This directory contains a review-oriented Foundry project for an Atlas solver and a solver-bound, typed two-router
 cycle executor. It is **not production-ready, has no deployment script, and must not be deployed to mainnet or Polygon
 without an independent security review**. Nothing in this directory signs, submits, broadcasts, funds, or deploys a
-transaction, and no live router or token addresses are included.
+transaction. FastLane Atlas and Polygon wrapped-native addresses below are
+**reference pins** for the optional read-only fork test, not a deploy kit and
+not a live router/cycle configuration.
 
 The supported typed cycle is deliberately narrow:
 

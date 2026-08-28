@@ -270,6 +270,23 @@ treated as `node_id`; anything else is `stable_id`. Missing documents return
 `404`. The body includes identity, kind, sector, status, confidence, schema
 version, full content, and the same label used by `/v1/graph`.
 
+### `POST /v1/skills`
+
+Returns promoted `skills` only. Not mixed into `/v1/search`. Requires a ready
+corpus (same watermarks as search). Body is one JSON object:
+
+```json
+{
+  "query": "dashboard",
+  "limit": 5
+}
+```
+
+`query` is required (max 512 characters). `limit` defaults to 5 and is rejected
+outside 1–25. Each hit includes name, origin node/hash, optional verification
+profile, procedure `content`, and `untrusted: true`. Apply-only
+`local-edit-apply-v1` evidence cannot appear here because it cannot promote.
+
 ## Deterministic evaluation
 
 The checked-in synthetic corpus covers semantic paraphrase, exact lexical

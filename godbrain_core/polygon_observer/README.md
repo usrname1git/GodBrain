@@ -229,10 +229,11 @@ confirmed Bor block/receipt boundary to produce normalized historical actor
 evidence. Quote observations feed the searcher; confirmed-action rankings feed
 research/tuning only. Neither path creates transactions.
 
-Atlas simulation and any execution adapter remain separate future components
-requiring independent security review and explicit authorization. Signing,
-submission, broadcasting, private keys, live deployment, user targeting, and
-chain-state mutation are absent.
+The typed Atlas two-router cycle lives in
+[`smart_contracts`](../smart_contracts/README.md) as an offline Foundry
+boundary. It is not integrated here. Live authorization, deployment, signing,
+submission, broadcasting, private keys, user targeting, and chain-state
+mutation are absent.
 
 ## Official sources
 

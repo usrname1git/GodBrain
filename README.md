@@ -26,9 +26,13 @@ Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The l
 
 ## How it works
 
-GodBrain routes every model's tool calls through a native C++ kernel instead of patching a specific inference server's chat template:
+GodBrain routes tool calls through a native C++ kernel instead of patching a
+specific inference server's chat template. The mouth must already be an
+OpenAI-compatible loopback server on `:8000` (desk default: `llama-server`;
+Colibri is the interchangeable alternative). This host does not call a
+commercial API, and `.vscode/mcp.json` is empty on purpose.
 
-- **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only) that any model — Colibri, Gemma, or a commercial API — calls with MCP-style JSON tool calls.
+- **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Galaxy chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
 - **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
@@ -64,10 +68,13 @@ Rust routers retrieve prompt context only through
 `http://127.0.0.1:8084/v1/search`. They validate the generation and
 `hybrid-v1` contract, preserve bounded citations and trust labels, and wrap
 retrieved text as explicitly untrusted reference data. If the service is
-unavailable, unready, malformed, oversized, or returns no usable context, chat
-fails closed before a model is started. Galaxy graph and node lookup use the
-same service (`/v1/graph`, `/v1/document`) and the active `rag_documents`
-generation. They do not fall back to the old `nodes` collection.
+unavailable, unready, malformed, oversized, or returns no usable context,
+**and** this kernel process has no session notes, chat fails closed before a
+model is started. Non-empty process session notes (hydrated from RAG at boot,
+or `/remember`) may still go to the mouth without a fresh Golden Record hit.
+They do not fall back to the old `nodes` collection. Galaxy graph and node
+lookup use the same service (`/v1/graph`, `/v1/document`) and the active
+`rag_documents` generation.
 
 Lexical/metadata retrieval remains the zero-configuration canonical fallback.
 An optional exact-loopback OpenAI-compatible embedding provider enables
@@ -87,18 +94,30 @@ These are the first-class commands the C++ kernel currently validates and dispat
 
 | Tool | Purpose |
 |------|---------|
-| `save_godbrain_thought` | Permanent memory — write reasoning the next model can learn from |
-| `query_recent_thoughts` | Recall prior models' thinking |
+| `save_godbrain_thought` | Candidate Golden Record via `memory-store.exe` |
+| `query_recent_thoughts` | Newest active-generation `rag_documents` |
 | `query_godbrain_skills` | Promoted skills only (untrusted procedure + evidence profile) |
 | `record_godbrain_skill_run` | Append harness evidence (`skill_verification_runs`) |
 | `promote_godbrain_skill` | Promote after origin is verified **and** a passing run exists |
-| `execute_godbrain_script` | Direct script execution / control (requires `reasoning` + `GODBRAIN_API_TOKEN`) |
+| `set_godbrain_status` | `verified` / `rejected` / `stale` with reasoning |
+| `observe_godbrain_host` | Windows inventory + `os_pin`; auto-verified sensor |
+| `promote_godbrain_claim` | `POST /api/truth` host_fact / doc_fact / playbook |
 | `get_system_telemetry` | Hardware/system awareness |
-| `propose_sovereign_architect_change` | Evolve the system's own rules (requires `reasoning` + `GODBRAIN_API_TOKEN`) |
+| `execute_godbrain_script` | PowerShell (requires `reasoning` + bearer) |
+| `propose_sovereign_architect_change` | PowerShell (requires `reasoning` + bearer) |
+
+`/edit` is not in this table. It is an allowlisted chat apply, recorded as
+`local-edit-apply-v1`, and cannot promote a skill.
 
 ### Why the sovereignty check matters
 
-Any model can emit these tool calls, but `execute_godbrain_script` and `propose_sovereign_architect_change` are high-risk: the kernel rejects them outright unless the payload carries a non-blank `reasoning` string *and* the request's `Authorization` header matches `GODBRAIN_API_TOKEN`. Ordinary read/chat routes (no `command_type`) stay unauthenticated for the local UI.
+The mouth can emit these tool calls, but `execute_godbrain_script`,
+`propose_sovereign_architect_change`, `record_godbrain_skill_run`, and
+`promote_godbrain_skill` are high-risk: the kernel rejects them unless the
+payload carries a non-blank `reasoning` string *and* `Authorization: Bearer`
+matches `GODBRAIN_API_TOKEN`. Ordinary loopback read/chat routes (no
+`command_type`) stay unauthenticated for the local UI. Every Tailscale route
+needs the bearer, including GETs.
 
 ## The bigger picture
 

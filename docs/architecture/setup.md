@@ -62,12 +62,12 @@ Set at least:
 
 | Variable | Required for | Notes |
 |---|---|---|
-| `MONGODB_URI` | rag-service, memory-store, Librarian | Default `mongodb://127.0.0.1:27017` |
-| `GODBRAIN_API_TOKEN` | Privileged `command_type`, Tailscale door | High-entropy. User env, not a file in the repo. WMI child env gets it; `*.launch.cmd` must not. |
+| `MONGODB_URI` | `memory-store.exe`, `rag-service.exe`, `rag-rebuild.exe` | Default `mongodb://127.0.0.1:27017`. Kernel and Librarian do not read Mongo; they talk to those processes. |
+| `GODBRAIN_API_TOKEN` | Every `command_type`; every Tailscale route | High-entropy. User env, not a file in the repo. WMI child env gets it; `*.launch.cmd` must not. Missing token fail-closes `command_type` and keeps the Tailscale door unbound. Loopback GET glances and loopback chat stay unauthenticated. |
 
 Optional overrides (mouth path, snapshot, frontend, RAG port) are in
-[`reference.md`](reference.md#configuration). Missing server token fail-closes
-privileged writes; do not start a kernel that fail-opens loopback writes.
+[`reference.md`](reference.md#configuration). Do not start a kernel that
+fail-opens privileged writes.
 
 ## 3. Build Alexandria
 

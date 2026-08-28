@@ -54,9 +54,10 @@ flowchart LR
 ```
 
 Nothing privileged talks to Mongo except the Memory Store and the RAG service.
-Chat generate stays on loopback. The Tailscale listener is GET glances plus
-bearer writes. It does not host `/api/chat`. Experimental Go/Rust routers on
-`:8082` are alternatives, not a cluster; this host runs the C++ kernel.
+Chat generate stays on loopback. Every Tailscale route requires
+`Authorization: Bearer`, including GET glances. That door does not host
+`/api/chat`. Experimental Go/Rust routers on `:8082` are alternatives, not a
+cluster; this host runs the C++ kernel.
 
 ### Goals
 
