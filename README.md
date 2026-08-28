@@ -151,7 +151,7 @@ The verifier is still the bottleneck. Privileged doors existing is not "the hard
 Wanted on this product (still gated):
 
 - A mouth that ships real UI and host work the way a web dev would — kernel allowlist, then you judge.
-- Models that keep inheriting each other's **verified** teachings, including richer rag-service query. Writes stay candidate until `/verify`.
+- Models that keep inheriting each other's **verified** teachings. `/recall <query>` already searches `:8084`. Writes stay candidate until `/verify`. Extra sector/kind filters are optional, not a new vault.
 
 Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
 
@@ -167,7 +167,7 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 - [x] Teachings: Librarian candidates + rag-service retrieve (models inherit committed records)
 - [x] Bounded `/edit` + privileged `pwsh` behind bearer + `reasoning`
 - [ ] Mouth ships web-dev class GodBrain UI/product work (allowlist grows on purpose, still no mouth `git push`)
-- [ ] Richer teaching query for the mouth (still `:8084` / kernel recall, not Mongo MCP)
+- [x] Richer teaching query for the mouth (`/recall <query>` and `query_recent_thoughts` search verified records through `:8084`, not Mongo MCP)
 - [ ] Candidate-vs-verified conflict queue (smallest extra node: overloaded verifier)
 - [ ] Autonomous CVE ingestion — not b-line
 - [ ] Cross-fleet patch (Devuan / macOS / Windows) — not this machine
