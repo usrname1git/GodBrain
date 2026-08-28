@@ -1,7 +1,9 @@
 # Future planned implementations
 
 Long-horizon items. They still correlate as rails. They are **not** the
-Jarvis backlog. Next phase is [`next.md`](next.md). Index:
+Jarvis backlog. The old next-phase b-line **shipped** ([`next.md`](next.md)
+pointer, snapshot [`b-line.md`](b-line.md)). Live desk:
+[`current.md`](current.md). Index:
 [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
 
 A factory node is a hire: add it only for a named signal (distinct specialty,
