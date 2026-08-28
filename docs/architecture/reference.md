@@ -178,6 +178,18 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `MONGODB_DB_NAME` | Memory Store and RAG tools | Override database `godbrain` |
 | `GODBRAIN_RAG_PORT` | RAG service | Override loopback port `8084`; bind address is not configurable |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
+| `GODBRAIN_EMBEDDING_ENDPOINT` | RAG service | Optional exact-loopback embedding HTTP origin |
+| `GODBRAIN_EMBEDDING_MODEL` | RAG service | Optional embedding model id (with revision, sha256, dimension) |
+| `GODBRAIN_RAG_EMBEDDING_REQUIRED` | RAG service | `1` fail-closes hybrid when the embedding provider is down |
+| `GODBRAIN_LIBRARIAN_MODEL` | Native Librarian | Mouth model id override |
+| `GODBRAIN_MOUTH_HOST` | Native Librarian | Mouth host (default `127.0.0.1`) |
+| `GODBRAIN_MOUTH_PORT` | Native Librarian | Mouth port (default `8000`) |
+| `PROMPT_TEMPLATE_PATH` | Native Librarian | Override extract prompt file |
+| `GODBRAIN_SHOW_CONSOLE` | C++ Kernel | `1` keeps a console window |
+
+This table is the operator set, not every env a nested tree reads. Embedding
+identity also needs `GODBRAIN_EMBEDDING_MODEL_REVISION`,
+`GODBRAIN_EMBEDDING_MODEL_SHA256`, and `GODBRAIN_EMBEDDING_DIMENSION` together.
 
 Secrets must not be committed, logged, inserted into prompts, or stored in
 graph records.
@@ -298,7 +310,9 @@ execution — which this host is not doing.
 
 ## Failure and logs
 
-- Startup fails when a required database dependency cannot be reached.
+- Start-GodBrain waits up to 30s for Mongo `:27017`, logs that RAG will fail,
+  then still launches rag-service, mouth, and kernel. Chat/RAG fail closed
+  until Mongo is up. It does not abort the whole desk.
 - Spawn/timeout errors return failure, not synthetic model output.
 - Projection failure after commit is explicit; `rag-rebuild` repairs; committed
   runs never go back to failed.
@@ -318,6 +332,14 @@ execution — which this host is not doing.
 | `logs/heal-last.json` | Heal |
 | `logs/where-we-are.md` | `scripts/Write-SessionDigest.ps1` |
 | `logs/mouth.txt` | mouth starter |
+| `logs/last-doors.json` | `/api/doors`, Heal |
+| `logs/last-edit-plan.txt` | `/edit` plan pass |
+| `logs/last-edit-result.json` | `/edit` apply |
+| `logs/last-desk-test.json` | `Test-GodBrainDesk.ps1` |
+| `logs/last-sre-diagnose.txt` | Heal `sre_surgeon --diagnose` |
+| `logs/last-skill-lab.json` | `Verify-SkillLab.ps1` |
+| `logs/coli-model.txt` | Colibri snapshot pin |
+| `logs/cs2-pause.json` | CS2 pause gate |
 
 Logs must redact bearer tokens, credentials, private keys, and sensitive
-prompt content.
+prompt content. This list is the glance/Heal set, not every file under `logs/`.

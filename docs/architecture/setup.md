@@ -91,8 +91,9 @@ layer:
 Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`.
 
 Optional live desk eval (from `godbrain_core\memory_store`, RAG must be ready).
-Verified-only plus each query's sector. A miss means that claim is not a
-verified Golden Record yet. `-strict` fails on any miss:
+Verified-only plus each query's sector. A miss means no configured needle
+appeared in the returned top-K, or the query failed. It does not prove the
+claim is absent from the verified corpus. `-strict` fails on any such miss:
 
 ```powershell
 .\rag-eval.exe -live
