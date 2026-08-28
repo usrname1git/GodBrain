@@ -787,7 +787,10 @@ Result maybe_apply(
 
     std::vector<Hunk> hunks = parse_apply_blocks(first_answer);
     if (hunks.empty()) hunks = parse_apply_blocks(user_msg);
-    if (hunks.empty() && generate) {
+
+    ApplyOutcome applied;
+    if (!hunks.empty()) applied = apply_hunks(hunks, user_msg);
+    if (!applied.ok && generate) {
         std::ostringstream usr;
         usr << "First pass did not apply. "
             << local_edit::edit_user_with_excerpt(user_msg);
@@ -798,19 +801,20 @@ Result maybe_apply(
         append_plan_section("SECOND", second.empty() ? "(empty)" : second);
         hunks = parse_apply_blocks(second);
         if (hunks.empty()) {
-            result.report =
-                "Plan saved. Second pass had no apply blocks. "
-                "Ask again with /edit and a file name.";
+            result.report = applied.report.empty()
+                                ? "Plan saved. Second pass had no apply blocks. "
+                                  "Ask again with /edit and a file name."
+                                : applied.report +
+                                      "Second pass had no apply blocks.\n";
             save_result(false, result.report, CheckOutcome{});
             return result;
         }
-    } else if (hunks.empty()) {
+        applied = apply_hunks(hunks, user_msg);
+    } else if (!applied.ok && hunks.empty()) {
         result.report = "Plan saved. No apply blocks and no second pass.";
         save_result(false, result.report, CheckOutcome{});
         return result;
     }
-
-    const ApplyOutcome applied = apply_hunks(hunks, user_msg);
     result.report = applied.report;
     result.applied = applied.ok;
     CheckOutcome check;
