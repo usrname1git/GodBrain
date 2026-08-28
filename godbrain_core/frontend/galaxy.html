@@ -1329,6 +1329,12 @@
                 } else {
                     lines.push('GPU: none');
                 }
+                const pendingHost = (status && status.pending_judge) || {};
+                if (typeof pendingHost.total === 'number') {
+                    lines.push('Judge: ' + pendingHost.total + ' waiting');
+                } else {
+                    lines.push('Judge: none');
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(

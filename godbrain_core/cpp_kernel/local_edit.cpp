@@ -592,8 +592,8 @@ size_t excerpt_at(const std::string& body, const std::string& rel,
         const std::string lower_hint = ascii_lower(hint);
         const std::string lower_rel = ascii_lower(rel);
         static const char* markers[] = {
-            "Inbox: none", "Heal: none", "CS2: idle", "host-card",
-            "function paintStatus",
+            "Inbox: none", "Heal: none", "CS2: idle", "GPU: none",
+            "Judge: none", "host-card", "function paintStatus",
         };
         for (const char* marker : markers) {
             if (lower_hint.find(ascii_lower(marker)) == std::string::npos &&
@@ -780,27 +780,12 @@ Result maybe_apply(
     std::vector<Hunk> hunks = parse_apply_blocks(first_answer);
     if (hunks.empty()) hunks = parse_apply_blocks(user_msg);
     if (hunks.empty() && generate) {
-        const std::string file = guess_file(user_msg + "\n" + first_answer);
         std::ostringstream usr;
-        usr << "You already planned this job (kept in RAM, do not re-plan):\n"
-            << (g_plan.empty() ? first_answer : g_plan) << "\n\n";
-        if (!file.empty()) {
-            usr << "File " << file << " excerpt:\n"
-                << excerpt(file, user_msg) << "\n\n";
-        }
-        usr << "Copy old text from the excerpt only. Close any truncated APPLY. "
-               "Emit ONLY apply blocks, no prose:\n"
-               "*** APPLY\n"
-               "path: relative/from/repo\n"
-               "<<<<\n"
-               "exact old text\n"
-               "====\n"
-               "exact new text\n"
-               ">>>>\n"
-               "*** END\n";
+        usr << "First pass did not apply. "
+            << local_edit::edit_user_with_excerpt(user_msg);
         const std::string sys =
             "You are a local file editor. Output apply blocks only. "
-            "No git. No push. No extra files.";
+            "No git. No push. No extra files. Copy old text from the excerpt.";
         const std::string second = generate(sys, usr.str());
         append_plan_section("SECOND", second.empty() ? "(empty)" : second);
         hunks = parse_apply_blocks(second);

@@ -338,9 +338,9 @@ int main() {
                         std::string::npos,
                     "second pass excerpt stays on host-card") ||
             !expect(second_excerpt_user.find(
-                        "if (inboxLine) lines.push(inboxLine)", ex) ==
+                        "if (inboxLine) lines.push(inboxLine)") ==
                         std::string::npos,
-                    "truncated overlay plan does not move excerpt")) {
+                    "truncated overlay plan is not fed to second pass")) {
             std::cerr << "second excerpt usr size=" << second_excerpt_user.size()
                       << std::endl;
             return 1;
