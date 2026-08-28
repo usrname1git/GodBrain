@@ -174,8 +174,8 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `MONGO_STORE_PATH` | Native Librarian | Override `memory-store.exe` |
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temp script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
-| `MONGODB_URI` | `memory-store.exe`, `rag-rebuild.exe` require it. `rag-service.exe` defaults to `mongodb://127.0.0.1:27017` if unset. `rag-eval.exe` does not use it. Start-GodBrain copies URI into WMI children (keep-list default is that loopback string). |
-| `MONGODB_DB_NAME` | Mongo-backed commands default to `godbrain`. Not in the Start-GodBrain WMI keep-list. |
+| `MONGODB_URI` | `memory-store.exe` and `rag-rebuild.exe` require it. `rag-service.exe` defaults if unset. `rag-eval.exe` does not use it. | Connection string. Start copies it into WMI children; keep-list default is `mongodb://127.0.0.1:27017`. |
+| `MONGODB_DB_NAME` | Mongo-backed commands (`memory-store`, `rag-rebuild`, `rag-service`) | Override database. Default `godbrain`. Not in the Start-GodBrain WMI keep-list. |
 | `GODBRAIN_RAG_PORT` | RAG service only | Numeric bind port. **Do not set on this desk.** The C++ kernel is hardcoded to `127.0.0.1:8084`. Changing the port desyncs Galaxy/chat. |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
 | `GODBRAIN_EMBEDDING_ENDPOINT` | `memory-store.exe`, `rag-rebuild.exe`, `rag-service.exe` | Optional exact-loopback embedding HTTP origin. All three call `rag.EmbeddingRuntimeFromEnvironment()`. |
