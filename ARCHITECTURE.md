@@ -20,10 +20,21 @@ verify, then repeat or stop. The bottleneck is the verifier, not the model.
 | `:8000` | `llama-server` or `coli serve` | One GPU mouth. Chat and Librarian share it. |
 | `:8083` | `godbrain-kernel.exe` | Galaxy, HTTP API, privileged `command_type`. Loopback chat. |
 
-Heal/Watch keep those listeners up. Librarian distills transcripts into
-**candidate** Golden Records. The operator `/verify` or `/reject` crowns truth.
-Playbooks stay candidate until a human judges. Host inventory and Learn-backed
-facts can auto-verify when a live probe or quote actually matches.
+Heal/Watch keep those listeners up. The **b-line** (one loop, inbox/pending,
+phone glance, SRE diagnose-only, one Gemma mouth) **shipped** — see
+[`docs/architecture/next.md`](docs/architecture/next.md) (pointer) and
+[`docs/architecture/b-line.md`](docs/architecture/b-line.md) (snapshot).
+
+This desk: mouth is bartowski Gemma 12B IT **Q6_K_L**, MTP **off**; Colibri/GLM
+is research, not the Heal default. `/edit` writes allowlisted repo files
+(apply-only, no RAG, no Oracle persist; Galaxy This host shows
+`Edit: ok|fail|none`). Librarian distills transcripts into **candidate**
+Golden Records. The operator `/verify` or `/reject` crowns truth. Playbooks
+stay candidate until a human judges. Host inventory and Learn-backed facts
+can auto-verify when a live probe or quote actually matches.
+
+Open kernel-path product is still **mouth-as-web-dev** (exact `*** APPLY`
+bytes). Later / not-this-host is [`docs/architecture/future.md`](docs/architecture/future.md).
 
 A second node is allowed only when a named signal pays for it (distinct
 specialty, real parallelism that does not share the GPU slot, a different
@@ -83,8 +94,8 @@ cluster; this host runs the C++ kernel.
 | Category | File | Read it for |
 |---|---|---|
 | Currently in place | [`docs/architecture/current.md`](docs/architecture/current.md) | What ships and is exercised on this desk |
-| Next phase | [`docs/architecture/next.md`](docs/architecture/next.md) | Pointer: b-line shipped. Snapshot [`b-line.md`](docs/architecture/b-line.md). Remaining later is [`future.md`](docs/architecture/future.md) |
-| Future planned | [`docs/architecture/future.md`](docs/architecture/future.md) | Factory, later library policy, experimental trees — ranked, not a backlog |
+| B-line (complete) | [`docs/architecture/next.md`](docs/architecture/next.md) | Pointer, not a backlog. Snapshot [`b-line.md`](docs/architecture/b-line.md) |
+| Later / not this host | [`docs/architecture/future.md`](docs/architecture/future.md) | Factory nos, retention, conflict queue if the verifier is actually overloaded |
 | Setup and replication | [`docs/architecture/setup.md`](docs/architecture/setup.md) | MongoDB, builds, logon, Watch, mouth, token, first desk check |
 | Advanced details | [`docs/architecture/reference.md`](docs/architecture/reference.md) | HTTP tables, inventory, env vars, sequence diagrams, collections |
 
