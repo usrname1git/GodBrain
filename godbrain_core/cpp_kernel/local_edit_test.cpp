@@ -296,6 +296,29 @@ int main() {
         return 1;
     }
 
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+        "*** APPLY\n"
+        "path: godbrain_core/frontend/galaxy.html\n"
+        "<<<<\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        "====\n"
+        "            const inboxLine = inboxOverlayLine(status);\n"
+        "            if (inboxLine) lines.push(inboxLine);\n"
+        "            const cs2 = (status && status.cs2) || {};\n"
+        ">>>>\n"
+        "*** END\n",
+        {});
+    if (!expect(result.attempted, "overlay hunk attempted") ||
+        !expect(!result.applied, "overlay hunk not in host-card excerpt") ||
+        !expect(result.report.find("not in excerpt") != std::string::npos,
+                "overlay skip says not in excerpt")) {
+        std::cerr << "overlay report=" << result.report << std::endl;
+        return 1;
+    }
+
     std::cout << "local_edit_test ok" << std::endl;
     return 0;
 }
