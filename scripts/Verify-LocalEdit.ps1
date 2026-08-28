@@ -21,6 +21,11 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 
+function Split-EditPathList([string]$List) {
+    if ([string]::IsNullOrWhiteSpace($List)) { return @() }
+    return @($List -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 function Get-EditCheckProfile([string]$Rel) {
     $n = $Rel.Replace('/', '\').ToLowerInvariant().TrimStart('\')
     if ($n -eq 'godbrain_core\frontend\galaxy.html') { return 'galaxy-html-static-v1' }
@@ -148,14 +153,21 @@ if ($SelfTest) {
     Test-GalaxyHtml (Join-Path $RepoRoot "godbrain_core\frontend\galaxy.html")
     $listed = Invoke-EditChecks @('README.md','AGENTS.md')
     if ($listed.profile -ne 'local-edit-apply-v1') { throw "pathlist classify" }
+    $split = Split-EditPathList ' README.md ; AGENTS.md ; '
+    if ($split.Count -ne 2 -or $split[0] -ne 'README.md' -or $split[1] -ne 'AGENTS.md') {
+        throw "pathlist split"
+    }
+    $hostExe = (Get-Process -Id $PID).Path
+    $child = & $hostExe -NoProfile -File $PSCommandPath -RepoRoot $RepoRoot -PathList 'README.md;AGENTS.md'
+    if ($LASTEXITCODE -ne 0) { throw "pathlist child failed: $child" }
+    $childObj = $child | Select-Object -Last 1 | ConvertFrom-Json
+    if (-not $childObj.ok) { throw "pathlist child not ok" }
     Write-Output '{"ok":true,"profile":"self-test","detail":"self-test ok"}'
     exit 0
 }
 
 $rels = @()
-if (-not [string]::IsNullOrWhiteSpace($PathList)) {
-    $rels += @($PathList -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-}
+$rels += Split-EditPathList $PathList
 if ($Path) { $rels += @($Path) }
 if ($rels.Count -lt 1) {
     throw "Verify-LocalEdit: pass -Path or -PathList"
