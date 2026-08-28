@@ -118,7 +118,8 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 `/edit` plans a repo file change, then a second GPU pass applies `*** APPLY`
 blocks. `/edit` does not search RAG (the untrusted-notes wrapper jailed the
 mouth off APPLY) and does not persist as an Oracle candidate. First pass
-gets a window around the named file text, not the first 4 KB. Apply skips
+gets a window around a marker named in the `/edit` text (not the first
+Galaxy glance in the file), not the first 4 KB. Apply skips
 an old-text hunk that is not in that excerpt (wrong site, e.g. overlay vs
 host-card). A complete
 hunk in the `/edit` message is applied if the mouth
