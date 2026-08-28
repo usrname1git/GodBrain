@@ -116,7 +116,10 @@ blocks. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
 `docs\*.md`, or `godbrain_core\` (not build / vendor / LLM / archive). Never
 git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
-enough to promote a skill.
+enough to promote a skill. A path-selected bounded check
+(`powershell-parse-v1`, `kernel-syntax-v1`, `memory-store-go-v1`,
+`galaxy-html-static-v1`, `librarian-self-test-v1`) may run after apply;
+`check_ok` is recorded separately and still cannot promote.
 
 Librarian may extract `skills_extracted`; they land as candidate knowledge
 nodes (`kind=skill`). `PromoteSkill` requires a verified origin node, a

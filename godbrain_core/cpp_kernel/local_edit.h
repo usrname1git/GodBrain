@@ -10,6 +10,9 @@ namespace local_edit {
 struct Result {
     bool attempted = false;
     bool applied = false;
+    bool check_ran = false;
+    bool check_ok = false;
+    std::string check_profile;
     std::string report;
 };
 
@@ -22,6 +25,7 @@ struct Preview {
 
 bool looks_like_edit_request(const std::string& user_msg);
 Preview preview_apply_blocks(const std::string& text);
+std::string check_profile_for(const std::string& rel);
 
 Result maybe_apply(
     const std::string& user_msg,

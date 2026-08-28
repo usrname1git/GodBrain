@@ -195,9 +195,13 @@ plan to `logs/last-edit-plan.txt`, does a second GPU pass for
 `*** APPLY` blocks (thinking off, spoken-only parse), writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
-or `godbrain_core\` (not build / vendor / LLM / archive). `local_edit_test`
-applies a real
-fixture file offline (no GPU). Never git push from the mouth.
+or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
+apply, `scripts\Verify-LocalEdit.ps1` runs a **bounded** check by path
+(PowerShell parse, kernel file sanity, memory-store `go test -short`,
+Galaxy HTML markers, or `librarian --self-test`). Receipt stays
+`verification_profile=local-edit-apply-v1` and `skill_promote_eligible=false`.
+`local_edit_test` applies a real fixture file offline (no GPU). Never git
+push from the mouth.
 
 ### CS2 pause
 

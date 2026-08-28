@@ -1,0 +1,174 @@
+# Bounded post-/edit checks. Not a skill gym. Apply-only cannot promote.
+# Keep profile names in sync with local_edit.cpp check_profile_for.
+#
+#   .\scripts\Verify-LocalEdit.ps1 -RepoRoot . -Path scripts\Show-SystemFlex.ps1
+#   .\scripts\Verify-LocalEdit.ps1 -SelfTest
+
+[CmdletBinding()]
+param(
+    [string]$RepoRoot = "",
+    [string[]]$Path = @(),
+    [switch]$SelfTest
+)
+
+$ErrorActionPreference = "Stop"
+if ($PSScriptRoot -and -not $RepoRoot) {
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    throw "Verify-LocalEdit: RepoRoot is empty"
+}
+$RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+
+function Get-EditCheckProfile([string]$Rel) {
+    $n = $Rel.Replace('/', '\').ToLowerInvariant().TrimStart('\')
+    if ($n -eq 'godbrain_core\frontend\galaxy.html') { return 'galaxy-html-static-v1' }
+    if ($n.StartsWith('godbrain_core\memory_store\') -and $n.EndsWith('.go')) {
+        return 'memory-store-go-v1'
+    }
+    if ($n -eq 'godbrain_core\cpp_tools\librarian.cpp') { return 'librarian-self-test-v1' }
+    if ($n.StartsWith('godbrain_core\cpp_kernel\') -and
+        ($n.EndsWith('.cpp') -or $n.EndsWith('.h'))) {
+        return 'kernel-syntax-v1'
+    }
+    if ($n.EndsWith('.ps1')) { return 'powershell-parse-v1' }
+    return 'local-edit-apply-v1'
+}
+
+function Test-RepoRel([string]$Rel) {
+    if ([string]::IsNullOrWhiteSpace($Rel)) { throw "empty path" }
+    if ($Rel.Contains('..') -or $Rel.Contains(':')) { throw "path not allowlisted: $Rel" }
+    $full = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Rel))
+    $root = $RepoRoot.TrimEnd('\') + '\'
+    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and
+        $full -ne $RepoRoot) {
+        throw "path escaped repo: $Rel"
+    }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        throw "missing $Rel"
+    }
+    return $full
+}
+
+function Test-PowerShellParse([string]$Full) {
+    $tokens = $null
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($Full, [ref]$tokens, [ref]$errors)
+    if ($errors -and $errors.Count -gt 0) {
+        throw ("parse failed: " + $errors[0].ToString())
+    }
+}
+
+function Test-KernelSyntax([string]$Full) {
+    $bytes = [System.IO.File]::ReadAllBytes($Full)
+    if ($bytes.Length -lt 1) { throw "empty kernel file" }
+    if ($bytes -contains 0) { throw "NUL byte in kernel file" }
+}
+
+function Test-GalaxyHtml([string]$Full) {
+    $text = [System.IO.File]::ReadAllText($Full)
+    if ($text.Length -lt 200) { throw "galaxy.html too short" }
+    if ($text -notmatch '(?i)<html') { throw "galaxy.html missing html" }
+    if ($text -notmatch '(?i)godbrain') { throw "galaxy.html missing GodBrain" }
+    if ($text -notmatch '(?i)3d-graph') { throw "galaxy.html missing graph root" }
+}
+
+function Test-MemoryStoreGo {
+    $mod = Join-Path $RepoRoot "godbrain_core\memory_store"
+    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+        throw "go is not on PATH"
+    }
+    Push-Location $mod
+    try {
+        & go test -count=1 -short -timeout 45s ./...
+        if ($LASTEXITCODE -ne 0) { throw "go test failed: $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-LibrarianSelfTest {
+    $exe = Join-Path $RepoRoot "godbrain_core\cpp_tools\librarian.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { throw "missing librarian.exe" }
+    & $exe --self-test
+    if ($LASTEXITCODE -ne 0) { throw "librarian --self-test failed: $LASTEXITCODE" }
+}
+
+function Invoke-EditChecks([string[]]$Rels) {
+    $profiles = New-Object System.Collections.Generic.List[string]
+    foreach ($rel in $Rels) {
+        $full = Test-RepoRel $rel
+        $profile = Get-EditCheckProfile $rel
+        if (-not $profiles.Contains($profile)) { $profiles.Add($profile) }
+        switch ($profile) {
+            'powershell-parse-v1' { Test-PowerShellParse $full }
+            'kernel-syntax-v1' { Test-KernelSyntax $full }
+            'galaxy-html-static-v1' { Test-GalaxyHtml $full }
+            'memory-store-go-v1' { }
+            'librarian-self-test-v1' { }
+            'local-edit-apply-v1' { }
+            default { throw "unknown profile $profile" }
+        }
+    }
+    if ($profiles -contains 'memory-store-go-v1') { Test-MemoryStoreGo }
+    if ($profiles -contains 'librarian-self-test-v1') { Test-LibrarianSelfTest }
+    $joined = [string]::Join('+', $profiles)
+    return @{ ok = $true; profile = $joined; detail = 'check passed' }
+}
+
+if ($SelfTest) {
+    if ((Get-EditCheckProfile 'scripts\Show-SystemFlex.ps1') -ne 'powershell-parse-v1') {
+        throw "classify ps1"
+    }
+    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\main.cpp') -ne 'kernel-syntax-v1') {
+        throw "classify kernel"
+    }
+    if ((Get-EditCheckProfile 'godbrain_core\memory_store\store.go') -ne 'memory-store-go-v1') {
+        throw "classify go"
+    }
+    if ((Get-EditCheckProfile 'godbrain_core\frontend\galaxy.html') -ne 'galaxy-html-static-v1') {
+        throw "classify galaxy"
+    }
+    if ((Get-EditCheckProfile 'godbrain_core\cpp_tools\librarian.cpp') -ne 'librarian-self-test-v1') {
+        throw "classify librarian"
+    }
+    if ((Get-EditCheckProfile 'docs\architecture\current.md') -ne 'local-edit-apply-v1') {
+        throw "classify md"
+    }
+    $tmp = Join-Path $env:TEMP ("gb-edit-" + [guid]::NewGuid().ToString("n") + ".ps1")
+    Set-Content -LiteralPath $tmp -Value 'Write-Output 1' -Encoding UTF8
+    try { Test-PowerShellParse $tmp } finally { Remove-Item -LiteralPath $tmp -Force }
+    $bad = Join-Path $env:TEMP ("gb-edit-bad-" + [guid]::NewGuid().ToString("n") + ".ps1")
+    Set-Content -LiteralPath $bad -Value 'function (' -Encoding UTF8
+    $threw = $false
+    try { Test-PowerShellParse $bad } catch { $threw = $true }
+    Remove-Item -LiteralPath $bad -Force
+    if (-not $threw) { throw "broken ps1 must fail parse" }
+    Test-GalaxyHtml (Join-Path $RepoRoot "godbrain_core\frontend\galaxy.html")
+    Write-Output '{"ok":true,"profile":"self-test","detail":"self-test ok"}'
+    exit 0
+}
+
+if (-not $Path -or $Path.Count -lt 1) {
+    throw "Verify-LocalEdit: pass -Path"
+}
+try {
+    $result = Invoke-EditChecks $Path
+    $payload = @{
+        ok      = [bool]$result.ok
+        profile = [string]$result.profile
+        detail  = [string]$result.detail
+    } | ConvertTo-Json -Compress
+    Write-Output $payload
+    exit 0
+} catch {
+    $err = $_.Exception.Message
+    if ([string]::IsNullOrWhiteSpace($err)) { $err = "$_" }
+    $payload = @{
+        ok      = $false
+        profile = 'local-edit-apply-v1'
+        detail  = $err
+    } | ConvertTo-Json -Compress
+    Write-Output $payload
+    exit 1
+}

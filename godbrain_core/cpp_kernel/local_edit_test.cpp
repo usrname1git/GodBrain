@@ -64,6 +64,27 @@ int main() {
         return 1;
     }
 
+    if (!expect(local_edit::check_profile_for("scripts\\Show-SystemFlex.ps1") ==
+                    "powershell-parse-v1",
+                "ps1 profile") ||
+        !expect(local_edit::check_profile_for("godbrain_core/cpp_kernel/main.cpp") ==
+                    "kernel-syntax-v1",
+                "kernel profile") ||
+        !expect(local_edit::check_profile_for("godbrain_core\\memory_store\\store.go") ==
+                    "memory-store-go-v1",
+                "go profile") ||
+        !expect(local_edit::check_profile_for("godbrain_core\\frontend\\galaxy.html") ==
+                    "galaxy-html-static-v1",
+                "galaxy profile") ||
+        !expect(local_edit::check_profile_for("godbrain_core\\cpp_tools\\librarian.cpp") ==
+                    "librarian-self-test-v1",
+                "librarian profile") ||
+        !expect(local_edit::check_profile_for("docs\\architecture\\current.md") ==
+                    "local-edit-apply-v1",
+                "md stays apply-only")) {
+        return 1;
+    }
+
     char exe[MAX_PATH] = {};
     GetModuleFileNameA(NULL, exe, MAX_PATH);
     std::string dir(exe);
