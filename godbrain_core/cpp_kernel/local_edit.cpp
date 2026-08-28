@@ -801,11 +801,15 @@ Result maybe_apply(
         append_plan_section("SECOND", second.empty() ? "(empty)" : second);
         hunks = parse_apply_blocks(second);
         if (hunks.empty()) {
-            result.report = applied.report.empty()
-                                ? "Plan saved. Second pass had no apply blocks. "
-                                  "Ask again with /edit and a file name."
-                                : applied.report +
-                                      "Second pass had no apply blocks.\n";
+            if (applied.report.empty()) {
+                result.report =
+                    "Plan saved. Second pass had no apply blocks. "
+                    "Ask again with /edit and a file name.";
+            } else {
+                result.report = applied.report;
+                if (result.report.back() != '\n') result.report += '\n';
+                result.report += "Second pass had no apply blocks.\n";
+            }
             save_result(false, result.report, CheckOutcome{});
             return result;
         }
