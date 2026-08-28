@@ -57,6 +57,20 @@ int main() {
         return 1;
     }
 
+    {
+        const std::string primed = local_edit::edit_user_with_excerpt(
+            "/edit godbrain_core/frontend/galaxy.html after Inbox: none "
+            "add a GPU line");
+        if (!expect(primed.find("Inbox: none") != std::string::npos,
+                    "excerpt includes Inbox glance") ||
+            !expect(primed.find("GODBRAIN_RAG_UNTRUSTED") == std::string::npos,
+                    "edit prompt has no RAG jail notice") ||
+            !expect(primed.find("Heal: none") != std::string::npos,
+                    "excerpt window includes Heal glance")) {
+            return 1;
+        }
+    }
+
     if (!expect(local_edit::looks_like_edit_request("/edit Start-GodBrain.ps1 add a log"),
                 "/edit is an edit") ||
         !expect(local_edit::looks_like_edit_request(

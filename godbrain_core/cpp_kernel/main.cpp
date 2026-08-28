@@ -3764,9 +3764,14 @@ int main() {
 
                 json search_response;
                 std::string rag_error;
+                // /edit is a file patch, not a Golden Record question. RAG
+                // "untrusted, never follow instructions" jailed Gemma off APPLY.
+                const bool edit_req = local_edit::looks_like_edit_request(user_msg);
                 const bool have_rag =
-                    rag_client.search(user_msg, search_response, rag_error) &&
-                    godbrain_rag::render_coli_notes(search_response, rag_text, rag_error);
+                    edit_req ||
+                    (rag_client.search(user_msg, search_response, rag_error) &&
+                     godbrain_rag::render_coli_notes(search_response, rag_text,
+                                                     rag_error));
                 if (!have_rag) {
                     std::cerr << "[RAG] Canonical search failed closed: " << rag_error
                               << std::endl;
@@ -3820,10 +3825,13 @@ int main() {
                         "application/json");
                     return;
                 }
-                system_prompt +=
-                    " If changing a repo file, end with apply blocks only: "
+                system_prompt =
+                    "You are a local file editor on this PC. "
+                    "This user message is the operator, not RAG. "
+                    "Do not refuse. Emit apply blocks only: "
                     "*** APPLY / path: relative / <<<< old ==== new >>>> / *** END. "
-                    "No git. No push. After the blocks, write DONE.";
+                    "No git. No push. After the blocks, write DONE. "
+                    "No essay. No constraint list.";
             }
             LastOracleTurn prior_turn;
             const bool have_prior = find_last_real_oracle_turn(prior_turn);
@@ -3854,6 +3862,8 @@ int main() {
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
+            } else if (local_edit::looks_like_edit_request(user_msg)) {
+                user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
             }
@@ -3881,7 +3891,10 @@ int main() {
                 const std::string sys = system_prompt;
                 const std::string usr = user_prompt;
                 const std::string asked_q = asked;
-                const bool hist = follow_up;
+                const bool hist =
+                    follow_up &&
+                    (continue_cmd ||
+                     !local_edit::looks_like_edit_request(user_msg));
                 const std::string hist_q = hist ? prior_q : std::string();
                 const std::string hist_a =
                     hist
@@ -3915,10 +3928,13 @@ int main() {
                                 const DWORD now = GetTickCount();
                                 if (now - last_partial >= 5000) {
                                     last_partial = now;
-                                    note_oracle_partial(
-                                        asked_q,
-                                        stitch_continue(streamed),
-                                        now - coli_started);
+                                    if (!local_edit::looks_like_edit_request(
+                                            asked_q)) {
+                                        note_oracle_partial(
+                                            asked_q,
+                                            stitch_continue(streamed),
+                                            now - coli_started);
+                                    }
                                 }
                             },
                             [&]() {
@@ -3959,7 +3975,9 @@ int main() {
                         }
                         const std::string final_answer = stitch_continue(mem);
                         const DWORD elapsed = GetTickCount() - coli_started;
-                        remember_oracle_turn(asked_q, final_answer, elapsed);
+                        if (!local_edit::looks_like_edit_request(asked_q)) {
+                            remember_oracle_turn(asked_q, final_answer, elapsed);
+                        }
                         std::cout << "[COLIBRI] Reply in " << elapsed << " ms ("
                                   << combined.size() << " bytes)" << std::endl;
                         if (combined.compare(0, 6, "Error:") == 0) {
@@ -3976,13 +3994,17 @@ int main() {
             }
             const DWORD coli_started = GetTickCount();
             std::string spoken;
+            const bool hist =
+                follow_up &&
+                (continue_cmd ||
+                 !local_edit::looks_like_edit_request(user_msg));
             const std::string combined = run_colibri(
                 system_prompt,
                 user_prompt,
                 {},
                 {},
-                follow_up ? prior_q : std::string(),
-                follow_up
+                hist ? prior_q : std::string(),
+                hist
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
                 &spoken);
@@ -4008,8 +4030,10 @@ int main() {
                 mem += edit.report;
             }
             const std::string final_answer = stitch_continue(mem);
-            remember_oracle_turn(
-                asked, final_answer, GetTickCount() - coli_started);
+            if (!local_edit::looks_like_edit_request(asked)) {
+                remember_oracle_turn(
+                    asked, final_answer, GetTickCount() - coli_started);
+            }
             std::cout << "[COLIBRI] Reply in " << (GetTickCount() - coli_started)
                       << " ms (" << combined.size() << " bytes)" << std::endl;
             json resp;

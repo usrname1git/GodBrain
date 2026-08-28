@@ -81,6 +81,7 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch 'CS2:\s*idle') { throw "galaxy.html missing CS2 idle glance" }
     if ($text -notmatch 'Heal:\s*none') { throw "galaxy.html missing Heal glance" }
     if ($text -notmatch 'Inbox:\s*none') { throw "galaxy.html missing Inbox glance" }
+    if ($text -notmatch 'GPU:\s*none') { throw "galaxy.html missing GPU glance" }
 }
 
 function Test-MemoryStoreGo {
@@ -160,6 +161,8 @@ if ($SelfTest) {
     if ($alt -notmatch 'CS2:\s*idle') { throw "cs2 whitespace" }
     if ($alt -notmatch 'Heal:\s*none') { throw "heal whitespace" }
     if ($alt -notmatch 'Inbox:\s*none') { throw "inbox whitespace" }
+    $alt += "`nGPU:none"
+    if ($alt -notmatch 'GPU:\s*none') { throw "gpu whitespace" }
     $listed = Invoke-EditChecks @('README.md','AGENTS.md')
     if ($listed.profile -ne 'local-edit-apply-v1') { throw "pathlist classify" }
     $split = Split-EditPathList ' README.md ; AGENTS.md ; '

@@ -1320,6 +1320,14 @@
                 } else {
                     lines.push('Inbox: none');
                 }
+                const vramHost = (status && status.vram) || {};
+                if (typeof vramHost.dedicated_gb === 'number') {
+                    lines.push(
+                        'GPU: ' + vramHost.dedicated_gb + ' GB / ' +
+                        (vramHost.slots || 1) + ' slot');
+                } else {
+                    lines.push('GPU: none');
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(
