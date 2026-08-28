@@ -90,7 +90,7 @@ std::string check_profile_for_impl(std::string rel) {
     }
     if (rel.rfind("godbrain_core\\cpp_kernel\\", 0) == 0 &&
         (ends_with(rel, ".cpp") || ends_with(rel, ".h"))) {
-        return "kernel-syntax-v1";
+        return "kernel-file-v1";
     }
     if (ends_with(rel, ".ps1")) return "powershell-parse-v1";
     return "local-edit-apply-v1";
@@ -144,10 +144,12 @@ CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
     }
     std::ostringstream cmd;
     cmd << '"' << shell << "\" -NoProfile -ExecutionPolicy Bypass -File \""
-        << script << "\" -RepoRoot \"" << root << '"';
-    for (const auto& rel : edited) {
-        cmd << " -Path \"" << replace_slashes(rel) << '"';
+        << script << "\" -RepoRoot \"" << root << "\" -PathList \"";
+    for (size_t i = 0; i < edited.size(); ++i) {
+        if (i) cmd << ';';
+        cmd << replace_slashes(edited[i]);
     }
+    cmd << '"';
     std::string cmdline = cmd.str();
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
@@ -169,23 +171,45 @@ CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
     PROCESS_INFORMATION pi{};
     std::vector<char> mutable_cmd(cmdline.begin(), cmdline.end());
     mutable_cmd.push_back('\0');
+    HANDLE job = CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+            CloseHandle(job);
+            job = nullptr;
+        }
+    }
     if (!CreateProcessA(
             shell.c_str(),
             mutable_cmd.data(),
             nullptr,
             nullptr,
             TRUE,
-            CREATE_NO_WINDOW,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED,
             nullptr,
             root.c_str(),
             &si,
             &pi)) {
         CloseHandle(out_rd);
         CloseHandle(out_wr);
+        if (job) CloseHandle(job);
         out.detail = "CreateProcess failed";
         return out;
     }
     CloseHandle(out_wr);
+    if (job && !AssignProcessToJobObject(job, pi.hProcess)) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 2000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        CloseHandle(out_rd);
+        CloseHandle(job);
+        out.detail = "Job Object assign failed";
+        return out;
+    }
+    ResumeThread(pi.hThread);
     out.ran = true;
     std::string captured;
     char buf[4096];
@@ -211,6 +235,7 @@ CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
         if (WaitForSingleObject(pi.hProcess, slice) == WAIT_OBJECT_0) break;
     }
     if (timed_out) {
+        if (job) TerminateJobObject(job, 1);
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 2000);
         out.ok = false;
@@ -243,6 +268,7 @@ CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
     CloseHandle(out_rd);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (job) CloseHandle(job);
     if (out.detail.size() > 400) out.detail.resize(400);
     return out;
 }

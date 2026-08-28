@@ -8,6 +8,7 @@
 param(
     [string]$RepoRoot = "",
     [string[]]$Path = @(),
+    [string]$PathList = "",
     [switch]$SelfTest
 )
 
@@ -29,7 +30,7 @@ function Get-EditCheckProfile([string]$Rel) {
     if ($n -eq 'godbrain_core\cpp_tools\librarian.cpp') { return 'librarian-self-test-v1' }
     if ($n.StartsWith('godbrain_core\cpp_kernel\') -and
         ($n.EndsWith('.cpp') -or $n.EndsWith('.h'))) {
-        return 'kernel-syntax-v1'
+        return 'kernel-file-v1'
     }
     if ($n.EndsWith('.ps1')) { return 'powershell-parse-v1' }
     return 'local-edit-apply-v1'
@@ -59,7 +60,7 @@ function Test-PowerShellParse([string]$Full) {
     }
 }
 
-function Test-KernelSyntax([string]$Full) {
+function Test-KernelFile([string]$Full) {
     $bytes = [System.IO.File]::ReadAllBytes($Full)
     if ($bytes.Length -lt 1) { throw "empty kernel file" }
     if ($bytes -contains 0) { throw "NUL byte in kernel file" }
@@ -102,7 +103,7 @@ function Invoke-EditChecks([string[]]$Rels) {
         if (-not $profiles.Contains($profile)) { $profiles.Add($profile) }
         switch ($profile) {
             'powershell-parse-v1' { Test-PowerShellParse $full }
-            'kernel-syntax-v1' { Test-KernelSyntax $full }
+            'kernel-file-v1' { Test-KernelFile $full }
             'galaxy-html-static-v1' { Test-GalaxyHtml $full }
             'memory-store-go-v1' { }
             'librarian-self-test-v1' { }
@@ -120,7 +121,7 @@ if ($SelfTest) {
     if ((Get-EditCheckProfile 'scripts\Show-SystemFlex.ps1') -ne 'powershell-parse-v1') {
         throw "classify ps1"
     }
-    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\main.cpp') -ne 'kernel-syntax-v1') {
+    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\main.cpp') -ne 'kernel-file-v1') {
         throw "classify kernel"
     }
     if ((Get-EditCheckProfile 'godbrain_core\memory_store\store.go') -ne 'memory-store-go-v1') {
@@ -145,15 +146,22 @@ if ($SelfTest) {
     Remove-Item -LiteralPath $bad -Force
     if (-not $threw) { throw "broken ps1 must fail parse" }
     Test-GalaxyHtml (Join-Path $RepoRoot "godbrain_core\frontend\galaxy.html")
+    $listed = Invoke-EditChecks @('README.md','AGENTS.md')
+    if ($listed.profile -ne 'local-edit-apply-v1') { throw "pathlist classify" }
     Write-Output '{"ok":true,"profile":"self-test","detail":"self-test ok"}'
     exit 0
 }
 
-if (-not $Path -or $Path.Count -lt 1) {
-    throw "Verify-LocalEdit: pass -Path"
+$rels = @()
+if (-not [string]::IsNullOrWhiteSpace($PathList)) {
+    $rels += @($PathList -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+if ($Path) { $rels += @($Path) }
+if ($rels.Count -lt 1) {
+    throw "Verify-LocalEdit: pass -Path or -PathList"
 }
 try {
-    $result = Invoke-EditChecks $Path
+    $result = Invoke-EditChecks $rels
     $payload = @{
         ok      = [bool]$result.ok
         profile = [string]$result.profile
