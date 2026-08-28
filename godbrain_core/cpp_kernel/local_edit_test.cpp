@@ -319,6 +319,34 @@ int main() {
         return 1;
     }
 
+    {
+        std::string second_excerpt_user;
+        result = local_edit::maybe_apply(
+            "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+            "*** APPLY\n"
+            "path: godbrain_core/frontend/galaxy.html\n"
+            "<<<<\n"
+            "            const inboxLine = inboxOverlayLine(status);\n"
+            "            if (inboxLine) lines.push(inboxLine);\n",
+            [&](const std::string&, const std::string& usr) {
+                second_excerpt_user = usr;
+                return std::string();
+            });
+        const size_t ex = second_excerpt_user.find("excerpt:");
+        if (!expect(ex != std::string::npos, "second pass has excerpt") ||
+            !expect(second_excerpt_user.find("Inbox: none", ex) !=
+                        std::string::npos,
+                    "second pass excerpt stays on host-card") ||
+            !expect(second_excerpt_user.find(
+                        "if (inboxLine) lines.push(inboxLine)", ex) ==
+                        std::string::npos,
+                    "truncated overlay plan does not move excerpt")) {
+            std::cerr << "second excerpt usr size=" << second_excerpt_user.size()
+                      << std::endl;
+            return 1;
+        }
+    }
+
     std::cout << "local_edit_test ok" << std::endl;
     return 0;
 }
