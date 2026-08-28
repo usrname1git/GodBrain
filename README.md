@@ -178,4 +178,4 @@ Current b-line is **this host's OS/network stack** (services, TCP/IP, ICMP, SCM)
 
 ## Credits
 
-This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GodBrain does not vendor that binary and does not call it from Heal or `cpp_kernel`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.
+This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GitHub release zips lag `master`; get a current binary with [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build Privexec from source. Do not copy `wsudo.exe` into this repo. GodBrain does not call it from Heal or `cpp_kernel`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.

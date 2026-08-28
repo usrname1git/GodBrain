@@ -174,7 +174,7 @@ Optional operator chrome (not a runtime door):
 .\scripts\Show-SystemFlex.ps1
 ```
 
-`ti` on this host is [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo --ti` from PATH. Install their release; do not copy `wsudo.exe` into this repo. Heal and the kernel do not call it.
+`ti` on this host is [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo --ti` from PATH. GitHub release zips lag `master`; install via [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build from source. Do not copy `wsudo.exe` into this repo. Heal and the kernel do not call it.
 
 ## 7. First check
 
