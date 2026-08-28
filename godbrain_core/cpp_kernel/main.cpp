@@ -1846,6 +1846,14 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
         res.status = 404;
     } else {
         reply << "edit=" << (body.value("applied", false) ? "done" : "fail");
+        const std::string check_profile = body.value("check_profile", "");
+        if (!check_profile.empty()) {
+            const char* check_state = !body.value("check_ran", false)
+                ? "skip"
+                : (body.value("check_ok", false) ? "ok" : "fail");
+            reply << " check=" << check_profile << "/" << check_state;
+        }
+        reply << " promote=no";
         const std::string report = body.value("report", "");
         if (!report.empty()) {
             reply << "\n" << clip_pending_line(report, 200);

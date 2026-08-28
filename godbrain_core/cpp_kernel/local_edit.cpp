@@ -10,8 +10,19 @@
 #include <sstream>
 #include <vector>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4127)
+#endif
+#include "json.hpp"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 namespace local_edit {
 namespace {
+
+using json = nlohmann::json;
 
 std::string exe_dir() {
     char path[MAX_PATH];
@@ -48,6 +59,192 @@ std::string replace_slashes(std::string path) {
 bool ends_with(const std::string& value, const std::string& suf) {
     return value.size() >= suf.size() &&
            value.compare(value.size() - suf.size(), suf.size(), suf) == 0;
+}
+
+std::string json_escape(const std::string& text) {
+    std::ostringstream out;
+    for (unsigned char ch : text) {
+        if (ch == '\\' || ch == '"') {
+            out << '\\' << static_cast<char>(ch);
+        } else if (ch == '\n') {
+            out << "\\n";
+        } else if (ch == '\r') {
+            continue;
+        } else {
+            out << static_cast<char>(ch);
+        }
+    }
+    return out.str();
+}
+
+std::string check_profile_for_impl(std::string rel) {
+    rel = ascii_lower(replace_slashes(rel));
+    if (rel == "godbrain_core\\frontend\\galaxy.html") {
+        return "galaxy-html-static-v1";
+    }
+    if (rel.rfind("godbrain_core\\memory_store\\", 0) == 0 && ends_with(rel, ".go")) {
+        return "memory-store-go-v1";
+    }
+    if (rel == "godbrain_core\\cpp_tools\\librarian.cpp") {
+        return "librarian-self-test-v1";
+    }
+    if (rel.rfind("godbrain_core\\cpp_kernel\\", 0) == 0 &&
+        (ends_with(rel, ".cpp") || ends_with(rel, ".h"))) {
+        return "kernel-syntax-v1";
+    }
+    if (ends_with(rel, ".ps1")) return "powershell-parse-v1";
+    return "local-edit-apply-v1";
+}
+
+std::string find_pwsh() {
+    char buf[MAX_PATH] = {};
+    DWORD n = SearchPathA(nullptr, "pwsh.exe", nullptr, MAX_PATH, buf, nullptr);
+    if (n > 0 && n < MAX_PATH) return std::string(buf);
+    n = SearchPathA(nullptr, "powershell.exe", nullptr, MAX_PATH, buf, nullptr);
+    if (n > 0 && n < MAX_PATH) return std::string(buf);
+    return "";
+}
+
+struct CheckOutcome {
+    bool ran = false;
+    bool ok = false;
+    std::string profile;
+    std::string detail;
+};
+
+CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
+    CheckOutcome out;
+    if (edited.empty()) {
+        out.profile = "local-edit-apply-v1";
+        return out;
+    }
+    std::vector<std::string> profiles;
+    for (const auto& rel : edited) {
+        const std::string profile = check_profile_for_impl(rel);
+        if (std::find(profiles.begin(), profiles.end(), profile) == profiles.end()) {
+            profiles.push_back(profile);
+        }
+    }
+    std::ostringstream joined;
+    for (size_t i = 0; i < profiles.size(); ++i) {
+        if (i) joined << "+";
+        joined << profiles[i];
+    }
+    out.profile = joined.str();
+    const std::string root = repo_root();
+    const std::string script = root + "\\scripts\\Verify-LocalEdit.ps1";
+    if (root.empty() || GetFileAttributesA(script.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        out.detail = "missing Verify-LocalEdit.ps1";
+        return out;
+    }
+    const std::string shell = find_pwsh();
+    if (shell.empty()) {
+        out.detail = "pwsh not on PATH";
+        return out;
+    }
+    std::ostringstream cmd;
+    cmd << '"' << shell << "\" -NoProfile -ExecutionPolicy Bypass -File \""
+        << script << "\" -RepoRoot \"" << root << '"';
+    for (const auto& rel : edited) {
+        cmd << " -Path \"" << replace_slashes(rel) << '"';
+    }
+    std::string cmdline = cmd.str();
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE out_rd = nullptr;
+    HANDLE out_wr = nullptr;
+    if (!CreatePipe(&out_rd, &out_wr, &sa, 0)) {
+        out.detail = "pipe failed";
+        return out;
+    }
+    SetHandleInformation(out_rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    si.hStdOutput = out_wr;
+    si.hStdError = out_wr;
+    si.hStdInput = nullptr;
+    PROCESS_INFORMATION pi{};
+    std::vector<char> mutable_cmd(cmdline.begin(), cmdline.end());
+    mutable_cmd.push_back('\0');
+    if (!CreateProcessA(
+            shell.c_str(),
+            mutable_cmd.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            root.c_str(),
+            &si,
+            &pi)) {
+        CloseHandle(out_rd);
+        CloseHandle(out_wr);
+        out.detail = "CreateProcess failed";
+        return out;
+    }
+    CloseHandle(out_wr);
+    out.ran = true;
+    std::string captured;
+    char buf[4096];
+    const DWORD deadline = GetTickCount() + 70000;
+    bool timed_out = false;
+    for (;;) {
+        DWORD avail = 0;
+        if (PeekNamedPipe(out_rd, nullptr, 0, nullptr, &avail, nullptr) &&
+            avail > 0 && captured.size() < 65536) {
+            DWORD read = 0;
+            const DWORD want = static_cast<DWORD>(
+                (std::min)(sizeof(buf), static_cast<size_t>(avail)));
+            if (ReadFile(out_rd, buf, want, &read, nullptr) && read > 0) {
+                captured.append(buf, read);
+            }
+        }
+        const DWORD left = deadline - GetTickCount();
+        if (static_cast<int>(left) <= 0) {
+            timed_out = true;
+            break;
+        }
+        const DWORD slice = left > 100 ? 100 : left;
+        if (WaitForSingleObject(pi.hProcess, slice) == WAIT_OBJECT_0) break;
+    }
+    if (timed_out) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 2000);
+        out.ok = false;
+        out.detail = "check timed out";
+    }
+    DWORD read = 0;
+    while (captured.size() < 65536 &&
+           ReadFile(out_rd, buf, sizeof(buf), &read, nullptr) && read > 0) {
+        captured.append(buf, read);
+    }
+    if (!timed_out) {
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        json parsed;
+        try {
+            std::string line = captured;
+            const auto brace = captured.rfind('{');
+            if (brace != std::string::npos) line = captured.substr(brace);
+            parsed = json::parse(line);
+            out.ok = parsed.value("ok", false) && code == 0;
+            const std::string got = parsed.value("profile", out.profile);
+            if (!got.empty()) out.profile = got;
+            out.detail = parsed.value("detail", captured);
+        } catch (const json::exception&) {
+            out.ok = false;
+            out.detail = captured.empty() ? "check produced no JSON" : captured;
+        }
+        if (code != 0) out.ok = false;
+    }
+    CloseHandle(out_rd);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (out.detail.size() > 400) out.detail.resize(400);
+    return out;
 }
 
 bool path_ok(const std::string& rel) {
@@ -187,23 +384,25 @@ void save_plan(const std::string& user_msg, const std::string& first_answer) {
     out << "USER\n" << user_msg << "\n\nPLAN\n" << g_plan << "\n";
 }
 
-void save_result(bool applied, const std::string& report) {
+void save_result(
+    bool applied,
+    const std::string& report,
+    const CheckOutcome& check) {
     const std::string path = repo_root() + "\\logs\\last-edit-result.json";
-    std::ostringstream json;
-    json << "{\"applied\":" << (applied ? "true" : "false")
-         << ",\"verification_profile\":\"local-edit-apply-v1\""
-         << ",\"skill_promote_eligible\":false"
-         << ",\"report\":\"";
-    for (char ch : report) {
-        if (ch == '\\' || ch == '"') json << '\\';
-        if (ch == '\n') json << "\\n";
-        else if (ch == '\r') continue;
-        else json << ch;
-    }
-    json << "\"}\n";
+    const std::string profile =
+        check.profile.empty() ? "local-edit-apply-v1" : check.profile;
+    std::ostringstream payload;
+    payload << "{\"applied\":" << (applied ? "true" : "false")
+            << ",\"verification_profile\":\"local-edit-apply-v1\""
+            << ",\"check_profile\":\"" << json_escape(profile) << "\""
+            << ",\"check_ran\":" << (check.ran ? "true" : "false")
+            << ",\"check_ok\":" << (check.ok ? "true" : "false")
+            << ",\"skill_promote_eligible\":false"
+            << ",\"report\":\"" << json_escape(report) << "\""
+            << ",\"check_detail\":\"" << json_escape(check.detail) << "\"}\n";
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) return;
-    out << json.str();
+    out << payload.str();
 }
 
 std::string guess_file(const std::string& text) {
@@ -238,9 +437,19 @@ std::string excerpt(const std::string& rel) {
     return body;
 }
 
-std::string apply_hunks(const std::vector<Hunk>& hunks) {
+struct ApplyOutcome {
+    bool ok = false;
+    std::string report;
+    std::vector<std::string> edited;
+};
+
+ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks) {
+    ApplyOutcome out;
     const std::string root = repo_root();
-    if (root.empty()) return "FAIL: cannot resolve repo root";
+    if (root.empty()) {
+        out.report = "FAIL: cannot resolve repo root";
+        return out;
+    }
     std::ostringstream report;
     int ok = 0;
     for (const Hunk& hunk : hunks) {
@@ -260,6 +469,7 @@ std::string apply_hunks(const std::vector<Hunk>& hunks) {
                 continue;
             }
             ++ok;
+            out.edited.push_back(hunk.path);
             report << "edited " << hunk.path << "\n";
             continue;
         }
@@ -278,13 +488,23 @@ std::string apply_hunks(const std::vector<Hunk>& hunks) {
             continue;
         }
         ++ok;
+        out.edited.push_back(hunk.path);
         report << "edited " << hunk.path << "\n";
     }
-    if (ok == 0) return "FAIL\n" + report.str();
-    return "DONE\n" + report.str();
+    if (ok == 0) {
+        out.report = "FAIL\n" + report.str();
+        return out;
+    }
+    out.ok = true;
+    out.report = "DONE\n" + report.str();
+    return out;
 }
 
 }  // namespace
+
+std::string check_profile_for(const std::string& rel) {
+    return check_profile_for_impl(rel);
+}
 
 bool looks_like_edit_request(const std::string& user_msg) {
     const std::string lower = ascii_lower(user_msg);
@@ -342,18 +562,33 @@ Result maybe_apply(
             result.report =
                 "Plan saved. Second pass had no apply blocks. "
                 "Ask again with /edit and a file name.";
-            save_result(false, result.report);
+            save_result(false, result.report, CheckOutcome{});
             return result;
         }
     } else if (hunks.empty()) {
         result.report = "Plan saved. No apply blocks and no second pass.";
-        save_result(false, result.report);
+        save_result(false, result.report, CheckOutcome{});
         return result;
     }
 
-    result.report = apply_hunks(hunks);
-    result.applied = result.report.rfind("DONE", 0) == 0;
-    save_result(result.applied, result.report);
+    const ApplyOutcome applied = apply_hunks(hunks);
+    result.report = applied.report;
+    result.applied = applied.ok;
+    CheckOutcome check;
+    if (applied.ok) {
+        check = run_edit_check(applied.edited);
+        result.check_ran = check.ran;
+        result.check_ok = check.ok;
+        result.check_profile = check.profile;
+        if (!check.detail.empty()) {
+            result.report += "check " + check.profile + "=" +
+                             (check.ok ? "ok" : "fail") + " " + check.detail +
+                             "\n";
+        }
+    } else {
+        check.profile = "local-edit-apply-v1";
+    }
+    save_result(result.applied, result.report, check);
     return result;
 }
 
