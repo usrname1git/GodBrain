@@ -593,7 +593,7 @@ size_t excerpt_at(const std::string& body, const std::string& rel,
         const std::string lower_rel = ascii_lower(rel);
         static const char* markers[] = {
             "Inbox: none", "Heal: none", "CS2: idle", "GPU: none",
-            "Judge: none", "host-card", "function paintStatus",
+            "Judge: none", "Edit: none", "host-card", "function paintStatus",
         };
         auto take_marker = [&](bool hint_only) {
             for (const char* marker : markers) {

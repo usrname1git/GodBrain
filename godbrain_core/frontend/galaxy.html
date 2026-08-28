@@ -1335,6 +1335,12 @@
                 } else {
                     lines.push('Judge: none');
                 }
+                const editHost = (status && status.last_edit) || {};
+                if (editHost.applied === true) {
+                    lines.push('Edit: ok');
+                } else {
+                    lines.push('Edit: none');
+                }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
                     lines.push(
