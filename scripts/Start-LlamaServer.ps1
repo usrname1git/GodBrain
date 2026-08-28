@@ -5,19 +5,17 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$Model = "C:\nvme\gemma-4-12b-it-official\gemma-4-12b-it-qat-q4_0.gguf",
-    [string]$Draft = "C:\nvme\gemma4-12b-hauhau\mtp-gemma-4-12B-it.gguf",
+    [string]$Model = "C:\nvme\gemma-4-12b-it-bartowski\gemma-4-12B-it-Q6_K_L.gguf",
+    [string]$Draft = "C:\nvme\gemma-4-12b-it-bartowski\mtp-gemma-4-12B-it-Q8_0.gguf",
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is official Google IT Q4_0 **without MTP**. MTP (Hauhau or
-    # official) IMA'd Librarian extracts on b10453 and b10520. Pass -UseDraft
-    # to enable the draft GGUF. -NoDraft is accepted and keeps MTP off.
-    # Hauhau: -Model C:\nvme\gemma4-12b-hauhau\Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
-    # Obliterated: -Obliterated (Q6_K is not on the Hub; v2 Q8_0 is the quality
-    # pack). Named lab switch, not Watch default. Keep MTP off.
-    # Agentic gym: -Agentic (yuxinlu1 v2 Q6_K coding/tool fine-tune). Gym bro,
-    # not Watch default. Do not enable this model's MTP draft.
+    # Desk default is bartowski Gemma 4 12B IT Q6_K_L **without MTP**.
+    # Google QAT Q4_0 was replaced after Q6_K_L passed Librarian JSON extract
+    # and APPLY-block parse. Hauhau QAT+MTP IMA'd extracts and was deleted.
+    # Pass -UseDraft only if a draft GGUF is on disk; MTP stays off by default.
+    # Obliterated: -Obliterated (author v2 Q8_0). Named lab switch.
+    # Agentic gym: -Agentic (yuxinlu1 v2 Q6_K). Gym bro, not Watch default.
     [switch]$Obliterated,
     [switch]$Agentic,
     [switch]$UseDraft,
@@ -91,12 +89,12 @@ foreach ($log in @($stdout, $stderr)) {
     }
 }
 # Mouth file first so Galaxy shows llama=down while weights load.
-$mouthTag = if ($Model -match 'hauhau') {
-    "gemma4-12b-hauhau-q4_k_m"
-} elseif ($Model -match 'obliterat') {
+$mouthTag = if ($Model -match 'obliterat') {
     "gemma4-12b-obliterated-q8_0"
 } elseif ($Model -match 'agentic|gemma4-v2-Q6') {
     "gemma4-12b-agentic-q6_k"
+} elseif ($Model -match 'Q6_K_L|q6_k_l') {
+    "gemma4-12b-it-q6_k_l"
 } elseif ($Model -match 'qat-q4_0|12b-it-qat') {
     "gemma4-12b-it-q4_0"
 } else {
@@ -117,7 +115,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a $(if ($Model -match 'hauhau') { 'Gemma4-12B-HauhauCS' } elseif ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } elseif ($Model -match 'agentic|gemma4-v2-Q6') { 'Gemma4-12B-Agentic' } else { 'Gemma4-12B-IT' })",
+    "-a $(if ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } elseif ($Model -match 'agentic|gemma4-v2-Q6') { 'Gemma4-12B-Agentic' } else { 'Gemma4-12B-IT' })",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
