@@ -15,14 +15,17 @@ $video = Get-CimInstance Win32_VideoController |
     Where-Object CurrentHorizontalResolution |
     Select-Object -First 1
 
-$red = $PSStyle.Foreground.FromRgb(200, 16, 46)
-$white = $PSStyle.Foreground.FromRgb(242, 244, 247)
-$blue = $PSStyle.Foreground.FromRgb(87, 148, 208)
-$reset = $PSStyle.Reset
+$useAnsi = $null -ne $PSStyle
+if ($useAnsi) {
+    $red = $PSStyle.Foreground.FromRgb(200, 16, 46)
+    $white = $PSStyle.Foreground.FromRgb(242, 244, 247)
+    $blue = $PSStyle.Foreground.FromRgb(87, 148, 208)
+    $reset = $PSStyle.Reset
+}
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $trustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
-$isTrustedInstaller = $identity.Groups.Value -contains $trustedInstallerSid
+$isTrustedInstaller = @($identity.Groups | ForEach-Object { $_.Value }) -contains $trustedInstallerSid
 $principal = [Security.Principal.WindowsPrincipal]$identity
 $isAdministrator = $principal.IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
@@ -72,13 +75,34 @@ $display = if ($video.CurrentHorizontalResolution) {
 
 $writeRow = {
     param([string]$Label, [string]$Value)
-    Write-Host "  $blue$($Label.PadRight(11))$reset $white$Value$reset"
+    if ($useAnsi) {
+        Write-Host "  $blue$($Label.PadRight(11))$reset $white$Value$reset"
+    } else {
+        Write-Host ('  {0} ' -f $Label.PadRight(11)) -ForegroundColor Blue -NoNewline
+        Write-Host $Value -ForegroundColor White
+    }
+}
+
+$writeRule = {
+    if ($useAnsi) {
+        Write-Host "  $red================$white================$blue================$reset"
+    } else {
+        Write-Host '  ================' -ForegroundColor Red -NoNewline
+        Write-Host '================' -ForegroundColor White -NoNewline
+        Write-Host '================' -ForegroundColor Blue
+    }
 }
 
 Write-Host
-Write-Host "  $red================$white================$blue================$reset"
-Write-Host "  $red OLD$white GLORY$blue // WINDOWS COMMAND CENTER$reset"
-Write-Host "  $red================$white================$blue================$reset"
+& $writeRule
+if ($useAnsi) {
+    Write-Host "  $red OLD$white GLORY$blue // WINDOWS COMMAND CENTER$reset"
+} else {
+    Write-Host '   OLD' -ForegroundColor Red -NoNewline
+    Write-Host ' GLORY' -ForegroundColor White -NoNewline
+    Write-Host ' // WINDOWS COMMAND CENTER' -ForegroundColor Blue
+}
+& $writeRule
 & $writeRow 'OS' $os.Caption
 & $writeRow 'Build' "$($os.Version) | $($os.BuildNumber)"
 & $writeRow 'Installed' $os.InstallDate.ToString('yyyy-MM-dd')
@@ -97,5 +121,5 @@ if ($display) {
 }
 & $writeRow 'PowerShell' "$($PSVersionTable.PSVersion)"
 & $writeRow 'Uptime' $uptimeText
-Write-Host "  $red================$white================$blue================$reset"
+& $writeRule
 Write-Host
