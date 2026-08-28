@@ -142,6 +142,7 @@ Shipped on this desk, not slideware:
 - **Judge** — `/verify` `/reject` for playbooks and fights. Host probes and Learn quotes auto-verify when the evidence actually matches.
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth.
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not `wsudo`, not Visual Studio as a tool.
+- **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
 
@@ -174,3 +175,7 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 - [ ] Detect → reason → patch → verify with zero hand-holding — Heal is the loop; extra patch stays GO-gated
 
 Current b-line is **this host's OS/network stack** (services, TCP/IP, ICMP, SCM), not tanks or AppX eviction. Heal starts MongoDB, Dnscache, iphlpsvc, nsi, plus rag/mouth/kernel. ICMP loopback is detect-only. Patch grows only from a named, verified signal.
+
+## Credits
+
+This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GodBrain does not vendor that binary and does not call it from Heal or `cpp_kernel`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.
