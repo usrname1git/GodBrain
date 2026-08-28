@@ -83,6 +83,7 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch 'Inbox:\s*none') { throw "galaxy.html missing Inbox glance" }
     if ($text -notmatch 'GPU:\s*none') { throw "galaxy.html missing GPU glance" }
     if ($text -notmatch 'Judge:\s*none') { throw "galaxy.html missing Judge glance" }
+    if ($text -notmatch 'Edit:\s*none') { throw "galaxy.html missing Edit glance" }
 }
 
 function Test-MemoryStoreGo {
@@ -162,9 +163,10 @@ if ($SelfTest) {
     if ($alt -notmatch 'CS2:\s*idle') { throw "cs2 whitespace" }
     if ($alt -notmatch 'Heal:\s*none') { throw "heal whitespace" }
     if ($alt -notmatch 'Inbox:\s*none') { throw "inbox whitespace" }
-    $alt += "`nGPU:none`nJudge:none"
+    $alt += "`nGPU:none`nJudge:none`nEdit:none"
     if ($alt -notmatch 'GPU:\s*none') { throw "gpu whitespace" }
     if ($alt -notmatch 'Judge:\s*none') { throw "judge whitespace" }
+    if ($alt -notmatch 'Edit:\s*none') { throw "edit whitespace" }
     $listed = Invoke-EditChecks @('README.md','AGENTS.md')
     if ($listed.profile -ne 'local-edit-apply-v1') { throw "pathlist classify" }
     $split = Split-EditPathList ' README.md ; AGENTS.md ; '
