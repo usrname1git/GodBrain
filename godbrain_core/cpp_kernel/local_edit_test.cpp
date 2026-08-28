@@ -69,6 +69,25 @@ int main() {
                     "excerpt window includes Heal glance")) {
             return 1;
         }
+        const std::string gpu_hint = local_edit::edit_user_with_excerpt(
+            "/edit godbrain_core/frontend/galaxy.html after GPU: none "
+            "add a Judge line");
+        const size_t gpu_ex = gpu_hint.find("excerpt:");
+        const size_t in_ex = primed.find("excerpt:");
+        const size_t gpu_at_gpu = gpu_hint.find("GPU: none", gpu_ex);
+        const size_t gpu_at_inbox = primed.find("GPU: none", in_ex);
+        if (!expect(gpu_ex != std::string::npos && in_ex != std::string::npos,
+                    "both excerpts marked") ||
+            !expect(gpu_at_gpu != std::string::npos,
+                    "GPU hint excerpt contains GPU: none") ||
+            !expect(gpu_at_inbox != std::string::npos,
+                    "Inbox hint excerpt still reaches GPU") ||
+            !expect((gpu_at_gpu - gpu_ex) < (gpu_at_inbox - in_ex),
+                    "GPU hint windows closer to GPU than Inbox hint")) {
+            std::cerr << "gpu_off=" << (gpu_at_gpu - gpu_ex)
+                      << " inbox_off=" << (gpu_at_inbox - in_ex) << std::endl;
+            return 1;
+        }
     }
 
     if (!expect(local_edit::looks_like_edit_request("/edit Start-GodBrain.ps1 add a log"),

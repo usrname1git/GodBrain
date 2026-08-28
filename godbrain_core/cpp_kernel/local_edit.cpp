@@ -595,17 +595,25 @@ size_t excerpt_at(const std::string& body, const std::string& rel,
             "Inbox: none", "Heal: none", "CS2: idle", "GPU: none",
             "Judge: none", "host-card", "function paintStatus",
         };
-        for (const char* marker : markers) {
-            if (lower_hint.find(ascii_lower(marker)) == std::string::npos &&
-                lower_rel.find("galaxy.html") == std::string::npos) {
-                continue;
+        auto take_marker = [&](bool hint_only) {
+            for (const char* marker : markers) {
+                if (hint_only) {
+                    if (lower_hint.find(ascii_lower(marker)) ==
+                        std::string::npos) {
+                        continue;
+                    }
+                } else if (lower_rel.find("galaxy.html") == std::string::npos) {
+                    continue;
+                }
+                const size_t found = body.find(marker);
+                if (found != std::string::npos) {
+                    at = found;
+                    return true;
+                }
             }
-            const size_t found = body.find(marker);
-            if (found != std::string::npos) {
-                at = found;
-                break;
-            }
-        }
+            return false;
+        };
+        if (!take_marker(true)) take_marker(false);
     }
     if (at == std::string::npos) at = body.find("function paintStatus");
     if (at == std::string::npos) at = body.find("host-card");
