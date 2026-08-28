@@ -193,10 +193,14 @@ Do not `--ask` while the mouth holds the GPU slot.
 Galaxy can ask the mouth to change a repo file. `/edit` skips RAG search
 and does not store an Oracle candidate. The kernel writes the
 plan to `logs/last-edit-plan.txt`, does a second GPU pass for
-`*** APPLY` blocks (thinking off, spoken-only parse; file excerpt from
-the `/edit` path, a window around the named text, including `galaxy.html`). Old text that is not in that excerpt is skipped (wrong site). It applies a complete hunk
+`*** APPLY` blocks (thinking off, spoken-only parse; excerpt window around
+a marker named in the `/edit` text, including `galaxy.html`). Old text
+that is not in that excerpt is skipped (wrong site). A first-pass miss
+still gets the second pass (operator request + excerpt only; no truncated
+plan sludge). It applies a complete hunk
 from the user message if the mouth truncates. The second pass is appended
-as `SECOND` in that plan file. It writes
+as `SECOND` in that plan file. Galaxy This host shows `Edit: ok` / `fail` /
+`none` from `last_edit`. It writes
 `logs/last-edit-result.json` for `/status` / `/brief` / Galaxy, and
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
 or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
