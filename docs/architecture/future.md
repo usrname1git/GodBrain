@@ -61,11 +61,12 @@ leaves the same result, delete it.
 
 ## README wants vs standing nos
 
-The public README names two **wanted** later items that stay on the kernel
-path: mouth-as-web-dev (`/edit` allowlist grows on purpose, never mouth
-`git push`) and richer teaching query (still rag-service / `query_recent_thoughts`,
+The public README names one **wanted** kernel-path item still open:
+mouth-as-web-dev (`/edit` allowlist grows on purpose, never mouth `git push`).
+Richer teaching query already ships (`/recall <query>` through rag-service,
 never `mongosh` or a MongoDB IDE/MCP against the live vault). Do not add
-`.vscode` Mongo MCP to make an agent task easier.
+`.vscode` Mongo MCP to make an agent task easier. The conflict queue is
+**not** the next build.
 
 These remain **not this host**; several are standing nos:
 
