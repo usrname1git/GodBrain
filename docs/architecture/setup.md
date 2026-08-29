@@ -112,7 +112,7 @@ That compiles without starting GodBrain. Backups go outside git. Equivalent
 Developer-shell one-liner from `godbrain_core\cpp_kernel`:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action. Do not use startup as a
@@ -126,9 +126,11 @@ One GPU slot. On this desk:
 .\scripts\Start-LlamaServer.ps1
 ```
 
-MTP is **off** by default. Pass `-UseDraft` to start with the draft GGUF. This
-host's default model/server paths are machine-local under `C:\nvme\` — point
-`-Model`, `-Draft`, and `-Server` at your copies, or set the same layout.
+MTP is **on** by default when the bartowski draft GGUF is on disk. Pass
+`-NoDraft` to start without it. This host's default model/server paths are
+machine-local under `C:\nvme\` — point `-Model`, `-Draft`, and `-Server` at
+your copies, or set the same layout. Soak IMA with
+`.\scripts\Invoke-MtpSoak.ps1`.
 
 If you run Colibri instead, keep a single `coli serve` on `:8000`. Do not set
 both `COLI_GPU` and `COLI_GPUS`. Do not overcommit VRAM into RAM unless
@@ -174,7 +176,7 @@ Optional operator chrome (not a runtime door):
 .\scripts\Show-SystemFlex.ps1
 ```
 
-`ti` on this host is [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo --ti` from PATH. GitHub release zips lag `master`; install via [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build from source. Do not copy `wsudo.exe` into this repo. Heal and the kernel do not call it.
+`ti` on this host is [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo --ti` from PATH. GitHub release zips lag `master`; install via [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build from source. Do not copy `wsudo.exe` into this repo. Heal never calls it. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `--ti`.
 
 ## 7. First check
 

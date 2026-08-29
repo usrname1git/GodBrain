@@ -40,7 +40,8 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = surgery::execute_self_command(payload.value("command", ""));
         } else if (command_type == "save_godbrain_thought") {
             result = memory::save_thought(payload);
-        } else if (command_type == "query_recent_thoughts") {
+        } else if (command_type == "query_recent_thoughts" ||
+                   command_type == "query_constellation") {
             const std::string query = payload.value("query", "");
             if (!query.empty()) {
                 result = memory::search_verified(query, payload.value("limit", 8));

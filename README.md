@@ -12,11 +12,11 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 
 - **🧠 Model-agnostic mouth** — Plug in *any* LLM behind one kernel door (desk default: Gemma 12B on `llama-server`). No model is special; they inherit the same teachings.
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
-- **🛠️ Tools a stock `llama-server` will not give you** — Kernel `command_type`s: save/recall, skills, host observe, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
+- **🛠️ Tools a stock `llama-server` will not give you** — Built into the C++ kernel, not 40 npm MCP servers. Chat `tool_calls` plus `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`). Bounded `/edit` is a separate chat door, not a `command_type`.
 
 ## The Compute Cheat Code (vault ≠ GPU)
 
-Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Gemma 12B IT Q6_K_L, MTP off). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE.
+Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Gemma 12B IT Q6_K_L, bartowski MTP on). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE.
 
 Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them. Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
@@ -65,6 +65,10 @@ runner; a heavier model is only for a flagged fight or a high-stakes
 synthesis.
 
 ### Golden Record RAG status
+
+Golden Records are the **manual**: crowned facts the mouth RTFMs instead of
+scouring the internet. Retrieval ranking among verified cards is "which page,"
+not "what most pages said." Candidates and raw web text are not Oracle truth.
 
 Layer 3 is implemented. The production C++ kernel and the experimental Go and
 Rust routers retrieve prompt context only through
@@ -128,6 +132,7 @@ Karpathy's second brain is cute for taking notes. GodBrain is the same idea with
 
 Two product wants that are not notes:
 
+- **Replace Copilot / gemini-cli on this host.** GodBrain is the local agent loop you own: Galaxy + C++ kernel + one mouth. Hands are compiled into `local_tools.cpp`, not an MCP/plugin catalog. Copilot's Filesystem + Desktop Commander list was existence proof, not a stack to import. Do not dual-run. llama-server is an interchangeable generate engine; a GodBrain llama fork is later, only if ggml sunsets or blocks the tool path. Kernel tools and judge stay here so a vendor CLI dying does not take the desk with it.
 - **Replace the web-dev loop on this repo.** Galaxy, Tailscale glances, Shortcuts, and allowlisted `/edit` should grow until you do not hire someone to ship GodBrain UI. That is a destination, not "no sandbox, write anything."
 - **Models teach models over time.** Chat already retrieves committed teachings through rag-service (`:8084`). `query_recent_thoughts` and `/recall` list newest projected nodes; `/recall <query>` searches **verified** Golden Records through that same API — not `mongosh`, not a MongoDB IDE/MCP plugin against the live vault.
 
@@ -139,9 +144,9 @@ Shipped on this desk, not slideware:
 
 - **One loop** — Heal/Watch keep `:27017` / `:8084` / `:8000` / `:8083` up. Discover → allowlist start → verify. Heal does not kill, reboot, DISM, or run the repair cocktail.
 - **Teachings in and out of Mongo** — Librarian → `memory-store` (candidate only, fail-closed JSON). Chat/Oracle retrieve through rag-service, never by giving the model a Mongo shell. Oracle search is verified-only.
-- **Judge** — `/verify` `/reject` for playbooks and fights. Host probes and Learn quotes auto-verify when the evidence actually matches.
-- **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth.
-- **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not `wsudo`, not Visual Studio as a tool.
+- **Judge** — `/verify` `/reject` for playbooks and fights. Host probes and Learn quotes auto-verify when the evidence actually matches. That is how the mouth is fostered: crowned option next time, not token-chase from weights (ASCII instead of a BIOS map, shiny instead of a click path).
+- **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `C:\Users\autismo` and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
+- **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
@@ -150,7 +155,8 @@ The verifier is still the bottleneck. Privileged doors existing is not "the hard
 
 Wanted on this product (still gated):
 
-- A mouth that ships real UI and host work the way a web dev would — kernel allowlist, then you judge.
+- A mouth that ships real UI and host work the way a web dev would — kernel allowlist, then you judge. Copilot/gemini-cli are not part of that loop.
+- Own the generate engine if the stock llama-server door is sunset or gimped. Fork later; do not vendor Copilot MCP to get there.
 - Models that keep inheriting each other's **verified** teachings. `/recall <query>` already searches `:8084`. Writes stay candidate until `/verify`. Extra sector/kind filters are optional, not a new vault.
 
 Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
@@ -168,6 +174,7 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 - [x] Teachings: Librarian candidates + rag-service retrieve (models inherit committed records)
 - [x] Bounded `/edit` + privileged `pwsh` behind bearer + `reasoning`
 - [ ] Mouth ships web-dev class GodBrain UI/product work (allowlist grows on purpose, still no mouth `git push`)
+- [ ] Copilot-class local loop is the daily driver (Galaxy + kernel tools + judge); Copilot/gemini-cli not required
 - [x] Richer teaching query for the mouth (`/recall <query>` and `query_recent_thoughts` search verified records through `:8084`, not Mongo MCP)
 - [ ] Autonomous CVE ingestion — not b-line
 - [ ] Cross-fleet patch (Devuan / macOS / Windows) — not this machine
@@ -176,4 +183,4 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 
 ## Credits
 
-This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GitHub release zips lag `master`; get a current binary with [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build Privexec from source. Do not copy `wsudo.exe` into this repo. GodBrain does not call it from Heal or `cpp_kernel`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.
+This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GitHub release zips lag `master`; get a current binary with [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build Privexec from source. Do not copy `wsudo.exe` into this repo. Heal never calls it. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `--ti`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.

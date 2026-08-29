@@ -25,16 +25,18 @@ phone glance, SRE diagnose-only, one Gemma mouth) **shipped** — see
 [`docs/architecture/next.md`](docs/architecture/next.md) (pointer) and
 [`docs/architecture/b-line.md`](docs/architecture/b-line.md) (snapshot).
 
-This desk: mouth is bartowski Gemma 12B IT **Q6_K_L**, MTP **off**; Colibri/GLM
-is research, not the Heal default. `/edit` writes allowlisted repo files
+This desk: mouth is bartowski Gemma 12B IT **Q6_K_L** with bartowski MTP
+(`-NoDraft` to disable); Colibri/GLM is research, not the Heal default. `/edit` writes allowlisted repo files
 (apply-only, no RAG, no Oracle persistence; Galaxy This host shows
 `Edit: ok|fail|none`). Librarian distills transcripts into **candidate**
 Golden Records. The operator `/verify` or `/reject` crowns truth. Playbooks
 stay candidate until a human judges. Host inventory and Learn-backed facts
 can auto-verify when a live probe or quote actually matches.
 
-Open kernel-path product is still **mouth-as-web-dev** (exact `*** APPLY`
-bytes). Later / not-this-host is [`docs/architecture/future.md`](docs/architecture/future.md).
+Galaxy chat tools are kernel-native (OpenAI `tool_calls`, no MCP). Golden
+Records are the manual the mouth RTFMs. Open product work is still
+**mouth-as-web-dev** (exact `*** APPLY` bytes). Later / not-this-host is
+[`docs/architecture/future.md`](docs/architecture/future.md).
 
 A second node is allowed only when a named signal pays for it (distinct
 specialty, real parallelism that does not share the GPU slot, a different

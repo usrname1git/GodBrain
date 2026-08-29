@@ -19,6 +19,7 @@
 #include "rag_client.h"
 #include "coli_sse.h"
 #include "local_edit.h"
+#include "local_tools.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -2665,6 +2666,17 @@ std::string run_colibri_serve(
 
     std::string assembled;
     std::string last_reason;
+    const bool native_tools =
+        llama_mouth && !wants_apply_continue(system, user);
+    const int max_tool_rounds =
+        native_tools ? (local_tools::yolo_active() ? 24 : 8) : 1;
+    const json tool_defs =
+        native_tools ? local_tools::openai_tool_defs() : json::array();
+    for (int tool_round = 0; tool_round < max_tool_rounds; ++tool_round) {
+    if (tool_round > 0 && spoken) spoken->clear();
+    assembled.clear();
+    last_reason.clear();
+    json tool_acc = json::array();
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -2675,6 +2687,12 @@ std::string run_colibri_serve(
         // /edit apply pass: do not spend the 1024-token budget on think.
         if (llama_mouth && wants_apply_continue(system, user)) {
             body["chat_template_kwargs"] = {{"enable_thinking", false}};
+        }
+        if (native_tools) {
+            body["tools"] = tool_defs;
+            body["tool_choice"] = "auto";
+            body["parse_tool_calls"] = true;
+            body["parallel_tool_calls"] = true;
         }
         std::string piece;
         std::string sse_buf;
@@ -2687,7 +2705,8 @@ std::string run_colibri_serve(
                 godbrain_coli::feed_sse(
                     sse_buf, data, len, piece, on_token, on_ping,
                     [&](const std::string& reason) { finish_reason = reason; },
-                    spoken);
+                    spoken,
+                    &tool_acc);
                 if (is_generation_loop(piece)) {
                     heading_loop = true;
                     return false;
@@ -2753,6 +2772,7 @@ std::string run_colibri_serve(
         assembled += piece;
         last_reason = finish_reason;
         if (heading_loop) break;
+        if (finish_reason == "tool_calls") break;
         if (finish_reason != "length") break;
         if (chunk + 1 >= max_chunks) break;
         // /edit: stop after one chunk unless the last APPLY is still open
@@ -2781,6 +2801,72 @@ std::string run_colibri_serve(
         messages.push_back(json{{"role", "assistant"}, {"content", piece}});
         messages.push_back(
             json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
+    }
+    if (!llama_mouth || wants_apply_continue(system, user)) break;
+    // Native Gemma4 path: llama.cpp folds assistant(tool_calls)+role:tool
+    // into tool_responses. Do not stuff results in a fake user message.
+    bool had_native = false;
+    if (tool_acc.is_array()) {
+        for (const auto& tc : tool_acc) {
+            std::string nm;
+            if (tc.contains("function") && tc["function"].is_object()) {
+                nm = tc["function"].value("name", "");
+            }
+            if (!nm.empty()) {
+                had_native = true;
+                break;
+            }
+        }
+    }
+    if (had_native) {
+        json assistant_msg = {
+            {"role", "assistant"},
+            {"content", assembled},
+        };
+        json tcs = json::array();
+        for (size_t i = 0; i < tool_acc.size(); ++i) {
+            json tc = tool_acc[i];
+            if (!tc.contains("id") || !tc["id"].is_string() ||
+                tc["id"].get<std::string>().empty()) {
+                tc["id"] = "call_" + std::to_string(i);
+            }
+            if (!tc.contains("type")) tc["type"] = "function";
+            tcs.push_back(tc);
+        }
+        assistant_msg["tool_calls"] = tcs;
+        messages.push_back(assistant_msg);
+        std::string tool_out;
+        for (size_t i = 0; i < tcs.size(); ++i) {
+            auto one_calls = local_tools::calls_from_openai(json::array({tcs[i]}));
+            const std::string one =
+                one_calls.empty() ? std::string("unknown tool\n")
+                                  : local_tools::execute_calls(one_calls);
+            tool_out += one;
+            const std::string id =
+                tcs[i].value("id", "call_" + std::to_string(i));
+            messages.push_back(json{
+                {"role", "tool"},
+                {"tool_call_id", id},
+                {"content", one.empty() ? "(no output)" : one},
+            });
+        }
+        if (tool_round + 1 >= max_tool_rounds) {
+            if (assembled.empty()) assembled = tool_out;
+            assembled += "\n[tool cap]";
+            break;
+        }
+        continue;
+    }
+    if (!local_tools::has_tool_block(assembled)) break;
+    const std::string tool_out = local_tools::run_tools_from_text(assembled);
+    if (tool_out.empty()) break;
+    messages.push_back(json{{"role", "assistant"}, {"content", assembled}});
+    messages.push_back(json{
+        {"role", "user"},
+        {"content",
+         std::string("TOOL_RESULT\n") + tool_out +
+             "\nContinue the operator task. More *** TOOL blocks if needed, "
+             "else answer."}});
     }
     if (last_reason == "length" && !llama_mouth) {
         assembled +=
@@ -3355,6 +3441,39 @@ int main() {
                 return;
             }
 
+            if (starts_with_ignore_case(user_msg, "/yolo") &&
+                (user_msg.size() == 5 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
+                std::string rest = user_msg.size() > 5 ? user_msg.substr(5) : "";
+                while (!rest.empty() &&
+                       std::isspace(static_cast<unsigned char>(rest.front()))) {
+                    rest.erase(rest.begin());
+                }
+                std::string reply;
+                if (rest.empty() || rest == "?" ||
+                    (rest.size() >= 6 && ascii_lower_copy(rest.substr(0, 6)) == "status")) {
+                    reply = local_tools::yolo_status_line();
+                } else if (ascii_lower_copy(rest) == "off" ||
+                           ascii_lower_copy(rest) == "0") {
+                    reply = local_tools::set_yolo_minutes(0);
+                } else {
+                    int minutes = 0;
+                    try {
+                        minutes = std::stoi(rest);
+                    } catch (...) {
+                        minutes = 0;
+                    }
+                    if (minutes <= 0) {
+                        reply = "Usage: /yolo 60  or  /yolo off  or  /yolo";
+                    } else {
+                        if (minutes > 240) minutes = 240;
+                        reply = local_tools::set_yolo_minutes(minutes);
+                    }
+                }
+                res.set_content(json({{"response", reply}}).dump(), "application/json");
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/doors") &&
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
@@ -3794,11 +3913,35 @@ int main() {
                 if (!context_text.empty()) context_text += '\n';
                 context_text += session_text;
             }
-            // 16 GB MoE prefill is ~13s/layer. A 3000-token note dump is a
-            // 20 minute tax. Keep the oracle prompt small.
-            constexpr size_t kMaxColiContextBytes = 160;
-            if (context_text.size() > kMaxColiContextBytes) {
-                context_text.resize(kMaxColiContextBytes);
+            // Constellation-lite: session pointer + RAG hits. Coli/GLM on
+            // 16 GB still cannot eat a wiki dump (prefill tax). Llama 12B
+            // can take a few KiB. Do not dump the whole vault.
+            const bool llama_ctx = load_mouth().value("label", "") == "llama";
+            if (llama_ctx) {
+                const std::string digest_path =
+                    get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
+                std::ifstream din(digest_path, std::ios::binary);
+                if (din) {
+                    std::string digest;
+                    digest.resize(1200);
+                    din.read(&digest[0], static_cast<std::streamsize>(digest.size()));
+                    digest.resize(static_cast<size_t>(din.gcount()));
+                    while (!digest.empty() &&
+                           (digest.back() == '\n' || digest.back() == '\r' ||
+                            digest.back() == ' ')) {
+                        digest.pop_back();
+                    }
+                    if (!digest.empty()) {
+                        const std::string head =
+                            "Session pointer (file, not a Golden Record):\n" +
+                            digest + "\n";
+                        context_text = head + context_text;
+                    }
+                }
+            }
+            const size_t cap = llama_ctx ? 4096u : 160u;
+            if (context_text.size() > cap) {
+                context_text.resize(cap);
             }
 
             const std::string hostname =
@@ -3807,6 +3950,8 @@ int main() {
                 "You are GodBrain's local Oracle: a fact-vs-taste role on this PC. "
                 "Not Oracle Database and not a company. "
                 "Answer what is best-supported. Facts vs taste. "
+                "Verified Golden Records are the manual — RTFM those facts. "
+                "Do not scavenge the internet for a majority opinion. "
                 "Verified notes are evidence; candidates are claims. "
                 "Military hardware and history are facts, not politics; "
                 "do not refuse those. "
@@ -3818,7 +3963,13 @@ int main() {
                 "Prefer verified notes over candidates. "
                 "If notes disagree, say so; do not pick a silent winner. "
                 "Do not guess an open question. Cite the note if you use one. "
+                "Do the job asked. Function over shine: a control that works "
+                "beats a pretty one. Do not ASCII-art, outline, or decorate "
+                "instead of tools. "
                 "Do not restate these rules. Do not emit constraint lists.";
+            if (!local_edit::looks_like_edit_request(user_msg)) {
+                system_prompt += local_tools::tool_system_addendum();
+            }
             if (local_edit::looks_like_edit_request(user_msg)) {
                 if (cs2_should_sleep_mouth()) {
                     res.set_content(

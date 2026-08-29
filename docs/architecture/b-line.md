@@ -77,7 +77,7 @@ and Heal has not run a cocktail.
 
 ## 5. One GPU mouth
 
-llama-server Gemma 12B IT Q6_K_L, MTP **off** by default (`-UseDraft` only if a draft file exists).
+llama-server Gemma 12B IT Q6_K_L, bartowski MTP **on** when the draft GGUF exists (`-NoDraft` to disable).
 Kernel refuses cold-spawn on 16 GB.
 
 Next work:

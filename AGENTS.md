@@ -9,7 +9,11 @@
   smart contracts, and vendored Colibri tree have different trust boundaries.
 - Prefer existing toolchains and checked-in dependencies. Do not add agent
   frameworks, MCP servers, bootstrap scripts, or package managers merely to make
-  an agent task easier.
+  an agent task easier. New mouth hands are a named function in
+  `godbrain_core/cpp_kernel/local_tools.cpp` (and the OpenAI `tools` schema
+  next to it). Not `npx -y @…`, not a 40-server MCP list, not a VS Code
+  plugin marketplace. npm MCP is clunky and a sunset risk; this repo does
+  not take that dependency.
 - Do not edit generated outputs (`build/`, `target/`, `out/`, `cache/`, binaries,
   object files, or model snapshots). Do not modernize `archive/neo4j`; it is
   historical and is not an active runtime dependency.
@@ -49,6 +53,39 @@ to count how many nodes the problem actually has. Usually one.
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
   implement this. The loop is Heal + judge + this file.
+
+## Foster, don't token-chase
+
+Weights will offer the shiny completion (ASCII painting a BIOS dump,
+constraint lists, "I cannot access files"). GodBrain raises the correct
+option above that, like teaching a kid what the work *is*:
+
+1. **Rails** (this file + kernel jail). A control is the click path that
+   does X, not that it is pretty.
+2. **Verified Golden Records.** `/verify` is the parent. The next generate
+   inherits crowned claims, not the raw transcript or a rejected guess.
+3. **Built-in tools.** Kernel executes. `/yolo` means keep doing the job
+   (offsets, sort, patch), not a slideshow.
+4. **Weights last.** Do not add prompt sludge or a 40-server MCP pile
+   that restates the rules.
+
+Not a second agent. Not a skill bible on the 12B mouth (that IMA'd).
+The judge is how they learn which option was correct.
+
+The wiped llama.cpp overlay (Gemini delete) is
+`archive/godbrain-llama-chat-extensions.extract.cpp`. It stuffed MCP
+tool names into `preserved_tokens`. Live path is kernel `tool_calls`,
+not that PEG list. Do not paste the 80 architect slogans into the 12B
+prompt.
+
+**Constellation** was a paid Node graph you could not see without a
+subscription. Do not bring Node constellation back. Inheritance is
+**verified** Golden Records (the manual) plus `logs/where-we-are.md` at
+session edges. `/recall` / `query_recent_thoughts` /
+`query_constellation` search that manual. A deep-dive that "already
+knew most of it but learned 4 skills" is Librarian: extract *new*
+claims against what is already verified, then `/verify`. Not Exa, not
+"aggregate whatever the internet said."
 
 ## Before implementing
 
@@ -118,6 +155,11 @@ cloud model to get it.
   learned" queries pull from committed `rag_documents`, not from raw
   transcripts. Raw may contain claims later rejected; that is why judge
   exists.
+- **Golden Records are the manual, not a popularity contest.** Oracle
+  search is verified-only so the mouth can RTFM. Ranking among those
+  cards finds the right page. It does not mean "most web hits win" and
+  it does not send the mouth to scavenge the internet. Unverified web
+  text stays raw or candidate until `/verify`.
 - **Extract claims, not a summary of the whole document.** Librarian writes
   specific new findings with evidence spans. Do not dump a paraphrase of the
   entire source into one node.
@@ -302,13 +344,47 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 ### Mouth (llama-server / Colibri)
 
 Live `/edit` works on the Gemma 12B IT mouth. Desk default is
-`scripts\Start-LlamaServer.ps1` bartowski Gemma 4 IT **Q6_K_L** without MTP.
-Hauhau QAT+MTP IMA'd Librarian extracts and was removed. Pass `-UseDraft`
-only if a draft GGUF is present. `-NoDraft` keeps MTP off.
+`scripts\Start-LlamaServer.ps1` bartowski Gemma 4 IT **Q6_K_L with MTP**
+when `mtp-gemma-4-12B-it-Q8_0.gguf` is on disk. Hauhau QAT+MTP IMA'd
+Librarian extracts and was removed (different draft). `-NoDraft` disables.
+`scripts\Invoke-MtpSoak.ps1` is the IMA soak (CUDA abort or garbled generate).
 OBLITERATUS Gemma 4 12B is a named lab switch (`-Obliterated`, v2 Q8_0 on
-`C:\nvme`). Not the Watch default. Keep MTP off.
+`C:\nvme`). Not the Watch default. MTP off unless `-UseDraft`.
 yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
-`C:\nvme`). Coding/tool fine-tune, not Watch default. Keep MTP off.
+`C:\nvme`). Coding/tool fine-tune, not Watch default. MTP off unless `-UseDraft`.
+
+Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
+(`--jinja` is already on; do not pass llama-server `--tools all`, do not
+add Copilot MCP or any MCP server into this repo). This host does not
+dual-run Copilot as the hands. GodBrain is the replacement: one built-in
+kernel tool surface, not a plugin pile. Gemma 4 emits `tool_calls`;
+llama.cpp folds `role:tool` into Gemma's `tool_responses`. llama-server is
+a swappable mouth, not the product. A GodBrain llama fork is later, only
+if stock ggml gimp or sunsets the tool path. `*** TOOL` text blocks still work as a
+fallback. Sticky under `C:\Users\autismo` and `C:\Temp\GitHub`:
+`list_local_dir` (depth), `read_local_file` (offset/limit/tail),
+`write_local_file` (append), `create_local_dir`, `move_local_file`,
+`get_file_info`, `search_local` (name or `content:`), `edit_local_file`
+(`replace_all`), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
+`run_node`. Excel/PDF/DOCX go through host Python libs, not C++ parsers.
+Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
+`start_process`, `create_directory`, `move_file`, `list_processes`) map
+onto those. No `kill_process`, no interactive SSH/DB, no Mongo, no Remote
+MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
+(no YOLO): console SysInternals `*64` from `C:\Tools\SysInternals`
+(`run_sysint` / `handle64` / `tcpvcon64` / `psping64` / `whois64` /
+`pslist64` / `autorunsc64` / …), `run_reg query`, `run_wevtutil qe|gl`,
+`run_logman query`, `run_schtasks /Query`, `run_host` (`tasklist` `whoami`
+`netstat` `fltmc` `ipconfig` show / `sc query`).
+`/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
+`run_elevate` (MinSudo / `wsudo -A -w`, never `--ti`),
+`reg add|delete`, `schtasks /Create|/Change|/Delete|/Run`, `wevtutil cl`,
+`logman start|stop`, `sc start|stop`, `ipconfig /flushdns`. Never:
+`pskill` / `PsExec` / `psshutdown` / `pssuspend` / `pspasswd` /
+`notmyfault` / Sysmon / livekd / sdelete / Intel MFIT / `git push` / DISM /
+reboot / SAM|SECURITY hives / GodBrain* task delete or disable /
+BFE|mpssvc|Dnscache|MongoDB stop. Heal still never launches SysInternals.
+CORS stays the kernel/localhost list.
 
 Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored
@@ -486,7 +562,7 @@ It does not start the kernel. Equivalent Developer-shell one-liner from
 `godbrain_core\cpp_kernel`:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
 ```
 
 Starting the kernel is an integration action: it may talk to Mongo via

@@ -30,8 +30,8 @@ never changes; only status does.
 
 | Component | Status | Path | Interface | Responsibility |
 |---|---|---|---|---|
-| Mouth (`llama-server` or `coli serve`) | Implemented | `scripts/Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Desk default is bartowski Gemma 12B IT Q6_K_L **without MTP** (`-UseDraft` only if a draft GGUF exists). Colibri is the interchangeable engine, not the protocol. |
-| C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, mouth invocation, privileged command dispatch, no-GPU GET doors |
+| Mouth (`llama-server` or `coli serve`) | Implemented | `scripts/Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Desk default is bartowski Gemma 12B IT Q6_K_L **with MTP** when the bartowski draft GGUF exists (`-NoDraft` to disable). Colibri is the interchangeable engine, not the protocol. |
+| C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, mouth invocation, built-in chat tools (`local_tools.cpp`, not MCP), privileged `command_type` dispatch, no-GPU GET doors |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and mouth invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
@@ -91,7 +91,7 @@ POST: `/api/remember`, `/api/librarian`, `/api/observe`, `/api/truth`,
 
 `/observe`, `/vram`, `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
 `/recall` (optional query searches verified records), `/status`, `/last`, `/brief`, `/pending`, `/heal`, `/sre`, `/edit`,
-`/last-edit`, `/doors`.
+`/last-edit`, `/doors`, `/yolo` (`/yolo 60` timed mutate/elevate hat, `/yolo off`).
 
 `/verify last <why>` and `/reject last <why>` judge the newest on-disk Oracle
 turn. `/verify <12-char prefix> <why>` resolves against `/pending`.

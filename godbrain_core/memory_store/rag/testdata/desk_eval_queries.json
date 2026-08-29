@@ -70,7 +70,7 @@
     },
     {
       "id": "mtp-off",
-      "query": "llama-server Gemma MTP off desk default",
+      "query": "llama-server Gemma mouth desk default",
       "needles": ["llama"],
       "sector": "windows-sre"
     }

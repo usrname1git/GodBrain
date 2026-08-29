@@ -16,12 +16,15 @@ What “done” meant, and where it lives now:
 - Phone glance without GPU (`/brief` first line, Tailscale bearer) —
   Phone glance in [`current.md`](current.md).
 - SRE diagnose-only until a named GO — same Heal / SRE section.
-- One GPU mouth, Gemma IT Q6_K_L, MTP off, CS2 yield — Mouth in
+- One GPU mouth, Gemma IT Q6_K_L, bartowski MTP on, CS2 yield — Mouth in
   [`current.md`](current.md).
 
 Standing rails did not expire: strengthen the verifier in place, do not
 hire Agent Factory, do not auto-verify playbooks.
 
 Open product work is **not** a second copy of this phase. README still has
-mouth-as-web-dev. [`future.md`](future.md) still has retention, the conflict
-queue (only if the verifier is actually overloaded), and the Factory nos.
+mouth-as-web-dev, and the Copilot/gemini-cli replacement on this host
+(Galaxy + kernel tools + judge; do not dual-run Copilot; llama-server is
+the current mouth, a fork only if ggml sunsets). [`future.md`](future.md)
+still has retention, the conflict queue (only if the verifier is actually
+overloaded), and the Factory nos.
