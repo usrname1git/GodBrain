@@ -17,8 +17,9 @@ service named `MongoDB`.
 ## Mouth (`:8000`)
 
 One GPU generate slot. Desk default is bartowski Gemma 12B IT **Q6_K_L** via
-`llama-server` **with no MTP** (`scripts/Start-LlamaServer.ps1`; `-UseDraft`
-enables a draft GGUF only if that file exists).
+`llama-server` **with MTP** when the bartowski draft GGUF exists
+(`scripts/Start-LlamaServer.ps1`; `-NoDraft` disables). Hauhau/official QAT
+MTP is not this draft. Soak: `scripts/Invoke-MtpSoak.ps1`.
 Heal/Watch kick that door, not Colibri. `-Obliterated` loads the local
 OBLITERATUS Gemma 4 12B v2 Q8_0 (Q6_K is not on the Hub); named GO, not the
 Watch default. `-Agentic` loads the local yuxinlu1 Gemma 4 12B v2 Q6_K
@@ -47,8 +48,19 @@ Ordinary loopback chat and GET glances are unauthenticated. Privileged
 PowerShell (`execute_godbrain_script`, `propose_sovereign_architect_change`) is
 an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` with a
 60s wait, capped concurrent pipes, and explicit job/process kill on timeout.
-If Job Object setup fails it still terminates the `pwsh` it created. Mouth
-text is never scanned and executed.
+If Job Object setup fails it still terminates the `pwsh` it created. Chat advertises OpenAI `tools` to llama-server (`--jinja`). Gemma 4 native
+`tool_calls` / `tool_responses` are executed by the kernel. Copilot MCP is
+not a runtime on this desk; GodBrain replaces that client. Do not dual-run.
+Llama chat prepends `logs/where-we-are.md` (session pointer) and verified
+RAG hits so the mouth can RTFM Golden Records (4 KiB cap). That is the
+manual, not an internet majority vote. Coli/GLM stays at 160 bytes.
+`query_constellation` is an alias of `query_recent_thoughts`. There is no
+Node constellation viewer. `*** TOOL` text is a fallback.
+Allowlist: FS under `C:\Users\autismo` and `C:\Temp\GitHub` (list/read/write/
+search/edit/move/mkdir/info/tail), SysInternals console `*64`,
+`reg`/`wevtutil`/`logman`/`schtasks` query, always-on `run_pwsh` /
+`run_python` / `run_node`. Mutate and `run_elevate` need `/yolo`. No Mongo
+shell, no process kill, no Remote MCP. Mouth text is not a general shell.
 
 Galaxy: graph, chat, This host vs Pending, SRE button. Brave extension talks to
 the same loopback API.

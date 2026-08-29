@@ -49,7 +49,7 @@ if (-not $SkipBackup -and (Test-Path -LiteralPath $exe)) {
 }
 
 $vcvars = Find-Vcvars64
-$sources = "main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp"
+$sources = "main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp"
 $clLine = "cl /nologo /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe $sources /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib"
 Push-Location $kernelDir
 try {

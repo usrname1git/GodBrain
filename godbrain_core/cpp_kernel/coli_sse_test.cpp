@@ -88,6 +88,34 @@ int main() {
         return 1;
     }
 
+    nlohmann::json tools = nlohmann::json::array();
+    std::string tool_assembled;
+    godbrain_coli::handle_sse_event(
+        R"SSE(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"list_local_dir","arguments":"{"}}]}}]})SSE",
+        tool_assembled, on_token, on_ping, {}, nullptr, &tools);
+    godbrain_coli::handle_sse_event(
+        R"SSE(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"path\":\"C:\\Temp\"}"}}]}}]})SSE",
+        tool_assembled, on_token, on_ping, {}, nullptr, &tools);
+    std::string tool_finish;
+    godbrain_coli::handle_sse_event(
+        R"SSE(data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]})SSE",
+        tool_assembled, on_token, on_ping,
+        [&](const std::string& r) { tool_finish = r; }, nullptr, &tools);
+    if (!expect(tool_assembled.empty(), "tool_calls are not spoken content")) {
+        return 1;
+    }
+    if (!expect(tool_finish == "tool_calls", "finish_reason tool_calls")) {
+        return 1;
+    }
+    if (!expect(tools.size() == 1 &&
+                    tools[0]["function"]["name"] == "list_local_dir" &&
+                    tools[0]["id"] == "c1" &&
+                    tools[0]["function"]["arguments"].get<std::string>().find(
+                        "path") != std::string::npos,
+                "tool_calls accumulate by index")) {
+        return 1;
+    }
+
     std::cout << "coli_sse_test ok" << std::endl;
     return 0;
 }

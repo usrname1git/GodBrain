@@ -10,12 +10,15 @@ param(
     [string]$Server = "C:\nvme\llama-cpp\llama-server.exe",
     [int]$Port = 8000,
     [int]$Ctx = 8192,
-    # Desk default is bartowski Gemma 4 12B IT Q6_K_L **without MTP**.
-    # Google QAT Q4_0 was replaced after Q6_K_L passed Librarian JSON extract
-    # and APPLY-block parse. Hauhau QAT+MTP IMA'd extracts and was deleted.
-    # Pass -UseDraft only if a draft GGUF is on disk; MTP stays off by default.
-    # Obliterated: -Obliterated (author v2 Q8_0). Named lab switch.
-    # Agentic gym: -Agentic (yuxinlu1 v2 Q6_K). Gym bro, not Watch default.
+    # Desk default is bartowski Gemma 4 12B IT Q6_K_L **with MTP** when the
+    # bartowski draft GGUF is on disk. Google QAT Q4_0 was replaced after
+    # Q6_K_L passed Librarian JSON extract and APPLY-block parse. Hauhau
+    # QAT+MTP IMA'd extracts and was deleted — that was a different draft,
+    # not this file. Pass -NoDraft to disable. -UseDraft opts lab switches in.
+    # Obliterated: -Obliterated (author v2 Q8_0). Named lab switch; MTP off
+    # unless -UseDraft (do not pair it with the bartowski draft by accident).
+    # Agentic gym: -Agentic (yuxinlu1 v2 Q6_K). Same rule. Soak:
+    # scripts\Invoke-MtpSoak.ps1. Fail closed: -NoDraft.
     [switch]$Obliterated,
     [switch]$Agentic,
     [switch]$UseDraft,
@@ -35,7 +38,13 @@ if ($Agentic -and -not $PSBoundParameters.ContainsKey('Model')) {
 }
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
-$useDraft = $UseDraft -and -not $NoDraft
+if ($NoDraft) {
+    $useDraft = $false
+} elseif ($Obliterated -or $Agentic) {
+    $useDraft = [bool]$UseDraft
+} else {
+    $useDraft = $true
+}
 $draftMissing = $false
 if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
     Write-Host "Start-LlamaServer: draft missing $Draft — starting without MTP"
@@ -60,8 +69,8 @@ function Test-Port([int]$PortNum) {
 }
 
 Write-Host "Start-LlamaServer: disabling Watch so it cannot restart coli mid-swap"
-schtasks /Change /TN GodBrainWatch /DISABLE 2>$null | Out-Null
 try {
+schtasks /Change /TN GodBrainWatch /DISABLE 2>$null | Out-Null
 $coli = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match '(?i)coli(\.exe)?["'']?\s+serve' })
 foreach ($p in $coli) {
@@ -106,6 +115,9 @@ $mouthLine = "llama-server $mouthTag" + $(if ($useDraft) { " mtp" } else { "" })
 # Do not pass -ngl: --fit on only adjusts unset knobs. 999 packed the 16 GB card.
 # WMI Create so llama-server is not a child of this shell's Job Object.
 # Start-Process dies with the agent wrapper; Win32_Process.Create does not.
+$alias = "Gemma4-12B-IT"
+if ($Model -match 'obliterat') { $alias = "Gemma4-12B-OBLITERATED" }
+elseif ($Model -match 'agentic|gemma4-v2-Q6') { $alias = "Gemma4-12B-Agentic" }
 $argParts = @(
     "--host 127.0.0.1",
     "--port $Port",
@@ -115,7 +127,7 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
-    "-a $(if ($Model -match 'obliterat') { 'Gemma4-12B-OBLITERATED' } elseif ($Model -match 'agentic|gemma4-v2-Q6') { 'Gemma4-12B-Agentic' } else { 'Gemma4-12B-IT' })",
+    "-a $alias",
     "--log-file `"$stderr`""
 )
 if ($useDraft) {
@@ -128,10 +140,12 @@ if ($useDraft) {
 } else {
     if ($draftMissing) {
         Write-Host "Start-LlamaServer: MTP off (draft missing)"
-    } elseif ($UseDraft -and $NoDraft) {
-        Write-Host "Start-LlamaServer: MTP off (-NoDraft wins over -UseDraft)"
+    } elseif ($NoDraft) {
+        Write-Host "Start-LlamaServer: MTP off (-NoDraft)"
+    } elseif ($Obliterated -or $Agentic) {
+        Write-Host "Start-LlamaServer: MTP off (lab switch; pass -UseDraft to enable)"
     } else {
-        Write-Host "Start-LlamaServer: MTP off (desk default; pass -UseDraft to enable)"
+        Write-Host "Start-LlamaServer: MTP off"
     }
 }
 # Launch llama-server.exe directly. A cmd wrapper is a console process and
@@ -170,6 +184,9 @@ if (-not $up) {
 }
 Write-Host "Start-LlamaServer: up on :$Port  model=$Model"
 Write-Host "Galaxy: http://127.0.0.1:8083/galaxy"
+} catch {
+    Write-Host ("Start-LlamaServer: failed: {0}" -f $_.Exception.Message)
+    throw
 } finally {
     schtasks /Change /TN GodBrainWatch /ENABLE 2>$null | Out-Null
 }
