@@ -25,6 +25,20 @@ int main() {
     pass &= expect(local_tools::path_is_granted("C:\\Temp\\GitHub", &err), "temp github granted");
     pass &= expect(local_tools::path_is_granted("C:\\Users\\autismo\\Desktop", &err),
                    "profile desktop granted");
+    CreateDirectoryA("C:\\Temp\\GitHub", nullptr);
+    const char kJunc[] = "C:\\Temp\\GitHub\\godbrain-junc-win";
+    RemoveDirectoryA(kJunc);
+    const std::string mklink = std::string("cmd.exe /c mklink /J \"") + kJunc +
+                               "\" \"C:\\Windows\" >nul 2>nul";
+    system(mklink.c_str());
+    const bool junc_ok =
+        (GetFileAttributesA(kJunc) != INVALID_FILE_ATTRIBUTES);
+    if (junc_ok) {
+        pass &= expect(!local_tools::path_is_granted(
+                           std::string(kJunc) + "\\System32\\cmd.exe", &err),
+                       "junction to windows denied");
+        RemoveDirectoryA(kJunc);
+    }
 
     const std::string sample =
         "*** TOOL\nname: list_local_dir\npath: C:\\Temp\\GitHub\n*** END\n";

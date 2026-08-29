@@ -117,6 +117,51 @@ bool starts_with_ci(const std::string& value, const std::string& prefix) {
     return ascii_lower(value.substr(0, prefix.size())) == ascii_lower(prefix);
 }
 
+std::string strip_extended_prefix(std::string path) {
+    if (starts_with_ci(path, "\\\\?\\UNC\\")) {
+        return "\\\\" + path.substr(8);
+    }
+    if (starts_with_ci(path, "\\\\?\\")) {
+        return path.substr(4);
+    }
+    return path;
+}
+
+std::string final_path(const std::string& path) {
+    std::string probe = canon_path(path);
+    if (probe.empty()) return "";
+    std::string suffix;
+    for (int hop = 0; hop < 48; ++hop) {
+        HANDLE h = CreateFileA(
+            probe.c_str(), 0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            char buf[32768];
+            const DWORD n = GetFinalPathNameByHandleA(
+                h, buf, 32768, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+            CloseHandle(h);
+            if (n == 0 || n >= 32768) {
+                return suffix.empty() ? probe : canon_path(probe + "\\" + suffix);
+            }
+            std::string fin = strip_extended_prefix(std::string(buf, n));
+            if (!suffix.empty()) {
+                if (!fin.empty() && fin.back() != '\\') fin.push_back('\\');
+                fin += suffix;
+                const std::string joined = canon_path(fin);
+                return joined.empty() ? fin : joined;
+            }
+            return fin;
+        }
+        const size_t slash = probe.find_last_of("\\/");
+        if (slash == std::string::npos || slash < 2) break;
+        const std::string name = probe.substr(slash + 1);
+        probe = probe.substr(0, slash);
+        suffix = suffix.empty() ? name : (name + "\\" + suffix);
+    }
+    return canon_path(path);
+}
+
 bool file_exists(const std::string& path) {
     return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
@@ -648,13 +693,13 @@ std::vector<std::string> default_roots() {
 }
 
 bool path_is_granted(const std::string& path, std::string* err) {
-    const std::string full = canon_path(path);
+    const std::string full = final_path(path);
     if (full.empty()) {
         if (err) *err = "cannot canonicalize path";
         return false;
     }
     for (const auto& root : default_roots()) {
-        const std::string r = canon_path(root);
+        const std::string r = final_path(root);
         if (r.empty()) continue;
         if (ascii_lower(full) == ascii_lower(r)) return true;
         const std::string prefix = r + "\\";

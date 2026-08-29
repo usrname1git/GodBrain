@@ -45,14 +45,17 @@ function Write-Color {
     Write-Host $Text -ForegroundColor $Color
 }
 
-# Use the variable to build absolute paths dynamically
-$SourceDir = Join-Path $scriptDir "llama.cpp"
-$RuntimeDir = Join-Path $scriptDir "llama-cpp"
-$GodBrainDir = $scriptDir
-
-# Use the variable to build absolute paths dynamically without hardcoding
-$llamaSourcePath = Join-Path -Path $scriptDir -ChildPath "llama.cpp"
-$buildOutputPath = Join-Path -Path $scriptDir -ChildPath "build"
+if (-not $PSBoundParameters.ContainsKey('GodBrainDir')) {
+    $GodBrainDir = (Resolve-Path (Join-Path $scriptDir '..')).Path
+}
+if (-not $PSBoundParameters.ContainsKey('SourceDir')) {
+    $SourceDir = Join-Path $env:USERPROFILE 'llama.cpp'
+}
+if (-not $PSBoundParameters.ContainsKey('RuntimeDir')) {
+    $RuntimeDir = Join-Path $env:USERPROFILE 'llama-cpp'
+}
+$llamaSourcePath = $SourceDir
+$buildOutputPath = Join-Path $SourceDir 'build'
 
 Write-Host "Building llama.cpp from $llamaSourcePath into $buildOutputPath"
 
@@ -366,16 +369,14 @@ function Invoke-CustomBuild {
             }
 
             $cmakeArgs += @(
-             cmake -B build -S . `
-  -DGGML_CUDA=ON `
-  -DCMAKE_CUDA_ARCHITECTURES="89" `           # Your Ada GPU - lock it hard
-  -DCMAKE_BUILD_TYPE=Release `
-  -DGGML_NATIVE=OFF `                         # Disable some native/exotic stuff
-  -DGGML_CUDA_FORCE_MMQ=ON `                  # Force quantized kernels (good for GGUF)
-  -DGGML_CUDA_F16=ON `                        # Helps quantized perf
-  -DGGML_SCHED_MAX_COPIES=2 `
-  -DCMAKE_CXX_FLAGS="/bigobj /Zm2000" `
-  -G "Visual Studio 17 2022" -A x64
+                "-DGGML_CUDA=ON",
+                "-DCMAKE_CUDA_ARCHITECTURES=89",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DGGML_NATIVE=OFF",
+                "-DGGML_CUDA_FORCE_MMQ=ON",
+                "-DGGML_CUDA_F16=ON",
+                "-DGGML_SCHED_MAX_COPIES=2",
+                "-DCMAKE_CXX_FLAGS=/bigobj /Zm2000"
             )
 
             if ($Generator -match 'Ninja') {
