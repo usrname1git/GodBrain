@@ -847,7 +847,7 @@ std::string unknown_tool_msg(const std::string& name) {
            "move_local_file get_file_info search_local edit_local_file "
            "run_strings run_sqlite3 run_sysint run_reg run_wevtutil run_logman "
            "run_schtasks run_pwsh run_python run_node run_elevate run_host "
-           "acl_takeover acl_release). "
+           "acl_takeover acl_release list_granted_roots). "
            "Never pskill/kill_process/psexec/psshutdown/notmyfault/sysmon/MFIT/"
            "--ti/mongo. Heal never launches these.\n";
 }
@@ -1197,6 +1197,9 @@ std::string execute_calls(const std::vector<Call>& calls) {
             c.name = "move_local_file";
         } else if (c.name == "get_metadata") {
             c.name = "get_file_info";
+        } else if (c.name == "list_authorized_paths" ||
+                   c.name == "authorized_paths" || c.name == "granted_roots") {
+            c.name = "list_granted_roots";
         } else if (c.name == "python") {
             c.name = "run_python";
         } else if (c.name == "node") {
@@ -1224,6 +1227,12 @@ std::string execute_calls(const std::vector<Call>& calls) {
             c.name == "read_process_output") {
             out << "interact_with_process denied: no interactive sessions. "
                    "Use run_pwsh / run_python / run_node (60s Job).\n";
+            continue;
+        }
+
+        if (c.name == "list_granted_roots") {
+            out << "list_granted_roots\n" << roots_join() << "\n"
+                << "Kernel jail, not Mongo. get_file_info to probe a path.\n";
             continue;
         }
 
@@ -1956,13 +1965,15 @@ bool looks_like_local_fs_ask(const std::string& msg) {
     const std::string t = ascii_lower(msg);
     const bool place = has_word(t, "repo") || has_word(t, "folder") ||
                        has_word(t, "directory") || has_word(t, "path") ||
-                       has_word(t, "files") || has_word(t, "file");
+                       has_word(t, "paths") || has_word(t, "files") ||
+                       has_word(t, "file");
     const bool rw_phrase =
         t.find("r/w") != std::string::npos || has_word(t, "rw") ||
         t.find("read and write") != std::string::npos ||
         t.find("write access") != std::string::npos;
     if (rw_phrase && place) return true;
-    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail");
+    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail") ||
+                              has_word(t, "authorized") || has_word(t, "allowlist");
     if (has_word(t, "granted") && has_word(t, "jail")) return true;
     return jail_granted && place;
 }
@@ -1986,6 +1997,8 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "acl_takeover / acl_release (wsudo -T TI, then takeown /R /A /SKIPSL "
             "and icacls Administrators:(OI)(CI)F, then restore the saved ACL). "
             "Never pskill/git push/DISM/reboot/Mongo. "
+            "Authorized paths are those jail roots from the kernel, not Mongo. "
+            "Call list_granted_roots. Never say you cannot query Mongo. "
             "Call tools when the operator asks to inspect the host or a granted folder. "
             "Do not claim you lack a filesystem.";
     } else {
@@ -1996,7 +2009,9 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "C:\\Temp\\GitHub). "
             "To verify a path: get_file_info or list_local_dir, then say yes or no. "
             "read_local_file / write_local_file / edit_local_file / search_local / "
-            "create_local_dir. Not git push. Ordinary trivia: no tools. "
+            "create_local_dir / list_granted_roots. Authorized paths are that "
+            "jail, from the kernel, not Mongo. Call list_granted_roots. Never "
+            "say you cannot query Mongo. Not git push. Ordinary trivia: no tools. "
             "Do not claim you lack a filesystem.";
     }
     if (yolo_active()) {
@@ -2080,6 +2095,11 @@ nlohmann::json openai_tool_defs(bool full) {
          {"content", content},
          {"args", args}},
         {"path", "old_text", "content"}));
+    tools.push_back(tool_fn(
+        "list_granted_roots",
+        "Print the kernel file-jail roots (live env). Not Mongo. Call this "
+        "when asked which paths are authorized.",
+        json::object()));
     if (!full) return tools;
     tools.push_back(tool_fn(
         "move_local_file", "Move/rename a granted path to dest (also granted).",

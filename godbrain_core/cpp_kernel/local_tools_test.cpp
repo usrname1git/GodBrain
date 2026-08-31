@@ -296,21 +296,36 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 7, "files hop 7 tools");
+    pass &= expect(files.is_array() && files.size() == 8, "files hop 8 tools");
     bool files_has_sysint = false;
     bool files_has_info = false;
+    bool files_has_roots = false;
     for (const auto& t : files) {
         const std::string n = t["function"].value("name", "");
         if (n == "run_sysint") files_has_sysint = true;
         if (n == "get_file_info") files_has_info = true;
+        if (n == "list_granted_roots") files_has_roots = true;
     }
     pass &= expect(!files_has_sysint, "files hop no sysint");
     pass &= expect(files_has_info, "files hop has get_file_info");
+    pass &= expect(files_has_roots, "files hop has list_granted_roots");
     const auto host_defs =
         local_tools::openai_tool_defs_for("run_sysint handle64 on CS2");
     pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
     pass &= expect(!local_tools::looks_like_local_fs_ask("what is 2+2"),
                    "math is not local-fs");
+    pass &= expect(
+        local_tools::looks_like_local_fs_ask("what are the authorized paths"),
+        "authorized paths is local-fs");
+    {
+        const std::string roots = local_tools::run_tools_from_text(
+            "*** TOOL\nname: list_granted_roots\n*** END\n");
+        pass &= expect(roots.find("list_granted_roots") != std::string::npos &&
+                           roots.find("not Mongo") != std::string::npos &&
+                           (roots.find("C:\\Tools") != std::string::npos ||
+                            roots.find("C:\\Users") != std::string::npos),
+                       "list_granted_roots prints jail");
+    }
     pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Temp\\GitHub"),
                    "list granted temp is local-fs");
     pass &= expect(

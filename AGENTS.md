@@ -389,7 +389,7 @@ fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
 `C:\Temp\GitHub` (Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
 `write_local_file` (append), `create_local_dir`, `move_local_file`,
-`get_file_info`, `search_local` (name or `content:`), `edit_local_file`
+`get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `search_local` (name or `content:`), `edit_local_file`
 (`replace_all`), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
 `run_node`. Excel/PDF/DOCX go through host Python libs, not C++ parsers.
 Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
