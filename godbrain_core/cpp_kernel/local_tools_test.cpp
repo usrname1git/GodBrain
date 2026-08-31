@@ -159,6 +159,12 @@ int main() {
         "*** TOOL\nname: run_elevate\n<<<<\nwhoami\n>>>>\n*** END\n";
     const std::string eres = local_tools::run_tools_from_text(elev);
     pass &= expect(eres.find("YOLO required") != std::string::npos, "elevate needs yolo");
+    const std::string acl_need =
+        "*** TOOL\nname: acl_takeover\npath: C:\\Temp\\GitHub\\godbrain-acl-test\n"
+        "*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(acl_need).find("YOLO required") !=
+                       std::string::npos,
+                   "acl takeover needs yolo");
 
     const std::string gb_del =
         "*** TOOL\nname: run_schtasks\nargs: /Delete /TN GodBrainWatch /F\n*** END\n";
@@ -178,6 +184,22 @@ int main() {
     const std::string gres2 = local_tools::run_tools_from_text(gb_del);
     pass &= expect(gres2.find("GodBrain") != std::string::npos,
                    "godbrain task delete blocked in yolo");
+    pass &= expect(local_tools::run_tools_from_text(
+                       "*** TOOL\nname: acl_takeover\npath: C:\\Windows\\System32\n"
+                       "*** END\n")
+                       .find("denied") != std::string::npos,
+                   "acl system32 denied");
+    pass &= expect(
+        local_tools::run_tools_from_text(
+            "*** TOOL\nname: acl_takeover\n"
+            "path: C:\\Windows\\System32\\config\\SAM\n*** END\n")
+            .find("denied") != std::string::npos,
+        "acl SAM denied");
+    pass &= expect(local_tools::run_tools_from_text(
+                       "*** TOOL\nname: acl_release\n"
+                       "path: C:\\Temp\\GitHub\\no-such-acl-key\n*** END\n")
+                       .find("denied") != std::string::npos,
+                   "acl release without key denied");
     local_tools::set_yolo_minutes(0);
 
     const std::string clock =

@@ -403,6 +403,9 @@ MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
 `netstat` `fltmc` `ipconfig` show / `sc query`).
 `/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
 `run_elevate` (MinSudo / `wsudo -A -w`, never `--ti`),
+`acl_takeover` / `acl_release` (`takeown /f /r /d y` then
+`icacls /grant Administrators:F /t /q`, then restore the saved DACL — throw
+the key; not `/reset`),
 `reg add|delete`, `schtasks /Create|/Change|/Delete|/Run`, `wevtutil cl`,
 `logman start|stop`, `sc start|stop`, `ipconfig /flushdns`. Never:
 `pskill` / `PsExec` / `psshutdown` / `pssuspend` / `pspasswd` /

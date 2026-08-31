@@ -32,6 +32,7 @@ constexpr size_t kMaxListEntries = 500;
 constexpr size_t kMaxPwshBytes = 64 * 1024;
 constexpr DWORD kToolTimeoutMs = 30000;
 constexpr DWORD kPwshTimeoutMs = 60000;
+constexpr DWORD kAclTimeoutMs = 120000;
 
 const char kSysintDir[] = "C:\\Tools\\SysInternals";
 const char kMinSudo[] = "C:\\Tools\\TeamM2\\MinSudo.exe";
@@ -480,8 +481,77 @@ std::string system32(const char* name) {
     return std::string(buf) + "\\" + name;
 }
 
+std::string find_pwsh();
+
 std::string quote_path(const std::string& path) {
     return "\"" + path + "\"";
+}
+
+std::string ps_literal(const std::string& path) {
+    std::string out = "'";
+    for (char ch : path) {
+        if (ch == '\'') out += "''";
+        else out.push_back(ch);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+std::string acl_id(const std::string& full) {
+    uint64_t h = 14695981039346656037ull;
+    const std::string low = ascii_lower(full);
+    for (unsigned char c : low) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+
+std::string acl_store_dir() { return "C:\\Temp\\GitHub\\.godbrain-acl"; }
+
+bool acl_hive_denied(const std::string& full) {
+    std::string t = ascii_lower(full);
+    for (char& ch : t) {
+        if (ch == '/') ch = '\\';
+    }
+    while (!t.empty() && t.back() == '\\') t.pop_back();
+    if (t == "c:" || t == "c:\\windows" || t == "c:\\windows\\system32") {
+        return true;
+    }
+    const char* hives[] = {"sam", "security", "system", nullptr};
+    for (int i = 0; hives[i]; ++i) {
+        const std::string needle =
+            std::string("\\system32\\config\\") + hives[i];
+        const size_t p = t.find(needle);
+        if (p == std::string::npos) continue;
+        const size_t after = p + needle.size();
+        if (after == t.size() || t[after] == '\\' || t[after] == '.') return true;
+    }
+    return false;
+}
+
+std::string run_elevated_file(const std::string& tmp) {
+    const std::string pwsh = find_pwsh();
+    if (pwsh.empty()) return "pwsh.exe not found";
+    if (file_exists(kMinSudo)) {
+        return run_process(kMinSudo,
+                           "--NoLogo " + quote_path(pwsh) +
+                               " -NoProfile -NonInteractive -File " +
+                               quote_path(tmp),
+                           kAclTimeoutMs);
+    }
+    if (file_exists(kWsudo)) {
+        return run_process(kWsudo,
+                           "-A -w " + quote_path(pwsh) +
+                               " -NoProfile -NonInteractive -File " +
+                               quote_path(tmp),
+                           kAclTimeoutMs);
+    }
+    return run_process(pwsh,
+                       "-NoProfile -NonInteractive -File " + quote_path(tmp),
+                       kAclTimeoutMs);
 }
 
 std::string with_accepteula(const std::string& args) {
@@ -706,7 +776,8 @@ std::string unknown_tool_msg(const std::string& name) {
            " (list_local_dir read_local_file write_local_file create_local_dir "
            "move_local_file get_file_info search_local edit_local_file "
            "run_strings run_sqlite3 run_sysint run_reg run_wevtutil run_logman "
-           "run_schtasks run_pwsh run_python run_node run_elevate run_host). "
+           "run_schtasks run_pwsh run_python run_node run_elevate run_host "
+           "acl_takeover acl_release). "
            "Never pskill/kill_process/psexec/psshutdown/notmyfault/sysmon/MFIT/"
            "--ti/mongo. Heal never launches these.\n";
 }
@@ -1021,6 +1092,19 @@ std::string execute_calls(const std::vector<Call>& calls) {
         } else if (c.name == "pwsh" || c.name == "powershell") c.name = "run_pwsh";
         else if (c.name == "elevate" || c.name == "wsudo" || c.name == "minsudo") {
             c.name = "run_elevate";
+        } else if (c.name == "takeown" || c.name == "run_takeown" ||
+                   c.name == "acl_takeover") {
+            c.name = "acl_takeover";
+        } else if (c.name == "icacls" || c.name == "run_icacls" ||
+                   c.name == "acl_release") {
+            if (contains_ci(c.args, "restore") || contains_ci(c.args, "release") ||
+                contains_ci(c.name, "release")) {
+                c.name = "acl_release";
+            } else if (c.name == "acl_release") {
+                c.name = "acl_release";
+            } else {
+                c.name = "acl_takeover";
+            }
         } else if (c.name == "wevtutil") c.name = "run_wevtutil";
         else if (c.name == "logman") c.name = "run_logman";
         else if (c.name == "schtasks") c.name = "run_schtasks";
@@ -1597,6 +1681,81 @@ std::string execute_calls(const std::vector<Call>& calls) {
             continue;
         }
 
+        if (c.name == "acl_takeover" || c.name == "acl_release") {
+            if (yolo_required_msg(out, c.name)) continue;
+            if (c.path.empty()) {
+                out << c.name << ": path required\n";
+                continue;
+            }
+            if (!path_is_granted(c.path, &err)) {
+                out << c.name << " denied: " << err << "\n";
+                continue;
+            }
+            const std::string full = final_path(expand_env(c.path));
+            if (full.empty()) {
+                out << c.name << " denied: cannot canonicalize path\n";
+                continue;
+            }
+            if (acl_hive_denied(full)) {
+                out << c.name
+                    << " denied: C:\\, C:\\Windows, and SAM/SECURITY/SYSTEM "
+                       "hives are operator GO.\n";
+                continue;
+            }
+            ensure_dir(acl_store_dir());
+            const std::string id = acl_id(full);
+            const std::string key = acl_store_dir() + "\\" + id + ".txt";
+            const std::string meta = key + ".meta.json";
+            std::string body;
+            if (c.name == "acl_takeover") {
+                body = "$ErrorActionPreference = 'Continue'\n"
+                       "$p = " +
+                       ps_literal(full) +
+                       "\n"
+                       "$key = " +
+                       ps_literal(key) +
+                       "\n"
+                       "$meta = " +
+                       ps_literal(meta) +
+                       "\n"
+                       "$parent = Split-Path -Parent $p\n"
+                       "if ([string]::IsNullOrWhiteSpace($parent)) { $parent = $p }\n"
+                       "icacls $p /save $key /t /q\n"
+                       "Write-Output \"icacls save exit $LASTEXITCODE\"\n"
+                       "@{ path = $p; parent = $parent; key = $key } | "
+                       "ConvertTo-Json | Set-Content -LiteralPath $meta -Encoding UTF8\n"
+                       "takeown /f $p /r /d y\n"
+                       "Write-Output \"takeown exit $LASTEXITCODE\"\n"
+                       "icacls $p /grant '*S-1-5-32-544:F' /t /q\n"
+                       "Write-Output \"icacls grant Administrators:F exit $LASTEXITCODE\"\n"
+                       "Write-Output \"acl_takeover ok $p\"\n"
+                       "Write-Output \"acl_release the same path when the job is done\"\n";
+            } else {
+                body = "$ErrorActionPreference = 'Continue'\n"
+                       "$metaPath = " +
+                       ps_literal(meta) +
+                       "\n"
+                       "if (-not (Test-Path -LiteralPath $metaPath)) {\n"
+                       "  Write-Output 'acl_release denied: no saved key for this path. "
+                       "Not guessing icacls /reset.'\n"
+                       "  exit 2\n"
+                       "}\n"
+                       "$m = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json\n"
+                       "icacls $m.parent /restore $m.key /q\n"
+                       "Write-Output \"icacls restore exit $LASTEXITCODE\"\n"
+                       "Remove-Item -LiteralPath $m.key,$metaPath -Force -ErrorAction SilentlyContinue\n"
+                       "Write-Output \"acl_release ok $($m.path)\"\n";
+            }
+            const std::string tmp = write_temp_ps1(body);
+            if (tmp.empty()) {
+                out << c.name << ": cannot write temp script\n";
+                continue;
+            }
+            out << c.name << " " << full << "\n"
+                << run_elevated_file(tmp) << "\n";
+            continue;
+        }
+
         if (c.name == "run_elevate") {
             if (yolo_required_msg(out, "run_elevate")) continue;
             if (c.content.empty() && c.args.empty() && c.path.empty()) {
@@ -1669,7 +1828,7 @@ bool looks_like_host_inspect(const std::string& msg) {
         "reg query", "reg.exe", "registry", "run_elevate", "minsudo",
         "run_pwsh", "run_python", "run_node", "run_host", "run_reg",
         "run_wevtutil", "run_logman", "run_schtasks", "run_strings",
-        "sqlite", nullptr};
+        "sqlite", "takeown", "icacls", "acl_takeover", "acl_release", nullptr};
     for (int i = 0; keys[i]; ++i) {
         if (t.find(keys[i]) != std::string::npos) return true;
     }
@@ -1719,7 +1878,9 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "run_strings, run_sqlite3, run_pwsh, run_python, run_node, "
             "run_sysint, run_reg query, run_wevtutil, run_logman, "
             "run_schtasks /Query, run_host. "
-            "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti). "
+            "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti); "
+            "acl_takeover / acl_release (takeown + icacls Administrators:F, "
+            "then restore the saved ACL). "
             "Never pskill/git push/DISM/reboot/Mongo. "
             "Call tools when the operator asks to inspect the host or a granted folder. "
             "Do not claim you lack a filesystem.";
@@ -1736,7 +1897,9 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
     }
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "
-             "(map, sort, patch). No ASCII art, no outline, no asking.";
+             "(map, sort, patch). No ASCII art, no outline, no asking. "
+             "ACL: acl_takeover path, do the job, acl_release path. "
+             "Throw away the key; do not leave Administrators:F.";
     }
     return s;
 }
@@ -1872,6 +2035,17 @@ nlohmann::json openai_tool_defs(bool full) {
         "run_elevate",
         "YOLO only. MinSudo/wsudo -A, never --ti. Body is pwsh to run elevated.",
         {{"content", content}, {"path", path}}));
+    tools.push_back(tool_fn(
+        "acl_takeover",
+        "YOLO only. Hostile ACL takeover of a granted path: save DACL, "
+        "takeown /f /r /d y, icacls /grant Administrators:F /t /q (SID "
+        "S-1-5-32-544). Then do the job and call acl_release. Not SAM/SECURITY.",
+        {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "acl_release",
+        "YOLO only. Throw away the takeover key: restore the saved DACL for "
+        "path. Fails closed if no save exists (will not icacls /reset).",
+        {{"path", path}}, {"path"}));
     return tools;
 }
 
