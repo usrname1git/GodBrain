@@ -1,5 +1,5 @@
 # Unified no-GPU core gate. Desk doors plus Jarvis offline tests.
-# Not a Node graph. Writes logs/last-core-gate.json.
+# Writes logs/last-core-gate.json.
 #
 #   .\scripts\Test-GodBrainCore.ps1
 #   .\scripts\Test-GodBrainCore.ps1 -LiveMouth
@@ -23,12 +23,13 @@ function Add-Part([string]$Name, [bool]$Ok, [string]$Note) {
     if (-not $Ok) { $fails.Add("$Name : $Note") }
 }
 
+$hostExe = (Get-Process -Id $PID).Path
 $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
 $jarvis = Join-Path $RepoRoot "scripts\Test-JarvisLoop.ps1"
 if (-not (Test-Path -LiteralPath $desk)) {
     Add-Part "desk" $false "missing Test-GodBrainDesk.ps1"
 } else {
-    $p = Start-Process -FilePath "pwsh" -ArgumentList @(
+    $p = Start-Process -FilePath $hostExe -ArgumentList @(
         "-NoProfile", "-File", $desk, "-RepoRoot", $RepoRoot, "-Base", $Base
     ) -Wait -PassThru -NoNewWindow
     Add-Part "desk" ($p.ExitCode -eq 0) $(if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" })
@@ -37,10 +38,10 @@ if (-not (Test-Path -LiteralPath $desk)) {
 if (-not (Test-Path -LiteralPath $jarvis)) {
     Add-Part "jarvis" $false "missing Test-JarvisLoop.ps1"
 } else {
-    $args = @("-NoProfile", "-File", $jarvis, "-RepoRoot", $RepoRoot, "-Base", $Base)
-    if ($LiveMouth) { $args += "-LiveMouth" }
-    if ($LiveJarvis) { $args += "-LiveJarvis" }
-    $p = Start-Process -FilePath "pwsh" -ArgumentList $args -Wait -PassThru -NoNewWindow
+    $jarvisArgs = @("-NoProfile", "-File", $jarvis, "-RepoRoot", $RepoRoot, "-Base", $Base)
+    if ($LiveMouth) { $jarvisArgs += "-LiveMouth" }
+    if ($LiveJarvis) { $jarvisArgs += "-LiveJarvis" }
+    $p = Start-Process -FilePath $hostExe -ArgumentList $jarvisArgs -Wait -PassThru -NoNewWindow
     Add-Part "jarvis" ($p.ExitCode -eq 0) $(if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" })
 }
 

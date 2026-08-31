@@ -8,7 +8,7 @@
 
 #include "../cpp_tools/keccak256.hpp"
 
-// Selected-text browser evidence (item 6). Title+URL is metadata. A quote is
+// Selected-text browser evidence. Title+URL is metadata. A quote is
 // untrusted, candidate, and must never be used as a command or tool grant.
 namespace browser_evidence {
 

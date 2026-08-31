@@ -1058,11 +1058,16 @@ static json kernel_status_body() {
     };
 }
 
-static browser_evidence::Evidence parse_browser_evidence(const json& payload) {
-    json src = payload;
+static browser_evidence::Evidence parse_browser_evidence(const json& payload,
+                                                         bool top_level) {
+    json src = json::object();
     if (payload.contains("browser_evidence") &&
         payload["browser_evidence"].is_object()) {
         src = payload["browser_evidence"];
+    } else if (top_level) {
+        src = payload;
+    } else {
+        return {};
     }
     auto str = [&](const char* key) -> std::string {
         if (src.contains(key) && src[key].is_string()) {
@@ -1085,7 +1090,7 @@ static void handle_remember(const httplib::Request& req, httplib::Response& res)
     if (!write_authorized(req, res)) return;
     try {
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
-        const browser_evidence::Evidence ev = parse_browser_evidence(payload);
+        const browser_evidence::Evidence ev = parse_browser_evidence(payload, true);
         std::string text;
         std::string source_type = "operator_thought";
         std::string sector = payload.value("sector", "operator");
@@ -1661,8 +1666,11 @@ static std::string core_events_path() {
     return repo_root_from_exe() + "\\logs\\core-events.jsonl";
 }
 
+static std::mutex g_core_events_mu;
+
 static void append_core_event(const std::string& kind, const std::string& detail) {
     if (kind.empty()) return;
+    std::lock_guard<std::mutex> lock(g_core_events_mu);
     const std::string dir = repo_root_from_exe() + "\\logs";
     CreateDirectoryA(dir.c_str(), nullptr);
     const std::string path = core_events_path();
@@ -1687,6 +1695,7 @@ static void append_core_event(const std::string& kind, const std::string& detail
 }
 
 static std::vector<json> load_core_event_tail(size_t n) {
+    std::lock_guard<std::mutex> lock(g_core_events_mu);
     std::vector<json> all;
     std::ifstream in(core_events_path(), std::ios::binary);
     if (!in) return all;
@@ -1694,7 +1703,9 @@ static std::vector<json> load_core_event_tail(size_t n) {
     while (std::getline(in, line)) {
         if (line.empty()) continue;
         try {
-            all.push_back(json::parse(line));
+            json parsed = json::parse(line);
+            if (!parsed.is_object()) continue;
+            all.push_back(parsed);
         } catch (const json::exception&) {
         }
         if (all.size() > 200) {
@@ -3848,7 +3859,8 @@ int main() {
         try {
             json payload = json::parse(req.body);
             std::string user_msg = payload.value("message", "");
-            const browser_evidence::Evidence ev = parse_browser_evidence(payload);
+            const browser_evidence::Evidence ev =
+                parse_browser_evidence(payload, false);
             const std::string evidence_block =
                 browser_evidence::format_prompt_block(ev);
             

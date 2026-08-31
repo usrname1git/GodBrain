@@ -261,10 +261,9 @@ func (s *Store) requireDistinctPassingFixtures(
 ) error {
 	opts := options.Find().SetSort(latestSkillRunSort()).SetLimit(50)
 	cursor, err := s.db.Collection("skill_verification_runs").Find(ctx, bson.M{
-		"origin_node_id":        originNodeID,
-		"skill_name":            skillName,
-		"verification_profile":  profile,
-		"result":                SkillRunPassed,
+		"origin_node_id":       originNodeID,
+		"skill_name":           skillName,
+		"verification_profile": profile,
 	}, opts)
 	if err != nil {
 		return err
@@ -274,25 +273,30 @@ func (s *Store) requireDistinctPassingFixtures(
 	if err = cursor.All(ctx, &runs); err != nil {
 		return err
 	}
-	if distinctPassingFixtureCount(runs) < min {
+	if currentPassingFixtureCount(runs) < min {
 		return ErrSkillSuiteRequired
 	}
 	return nil
 }
 
-func distinctPassingFixtureCount(runs []SkillVerificationRun) int {
+// runs must be latest-first. Only the newest run per fixture counts.
+func currentPassingFixtureCount(runs []SkillVerificationRun) int {
 	seen := map[string]struct{}{}
+	n := 0
 	for _, run := range runs {
-		if run.Result != SkillRunPassed {
-			continue
-		}
 		id := strings.TrimSpace(run.FixtureID)
 		if id == "" {
 			continue
 		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
 		seen[id] = struct{}{}
+		if run.Result == SkillRunPassed {
+			n++
+		}
 	}
-	return len(seen)
+	return n
 }
 
 func (s *Store) QueryPromotedSkills(ctx context.Context, query string, limit int) ([]Skill, error) {
