@@ -1593,19 +1593,18 @@ static json cs2_desk() {
 }
 
 static std::atomic<DWORD> g_mouth_restart_ms{0};
-// Start-LlamaServer kills every llama-server.exe. Galaxy polls /status often.
-// Do not re-kick while weights are still loading or we just launched.
-static const DWORD kMouthRestartCooldownMs = 300000;
+// Start-LlamaServer kills leftover llama-server.exe. Do not re-kick while
+// weights are still loading. A hung IMA process that never binds :8000
+// must not block restart forever.
+static const DWORD kMouthLoadWaitMs = 90000;
 
 static bool maybe_restart_mouth() {
     if (load_mouth().value("label", "") != "llama") return false;
     if (cs2_should_sleep_mouth()) return false;
+    if (colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
-    if (last != 0 && now - last < kMouthRestartCooldownMs) return true;
-    // Loading: :8000 is down but the process is up. Watch/Heal kill leftovers
-    // after ~4 min. A /status poll must not race Start-LlamaServer.
-    if (process_running_ci(L"llama-server.exe")) return true;
+    if (last != 0 && now - last < kMouthLoadWaitMs) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
     const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
@@ -2702,10 +2701,7 @@ std::string run_colibri_serve(
     const std::string& tool_hint = {}) {
     httplib::Client client(kColibriServeHost, kColibriServePort);
     client.set_connection_timeout(0, 500000);
-    // Colibri pings empty deltas every ~10s during prefill. A 60s read
-    // timeout then means the engine died, not that we are still paging.
-    client.set_read_timeout(60, 0);
-    client.set_write_timeout(5, 0);
+    client.set_write_timeout(15, 0);
     client.set_max_timeout(kColiChunkTimeoutMs);
     client.set_follow_location(false);
 
@@ -2728,16 +2724,22 @@ std::string run_colibri_serve(
     }
 
     const bool llama_mouth = load_mouth().value("label", "") == "llama";
+    // Colibri pings empty deltas every ~10s during prefill. llama.cpp does
+    // not; a 60s read timeout on a tools prefill looks like "no body".
+    client.set_read_timeout(llama_mouth ? 180 : 60, 0);
     const int chunk_tokens = llama_mouth ? kLlamaChunkTokens : kColiChunkTokens;
     const int max_chunks = llama_mouth ? kLlamaMaxChunks : kColiMaxChunks;
 
     std::string assembled;
     std::string last_reason;
+    std::string last_tool_out;
     const bool native_tools =
         llama_mouth && !wants_apply_continue(system, user) &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
+    // 12B on this 4080 IMA'd on the 4th native-tool generate (KV reuse).
+    // Three hops is list/read/answer. YOLO still gets more, then fail closed.
     const int max_tool_rounds =
-        native_tools ? (local_tools::yolo_active() ? 24 : 8) : 1;
+        native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
@@ -2803,12 +2805,18 @@ std::string run_colibri_serve(
             assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
             if (assembled.empty()) {
                 if (llama_mouth) {
-                    if (process_running_ci(L"llama-server.exe")) {
-                        return "Error: llama-server returned no body (cut or timeout). "
-                               "Ask again. Not Colibri.";
+                    maybe_restart_mouth();
+                    std::string err =
+                        colibri_serve_up()
+                            ? "Error: llama-server returned no body (cut or timeout). "
+                              "Ask again. Not Colibri."
+                            : "Error: llama-server CUDA abort or :8000 died. "
+                              "Starting it. Ask again in about a minute. "
+                              "Not Colibri, not GLM paging.";
+                    if (!last_tool_out.empty()) {
+                        return last_tool_out + "\n" + err;
                     }
-                    return "Error: llama-server died during generate (often CUDA IMA). "
-                           "Mouth restart may kick. Not Colibri, not GLM paging.";
+                    return err;
                 }
                 return "Error: Colibri serve did not finish in 1200s. "
                        "GLM-5.2 is paging experts off disk on 16 GB. "
@@ -2937,6 +2945,7 @@ std::string run_colibri_serve(
                 {"content", one.empty() ? "(no output)" : one},
             });
         }
+        last_tool_out = tool_out;
         if (tool_round + 1 >= max_tool_rounds) {
             if (assembled.empty()) assembled = tool_out;
             assembled += "\n[tool cap]";
@@ -4164,11 +4173,14 @@ int main() {
             }
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
+                const std::string gp = local_tools::first_granted_path(user_msg);
                 user_prompt =
-                    "Kernel: file tools are live on this PC. Call list_local_dir, "
-                    "search_local, or get_file_info on the path only — not the rest "
-                    "of the sentence. Never say you do not have access to the "
-                    "local file system.\n\n" +
+                    "Kernel: file tools are live on this PC. " +
+                    (gp.empty()
+                         ? std::string("Call list_granted_roots or list_local_dir.")
+                         : ("Exact folder: " + gp +
+                            ". Call list_local_dir on that path, not C:\\Temp\\GitHub.")) +
+                    " Never say you do not have access to the local file system.\n\n" +
                     user_prompt;
             }
 

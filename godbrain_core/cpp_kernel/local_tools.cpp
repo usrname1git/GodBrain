@@ -1986,6 +1986,10 @@ bool looks_like_no_tools(const std::string& msg) {
 
 // Skip RAG only for a granted-root path token or an explicit RW/jail ask.
 // Bare C:\ and substring read/ready/thread must not skip Golden Records.
+std::string first_granted_path(const std::string& msg) {
+    return granted_path_from_message(msg);
+}
+
 bool looks_like_fs_refuse(const std::string& text) {
     const std::string t = ascii_lower(text);
     static const char* k[] = {
