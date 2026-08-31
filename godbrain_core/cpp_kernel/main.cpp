@@ -24,6 +24,7 @@
 #include "thinking_cmd.h"
 #include "tool_round.h"
 #include "browser_evidence.h"
+#include "unused49.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -616,6 +617,7 @@ static std::string trim_ngram_loop(std::string text) {
 }
 
 static std::string sanitize_oracle_body(std::string answer) {
+    answer = unused49::strip_tail(std::move(answer));
     answer = strip_cut_marker(std::move(answer));
     for (;;) {
         const size_t begin = answer.find("*(");
@@ -641,27 +643,7 @@ static std::string sanitize_oracle_body(std::string answer) {
 }
 
 static bool is_unused49_junk(const std::string& text) {
-    const std::string t = ascii_lower_copy(text);
-    if (t.find("unused49") == std::string::npos) return false;
-    size_t keep = 0;
-    for (size_t i = 0; i < t.size();) {
-        if (t.compare(i, 10, "<unused49>") == 0) {
-            i += 10;
-            continue;
-        }
-        if (t.compare(i, 8, "unused49") == 0) {
-            i += 8;
-            continue;
-        }
-        const unsigned char c = static_cast<unsigned char>(t[i]);
-        if (std::isspace(c) != 0 || c == '<' || c == '>') {
-            ++i;
-            continue;
-        }
-        ++keep;
-        ++i;
-    }
-    return keep < 24;
+    return unused49::is_junk(text);
 }
 
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn) {
@@ -3105,6 +3087,7 @@ std::string run_colibri_serve(
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
     int chain_hops = 0;
+    bool unused49_seen = false;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
@@ -3226,6 +3209,7 @@ std::string run_colibri_serve(
             });
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (heading_loop) {
+            if (unused49::contains(piece)) unused49_seen = true;
             piece = sanitize_oracle_body(piece);
             if (is_resume_jail(piece)) {
                 const size_t cut = piece.find("END>>");
@@ -3297,10 +3281,13 @@ std::string run_colibri_serve(
             }
             if (piece.empty()) break;
         }
+        const bool piece49 = unused49::contains(piece);
+        if (piece49) unused49_seen = true;
         piece = sanitize_oracle_body(piece);
         piece = strip_replayed_prefix(assembled, piece);
         assembled += piece;
         last_reason = finish_reason;
+        if (piece49) break;
         if (heading_loop) break;
         if (finish_reason == "tool_calls") break;
         if (finish_reason != "length") break;
@@ -3435,18 +3422,26 @@ std::string run_colibri_serve(
         assembled +=
             "\n[cut at 640 tokens — say continue]";
     }
-    if (assembled.find("tool_call") != std::string::npos ||
-        is_unused49_junk(assembled)) {
+    const bool hit49 =
+        unused49::contains(assembled) ||
+        (spoken && unused49::contains(*spoken));
+    assembled = unused49::strip_tail(assembled);
+    if (spoken) *spoken = unused49::strip_tail(*spoken);
+    if (assembled.find("tool_call") != std::string::npos) {
         assembled.clear();
     }
-    if (spoken && (spoken->find("tool_call") != std::string::npos ||
-                   is_unused49_junk(*spoken))) {
+    if (spoken && spoken->find("tool_call") != std::string::npos) {
         spoken->clear();
     }
+    if (hit49 && unused49::keep_count(assembled) < 24) assembled.clear();
+    if (hit49 && spoken && unused49::keep_count(*spoken) < 24) spoken->clear();
+    if ((unused49_seen || hit49) && llama_mouth) maybe_restart_mouth(true);
     if (assembled.empty()) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
-        if (local_tools::looks_like_local_fs_ask(hop_hint) &&
-            !local_tools::looks_like_list_only_ask(hop_hint)) {
+        if (local_tools::looks_like_jarvis_need_ask(hop_hint)) {
+            // Observe is the map. Need-asks must conclude in sentences.
+        } else if (local_tools::looks_like_local_fs_ask(hop_hint) &&
+                   !local_tools::looks_like_list_only_ask(hop_hint)) {
             assembled = local_tools::analysis_observe(hop_hint);
             if (assembled.empty()) assembled = local_tools::jarvis_rails_blurb();
         } else if (!tool_ledger.empty()) {
@@ -4933,14 +4928,19 @@ int main() {
                         std::string chunk = strip_coli_reply(combined);
                         std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
-                        if (is_unused49_junk(chunk) ||
-                            is_unused49_junk(for_memory)) {
+                        if (unused49::contains(chunk) ||
+                            unused49::contains(for_memory)) {
                             maybe_restart_mouth(true);
-                            chunk =
-                                "Error: llama-server dumped unused49 "
-                                "(poisoned KV slot). Recycled. Ask again in "
-                                "about a minute. Not Colibri.";
-                            for_memory = chunk;
+                            chunk = unused49::strip_tail(chunk);
+                            for_memory = unused49::strip_tail(for_memory);
+                            if (unused49::keep_count(chunk) < 24 &&
+                                unused49::keep_count(for_memory) < 24) {
+                                chunk =
+                                    "Error: llama-server dumped unused49 "
+                                    "(poisoned KV slot). Recycled. Ask again in "
+                                    "about a minute. Not Colibri.";
+                                for_memory = chunk;
+                            }
                         }
                         if (local_fs_ask && !no_tools_ask &&
                             local_tools::looks_like_fs_refuse(for_memory)) {
@@ -5028,12 +5028,17 @@ int main() {
             std::string chunk = strip_coli_reply(combined);
             std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
-            if (is_unused49_junk(chunk) || is_unused49_junk(for_memory)) {
+            if (unused49::contains(chunk) || unused49::contains(for_memory)) {
                 maybe_restart_mouth(true);
-                chunk =
-                    "Error: llama-server dumped unused49 (poisoned KV slot). "
-                    "Recycled. Ask again in about a minute. Not Colibri.";
-                for_memory = chunk;
+                chunk = unused49::strip_tail(chunk);
+                for_memory = unused49::strip_tail(for_memory);
+                if (unused49::keep_count(chunk) < 24 &&
+                    unused49::keep_count(for_memory) < 24) {
+                    chunk =
+                        "Error: llama-server dumped unused49 (poisoned KV slot). "
+                        "Recycled. Ask again in about a minute. Not Colibri.";
+                    for_memory = chunk;
+                }
             }
             if (local_fs_ask && !no_tools_ask &&
                 local_tools::looks_like_fs_refuse(for_memory)) {
