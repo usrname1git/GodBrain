@@ -914,7 +914,21 @@ std::string granted_path_from_message(const std::string& msg) {
         }
         if (!path_is_granted(tok)) return false;
         const std::string full = final_path(expand_env(tok));
-        hit = full.empty() ? tok : full;
+        const std::string use = full.empty() ? tok : full;
+        const bool spaced = tok.find(' ') != std::string::npos ||
+                            tok.find('\t') != std::string::npos;
+        if (spaced && !file_exists(use)) {
+            bool exact_root = false;
+            for (const auto& r : default_roots()) {
+                const std::string rr = final_path(r);
+                if (!rr.empty() && ascii_lower(use) == ascii_lower(rr)) {
+                    exact_root = true;
+                    break;
+                }
+            }
+            if (!exact_root) return false;
+        }
+        hit = use;
         return true;
     };
     auto consider_span = [&](std::string tok) {
@@ -1249,6 +1263,10 @@ std::string execute_calls(const std::vector<Call>& calls) {
             c.name == "run_sqlite3" || c.name == "search_local" ||
             c.name == "edit_local_file" || c.name == "create_local_dir" ||
             c.name == "move_local_file" || c.name == "get_file_info") {
+            if (!file_exists(canon_path(c.path))) {
+                const std::string hit = granted_path_from_message(c.path);
+                if (!hit.empty() && file_exists(hit)) c.path = hit;
+            }
             if (!path_is_granted(c.path, &err)) {
                 out << c.name << " denied: " << err << "\n";
                 continue;
@@ -1990,13 +2008,20 @@ bool looks_like_fs_refuse(const std::string& text) {
 
 std::string answer_fs_ask(const std::string& user_msg) {
     const std::string p = granted_path_from_message(user_msg);
-    if (!p.empty()) {
+    if (p.empty()) {
         return run_tools_from_text(
-            std::string("*** TOOL\nname: get_file_info\npath: ") + p +
-            "\n*** END\n");
+            "*** TOOL\nname: list_granted_roots\n*** END\n");
+    }
+    const DWORD attr = GetFileAttributesA(p.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES &&
+        (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return run_tools_from_text(
+            std::string("*** TOOL\nname: list_local_dir\npath: ") + p +
+            "\nargs: depth=2\n*** END\n");
     }
     return run_tools_from_text(
-        "*** TOOL\nname: list_granted_roots\n*** END\n");
+        std::string("*** TOOL\nname: get_file_info\npath: ") + p +
+        "\n*** END\n");
 }
 
 bool looks_like_local_fs_ask(const std::string& msg) {

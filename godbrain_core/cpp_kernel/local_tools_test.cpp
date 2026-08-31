@@ -328,9 +328,20 @@ int main() {
         const std::string probe = local_tools::answer_fs_ask(
             "I do not have access to " + home +
             "\\Documents\\GitHub\\GodBrain");
-        pass &= expect(probe.find("get_file_info") != std::string::npos &&
-                           probe.find("denied") == std::string::npos,
+        pass &= expect((probe.find("get_file_info") != std::string::npos ||
+                        probe.find("list_local_dir") != std::string::npos) &&
+                           probe.find("denied") == std::string::npos &&
+                           probe.find("repo that needs") == std::string::npos,
                        "fs refuse probe hits repo");
+        const std::string longq =
+            "Can you find anything apparent in " + home +
+            "\\Documents\\GitHub\\GodBrain repo that needs fixing for you "
+            "to become Jarvis?";
+        const std::string longp = local_tools::answer_fs_ask(longq);
+        pass &= expect(longp.find("repo that needs") == std::string::npos &&
+                           longp.find("GodBrain") != std::string::npos &&
+                           longp.find("missing") == std::string::npos,
+                       "path stops at GodBrain not English tail");
     }
     {
         const std::string roots = local_tools::run_tools_from_text(

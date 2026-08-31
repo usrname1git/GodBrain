@@ -4165,8 +4165,10 @@ int main() {
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt =
-                    "Kernel: file tools are live on this PC. Call get_file_info. "
-                    "Never say you do not have access to the local file system.\n\n" +
+                    "Kernel: file tools are live on this PC. Call list_local_dir, "
+                    "search_local, or get_file_info on the path only — not the rest "
+                    "of the sentence. Never say you do not have access to the "
+                    "local file system.\n\n" +
                     user_prompt;
             }
 
