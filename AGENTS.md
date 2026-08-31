@@ -56,8 +56,14 @@ to count how many nodes the problem actually has. Usually one.
   capture, (7) multi-fixture skill verification, (8) unified core gate and
   correlated event history. Destination: task ID, bounded tool rounds,
   hash-bound diff, verify, survive restart, verified lesson to Alexandria.
-  Implement in that order. Item 1 is in flight on `mouth-one-fs-hop`.
-  Items 2–8 wait until 1 can read-then-speak without IMA or dir.
+  Implement in that order. Chair cuts GO'd 2026-08-31: **3a** four
+  no-GPU benches + `-LiveMouth` small-prompt gauntlet
+  (`scripts\Test-JarvisLoop.ps1`; shred llama only if 2+2 fails, not
+  if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
+  Galaxy preview + txn rollback (not a 7-step ceremony). **4a**
+  `repo_map` / `changed_context` from git + nearest README (not a
+  symbol graph in Mongo). Item 1 is in flight on `mouth-one-fs-hop`.
+  Item 2 (ledger) after 1. Grow 3 toward ~20 only as 2/5/6 exist.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
