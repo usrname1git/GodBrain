@@ -927,8 +927,8 @@ Result maybe_apply(
                              "\n";
         }
         if (!check.ran || !check.ok) {
+            result.applied = false;
             if (restore_originals(applied.originals)) {
-                result.applied = false;
                 result.rolled_back = true;
                 result.after_hash = result.before_hash;
                 result.report += check.ran ? "rolled back (check failed)\n"

@@ -2025,7 +2025,7 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
         const std::string check_profile = body.value("check_profile", "");
         if (!check_profile.empty()) {
             const char* check_state = !body.value("check_ran", false)
-                ? "skip"
+                ? "missing"
                 : (body.value("check_ok", false) ? "ok" : "fail");
             reply << " check=" << check_profile << "/" << check_state;
         }
@@ -2990,7 +2990,7 @@ std::string run_colibri_serve(
                  "Identities hold: 1+2=3, never 4. Do not dump dir. Do not "
                  "invent a persona file."}});
         std::cout << "[TOOLS] kernel observe (" << seed.size()
-                  << " bytes) then speak" << std::endl;
+                  << " bytes) then hop" << std::endl;
     }
     for (int tool_round = 0; tool_round < max_tool_rounds; ++tool_round) {
     if (tool_round > 0 && spoken) spoken->clear();
