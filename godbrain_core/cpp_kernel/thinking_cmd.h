@@ -4,7 +4,6 @@
 #include <string>
 
 // Whole-message desk command. Typing this in Galaxy must not reach the mouth.
-// compact("enable_thinking: false") -> enable_thinking:false
 inline std::string thinking_cmd_compact(const std::string& msg) {
     size_t a = 0;
     size_t b = msg.size();

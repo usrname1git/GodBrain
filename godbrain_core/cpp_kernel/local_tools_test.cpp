@@ -224,6 +224,23 @@ int main() {
     pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
     pass &= expect(!local_tools::looks_like_local_fs_ask("what is 2+2"),
                    "math is not local-fs");
+    pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Temp\\GitHub"),
+                   "list granted temp is local-fs");
+    pass &= expect(
+        local_tools::looks_like_local_fs_ask("do you have r/w to the repo"),
+        "rw repo is local-fs");
+    pass &= expect(
+        local_tools::looks_like_local_fs_ask("is the tool jail granted"),
+        "jail granted is local-fs");
+    pass &= expect(
+        !local_tools::looks_like_local_fs_ask("is the local mouth ready"),
+        "ready is not local-fs");
+    pass &= expect(
+        !local_tools::looks_like_local_fs_ask("please read the Heal file"),
+        "read Heal file is not local-fs");
+    pass &= expect(
+        !local_tools::looks_like_local_fs_ask("C:\\Windows\\System32"),
+        "system32 is not local-fs");
     pass &= expect(local_tools::looks_like_no_tools("No tools.\nWhat is this PC?"),
                    "no tools prefix");
     pass &= expect(local_tools::looks_like_no_tools("no tools: advise"),

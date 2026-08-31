@@ -371,9 +371,10 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 (`--jinja` is already on; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
 **file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
-or the ask is host inspect (SysInternals/reg/events/schtasks). Local
-path/RW questions skip RAG and session dump so Gemma can `get_file_info`
-instead of unused49. A message that starts with `No tools` skips RAG,
+or the ask is host inspect (SysInternals/reg/events/schtasks). A granted-root
+path token (`C:\Users\autismo` / `C:\Temp\GitHub`) or an explicit r/w / jail
+ask skips RAG and session dump so Gemma can `get_file_info` instead of
+unused49. Bare `C:\Windows` and “read the Heal file” still RTFM. A message that starts with `No tools` skips RAG,
 session dump, and the tools schema so a long advisory prompt can answer
 instead of unused49. Full tool dump is still there for SRE asks. This host does not
 dual-run Copilot as the hands. GodBrain is the replacement: one built-in

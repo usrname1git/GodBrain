@@ -683,6 +683,83 @@ std::string unknown_tool_msg(const std::string& name) {
            "--ti/mongo. Heal never launches these.\n";
 }
 
+bool is_ident_char(unsigned char c) {
+    return std::isalnum(c) != 0 || c == '_' || c == '-';
+}
+
+bool has_word(const std::string& hay, const std::string& word) {
+    if (word.empty()) return false;
+    size_t pos = 0;
+    while ((pos = hay.find(word, pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 || !is_ident_char(static_cast<unsigned char>(hay[pos - 1]));
+        const size_t end = pos + word.size();
+        const bool right =
+            end >= hay.size() ||
+            !is_ident_char(static_cast<unsigned char>(hay[end]));
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
+bool is_path_stop(unsigned char c) {
+    return std::isspace(c) != 0 || c == '"' || c == '\'' || c == '<' ||
+           c == '>' || c == '|' || c == '?' || c == '*' || c == ';' || c == ',';
+}
+
+bool granted_path_in_message(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    auto consider = [](std::string tok) {
+        while (!tok.empty() &&
+               (tok.back() == '.' || tok.back() == ')' || tok.back() == ']')) {
+            tok.pop_back();
+        }
+        if (tok.size() < 2) return false;
+        for (char& ch : tok) {
+            if (ch == '/') ch = '\\';
+        }
+        return path_is_granted(tok);
+    };
+
+    for (size_t i = 0; i + 2 < t.size(); ++i) {
+        if (std::isalpha(static_cast<unsigned char>(t[i])) == 0 ||
+            t[i + 1] != ':' || (t[i + 2] != '\\' && t[i + 2] != '/')) {
+            continue;
+        }
+        size_t j = i;
+        while (j < t.size() && !is_path_stop(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+        if (consider(t.substr(i, j - i))) return true;
+        if (j > i) i = j - 1;
+    }
+
+    const char* bare[] = {"users\\autismo", "users/autismo", "temp\\github",
+                          "temp/github", nullptr};
+    for (int p = 0; bare[p]; ++p) {
+        const std::string pre = bare[p];
+        size_t pos = 0;
+        while ((pos = t.find(pre, pos)) != std::string::npos) {
+            if (pos > 0 &&
+                is_ident_char(static_cast<unsigned char>(t[pos - 1]))) {
+                ++pos;
+                continue;
+            }
+            size_t j = pos;
+            while (j < t.size() &&
+                   !is_path_stop(static_cast<unsigned char>(t[j]))) {
+                ++j;
+            }
+            if (consider(std::string("c:\\") + t.substr(pos, j - pos))) {
+                return true;
+            }
+            pos = (j == pos) ? pos + 1 : j;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 std::vector<std::string> default_roots() {
@@ -1494,28 +1571,22 @@ bool looks_like_no_tools(const std::string& msg) {
     return t.compare(0, 8, "no tools") == 0;
 }
 
+// Skip RAG only for a granted-root path token or an explicit RW/jail ask.
+// Bare C:\ and substring read/ready/thread must not skip Golden Records.
 bool looks_like_local_fs_ask(const std::string& msg) {
+    if (granted_path_in_message(msg)) return true;
     const std::string t = ascii_lower(msg);
-    if (t.find("c:\\") != std::string::npos || t.find("c:/") != std::string::npos) {
-        return true;
-    }
-    if (t.find("users\\autismo") != std::string::npos ||
-        t.find("temp\\github") != std::string::npos) {
-        return true;
-    }
-    const bool access = t.find("access") != std::string::npos ||
-                        t.find("granted") != std::string::npos ||
-                        t.find("jail") != std::string::npos ||
-                        t.find("read") != std::string::npos ||
-                        t.find("write") != std::string::npos ||
-                        t.find("r/w") != std::string::npos;
-    const bool place = t.find("repo") != std::string::npos ||
-                       t.find("folder") != std::string::npos ||
-                       t.find("directory") != std::string::npos ||
-                       t.find("file") != std::string::npos ||
-                       t.find("path") != std::string::npos ||
-                       t.find("local") != std::string::npos;
-    return access && place;
+    const bool rw_phrase =
+        t.find("r/w") != std::string::npos || has_word(t, "rw") ||
+        t.find("read and write") != std::string::npos ||
+        t.find("write access") != std::string::npos;
+    if (rw_phrase) return true;
+    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail");
+    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
+                       has_word(t, "directory") || has_word(t, "path") ||
+                       has_word(t, "files") || has_word(t, "file");
+    if (has_word(t, "granted") && has_word(t, "jail")) return true;
+    return jail_granted && place;
 }
 
 bool use_full_tool_defs(const std::string& user_msg) {
