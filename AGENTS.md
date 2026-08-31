@@ -62,8 +62,9 @@ to count how many nodes the problem actually has. Usually one.
   if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
   Galaxy preview + txn rollback (not a 7-step ceremony). **4a**
   `repo_map` / `changed_context` from git + nearest README (not a
-  symbol graph in Mongo). Item 1 is in flight on `mouth-one-fs-hop`.
-  Item 2 (ledger) after 1. Grow 3 toward ~20 only as 2/5/6 exist.
+  symbol graph in Mongo). Item 1 chain is flatten hops +
+  `logs/last-chain.json` on `mouth-one-fs-hop`. Item 2 (full ledger)
+  after 1. Grow 3 toward ~20 only as 2/5/6 exist.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -393,10 +394,11 @@ granted path. A question that *contains* a granted path but asks what
 is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
 **flattens** the result into a fresh user turn and POSTs again with
 `cache_prompt` false — never `role:tool` back into the llama KV (that
-is the CUDA IMA). On a repo analysis ask the kernel lists the folder and injects a
-**short rails blurb** (one loop, Heal never kills, leftovers). Do not
-paste `AGENTS.md` into the 12B prompt — that unused49's. Cap 3 (last
-round speak-only). Do not return `dir` as the answer. If Gemma listed `C:\Temp\GitHub` instead of the named
+is the CUDA IMA). Chain: after each execute, flatten into a fresh user turn
+(`cache_prompt` false, never `role:tool`). Non-YOLO cap 3 (last round
+speak-only). `read_local_file` of `AGENTS.md` / `Heal-GodBrain.ps1`
+returns the short rails blurb, not the file (12B unused49's on a dump).
+Observe/conclude buffer: `logs/last-chain.json`. Continue reloads it. If Gemma listed `C:\Temp\GitHub` instead of the named
 path, the kernel appends a list of that path. YOLO still loops (cap 8,
 same flatten). A granted-root
 path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /

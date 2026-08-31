@@ -1535,6 +1535,14 @@ bool colibri_serve_up() {
     return response && response->status == 200;
 }
 
+static bool wait_mouth_up(int tries = 40) {
+    for (int i = 0; i < tries; ++i) {
+        if (colibri_serve_up()) return true;
+        Sleep(1500);
+    }
+    return colibri_serve_up();
+}
+
 static bool process_running_ci(const wchar_t* exe) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -1558,6 +1566,35 @@ static std::string repo_root_from_exe() {
     char canon[MAX_PATH] = {};
     if (GetFullPathNameA(dir.c_str(), MAX_PATH, canon, nullptr) == 0) return "";
     return std::string(canon);
+}
+
+static std::string chain_path() {
+    return repo_root_from_exe() + "\\logs\\last-chain.json";
+}
+
+static void save_chain(const std::string& goal, const std::string& ledger,
+                       const std::string& answer, int hops) {
+    json doc = {
+        {"goal", goal.substr(0, 500)},
+        {"ledger", ledger.substr(0, 4000)},
+        {"answer", answer.substr(0, 2000)},
+        {"hops", hops},
+        {"at_tick", static_cast<int>(GetTickCount())},
+    };
+    const std::string path = chain_path();
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+    out << doc.dump();
+}
+
+static json load_chain() {
+    std::ifstream in(chain_path(), std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
 }
 
 static json read_cs2_pause_file() {
@@ -1604,7 +1641,7 @@ static bool maybe_restart_mouth(bool even_if_up) {
     if (!even_if_up && colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
-    if (last != 0 && now - last < kMouthLoadWaitMs) return true;
+    if (!even_if_up && last != 0 && now - last < kMouthLoadWaitMs) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
     const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
@@ -2755,10 +2792,33 @@ std::string run_colibri_serve(
     const int max_tool_rounds =
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
+    int chain_hops = 0;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
                      : json::array();
+    const std::string hop_hint0 = tool_hint.empty() ? user : tool_hint;
+    if (llama_mouth && native_tools && !local_tools::yolo_active() &&
+        local_tools::looks_like_local_fs_ask(hop_hint0) &&
+        !local_tools::looks_like_list_only_ask(hop_hint0)) {
+        std::string seed = local_tools::complete_fs_listing(hop_hint0, "");
+        if (seed.size() > 2200) seed.resize(2200);
+        seed += "\n";
+        seed += local_tools::jarvis_rails_blurb();
+        tool_ledger = seed;
+        last_tool_out = seed;
+        chain_hops = 1;
+        messages = base_messages;
+        messages.push_back(json{
+            {"role", "user"},
+            {"content",
+             std::string("Kernel listing plus rails:\n") + seed +
+                 "\n\nOperator question:\n" + hop_hint0 +
+                 "\nConclude Z. Identities hold: 1+2=3, never 4. "
+                 "Do not dump dir. Do not invent a persona file."}});
+        std::cout << "[TOOLS] kernel observe (" << seed.size()
+                  << " bytes) then speak" << std::endl;
+    }
     for (int tool_round = 0; tool_round < max_tool_rounds; ++tool_round) {
     if (tool_round > 0 && spoken) spoken->clear();
     assembled.clear();
@@ -2766,8 +2826,7 @@ std::string run_colibri_serve(
     json tool_acc = json::array();
     const bool use_tools =
         native_tools && (tool_round + 1 < max_tool_rounds) &&
-        (local_tools::yolo_active() ||
-         tool_ledger.find("Kernel rails") == std::string::npos);
+        tool_ledger.empty();
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -2799,8 +2858,11 @@ std::string run_colibri_serve(
         g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
         if (use_tools && llama_mouth) {
             body["stream"] = false;
+            httplib::Headers json_headers = headers;
+            json_headers.erase("Accept");
+            json_headers.emplace("Accept", "application/json");
             const auto response = client.Post(
-                "/v1/chat/completions", headers, body.dump(),
+                "/v1/chat/completions", json_headers, body.dump(),
                 "application/json");
             g_coli_job_started_ms.store(0, std::memory_order_relaxed);
             if (!response) {
@@ -2984,6 +3046,7 @@ std::string run_colibri_serve(
             tool_out += local_tools::jarvis_rails_blurb();
         }
         last_tool_out = tool_out;
+        ++chain_hops;
         if (!tool_ledger.empty()) tool_ledger += "\n";
         tool_ledger += tool_out;
         if (tool_ledger.size() > 6000) tool_ledger.resize(6000);
@@ -2992,9 +3055,11 @@ std::string run_colibri_serve(
             {"role", "user"},
             {"content",
              std::string("TOOL_RESULT\n") + tool_ledger +
-                 "\nThe kernel already listed the folder. Answer from "
-                 "TOOL_RESULT. Do not say you should read AGENTS.md. "
-                 "Do not dump dir. Do not invent a Jarvis persona file."}});
+                 "\nObserve is done. Conclude: if you still need a granted "
+                 "file, call read_local_file with args limit=40. Else answer "
+                 "Z. Identities hold: 1+2=3, never 4. Do not dump dir. "
+                 "Do not invent a persona file. Do not say you should read "
+                 "AGENTS.md without calling the tool."}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
                   << max_tool_rounds << " (" << tool_ledger.size()
                   << " bytes, cache_prompt=0)" << std::endl;
@@ -3025,6 +3090,12 @@ std::string run_colibri_serve(
         flatten_tool_turn(tool_out);
         assembled.clear();
         if (spoken) spoken->clear();
+        if (llama_mouth && !local_tools::yolo_active()) {
+            std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
+            maybe_restart_mouth(true);
+            Sleep(5000);
+            wait_mouth_up();
+        }
         continue;
     }
     if (!local_tools::has_tool_block(assembled)) break;
@@ -3033,6 +3104,12 @@ std::string run_colibri_serve(
     flatten_tool_turn(tool_out);
     assembled.clear();
     if (spoken) spoken->clear();
+    if (llama_mouth && !local_tools::yolo_active()) {
+        std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
+        maybe_restart_mouth(true);
+        Sleep(5000);
+        wait_mouth_up();
+    }
     continue;
     }
     if (last_reason == "length" && !llama_mouth) {
@@ -3047,8 +3124,25 @@ std::string run_colibri_serve(
                    is_unused49_junk(*spoken))) {
         spoken->clear();
     }
-    if (assembled.empty() && !tool_ledger.empty()) assembled = tool_ledger;
+    if (assembled.empty()) {
+        const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
+        if (local_tools::looks_like_local_fs_ask(hop_hint) &&
+            !local_tools::looks_like_list_only_ask(hop_hint)) {
+            assembled = local_tools::jarvis_rails_blurb();
+        } else if (!tool_ledger.empty()) {
+            assembled = tool_ledger;
+        }
+    }
     if (spoken && spoken->empty()) *spoken = assembled;
+    save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
+               chain_hops);
+    {
+        std::ofstream dbg(
+            (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
+            std::ios::app);
+        dbg << "hops=" << chain_hops << " ledger=" << tool_ledger.size()
+            << " out=" << assembled.size() << "\n";
+    }
     return assembled;
 }
 
@@ -4259,6 +4353,15 @@ int main() {
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
+                const json ch = load_chain();
+                if (ch.contains("ledger") && ch["ledger"].is_string()) {
+                    std::string led = ch["ledger"].get<std::string>();
+                    if (led.size() > 2000) led.resize(2000);
+                    if (!led.empty()) {
+                        user_prompt =
+                            "Prior chain ledger:\n" + led + "\n\n" + user_prompt;
+                    }
+                }
             } else if (local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             } else if (!follow_up && !context_text.empty()) {
@@ -4268,19 +4371,19 @@ int main() {
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
                 if (fs_analyze && !local_tools::yolo_active()) {
-                    std::string ev =
-                        local_tools::complete_fs_listing(user_msg, "");
-                    if (ev.size() > 2200) ev.resize(2200);
-                    ev += "\n";
-                    ev += local_tools::jarvis_rails_blurb();
+                    const std::string gp =
+                        local_tools::first_granted_path(user_msg);
                     user_prompt =
-                        "Kernel listing plus rails (files were read by the "
-                        "kernel; do not paste AGENTS.md):\n" +
-                        ev + "\n\nOperator question:\n" + user_msg +
-                        "\nAnswer from that. Do not say you should read "
-                        "AGENTS.md. Do not dump dir. Do not invent a persona "
-                        "file. Name live loop vs leftovers vs blockers.";
-                    tool_hint = std::string("No tools.\n") + asked;
+                        "Kernel: file tools are live. " +
+                        (gp.empty()
+                             ? std::string("Call list_granted_roots.")
+                             : ("Exact folder: " + gp +
+                                ". list_local_dir, then read_local_file "
+                                "args=limit=40 if you still need a file.")) +
+                        " " + local_tools::jarvis_rails_blurb() +
+                        " Chain: observe → conclude → tool or answer Z. "
+                        "1+2=3 never 4. Do not dump dir.\n\n" +
+                        user_prompt;
                 } else {
                     const std::string gp =
                         local_tools::first_granted_path(user_msg);

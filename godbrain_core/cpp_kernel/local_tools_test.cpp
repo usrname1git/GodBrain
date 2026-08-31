@@ -387,6 +387,13 @@ int main() {
                            blurb.find("copilot-instructions") != std::string::npos &&
                            blurb.find("temp_hermes") != std::string::npos,
                        "jarvis blurb names leftovers");
+        const std::string agread = local_tools::run_tools_from_text(
+            std::string("*** TOOL\nname: read_local_file\npath: ") + home +
+            "\\Documents\\GitHub\\GodBrain\\AGENTS.md\n*** END\n");
+        pass &= expect(agread.find("kernel rails") != std::string::npos &&
+                           agread.find("one loop") != std::string::npos &&
+                           agread.size() < 2500,
+                       "AGENTS.md read is blurb not a dump");
         const std::string miss =
             "search_local C:\\Temp\\GitHub name q=GodBrain repo hits=0 "
             "scanned=400\n";

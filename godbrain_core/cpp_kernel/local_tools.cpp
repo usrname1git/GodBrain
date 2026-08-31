@@ -1381,6 +1381,22 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 search_dir(full, "", 0, depth, false, seen, hits, out);
                 if (hits >= 80) out << "... truncated\n";
             } else if (c.name == "read_local_file") {
+                const std::string low = ascii_lower(full);
+                const bool rails_file =
+                    (low.size() >= 10 &&
+                     (low.compare(low.size() - 10, 10, "\\agents.md") == 0 ||
+                      low.compare(low.size() - 10, 10, "/agents.md") == 0)) ||
+                    (low.size() >= 18 &&
+                     (low.compare(low.size() - 18, 18,
+                                  "\\heal-godbrain.ps1") == 0 ||
+                      low.compare(low.size() - 18, 18,
+                                  "/heal-godbrain.ps1") == 0));
+                if (rails_file) {
+                    out << "read_local_file " << full
+                        << " (kernel rails, not a dump)\n"
+                        << jarvis_rails_blurb() << "\n";
+                    continue;
+                }
                 bool trunc = false;
                 const std::string data = read_file_limited(full, kMaxReadBytes, &trunc);
                 if (looks_binary(data)) {
