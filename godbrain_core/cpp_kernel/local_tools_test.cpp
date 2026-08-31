@@ -24,6 +24,9 @@ int main() {
     const std::string home = env_var("USERPROFILE");
     const std::string appdata = env_var("APPDATA");
     const std::string local = env_var("LOCALAPPDATA");
+    const std::string programdata = env_var("ProgramData");
+    const std::string programfiles = env_var("ProgramFiles");
+    const std::string programfiles_x86 = env_var("ProgramFiles(x86)");
     pass &= expect(!home.empty(), "USERPROFILE set");
     pass &= expect(!local_tools::path_is_granted("C:\\Windows\\System32\\notepad.exe", &err),
                    "windows denied");
@@ -45,6 +48,20 @@ int main() {
     pass &= expect(local_tools::path_is_granted("C:\\Tools", &err), "Tools granted");
     pass &= expect(local_tools::path_is_granted("C:\\Tools\\SysInternals\\pslist64.exe", &err),
                    "Tools subdir granted");
+    pass &= expect(
+        !programdata.empty() && local_tools::path_is_granted(programdata, &err),
+        "ProgramData granted");
+    pass &= expect(!programfiles.empty() &&
+                       local_tools::path_is_granted(programfiles, &err),
+                   "ProgramFiles granted");
+    pass &= expect(!programfiles.empty() &&
+                       local_tools::path_is_granted(programfiles + "\\Git", &err),
+                   "ProgramFiles subdir granted");
+    pass &= expect(programfiles_x86.empty() ||
+                       local_tools::path_is_granted(programfiles_x86, &err),
+                   "ProgramFiles x86 granted");
+    pass &= expect(local_tools::path_is_granted("%ProgramFiles%\\Git", &err),
+                   "env ProgramFiles granted");
     CreateDirectoryA("C:\\Temp\\GitHub", nullptr);
     const char kJunc[] = "C:\\Temp\\GitHub\\godbrain-junc-win";
     RemoveDirectoryA(kJunc);
@@ -263,6 +280,12 @@ int main() {
         "system32 is not local-fs");
     pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Tools\\SysInternals"),
                    "tools subdir is local-fs");
+    pass &= expect(
+        local_tools::looks_like_local_fs_ask("list C:\\Program Files\\Git"),
+        "program files path is local-fs");
+    pass &= expect(local_tools::looks_like_local_fs_ask(
+                       "read %ProgramFiles(x86)%\\Steam\\steam.exe"),
+                   "env programfiles x86 is local-fs");
     pass &= expect(local_tools::looks_like_local_fs_ask(
                        "read %USERPROFILE%\\Desktop\\notes.txt"),
                    "env profile path is local-fs");

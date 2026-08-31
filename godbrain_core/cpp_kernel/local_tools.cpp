@@ -731,9 +731,10 @@ bool has_word(const std::string& hay, const std::string& word) {
     return false;
 }
 
-bool is_path_stop(unsigned char c) {
-    return std::isspace(c) != 0 || c == '"' || c == '\'' || c == '<' ||
-           c == '>' || c == '|' || c == '?' || c == '*' || c == ';' || c == ',';
+bool is_path_hard_stop(unsigned char c) {
+    return c == '"' || c == '\'' || c == '<' || c == '>' || c == '|' ||
+           c == '?' || c == '*' || c == ';' || c == ',' || c == '\n' ||
+           c == '\r';
 }
 
 bool is_path_left(unsigned char c) {
@@ -747,14 +748,22 @@ bool env_token_ok(const std::string& tok) {
     const std::string name = tok.substr(1, end - 1);
     return name == "userprofile" || name == "appdata" ||
            name == "localappdata" || name == "temp" || name == "homedrive" ||
-           name == "homepath";
+           name == "homepath" || name == "programdata" ||
+           name == "programfiles" || name == "programfiles(x86)";
 }
 
 bool granted_path_in_message(const std::string& msg) {
     const std::string t = ascii_lower(msg);
     auto consider = [](std::string tok) {
         while (!tok.empty() &&
-               (tok.back() == '.' || tok.back() == ')' || tok.back() == ']')) {
+               (tok.back() == '.' || tok.back() == ']')) {
+            tok.pop_back();
+        }
+        while (!tok.empty() && tok.back() == ')') {
+            if (tok.size() >= 5 &&
+                ascii_lower(tok.substr(tok.size() - 5)) == "(x86)") {
+                break;
+            }
             tok.pop_back();
         }
         if (tok.size() < 2) return false;
@@ -763,6 +772,23 @@ bool granted_path_in_message(const std::string& msg) {
         }
         return path_is_granted(tok);
     };
+    auto consider_span = [&](std::string tok) {
+        while (!tok.empty() &&
+               std::isspace(static_cast<unsigned char>(tok.back())) != 0) {
+            tok.pop_back();
+        }
+        while (!tok.empty()) {
+            if (consider(tok)) return true;
+            const size_t sp = tok.find_last_of(" \t");
+            if (sp == std::string::npos) break;
+            tok.resize(sp);
+            while (!tok.empty() &&
+                   std::isspace(static_cast<unsigned char>(tok.back())) != 0) {
+                tok.pop_back();
+            }
+        }
+        return false;
+    };
 
     for (size_t i = 0; i + 2 < t.size(); ++i) {
         if (std::isalpha(static_cast<unsigned char>(t[i])) == 0 ||
@@ -770,21 +796,23 @@ bool granted_path_in_message(const std::string& msg) {
             continue;
         }
         size_t j = i;
-        while (j < t.size() && !is_path_stop(static_cast<unsigned char>(t[j]))) {
+        while (j < t.size() &&
+               !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
             ++j;
         }
-        if (consider(t.substr(i, j - i))) return true;
+        if (consider_span(t.substr(i, j - i))) return true;
         if (j > i) i = j - 1;
     }
 
     for (size_t i = 0; i < t.size(); ++i) {
         if (t[i] != '%') continue;
         size_t j = i + 1;
-        while (j < t.size() && !is_path_stop(static_cast<unsigned char>(t[j]))) {
+        while (j < t.size() &&
+               !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
             ++j;
         }
         const std::string tok = t.substr(i, j - i);
-        if (env_token_ok(tok) && consider(tok)) return true;
+        if (env_token_ok(tok) && consider_span(tok)) return true;
         if (j > i) i = j - 1;
     }
 
@@ -816,7 +844,7 @@ bool granted_path_in_message(const std::string& msg) {
                 }
                 size_t j = pos;
                 while (j < t.size() &&
-                       !is_path_stop(static_cast<unsigned char>(t[j]))) {
+                       !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
                     ++j;
                 }
                 const std::string raw = t.substr(pos, j - pos);
@@ -825,7 +853,7 @@ bool granted_path_in_message(const std::string& msg) {
                     pos = (j == pos) ? pos + 1 : j;
                     continue;
                 }
-                if (consider(drive + raw)) return true;
+                if (consider_span(drive + raw)) return true;
                 pos = (j == pos) ? pos + 1 : j;
             }
         }
@@ -848,6 +876,9 @@ std::vector<std::string> default_roots() {
     add(env_path("USERPROFILE"));
     add(env_path("APPDATA"));
     add(env_path("LOCALAPPDATA"));
+    add(env_path("ProgramData"));
+    add(env_path("ProgramFiles"));
+    add(env_path("ProgramFiles(x86)"));
     add("C:\\Tools");
     add("C:\\Temp\\GitHub");
     return roots;
@@ -1695,7 +1726,8 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
     } else {
         s = " You have built-in file tools (OpenAI tool_calls). The kernel executes. "
             "Jail: " + roots_join() +
-            " (%USERPROFILE% / %APPDATA% / %LOCALAPPDATA% / C:\\Tools / "
+            " (%USERPROFILE% / %APPDATA% / %LOCALAPPDATA% / %ProgramData% / "
+            "%ProgramFiles% / %ProgramFiles(x86)% / C:\\Tools / "
             "C:\\Temp\\GitHub). "
             "To verify a path: get_file_info or list_local_dir, then say yes or no. "
             "read_local_file / write_local_file / edit_local_file / search_local / "

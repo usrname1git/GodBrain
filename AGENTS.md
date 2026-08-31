@@ -372,8 +372,9 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 add Copilot MCP or any MCP server into this repo). First hop is the
 **file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
 or the ask is host inspect (SysInternals/reg/events/schtasks). A granted-root
-path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `C:\Tools` /
-`C:\Temp\GitHub`) or an explicit r/w / jail ask skips RAG and session dump
+path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
+`%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub`) or an
+explicit r/w / jail ask skips RAG and session dump
 so Gemma can `get_file_info` instead of unused49. Bare `C:\Windows` and
 “read the Heal file” still RTFM. A message that starts with `No tools` skips RAG,
 session dump, and the tools schema so a long advisory prompt can answer
@@ -384,7 +385,8 @@ llama.cpp folds `role:tool` into Gemma's `tool_responses`. llama-server is
 a swappable mouth, not the product. A GodBrain llama fork is later, only
 if stock ggml gimp or sunsets the tool path. `*** TOOL` text blocks still work as a
 fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
-`C:\Tools`, and `C:\Temp\GitHub` (Windows env; POSIX jail later):
+`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
+`C:\Temp\GitHub` (Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
 `write_local_file` (append), `create_local_dir`, `move_local_file`,
 `get_file_info`, `search_local` (name or `content:`), `edit_local_file`

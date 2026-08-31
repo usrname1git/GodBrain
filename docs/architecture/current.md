@@ -57,7 +57,8 @@ manual, not an internet majority vote. Coli/GLM stays at 160 bytes.
 `query_constellation` is an alias of `query_recent_thoughts`. There is no
 Node constellation viewer. `*** TOOL` text is a fallback.
 Allowlist: FS under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
-`C:\Tools`, and `C:\Temp\GitHub` (list/read/write/
+`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
+`C:\Temp\GitHub` (list/read/write/
 search/edit/move/mkdir/info/tail), SysInternals console `*64`,
 `reg`/`wevtutil`/`logman`/`schtasks` query, always-on `run_pwsh` /
 `run_python` / `run_node`. Mutate and `run_elevate` need `/yolo`. No Mongo
