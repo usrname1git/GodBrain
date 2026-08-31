@@ -15,7 +15,7 @@ Agent build commands also live in [`AGENTS.md`](../../AGENTS.md).
 - Go version from `godbrain_core/memory_store/go.mod`.
 - MongoDB Community as a **Windows service named `MongoDB`**, listening on
   `127.0.0.1:27017`.
-- One GPU mouth: either `llama-server` with a GGUF, or Colibri 1.6.2
+- One GPU mouth: either `llama-server` with a GGUF, or Colibri 1.10.0
   (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`). Prefer that over the vendored
   1.1.1 tree under `LLM/colibri_LLM`.
 - Optional: Tailscale (100.x) for the phone door; `GODBRAIN_API_TOKEN` is

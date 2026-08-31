@@ -49,6 +49,24 @@ to count how many nodes the problem actually has. Usually one.
 - **Keep it collapsible.** If deleting a node leaves the same result, delete
   it. Coordination is latency and another failure point (two starters racing
   `:8000` is the tax).
+- **Operator GO (2026-08-31):** GPT Copilot's Jarvis order is accepted:
+  (1) stateless multi-tool continuation, (2) durable task ledger with
+  cancel/resume, (3) end-to-end Jarvis benchmark, (4) volatile repo/symbol
+  index, (5) transactional patch preview/apply/verify, (6) browser evidence
+  capture, (7) multi-fixture skill verification, (8) unified core gate and
+  correlated event history. Destination: task ID, bounded tool rounds,
+  hash-bound diff, verify, survive restart, verified lesson to Alexandria.
+  Implement in that order. Chair cuts GO'd 2026-08-31: **3a** four
+  no-GPU benches + `-LiveMouth` small-prompt gauntlet
+  (`scripts\Test-JarvisLoop.ps1`; shred llama only if 2+2 fails, not
+  if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
+  Galaxy preview + txn rollback (not a 7-step ceremony). **4a**
+  `repo_map` / `changed_context` from git + nearest README (not a
+  symbol graph in Mongo). Analysis asks seed and fallback Z from
+  that map — a technical note, not a truncated 10-row `list_local_dir`.
+  Item 1 chain is flatten hops + `logs/last-chain.json` on
+  `mouth-one-fs-hop`. Item 2 (full ledger) after 1. Grow 3 toward
+  ~20 only as 2/5/6 exist.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -368,10 +386,23 @@ yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
 `C:\nvme`). Coding/tool fine-tune, not Watch default. MTP off unless `-UseDraft`.
 
 Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
-(`--jinja` is already on; do not pass llama-server `--tools all`, do not
+(`--jinja` is already on; `--no-cache-prompt` so a dead slot cannot
+unused49 the next chat; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
 **file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
-or the ask is host inspect (SysInternals/reg/events/schtasks). A granted-root
+or the ask is host inspect (SysInternals/reg/events/schtasks). Non-YOLO
+`list` / r/w / jail asks never start the mouth: the kernel lists the
+granted path. A question that *contains* a granted path but asks what
+is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
+**flattens** the result into a fresh user turn and POSTs again with
+`cache_prompt` false — never `role:tool` back into the llama KV (that
+is the CUDA IMA). Chain: after each execute, flatten into a fresh user turn
+(`cache_prompt` false, never `role:tool`). Non-YOLO cap 3 (last round
+speak-only). `read_local_file` of `AGENTS.md` / `Heal-GodBrain.ps1`
+returns the short rails blurb, not the file (12B unused49's on a dump).
+Observe/conclude buffer: `logs/last-chain.json`. Continue reloads it. If Gemma listed `C:\Temp\GitHub` instead of the named
+path, the kernel appends a list of that path. YOLO still loops (cap 8,
+same flatten). A granted-root
 path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
 `%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub`) or an
 explicit r/w / jail ask skips RAG and session dump
@@ -420,7 +451,7 @@ reboot / SAM|SECURITY hives / GodBrain* task delete or disable /
 BFE|mpssvc|Dnscache|MongoDB stop. Heal still never launches SysInternals.
 CORS stays the kernel/localhost list.
 
-Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
+Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.10.0
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored
 1.1.1 tree under `LLM/colibri_LLM`. Cold-spawn of the GLM snapshot on
 16 GB is disabled. Do not set both `COLI_GPU` and `COLI_GPUS`. Colibri

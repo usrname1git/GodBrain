@@ -113,7 +113,7 @@ static json load_heal_last();
 static json inbox_desk();
 static json load_last_desk_test();
 static json gpu_desk();
-static bool maybe_restart_mouth();
+static bool maybe_restart_mouth(bool even_if_up = false);
 static bool cs2_should_sleep_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
@@ -1535,6 +1535,14 @@ bool colibri_serve_up() {
     return response && response->status == 200;
 }
 
+static bool wait_mouth_up(int tries = 40) {
+    for (int i = 0; i < tries; ++i) {
+        if (colibri_serve_up()) return true;
+        Sleep(1500);
+    }
+    return colibri_serve_up();
+}
+
 static bool process_running_ci(const wchar_t* exe) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -1558,6 +1566,35 @@ static std::string repo_root_from_exe() {
     char canon[MAX_PATH] = {};
     if (GetFullPathNameA(dir.c_str(), MAX_PATH, canon, nullptr) == 0) return "";
     return std::string(canon);
+}
+
+static std::string chain_path() {
+    return repo_root_from_exe() + "\\logs\\last-chain.json";
+}
+
+static void save_chain(const std::string& goal, const std::string& ledger,
+                       const std::string& answer, int hops) {
+    json doc = {
+        {"goal", goal.substr(0, 500)},
+        {"ledger", ledger.substr(0, 4000)},
+        {"answer", answer.substr(0, 2000)},
+        {"hops", hops},
+        {"at_tick", static_cast<int>(GetTickCount())},
+    };
+    const std::string path = chain_path();
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+    out << doc.dump();
+}
+
+static json load_chain() {
+    std::ifstream in(chain_path(), std::ios::binary);
+    if (!in) return json::object();
+    try {
+        return json::parse(in);
+    } catch (const json::exception&) {
+        return json::object();
+    }
 }
 
 static json read_cs2_pause_file() {
@@ -1598,13 +1635,13 @@ static std::atomic<DWORD> g_mouth_restart_ms{0};
 // must not block restart forever.
 static const DWORD kMouthLoadWaitMs = 300000;
 
-static bool maybe_restart_mouth() {
+static bool maybe_restart_mouth(bool even_if_up) {
     if (load_mouth().value("label", "") != "llama") return false;
     if (cs2_should_sleep_mouth()) return false;
-    if (colibri_serve_up()) return false;
+    if (!even_if_up && colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
-    if (last != 0 && now - last < kMouthLoadWaitMs) return true;
+    if (!even_if_up && last != 0 && now - last < kMouthLoadWaitMs) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
     const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
@@ -2716,6 +2753,7 @@ std::string run_colibri_serve(
             json{{"role", "assistant"}, {"content", prior_assistant}});
     }
     messages.push_back(json{{"role", "user"}, {"content", user}});
+    const json base_messages = messages;
     httplib::Headers headers = {{"Accept", "text/event-stream"}};
     const std::string key = read_env("GODBRAIN_COLIBRI_KEY");
     const std::string coli_key = key.empty() ? read_env("COLI_API_KEY") : key;
@@ -2724,6 +2762,8 @@ std::string run_colibri_serve(
     }
 
     const bool llama_mouth = load_mouth().value("label", "") == "llama";
+    const std::string apply_src = tool_hint.empty() ? user : tool_hint;
+    const bool apply_cont = wants_apply_continue(system, apply_src);
     // Colibri pings empty deltas every ~10s during prefill. llama.cpp does
     // not; a 60s read timeout on a tools prefill looks like "no body".
     client.set_read_timeout(llama_mouth ? 180 : 60, 0);
@@ -2734,21 +2774,59 @@ std::string run_colibri_serve(
     std::string last_reason;
     std::string last_tool_out;
     const bool native_tools =
-        llama_mouth && !wants_apply_continue(system, user) &&
+        llama_mouth && !apply_cont &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
-    // Ordinary llama tool hops cap at 3 so a 4th generate cannot CUDA-abort
-    // the slot. YOLO still gets more, then fail closed.
+    {
+        std::ofstream dbg(
+            (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
+            std::ios::trunc);
+        dbg << "llama=" << llama_mouth << " native=" << native_tools
+            << " yolo=" << local_tools::yolo_active()
+            << " user_len=" << user.size() << "\n";
+        dbg << "hint=" << (tool_hint.empty() ? user : tool_hint).substr(0, 240)
+            << "\n";
+    }
+    // llama.cpp CUDA IMA is KV reuse after role:tool, not "12B cannot
+    // think twice." Flatten tool output into a fresh user turn, cache_prompt
+    // false, never send role:tool back. Last round is speak-only.
     const int max_tool_rounds =
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
+    std::string tool_ledger;
+    int chain_hops = 0;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
                      : json::array();
+    const std::string hop_hint0 = tool_hint.empty() ? user : tool_hint;
+    if (llama_mouth && native_tools && !local_tools::yolo_active() &&
+        local_tools::looks_like_local_fs_ask(hop_hint0) &&
+        !local_tools::looks_like_list_only_ask(hop_hint0)) {
+        std::string seed = local_tools::analysis_observe(hop_hint0);
+        if (seed.empty()) seed = local_tools::complete_fs_listing(hop_hint0, "");
+        if (seed.size() > 12000) seed.resize(12000);
+        tool_ledger = seed;
+        last_tool_out = seed;
+        chain_hops = 1;
+        messages = base_messages;
+        messages.push_back(json{
+            {"role", "user"},
+            {"content",
+             std::string("Kernel repo map (observe, not a listing):\n") + seed +
+                 "\n\nOperator question:\n" + hop_hint0 +
+                 "\nWrite Z as a technical note: what is live, leftovers, "
+                 "what is next. Sentences. Identities hold: 1+2=3, never 4. "
+                 "Do not dump dir. Do not invent a persona file."}});
+        std::cout << "[TOOLS] kernel observe (" << seed.size()
+                  << " bytes) then speak" << std::endl;
+    }
     for (int tool_round = 0; tool_round < max_tool_rounds; ++tool_round) {
     if (tool_round > 0 && spoken) spoken->clear();
     assembled.clear();
     last_reason.clear();
     json tool_acc = json::array();
+    const bool use_tools =
+        native_tools && (tool_round + 1 < max_tool_rounds) &&
+        tool_ledger.empty();
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -2759,12 +2837,15 @@ std::string run_colibri_serve(
         // /edit apply always off. Ordinary llama chat uses logs/thinking.txt
         // (Galaxy message enable_thinking: false|true, no GPU).
         if (llama_mouth) {
+            // Tool rounds must not think: reasoning_content ngram-aborts the
+            // SSE before delta.tool_calls arrive (empty answer).
             const bool think =
-                wants_apply_continue(system, user) ? false
-                                                   : llama_thinking_enabled();
+                use_tools ? false
+                          : (apply_cont ? false : llama_thinking_enabled());
             body["chat_template_kwargs"] = {{"enable_thinking", think}};
+            body["cache_prompt"] = false;
         }
-        if (native_tools) {
+        if (use_tools) {
             body["tools"] = tool_defs;
             body["tool_choice"] = "auto";
             body["parse_tool_calls"] = true;
@@ -2775,6 +2856,47 @@ std::string run_colibri_serve(
         std::string finish_reason;
         bool heading_loop = false;
         g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
+        if (use_tools && llama_mouth) {
+            body["stream"] = false;
+            httplib::Headers json_headers = headers;
+            json_headers.erase("Accept");
+            json_headers.emplace("Accept", "application/json");
+            const auto response = client.Post(
+                "/v1/chat/completions", json_headers, body.dump(),
+                "application/json");
+            g_coli_job_started_ms.store(0, std::memory_order_relaxed);
+            if (!response) {
+                maybe_restart_mouth();
+                std::string err =
+                    colibri_serve_up()
+                        ? "Error: llama-server returned no body (cut or timeout). "
+                          "Ask again. Not Colibri."
+                        : "Error: llama-server CUDA abort or :8000 died. "
+                          "Starting it. Ask again in about a minute. "
+                          "Not Colibri, not GLM paging.";
+                if (!last_tool_out.empty()) return last_tool_out + "\n" + err;
+                return err;
+            }
+            if (response->status != 200) {
+                return "Error: llama-server HTTP " +
+                       std::to_string(response->status);
+            }
+            try {
+                const json parsed = json::parse(response->body);
+                const auto& msg = parsed.at("choices").at(0).at("message");
+                if (msg.contains("content") && msg["content"].is_string()) {
+                    assembled = msg["content"].get<std::string>();
+                }
+                if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
+                    tool_acc = msg["tool_calls"];
+                    finish_reason = "tool_calls";
+                }
+            } catch (const json::exception&) {
+                return "Error: llama-server returned a malformed completion.";
+            }
+            last_reason = finish_reason;
+            break;
+        }
         const auto response = client.Post(
             "/v1/chat/completions", headers, body.dump(), "application/json",
             [&](const char* data, size_t len) {
@@ -2783,7 +2905,7 @@ std::string run_colibri_serve(
                     [&](const std::string& reason) { finish_reason = reason; },
                     spoken,
                     &tool_acc);
-                if (is_generation_loop(piece)) {
+                if (!use_tools && is_generation_loop(piece)) {
                     heading_loop = true;
                     return false;
                 }
@@ -2873,7 +2995,7 @@ std::string run_colibri_serve(
         // /edit: stop after one chunk unless the last APPLY is still open
         // (last *** APPLY after last >>>>, so a finished hunk does not
         // hide a truncated second hunk).
-        if (wants_apply_continue(system, user)) {
+        if (apply_cont) {
             if (!local_edit::apply_still_open(assembled)) break;
             messages.push_back(json{{"role", "assistant"}, {"content", piece}});
             messages.push_back(json{
@@ -2897,9 +3019,9 @@ std::string run_colibri_serve(
         messages.push_back(
             json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
-    if (!llama_mouth || wants_apply_continue(system, user)) break;
-    // Native Gemma4 path: llama.cpp folds assistant(tool_calls)+role:tool
-    // into tool_responses. Do not stuff results in a fake user message.
+    if (!llama_mouth || apply_cont) break;
+    // Native tools: execute in-process. Do not send role:tool back to
+    // llama.cpp (CUDA IMA on that KV). Flatten into a fresh user turn.
     bool had_native = false;
     if (tool_acc.is_array()) {
         for (const auto& tc : tool_acc) {
@@ -2913,11 +3035,50 @@ std::string run_colibri_serve(
             }
         }
     }
+    auto flatten_tool_turn = [&](std::string tool_out) {
+        const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
+        const bool analysis =
+            local_tools::looks_like_local_fs_ask(hop_hint) &&
+            !local_tools::looks_like_list_only_ask(hop_hint);
+        if (analysis) {
+            const std::string map = local_tools::analysis_observe(hop_hint);
+            if (!map.empty() &&
+                (tool_out.find("list_local_dir") != std::string::npos ||
+                 tool_out.size() < 400)) {
+                tool_out = map;
+            } else if (!map.empty() &&
+                       tool_out.find("Repo map") == std::string::npos) {
+                if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
+                tool_out += map;
+            }
+        } else {
+            tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
+        }
+        if (tool_out.size() > 12000) tool_out.resize(12000);
+        last_tool_out = tool_out;
+        ++chain_hops;
+        if (!tool_ledger.empty()) tool_ledger += "\n";
+        tool_ledger += tool_out;
+        if (tool_ledger.size() > 12000) tool_ledger.resize(12000);
+        messages = base_messages;
+        messages.push_back(json{
+            {"role", "user"},
+            {"content",
+             std::string("TOOL_RESULT\n") + tool_ledger +
+                 "\nObserve is done. Conclude: if you still need a granted "
+                 "file, call read_local_file with args limit=40. Else answer "
+                 "Z. Identities hold: 1+2=3, never 4. Do not dump dir. "
+                 "Do not invent a persona file. Do not say you should read "
+                 "AGENTS.md without calling the tool."}});
+        std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
+                  << max_tool_rounds << " (" << tool_ledger.size()
+                  << " bytes, cache_prompt=0)" << std::endl;
+    };
+    if (!had_native && assembled.find("tool_call") == std::string::npos &&
+        spoken && spoken->find("tool_call") != std::string::npos) {
+        assembled = *spoken;
+    }
     if (had_native) {
-        json assistant_msg = {
-            {"role", "assistant"},
-            {"content", assembled},
-        };
         json tcs = json::array();
         for (size_t i = 0; i < tool_acc.size(); ++i) {
             json tc = tool_acc[i];
@@ -2928,8 +3089,6 @@ std::string run_colibri_serve(
             if (!tc.contains("type")) tc["type"] = "function";
             tcs.push_back(tc);
         }
-        assistant_msg["tool_calls"] = tcs;
-        messages.push_back(assistant_msg);
         std::string tool_out;
         for (size_t i = 0; i < tcs.size(); ++i) {
             auto one_calls = local_tools::calls_from_openai(json::array({tcs[i]}));
@@ -2937,38 +3096,64 @@ std::string run_colibri_serve(
                 one_calls.empty() ? std::string("unknown tool\n")
                                   : local_tools::execute_calls(one_calls);
             tool_out += one;
-            const std::string id =
-                tcs[i].value("id", "call_" + std::to_string(i));
-            messages.push_back(json{
-                {"role", "tool"},
-                {"tool_call_id", id},
-                {"content", one.empty() ? "(no output)" : one},
-            });
         }
-        last_tool_out = tool_out;
-        if (tool_round + 1 >= max_tool_rounds) {
-            if (assembled.empty()) assembled = tool_out;
-            assembled += "\n[tool cap]";
-            break;
+        flatten_tool_turn(tool_out);
+        assembled.clear();
+        if (spoken) spoken->clear();
+        if (llama_mouth && !local_tools::yolo_active()) {
+            std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
+            maybe_restart_mouth(true);
+            Sleep(5000);
+            wait_mouth_up();
         }
         continue;
     }
     if (!local_tools::has_tool_block(assembled)) break;
     const std::string tool_out = local_tools::run_tools_from_text(assembled);
     if (tool_out.empty()) break;
-    messages.push_back(json{{"role", "assistant"}, {"content", assembled}});
-    messages.push_back(json{
-        {"role", "user"},
-        {"content",
-         std::string("TOOL_RESULT\n") + tool_out +
-             "\nContinue the operator task. More *** TOOL blocks if needed, "
-             "else answer."}});
+    flatten_tool_turn(tool_out);
+    assembled.clear();
+    if (spoken) spoken->clear();
+    if (llama_mouth && !local_tools::yolo_active()) {
+        std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
+        maybe_restart_mouth(true);
+        Sleep(5000);
+        wait_mouth_up();
+    }
+    continue;
     }
     if (last_reason == "length" && !llama_mouth) {
         assembled +=
             "\n[cut at 640 tokens — say continue]";
     }
+    if (assembled.find("tool_call") != std::string::npos ||
+        is_unused49_junk(assembled)) {
+        assembled.clear();
+    }
+    if (spoken && (spoken->find("tool_call") != std::string::npos ||
+                   is_unused49_junk(*spoken))) {
+        spoken->clear();
+    }
+    if (assembled.empty()) {
+        const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
+        if (local_tools::looks_like_local_fs_ask(hop_hint) &&
+            !local_tools::looks_like_list_only_ask(hop_hint)) {
+            assembled = local_tools::analysis_observe(hop_hint);
+            if (assembled.empty()) assembled = local_tools::jarvis_rails_blurb();
+        } else if (!tool_ledger.empty()) {
+            assembled = tool_ledger;
+        }
+    }
     if (spoken && spoken->empty()) *spoken = assembled;
+    save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
+               chain_hops);
+    {
+        std::ofstream dbg(
+            (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
+            std::ios::app);
+        dbg << "hops=" << chain_hops << " ledger=" << tool_ledger.size()
+            << " out=" << assembled.size() << "\n";
+    }
     return assembled;
 }
 
@@ -4001,7 +4186,12 @@ int main() {
             }
             const bool local_fs_ask =
                 local_tools::looks_like_local_fs_ask(user_msg);
+            const bool list_only_ask =
+                local_tools::looks_like_list_only_ask(user_msg);
             const bool no_tools_ask = local_tools::looks_like_no_tools(user_msg);
+            const bool fs_analyze =
+                local_fs_ask && !list_only_ask && !no_tools_ask &&
+                !local_edit::looks_like_edit_request(user_msg);
             if ((local_edit::looks_like_edit_request(user_msg) || local_fs_ask ||
                  no_tools_ask) &&
                 !continue_cmd) {
@@ -4064,7 +4254,7 @@ int main() {
             // 16 GB still cannot eat a wiki dump (prefill tax). Llama 12B
             // can take a few KiB. Do not dump the whole vault.
             const bool llama_ctx = load_mouth().value("label", "") == "llama";
-            if (llama_ctx && !local_fs_ask && !no_tools_ask) {
+            if (llama_ctx && !list_only_ask && !no_tools_ask) {
                 const std::string digest_path =
                     get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
                 std::ifstream din(digest_path, std::ios::binary);
@@ -4118,6 +4308,14 @@ int main() {
                 !no_tools_ask) {
                 system_prompt += local_tools::tool_system_addendum_for(user_msg);
             }
+            if (fs_analyze && !local_tools::yolo_active()) {
+                system_prompt +=
+                    " Jarvis on this PC is Heal/Watch, kernel tools, Golden "
+                    "Records, and /verify — not a butler persona file. "
+                    "list_local_dir the named folder, then read_local_file "
+                    "AGENTS.md or Heal-GodBrain.ps1 if needed, then answer. "
+                    "Do not dump dir. Never say you lack a filesystem.";
+            }
             if (local_edit::looks_like_edit_request(user_msg)) {
                 if (cs2_should_sleep_mouth()) {
                     res.set_content(
@@ -4166,32 +4364,104 @@ int main() {
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
+                const json ch = load_chain();
+                if (ch.contains("ledger") && ch["ledger"].is_string()) {
+                    std::string led = ch["ledger"].get<std::string>();
+                    if (led.size() > 2000) led.resize(2000);
+                    if (!led.empty()) {
+                        user_prompt =
+                            "Prior chain ledger:\n" + led + "\n\n" + user_prompt;
+                    }
+                }
             } else if (local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
             }
+            std::string tool_hint = asked;
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
-                const std::string gp = local_tools::first_granted_path(user_msg);
-                user_prompt =
-                    "Kernel: file tools are live on this PC. " +
-                    (gp.empty()
-                         ? std::string("Call list_granted_roots or list_local_dir.")
-                         : ("Exact folder: " + gp +
-                            ". Call list_local_dir on that path, not C:\\Temp\\GitHub.")) +
-                    " Never say you do not have access to the local file system.\n\n" +
-                    user_prompt;
+                if (fs_analyze && !local_tools::yolo_active()) {
+                    const std::string gp =
+                        local_tools::first_granted_path(user_msg);
+                    user_prompt =
+                        "Kernel: file tools are live. " +
+                        (gp.empty()
+                             ? std::string("Call list_granted_roots.")
+                             : ("Exact folder: " + gp +
+                                ". list_local_dir, then read_local_file "
+                                "args=limit=40 if you still need a file.")) +
+                        " " + local_tools::jarvis_rails_blurb() +
+                        " Chain: observe → conclude → tool or answer Z. "
+                        "1+2=3 never 4. Do not dump dir.\n\n" +
+                        user_prompt;
+                } else {
+                    const std::string gp =
+                        local_tools::first_granted_path(user_msg);
+                    user_prompt =
+                        "Kernel: file tools are live on this PC. " +
+                        (gp.empty()
+                             ? std::string(
+                                   "Call list_granted_roots or list_local_dir.")
+                             : ("Exact folder: " + gp +
+                                ". Call list_local_dir on that path, then "
+                                "read_local_file if the question needs a file, "
+                                "not C:\\Temp\\GitHub.")) +
+                        " Never say you do not have access to the local file "
+                        "system. Do not dump dir as the answer.\n\n" +
+                        user_prompt;
+                }
+            }
+
+            const bool want_stream =
+                payload.value("stream", false) ||
+                req.get_header_value("Accept").find("text/event-stream") !=
+                    std::string::npos;
+            // Explicit list/r/w/jail: kernel listing is the answer. Analysis
+            // over a named folder uses tools; the kernel flattens results
+            // into a fresh llama request (no role:tool KV reuse).
+            if (list_only_ask && !no_tools_ask && !continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg) &&
+                !local_tools::yolo_active()) {
+                const std::string listing =
+                    local_tools::complete_fs_listing(user_msg, "");
+                std::cout << "[TOOLS] fs ask; kernel list, no GPU ("
+                          << listing.size() << " bytes)" << std::endl;
+                remember_oracle_turn(asked, listing, 0);
+                if (want_stream) {
+                    res.set_header("Cache-Control", "no-cache");
+                    res.set_header("X-Accel-Buffering", "no");
+                    const std::string note = listing;
+                    res.set_chunked_content_provider(
+                        "text/event-stream",
+                        [note](size_t, httplib::DataSink& sink) {
+                            const std::string tok =
+                                std::string("data: ") +
+                                json({{"type", "token"}, {"text", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(tok.data(), tok.size());
+                            const std::string done =
+                                std::string("data: ") +
+                                json({{"type", "done"}, {"response", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(done.data(), done.size());
+                            sink.done();
+                            return true;
+                        });
+                    return;
+                }
+                res.set_content(
+                    json({{"response", listing}}).dump(),
+                    "application/json");
+                return;
             }
 
             std::cout << "[RAG] Context built (" << context_text.size()
                       << " bytes) follow_up=" << (follow_up ? "1" : "0")
                       << " continue=" << (continue_cmd ? "1" : "0")
                       << ". Asking Colibri..." << std::endl;
-            const bool want_stream =
-                payload.value("stream", false) ||
-                req.get_header_value("Accept").find("text/event-stream") !=
-                    std::string::npos;
             auto stitch_continue = [continue_cmd, prior_a](const std::string& next) {
                 if (!continue_cmd || prior_a.empty()) return next;
                 if (next.compare(0, 6, "Error:") == 0) return next;
@@ -4221,8 +4491,8 @@ int main() {
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue,
-                     local_fs_ask, no_tools_ask](
+                    [sys, usr, asked_q, tool_hint, hist_q, hist_a,
+                     stitch_continue, local_fs_ask, no_tools_ask](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -4264,10 +4534,19 @@ int main() {
                             hist_q,
                             hist_a,
                             &spoken,
-                            asked_q);
+                            tool_hint);
                         std::string chunk = strip_coli_reply(combined);
                         std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
+                        if (is_unused49_junk(chunk) ||
+                            is_unused49_junk(for_memory)) {
+                            maybe_restart_mouth(true);
+                            chunk =
+                                "Error: llama-server dumped unused49 "
+                                "(poisoned KV slot). Recycled. Ask again in "
+                                "about a minute. Not Colibri.";
+                            for_memory = chunk;
+                        }
                         if (local_fs_ask && !no_tools_ask &&
                             local_tools::looks_like_fs_refuse(for_memory)) {
                             const std::string probe =
@@ -4345,10 +4624,17 @@ int main() {
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
                 &spoken,
-                asked);
+                tool_hint);
             std::string chunk = strip_coli_reply(combined);
             std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
+            if (is_unused49_junk(chunk) || is_unused49_junk(for_memory)) {
+                maybe_restart_mouth(true);
+                chunk =
+                    "Error: llama-server dumped unused49 (poisoned KV slot). "
+                    "Recycled. Ask again in about a minute. Not Colibri.";
+                for_memory = chunk;
+            }
             if (local_fs_ask && !no_tools_ask &&
                 local_tools::looks_like_fs_refuse(for_memory)) {
                 const std::string probe = local_tools::answer_fs_ask(asked);

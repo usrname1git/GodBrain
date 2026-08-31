@@ -301,6 +301,15 @@ int main() {
     const std::string jsres = local_tools::run_tools_from_text(js);
     pass &= expect(jsres.find("node-ok") != std::string::npos, "node inline");
 
+    const std::string gemma_tc =
+        "<|tool_call>_call:list_granted_roots{}<tool_call|>";
+    const std::string gemma_res = local_tools::run_tools_from_text(gemma_tc);
+    pass &= expect(local_tools::has_tool_block(gemma_tc) &&
+                       gemma_res.find("list_granted_roots") !=
+                           std::string::npos &&
+                       gemma_res.find("not Mongo") != std::string::npos,
+                   "gemma tool_call text runs");
+
     const std::string killp =
         "*** TOOL\nname: kill_process\nargs: 1\n*** END\n";
     pass &= expect(local_tools::run_tools_from_text(killp).find("denied") !=
@@ -316,19 +325,22 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 8, "files hop 8 tools");
+    pass &= expect(files.is_array() && files.size() == 10, "files hop 10 tools");
     bool files_has_sysint = false;
     bool files_has_info = false;
     bool files_has_roots = false;
+    bool files_has_map = false;
     for (const auto& t : files) {
         const std::string n = t["function"].value("name", "");
         if (n == "run_sysint") files_has_sysint = true;
         if (n == "get_file_info") files_has_info = true;
         if (n == "list_granted_roots") files_has_roots = true;
+        if (n == "repo_map") files_has_map = true;
     }
     pass &= expect(!files_has_sysint, "files hop no sysint");
     pass &= expect(files_has_info, "files hop has get_file_info");
     pass &= expect(files_has_roots, "files hop has list_granted_roots");
+    pass &= expect(files_has_map, "files hop has repo_map");
     const auto host_defs =
         local_tools::openai_tool_defs_for("run_sysint handle64 on CS2");
     pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
@@ -364,6 +376,70 @@ int main() {
                            longp.find("GodBrain") != std::string::npos &&
                            longp.find("missing") == std::string::npos,
                        "path stops at GodBrain not English tail");
+        pass &= expect(local_tools::looks_like_local_fs_ask(longq),
+                       "jarvis repo ask is local-fs");
+        pass &= expect(!local_tools::looks_like_list_only_ask(longq),
+                       "jarvis repo ask is not list-only");
+        const std::string rails = local_tools::read_repo_rails(longq);
+        pass &= expect(rails.find("read_local_file") != std::string::npos &&
+                           rails.find("AGENTS.md") != std::string::npos &&
+                           rails.find("Heal-GodBrain.ps1") != std::string::npos,
+                       "rails read AGENTS and Heal");
+        const std::string blurb = local_tools::jarvis_rails_blurb();
+        pass &= expect(blurb.find("one loop") != std::string::npos &&
+                           blurb.find("copilot-instructions") != std::string::npos &&
+                           blurb.find("temp_hermes") != std::string::npos,
+                       "jarvis blurb names leftovers");
+        const std::string agread = local_tools::run_tools_from_text(
+            std::string("*** TOOL\nname: read_local_file\npath: ") + home +
+            "\\Documents\\GitHub\\GodBrain\\AGENTS.md\n*** END\n");
+        pass &= expect(agread.find("kernel rails") != std::string::npos &&
+                           agread.find("one loop") != std::string::npos &&
+                           agread.size() < 2500,
+                       "AGENTS.md read is blurb not a dump");
+        const std::string miss =
+            "search_local C:\\Temp\\GitHub name q=GodBrain repo hits=0 "
+            "scanned=400\n";
+        const std::string padded =
+            local_tools::complete_fs_listing(longq, miss);
+        pass &= expect(padded.find("search_local") != std::string::npos &&
+                           padded.find("list_local_dir") != std::string::npos &&
+                           padded.find("GodBrain") != std::string::npos &&
+                           padded.find("repo that needs") == std::string::npos,
+                       "missed Temp hop still lists named repo");
+        const std::string already =
+            "list_local_dir " + home +
+            "\\Documents\\GitHub\\GodBrain depth=1\n";
+        pass &= expect(local_tools::complete_fs_listing(longq, already) ==
+                           already,
+                       "complete_fs_listing is idempotent");
+        pass &= expect(local_tools::complete_fs_listing("what is 2+2", miss) ==
+                           miss,
+                       "non-fs hop is not padded");
+        const std::string map = local_tools::analysis_observe(longq);
+        int nlines = 0;
+        for (char ch : map) {
+            if (ch == '\n') ++nlines;
+        }
+        pass &= expect(map.find("Repo map") != std::string::npos &&
+                           map.find("list_local_dir") == std::string::npos &&
+                           map.find("AGENTS.md") != std::string::npos &&
+                           map.find("README.md") != std::string::npos &&
+                           map.find("copilot-instructions") != std::string::npos &&
+                           map.find("temp_hermes") != std::string::npos &&
+                           nlines >= 12 && map.size() > 800,
+                       "analysis observe is a writeup not 10 dir rows");
+        pass &= expect(local_tools::analysis_observe("list " + home +
+                                                     "\\Documents\\GitHub\\GodBrain")
+                           .empty(),
+                       "list-only ask is not a repo_map");
+        const std::string chg = local_tools::changed_context(
+            home + "\\Documents\\GitHub\\GodBrain");
+        pass &= expect(chg.find("Changed") != std::string::npos &&
+                           (chg.find("mouth-one-fs-hop") != std::string::npos ||
+                            chg.find("git") != std::string::npos ||
+                            chg.find("Recent") != std::string::npos),
+                       "changed_context has git");
     }
     {
         const std::string roots = local_tools::run_tools_from_text(
@@ -376,12 +452,30 @@ int main() {
     }
     pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Temp\\GitHub"),
                    "list granted temp is local-fs");
+    pass &= expect(local_tools::looks_like_list_only_ask("list C:\\Temp\\GitHub"),
+                   "list temp is list-only");
+    pass &= expect(
+        local_tools::looks_like_list_only_ask("do you have r/w to the repo"),
+        "rw repo is list-only");
+    pass &= expect(
+        local_tools::looks_like_list_only_ask("what are the authorized paths"),
+        "authorized paths is list-only");
+    pass &= expect(!local_tools::looks_like_list_only_ask("what is 2+2"),
+                   "math is not list-only");
     pass &= expect(
         local_tools::looks_like_local_fs_ask("do you have r/w to the repo"),
         "rw repo is local-fs");
     pass &= expect(
         local_tools::looks_like_local_fs_ask("is the tool jail granted"),
         "jail granted is local-fs");
+    {
+        const std::string jail =
+            local_tools::complete_fs_listing("is the tool jail granted", "");
+        pass &= expect(jail.find("list_granted_roots") != std::string::npos &&
+                           jail.find("not Mongo") != std::string::npos &&
+                           !jail.empty(),
+                       "jail grant with no path lists roots");
+    }
     pass &= expect(
         !local_tools::looks_like_local_fs_ask("is the local mouth ready"),
         "ready is not local-fs");

@@ -163,6 +163,8 @@ $argParts = @(
     "-c $Ctx",
     "-fa on",
     "--jinja",
+    "--no-cache-prompt",
+    "--no-cache-idle-slots",
     "-a $alias",
     "--log-file `"$stderr`""
 )

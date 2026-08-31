@@ -334,6 +334,167 @@ std::string find_exe(const char* name) {
     return "";
 }
 
+std::string find_git() {
+    std::string g = find_on_path("git");
+    if (!g.empty()) return g;
+    const char* extra[] = {
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        "C:\\Program Files\\Git\\bin\\git.exe",
+        nullptr};
+    for (int i = 0; extra[i]; ++i) {
+        if (file_exists(extra[i])) return extra[i];
+    }
+    return "";
+}
+
+std::string clip_chars(std::string s, size_t n) {
+    if (s.size() <= n) return s;
+    s.resize(n);
+    while (!s.empty() && s.back() != '\n') s.pop_back();
+    if (!s.empty() && s.back() != '\n') s += "\n";
+    s += "[clip]\n";
+    return s;
+}
+
+std::string first_lines(const std::string& s, int n) {
+    if (n < 1) return "";
+    std::string out;
+    int lines = 0;
+    for (size_t i = 0; i < s.size() && lines < n; ++i) {
+        out.push_back(s[i]);
+        if (s[i] == '\n') ++lines;
+    }
+    return out;
+}
+
+bool is_dir_path(const std::string& path) {
+    const DWORD attr = GetFileAttributesA(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES &&
+           (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+bool is_door_name(const std::string& name) {
+    static const char* doors[] = {
+        "README.md", "AGENTS.md", "ARCHITECTURE.md", "Start-GodBrain.ps1",
+        "Heal-GodBrain.ps1", "Watch-GodBrain.ps1", "Watch-GodBrain.vbs",
+        "Install-GodBrainLogon.ps1", "Install-GodBrainWatch.ps1",
+        "Install-GodBrainCs2Pause.ps1", "Start-CS2.ps1", "Start-CS2.cmd",
+        "Test-GodBrainDesk.ps1", "GodBrain-Cs2.ps1", "Watch-Cs2Pause.ps1",
+        nullptr};
+    for (int i = 0; doors[i]; ++i) {
+        if (_stricmp(name.c_str(), doors[i]) == 0) return true;
+    }
+    return false;
+}
+
+std::string quote_path(const std::string& path);
+
+std::string run_git_at(const std::string& repo, const std::string& extra) {
+    const std::string git = find_git();
+    if (git.empty()) return "";
+    return run_process(git,
+                       "--no-pager -C " + quote_path(repo) + " " + extra,
+                       8000);
+}
+
+std::string build_changed_context(const std::string& dir) {
+    std::ostringstream o;
+    o << "Changed (git, this tree):\n";
+    const std::string st = run_git_at(dir, "status -sb");
+    if (st.empty() || st.find("CreateProcess failed") != std::string::npos) {
+        o << "(git not available)\n";
+        return o.str();
+    }
+    o << clip_chars(st, 1800);
+    const std::string log = run_git_at(dir, "log -8 --oneline");
+    if (!log.empty() && log.find("CreateProcess failed") == std::string::npos) {
+        o << "Recent:\n" << clip_chars(log, 800);
+    }
+    const std::string stat = run_git_at(dir, "diff --stat HEAD");
+    if (!stat.empty() && stat.find("CreateProcess failed") == std::string::npos &&
+        stat != "(no output)") {
+        o << "Diffstat:\n" << clip_chars(stat, 800);
+    }
+    return o.str();
+}
+
+std::string build_repo_map(const std::string& dir) {
+    std::ostringstream o;
+    o << "Repo map (kernel observe, not a dir dump).\n";
+    o << "Path: " << dir << "\n";
+    const std::string branch = run_git_at(dir, "rev-parse --abbrev-ref HEAD");
+    if (!branch.empty() && branch.find("CreateProcess failed") == std::string::npos &&
+        branch.find("fatal:") == std::string::npos) {
+        o << "Branch: " << trim(branch) << "\n";
+    }
+    std::vector<std::string> doors, dirs, files;
+    WIN32_FIND_DATAA fd{};
+    HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            const std::string name = fd.cFileName;
+            if (name == "." || name == "..") continue;
+            const bool isdir =
+                (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (isdir) {
+                if (name != ".git") dirs.push_back(name);
+            } else if (is_door_name(name)) {
+                doors.push_back(name);
+            } else {
+                files.push_back(name);
+            }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    o << "Doors at root (constitution, keep):";
+    if (doors.empty()) o << " (none named)\n";
+    else {
+        for (const auto& n : doors) o << " " << n;
+        o << "\n";
+    }
+    o << "Dirs:";
+    if (dirs.empty()) o << " (none)\n";
+    else {
+        for (const auto& n : dirs) o << " " << n;
+        o << "\n";
+    }
+    o << "Other root files:";
+    if (files.empty()) o << " (none)\n";
+    else {
+        for (const auto& n : files) o << " " << n;
+        o << "\n";
+    }
+    static const char* leftovers[] = {
+        ".github\\copilot-instructions.md",
+        ".vscode\\mcp.json",
+        "godbrain_core\\temp_hermes",
+        "archive\\godbrain-llama-chat-extensions.extract.cpp",
+        nullptr};
+    o << "Leftovers (not the product; still on disk):\n";
+    int nleft = 0;
+    for (int i = 0; leftovers[i]; ++i) {
+        const std::string p = dir + "\\" + leftovers[i];
+        if (!file_exists(p)) continue;
+        ++nleft;
+        o << "- " << leftovers[i];
+        if (contains_ci(leftovers[i], "mcp.json")) o << " (empty servers leftover)";
+        o << "\n";
+    }
+    if (nleft == 0) o << "(none of the known leftover paths)\n";
+    const std::string readme = dir + "\\README.md";
+    if (file_exists(readme) && !is_dir_path(readme)) {
+        bool trunc = false;
+        const std::string body = read_file_limited(readme, 8 * 1024, &trunc);
+        o << "Nearest README.md (clip, not the wiki):\n";
+        o << first_lines(body, 8);
+        if (!o.str().empty() && o.str().back() != '\n') o << "\n";
+    }
+    o << build_changed_context(dir);
+    o << "Live loop on this host is Heal/Watch + kernel tools + /verify. "
+         "Jarvis is that loop, not a persona file. Do not staff a factory.\n";
+    return o.str();
+}
+
 std::string strip_exe(std::string stem) {
     stem = ascii_lower(trim(stem));
     const size_t slash = stem.find_last_of("\\/");
@@ -1176,7 +1337,8 @@ std::string yolo_status_line() {
 }
 
 bool has_tool_block(const std::string& text) {
-    return text.find("*** TOOL") != std::string::npos;
+    return text.find("*** TOOL") != std::string::npos ||
+           text.find("tool_call") != std::string::npos;
 }
 
 std::vector<Call> parse_tool_blocks(const std::string& text) {
@@ -1221,6 +1383,40 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
             else if (key == "dest") c.dest = val;
         }
         if (!c.name.empty()) calls.push_back(c);
+    }
+    if (calls.empty() && text.find("tool_call") != std::string::npos) {
+        static const char* names[] = {
+            "list_granted_roots", "list_local_dir", "read_local_file",
+            "get_file_info",      "search_local",   "write_local_file",
+            "edit_local_file",    "create_local_dir", "move_local_file",
+            nullptr};
+        const std::string lower = ascii_lower(text);
+        for (int i = 0; names[i]; ++i) {
+            const size_t p = lower.find(names[i]);
+            if (p == std::string::npos) continue;
+            Call c;
+            c.name = names[i];
+            const size_t brace = text.find('{', p);
+            if (brace != std::string::npos) {
+                const size_t close = text.find('}', brace);
+                if (close != std::string::npos && close > brace) {
+                    try {
+                        const json js = json::parse(
+                            text.substr(brace, close - brace + 1));
+                        if (js.contains("path") && js["path"].is_string()) {
+                            c.path = js["path"].get<std::string>();
+                        }
+                        if (js.contains("args") && js["args"].is_string()) {
+                            c.args = js["args"].get<std::string>();
+                        }
+                    } catch (const json::exception&) {
+                    }
+                }
+            }
+            if (c.path.empty()) c.path = granted_path_from_message(text);
+            calls.push_back(c);
+            break;
+        }
     }
     return calls;
 }
@@ -1308,6 +1504,26 @@ std::string execute_calls(const std::vector<Call>& calls) {
             continue;
         }
 
+        if (c.name == "repo_map" || c.name == "changed_context") {
+            std::string p = c.path.empty() ? repo_root() : c.path;
+            if (!file_exists(canon_path(p))) {
+                const std::string hit = granted_path_from_message(p);
+                if (!hit.empty() && file_exists(hit)) p = hit;
+            }
+            if (!path_is_granted(p, &err)) {
+                out << c.name << " denied: " << err << "\n";
+                continue;
+            }
+            const std::string full = canon_path(p);
+            if (!is_dir_path(full)) {
+                out << c.name << " needs a directory: " << full << "\n";
+                continue;
+            }
+            out << (c.name == "repo_map" ? build_repo_map(full)
+                                         : build_changed_context(full));
+            continue;
+        }
+
         if (c.name == "list_local_dir" || c.name == "read_local_file" ||
             c.name == "write_local_file" || c.name == "run_strings" ||
             c.name == "run_sqlite3" || c.name == "search_local" ||
@@ -1346,6 +1562,22 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 search_dir(full, "", 0, depth, false, seen, hits, out);
                 if (hits >= 80) out << "... truncated\n";
             } else if (c.name == "read_local_file") {
+                const std::string low = ascii_lower(full);
+                const bool rails_file =
+                    (low.size() >= 10 &&
+                     (low.compare(low.size() - 10, 10, "\\agents.md") == 0 ||
+                      low.compare(low.size() - 10, 10, "/agents.md") == 0)) ||
+                    (low.size() >= 18 &&
+                     (low.compare(low.size() - 18, 18,
+                                  "\\heal-godbrain.ps1") == 0 ||
+                      low.compare(low.size() - 18, 18,
+                                  "/heal-godbrain.ps1") == 0));
+                if (rails_file) {
+                    out << "read_local_file " << full
+                        << " (kernel rails, not a dump)\n"
+                        << jarvis_rails_blurb() << "\n";
+                    continue;
+                }
                 bool trunc = false;
                 const std::string data = read_file_limited(full, kMaxReadBytes, &trunc);
                 if (looks_binary(data)) {
@@ -2076,7 +2308,7 @@ std::string answer_fs_ask(const std::string& user_msg) {
         (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
         return run_tools_from_text(
             std::string("*** TOOL\nname: list_local_dir\npath: ") + p +
-            "\nargs: depth=2\n*** END\n");
+            "\nargs: depth=1\n*** END\n");
     }
     return run_tools_from_text(
         std::string("*** TOOL\nname: get_file_info\npath: ") + p +
@@ -2099,6 +2331,126 @@ bool looks_like_local_fs_ask(const std::string& msg) {
                               has_word(t, "authorized") || has_word(t, "allowlist");
     if (has_word(t, "granted") && has_word(t, "jail")) return true;
     return jail_granted && place;
+}
+
+bool looks_like_list_only_ask(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
+                       has_word(t, "directory") || has_word(t, "path") ||
+                       has_word(t, "paths") || has_word(t, "files") ||
+                       has_word(t, "file");
+    const bool rw_phrase =
+        t.find("r/w") != std::string::npos || has_word(t, "rw") ||
+        t.find("read and write") != std::string::npos ||
+        t.find("write access") != std::string::npos;
+    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail") ||
+                              has_word(t, "authorized") || has_word(t, "allowlist");
+    if (rw_phrase && place) return true;
+    if (has_word(t, "granted") && has_word(t, "jail")) return true;
+    if (jail_granted && place) return true;
+    if (has_word(t, "jarvis") || has_word(t, "fixing") || has_word(t, "fix") ||
+        has_word(t, "apparent") || has_word(t, "become") ||
+        has_word(t, "review") ||
+        t.find("needs fixing") != std::string::npos) {
+        return false;
+    }
+    if (has_word(t, "list") || has_word(t, "ls") || has_word(t, "dir")) {
+        return granted_path_in_message(msg) || place;
+    }
+    return false;
+}
+
+std::string complete_fs_listing(const std::string& user_msg,
+                                const std::string& tool_out) {
+    if (!looks_like_local_fs_ask(user_msg)) return tool_out;
+    const std::string gp = first_granted_path(user_msg);
+    if (gp.empty()) {
+        if (contains_ci(tool_out, "list_granted_roots")) return tool_out;
+        const std::string extra = answer_fs_ask(user_msg);
+        if (extra.empty()) return tool_out;
+        std::string out = tool_out;
+        if (!out.empty() && out.back() != '\n') out += '\n';
+        out += extra;
+        return out;
+    }
+    const std::string full = canon_path(gp);
+    const std::string needle = full.empty() ? gp : full;
+    if (contains_ci(tool_out, needle) || contains_ci(tool_out, gp)) {
+        return tool_out;
+    }
+    const std::string extra = answer_fs_ask(user_msg);
+    if (extra.empty()) return tool_out;
+    std::string out = tool_out;
+    if (!out.empty() && out.back() != '\n') out += '\n';
+    out += extra;
+    return out;
+}
+
+std::string repo_map(const std::string& dir) {
+    std::string err;
+    const std::string full = canon_path(dir);
+    if (full.empty() || !path_is_granted(full, &err) || !is_dir_path(full)) {
+        return "";
+    }
+    return build_repo_map(full);
+}
+
+std::string changed_context(const std::string& dir) {
+    std::string err;
+    const std::string full = canon_path(dir);
+    if (full.empty() || !path_is_granted(full, &err) || !is_dir_path(full)) {
+        return "";
+    }
+    return build_changed_context(full);
+}
+
+std::string analysis_observe(const std::string& user_msg) {
+    if (looks_like_list_only_ask(user_msg)) return "";
+    if (!looks_like_local_fs_ask(user_msg)) return "";
+    const std::string gp = first_granted_path(user_msg);
+    if (gp.empty()) return "";
+    return repo_map(gp);
+}
+
+std::string read_repo_rails(const std::string& user_msg) {
+    if (looks_like_list_only_ask(user_msg)) return "";
+    if (!looks_like_local_fs_ask(user_msg)) return "";
+    const std::string gp = first_granted_path(user_msg);
+    if (gp.empty()) return "";
+    const std::string full = canon_path(gp);
+    if (full.empty()) return "";
+    const DWORD attr = GetFileAttributesA(full.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES ||
+        (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return "";
+    }
+    static const char* names[] = {"AGENTS.md", "Heal-GodBrain.ps1", nullptr};
+    std::string out;
+    for (int i = 0; names[i]; ++i) {
+        Call c;
+        c.name = "read_local_file";
+        c.path = full + "\\" + names[i];
+        c.args = "limit=80";
+        const std::string one = execute_calls({c});
+        if (one.find("denied") != std::string::npos) continue;
+        if (one.find("read_local_file") == std::string::npos) continue;
+        std::string clip = one;
+        if (clip.size() > 1400) clip.resize(1400);
+        if (!out.empty()) out += "\n";
+        out += clip;
+    }
+    return out;
+}
+
+std::string jarvis_rails_blurb() {
+    return "Kernel rails (not a file dump; 12B unused49's if you paste "
+           "AGENTS.md): one loop on this host. Heal never kills a process. "
+           "Hands are kernel local_tools, not MCP. Golden Records + /verify "
+           "are the manual. Jarvis is that loop, not a persona file. "
+           "Leftovers in the listing: .github/copilot-instructions.md, "
+           ".vscode/mcp.json (empty servers), godbrain_core/temp_hermes, "
+           "archive/godbrain-llama-chat-extensions.extract.cpp. "
+           "Do not staff a factory.";
 }
 
 bool use_full_tool_defs(const std::string& user_msg) {
@@ -2225,6 +2577,15 @@ nlohmann::json openai_tool_defs(bool full) {
         "Print the kernel file-jail roots (live env). Not Mongo. Call this "
         "when asked which paths are authorized.",
         json::object()));
+    tools.push_back(tool_fn(
+        "repo_map",
+        "Kernel writeup of a granted repo: doors, leftovers, nearest README, "
+        "git branch/status. Not a truncated dir listing. Use for analysis.",
+        {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "changed_context",
+        "git status, recent log, and diffstat for a granted repo. Not Mongo.",
+        {{"path", path}}, {"path"}));
     if (!full) return tools;
     tools.push_back(tool_fn(
         "move_local_file", "Move/rename a granted path to dest (also granted).",
