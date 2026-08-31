@@ -6,9 +6,13 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <vector>
+
+#include "../cpp_tools/keccak256.hpp"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -59,6 +63,26 @@ std::string replace_slashes(std::string path) {
 bool ends_with(const std::string& value, const std::string& suf) {
     return value.size() >= suf.size() &&
            value.compare(value.size() - suf.size(), suf.size(), suf) == 0;
+}
+
+std::string content_hash(const std::string& body) {
+    uint8_t hash[32] = {};
+    Keccak256::getHash(
+        reinterpret_cast<const uint8_t*>(body.data()), body.size(), hash);
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (int i = 0; i < 32; ++i) {
+        out << std::setw(2) << static_cast<int>(hash[i]);
+    }
+    return out.str();
+}
+
+std::string clip_preview(std::string text, size_t max) {
+    if (text.size() > max) {
+        text.resize(max);
+        text += "...";
+    }
+    return text;
 }
 
 std::string json_escape(const std::string& text) {
@@ -460,18 +484,26 @@ void append_plan_section(const std::string& title, const std::string& body) {
 
 void save_result(
     bool applied,
+    bool rolled_back,
     const std::string& report,
-    const CheckOutcome& check) {
+    const CheckOutcome& check,
+    const Result& extra) {
     const std::string path = repo_root() + "\\logs\\last-edit-result.json";
     const std::string profile =
         check.profile.empty() ? "local-edit-apply-v1" : check.profile;
     std::ostringstream payload;
     payload << "{\"applied\":" << (applied ? "true" : "false")
+            << ",\"rolled_back\":" << (rolled_back ? "true" : "false")
             << ",\"verification_profile\":\"local-edit-apply-v1\""
             << ",\"check_profile\":\"" << json_escape(profile) << "\""
             << ",\"check_ran\":" << (check.ran ? "true" : "false")
             << ",\"check_ok\":" << (check.ok ? "true" : "false")
             << ",\"skill_promote_eligible\":false"
+            << ",\"before_hash\":\"" << json_escape(extra.before_hash) << "\""
+            << ",\"after_hash\":\"" << json_escape(extra.after_hash) << "\""
+            << ",\"preview_path\":\"" << json_escape(extra.preview_path) << "\""
+            << ",\"preview_old\":\"" << json_escape(clip_preview(extra.preview_old, 240)) << "\""
+            << ",\"preview_new\":\"" << json_escape(clip_preview(extra.preview_new, 240)) << "\""
             << ",\"report\":\"" << json_escape(report) << "\""
             << ",\"check_detail\":\"" << json_escape(check.detail) << "\"}\n";
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -642,6 +674,12 @@ struct ApplyOutcome {
     bool ok = false;
     std::string report;
     std::vector<std::string> edited;
+    std::map<std::string, std::string> originals;
+    std::string before_hash;
+    std::string after_hash;
+    std::string preview_path;
+    std::string preview_old;
+    std::string preview_new;
 };
 
 ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint) {
@@ -653,6 +691,7 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint
     }
     std::ostringstream report;
     int ok = 0;
+    std::map<std::string, std::string> working;
     for (const Hunk& hunk : hunks) {
         if (!path_ok(hunk.path)) {
             report << "skip bad path " << hunk.path << "\n";
@@ -660,20 +699,30 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint
         }
         const std::string full = root + "\\" + hunk.path;
         std::string body;
-        if (!read_all(full, body)) {
+        if (working.count(hunk.path)) {
+            body = working[hunk.path];
+        } else if (!read_all(full, body)) {
             report << "skip missing " << hunk.path << "\n";
             continue;
+        } else {
+            out.originals[hunk.path] = body;
+            if (out.before_hash.empty()) out.before_hash = content_hash(body);
+        }
+        if (out.preview_path.empty()) {
+            out.preview_path = hunk.path;
+            out.preview_old = hunk.old_text;
+            out.preview_new = hunk.new_text;
         }
         std::string old_text = hunk.old_text;
         std::string new_text = hunk.new_text;
         match_file_newlines(old_text, new_text, body);
         if (body.empty() && old_text.empty()) {
-            if (!write_all(full, new_text)) {
-                report << "skip write failed " << hunk.path << "\n";
-                continue;
-            }
+            working[hunk.path] = new_text;
             ++ok;
-            out.edited.push_back(hunk.path);
+            if (std::find(out.edited.begin(), out.edited.end(), hunk.path) ==
+                out.edited.end()) {
+                out.edited.push_back(hunk.path);
+            }
             report << "edited " << hunk.path << "\n";
             continue;
         }
@@ -693,21 +742,41 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint
             continue;
         }
         body.replace(at, old_text.size(), new_text);
-        if (!write_all(full, body)) {
-            report << "skip write failed " << hunk.path << "\n";
-            continue;
-        }
+        working[hunk.path] = body;
         ++ok;
-        out.edited.push_back(hunk.path);
+        if (std::find(out.edited.begin(), out.edited.end(), hunk.path) ==
+            out.edited.end()) {
+            out.edited.push_back(hunk.path);
+        }
         report << "edited " << hunk.path << "\n";
     }
     if (ok == 0) {
         out.report = "FAIL\n" + report.str();
         return out;
     }
+    for (const auto& kv : working) {
+        const std::string full = root + "\\" + kv.first;
+        if (!write_all(full, kv.second)) {
+            out.report = "FAIL\nwrite failed " + kv.first + "\n" + report.str();
+            out.ok = false;
+            return out;
+        }
+        if (out.after_hash.empty()) out.after_hash = content_hash(kv.second);
+    }
     out.ok = true;
     out.report = "DONE\n" + report.str();
     return out;
+}
+
+bool restore_originals(const std::map<std::string, std::string>& originals) {
+    const std::string root = repo_root();
+    if (root.empty()) return false;
+    bool ok = true;
+    for (const auto& kv : originals) {
+        const std::string full = root + "\\" + kv.first;
+        if (!write_all(full, kv.second)) ok = false;
+    }
+    return ok;
 }
 
 }  // namespace
@@ -810,17 +879,22 @@ Result maybe_apply(
                 if (result.report.back() != '\n') result.report += '\n';
                 result.report += "Second pass had no apply blocks.\n";
             }
-            save_result(false, result.report, CheckOutcome{});
+            save_result(false, false, result.report, CheckOutcome{}, result);
             return result;
         }
         applied = apply_hunks(hunks, user_msg);
     } else if (!applied.ok && hunks.empty()) {
         result.report = "Plan saved. No apply blocks and no second pass.";
-        save_result(false, result.report, CheckOutcome{});
+        save_result(false, false, result.report, CheckOutcome{}, result);
         return result;
     }
     result.report = applied.report;
     result.applied = applied.ok;
+    result.before_hash = applied.before_hash;
+    result.after_hash = applied.after_hash;
+    result.preview_path = applied.preview_path;
+    result.preview_old = applied.preview_old;
+    result.preview_new = applied.preview_new;
     CheckOutcome check;
     if (applied.ok) {
         check = run_edit_check(applied.edited);
@@ -832,10 +906,27 @@ Result maybe_apply(
                              (check.ok ? "ok" : "fail") + " " + check.detail +
                              "\n";
         }
+        if (check.ran && !check.ok) {
+            if (restore_originals(applied.originals)) {
+                result.applied = false;
+                result.rolled_back = true;
+                result.after_hash = result.before_hash;
+                result.report += "rolled back (check failed)\n";
+            } else {
+                result.report += "rollback write failed\n";
+            }
+        }
     } else {
         check.profile = "local-edit-apply-v1";
     }
-    save_result(result.applied, result.report, check);
+    if (!result.before_hash.empty()) {
+        result.report += "hash " + result.before_hash.substr(0, 12);
+        if (!result.after_hash.empty()) {
+            result.report += " -> " + result.after_hash.substr(0, 12);
+        }
+        result.report += "\n";
+    }
+    save_result(result.applied, result.rolled_back, result.report, check, result);
     return result;
 }
 
@@ -847,6 +938,9 @@ Preview preview_apply_blocks(const std::string& text) {
         out.first_path = hunks[0].path;
         out.first_old = hunks[0].old_text;
         out.first_new = hunks[0].new_text;
+        const std::string full = repo_root() + "\\" + hunks[0].path;
+        std::string body;
+        if (read_all(full, body)) out.first_hash = content_hash(body);
     }
     return out;
 }

@@ -10,10 +10,16 @@ namespace local_edit {
 struct Result {
     bool attempted = false;
     bool applied = false;
+    bool rolled_back = false;
     bool check_ran = false;
     bool check_ok = false;
     std::string check_profile;
     std::string report;
+    std::string before_hash;
+    std::string after_hash;
+    std::string preview_path;
+    std::string preview_old;
+    std::string preview_new;
 };
 
 struct Preview {
@@ -21,6 +27,7 @@ struct Preview {
     std::string first_path;
     std::string first_old;
     std::string first_new;
+    std::string first_hash;
 };
 
 bool looks_like_edit_request(const std::string& user_msg);

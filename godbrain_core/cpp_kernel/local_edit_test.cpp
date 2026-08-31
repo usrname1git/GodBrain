@@ -442,6 +442,81 @@ int main() {
         }
     }
 
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/cpp_kernel/local_edit_fixture.txt flip marker",
+        "*** APPLY\n"
+        "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+        "<<<<\n"
+        "EDIT_FIXTURE=old\n"
+        "====\n"
+        "EDIT_FIXTURE=hashed\n"
+        ">>>>\n"
+        "*** END\n",
+        {});
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(result.applied, "hash apply wrote") ||
+        !expect(result.before_hash.size() == 64, "before hash keccak") ||
+        !expect(result.after_hash.size() == 64, "after hash keccak") ||
+        !expect(result.before_hash != result.after_hash, "hash moved") ||
+        !expect(result.preview_path.find("local_edit_fixture") != std::string::npos,
+                "preview path") ||
+        !expect(!result.rolled_back, "txt apply is not rolled")) {
+        std::cerr << "hash report=" << result.report
+                  << " before=" << result.before_hash.size()
+                  << " after=" << result.after_hash.size() << std::endl;
+        return 1;
+    }
+
+    {
+        char exe2[MAX_PATH] = {};
+        GetModuleFileNameA(NULL, exe2, MAX_PATH);
+        std::string dir2(exe2);
+        const size_t slash2 = dir2.find_last_of("\\/");
+        if (slash2 != std::string::npos) dir2.resize(slash2);
+        dir2 += "\\..\\..\\scripts\\local_edit_rb.ps1";
+        char canon[MAX_PATH] = {};
+        GetFullPathNameA(dir2.c_str(), MAX_PATH, canon, nullptr);
+        const std::string ps1(canon);
+        {
+            std::ofstream out(ps1, std::ios::binary | std::ios::trunc);
+            out << "Write-Output 1\n";
+        }
+        result = local_edit::maybe_apply(
+            "/edit scripts/local_edit_rb.ps1 break parse",
+            "*** APPLY\n"
+            "path: scripts/local_edit_rb.ps1\n"
+            "<<<<\n"
+            "Write-Output 1\n"
+            "====\n"
+            "function (\n"
+            ">>>>\n"
+            "*** END\n",
+            {});
+        std::string ps1_body;
+        {
+            std::ifstream in(ps1, std::ios::binary);
+            ps1_body.assign((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+        }
+        DeleteFileA(ps1.c_str());
+        if (!expect(result.rolled_back, "bad ps1 rolled back") ||
+            !expect(!result.applied, "bad ps1 not left applied") ||
+            !expect(ps1_body == "Write-Output 1\n", "ps1 restored") ||
+            !expect(result.report.find("rolled back") != std::string::npos,
+                    "report says rolled back")) {
+            std::cerr << "rollback report=" << result.report
+                      << " body=" << ps1_body << std::endl;
+            return 1;
+        }
+    }
+
     std::cout << "local_edit_test ok" << std::endl;
     return 0;
 }

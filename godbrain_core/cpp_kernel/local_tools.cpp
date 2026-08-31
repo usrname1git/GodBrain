@@ -2,6 +2,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cctype>
@@ -493,6 +494,206 @@ std::string build_repo_map(const std::string& dir) {
     o << "Live loop on this host is Heal/Watch + kernel tools + /verify. "
          "Jarvis is that loop, not a persona file. Do not staff a factory.\n";
     return o.str();
+}
+
+std::string file_first_line(const std::string& path, size_t cap) {
+    bool trunc = false;
+    std::string t = read_file_limited(path, cap, &trunc);
+    while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
+    const size_t nl = t.find('\n');
+    if (nl != std::string::npos) t.resize(nl);
+    return t;
+}
+
+std::string live_stack_text() {
+    std::ostringstream o;
+    o << "Live stack (already on this desk, one generate slot):\n";
+    const std::string mouth = file_first_line(logs_dir() + "\\mouth.txt", 160);
+    o << "mouth=:8000 "
+      << (mouth.empty() ? "unknown" : mouth)
+      << " (you are that engine, not a missing LLM)\n";
+    o << "rag=127.0.0.1:8084 verified Golden Records (not a second vector DB)\n";
+    o << "kernel=:8083 local_tools + host_snap. Persist "
+         "logs/last-host-snap.txt and last-chain.json\n";
+    const std::string vram_path = logs_dir() + "\\last-vram.json";
+    std::string gpu = "gpu=unknown";
+    if (file_exists(vram_path)) {
+        try {
+            std::ifstream in(vram_path, std::ios::binary);
+            json v = json::parse(in);
+            gpu = "gpu=" + v.value("name", "?") + " " +
+                  std::to_string(v.value("dedicated_gb", 0)) + "GB";
+            const std::string nxt = v.value("next", "");
+            if (!nxt.empty()) gpu += std::string("; ") + nxt;
+        } catch (const json::exception&) {
+        }
+    }
+    o << gpu
+      << ". A 24GB card next week is the same slot, not a second GPU, "
+         "not auto-GLM.\n";
+    o << "voice=CPU Whisper/Piper, never on this GPU while the mouth is up. "
+         "Screen grab is not Heal.\n";
+    return o.str();
+}
+
+bool is_hot_proc(const std::string& name) {
+    const std::string n = ascii_lower(name);
+    static const char* k[] = {
+        "godbrain-kernel.exe", "llama-server.exe", "rag-service.exe",
+        "memory-store.exe", "mongod.exe", "coli.exe", "colibri.exe",
+        "python.exe", "cs2.exe", "steam.exe", "steamservice.exe",
+        nullptr};
+    for (int i = 0; k[i]; ++i) {
+        if (n == k[i]) return true;
+    }
+    return false;
+}
+
+std::string dir_child_names(const std::string& dir, size_t cap) {
+    std::ostringstream o;
+    size_t n = 0;
+    size_t extra = 0;
+    WIN32_FIND_DATAA fd{};
+    HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return "(unreadable)";
+    do {
+        const std::string name = fd.cFileName;
+        if (name == "." || name == "..") continue;
+        if (n < cap) {
+            if (n) o << " ";
+            o << name;
+            ++n;
+        } else {
+            ++extra;
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    if (extra) o << " +" << extra;
+    return o.str();
+}
+
+struct HostSnap {
+    std::string text;
+    int proc_total = 0;
+    int hot = 0;
+};
+
+HostSnap build_host_snap() {
+    HostSnap s;
+    std::ostringstream o;
+    o << live_stack_text();
+    o << "Host snap (kernel, this turn; not a watcher).\n";
+    {
+        HWND fg = GetForegroundWindow();
+        if (fg) {
+            char title[256];
+            title[0] = 0;
+            GetWindowTextA(fg, title, 256);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(fg, &pid);
+            o << "foreground=\"" << title << "\" pid=" << pid << "\n";
+        }
+    }
+    struct Row {
+        DWORD pid;
+        DWORD ppid;
+        std::string name;
+        bool hot;
+    };
+    std::vector<Row> rows;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe{};
+        pe.dwSize = sizeof(pe);
+        if (Process32First(snap, &pe)) {
+            do {
+                Row r;
+                r.pid = pe.th32ProcessID;
+                r.ppid = pe.th32ParentProcessID;
+                r.name = pe.szExeFile;
+                r.hot = is_hot_proc(r.name);
+                rows.push_back(r);
+            } while (Process32Next(snap, &pe));
+        }
+        CloseHandle(snap);
+    }
+    s.proc_total = static_cast<int>(rows.size());
+    o << "Process tree (" << s.proc_total << " live, pid/ppid):\n";
+    int shown = 0;
+    for (const auto& r : rows) {
+        if (!r.hot) continue;
+        o << "* " << r.name << " pid=" << r.pid << " ppid=" << r.ppid << "\n";
+        ++s.hot;
+        ++shown;
+    }
+    for (const auto& r : rows) {
+        if (r.hot) continue;
+        if (shown >= 48) break;
+        o << "  " << r.name << " pid=" << r.pid << " ppid=" << r.ppid << "\n";
+        ++shown;
+    }
+    if (s.proc_total > shown) {
+        o << "  +" << (s.proc_total - shown) << " more\n";
+    }
+    o << "FS granted roots (depth 1 names):\n";
+    for (const auto& root : default_roots()) {
+        if (!file_exists(root)) {
+            o << root << " missing\n";
+            continue;
+        }
+        o << root << " " << dir_child_names(root, 10) << "\n";
+    }
+    if (file_exists("C:\\nvme") && is_dir_path("C:\\nvme")) {
+        o << "C:\\nvme (host models, kernel read) "
+          << dir_child_names("C:\\nvme", 16) << "\n";
+    }
+    const std::string repo = repo_root();
+    if (!repo.empty() && file_exists(repo)) {
+        o << "Repo " << repo << " " << dir_child_names(repo, 14) << "\n";
+    }
+    const std::string mouth = logs_dir() + "\\mouth.txt";
+    if (file_exists(mouth)) {
+        bool trunc = false;
+        std::string line = read_file_limited(mouth, 120, &trunc);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+            line.pop_back();
+        }
+        o << "mouth=" << line << "\n";
+    }
+    o << "Call host_snap to refresh. Persist: logs/last-host-snap.txt.\n";
+    s.text = o.str();
+    return s;
+}
+
+void write_host_snap_files(const HostSnap& s) {
+    CreateDirectoryA(logs_dir().c_str(), nullptr);
+    const std::string txt = logs_dir() + "\\last-host-snap.txt";
+    const std::string js = logs_dir() + "\\last-host-snap.json";
+    {
+        const std::string tmp = txt + ".tmp";
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << s.text;
+            out.flush();
+        }
+        out.close();
+        MoveFileExA(tmp.c_str(), txt.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
+    json doc = {
+        {"proc_total", s.proc_total},
+        {"hot", s.hot},
+        {"at_tick", static_cast<int>(GetTickCount())},
+        {"bytes", static_cast<int>(s.text.size())},
+    };
+    {
+        const std::string tmp = js + ".tmp";
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) out << doc.dump();
+        out.close();
+        MoveFileExA(tmp.c_str(), js.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
 }
 
 std::string strip_exe(std::string stem) {
@@ -1504,6 +1705,11 @@ std::string execute_calls(const std::vector<Call>& calls) {
             continue;
         }
 
+        if (c.name == "host_snap") {
+            out << host_snap();
+            continue;
+        }
+
         if (c.name == "repo_map" || c.name == "changed_context") {
             std::string p = c.path.empty() ? repo_root() : c.path;
             if (!file_exists(canon_path(p))) {
@@ -2256,7 +2462,8 @@ bool looks_like_host_inspect(const std::string& msg) {
         "reg query", "reg.exe", "registry", "run_elevate", "minsudo",
         "run_pwsh", "run_python", "run_node", "run_host", "run_reg",
         "run_wevtutil", "run_logman", "run_schtasks", "run_strings",
-        "sqlite", "takeown", "icacls", "acl_takeover", "acl_release", nullptr};
+        "sqlite", "takeown", "icacls", "acl_takeover", "acl_release",
+        "host snap", "host_snap", "process tree", "telemetry", nullptr};
     for (int i = 0; keys[i]; ++i) {
         if (t.find(keys[i]) != std::string::npos) return true;
     }
@@ -2412,6 +2619,36 @@ std::string analysis_observe(const std::string& user_msg) {
     return repo_map(gp);
 }
 
+std::string host_snap() {
+    const HostSnap s = build_host_snap();
+    write_host_snap_files(s);
+    return s.text;
+}
+
+std::string host_snap_clip(size_t max_bytes) {
+    std::string t = host_snap();
+    if (max_bytes < 64) max_bytes = 64;
+    if (t.size() <= max_bytes) return t;
+    t.resize(max_bytes);
+    while (!t.empty() && t.back() != '\n') t.pop_back();
+    t += "[clip]\n";
+    return t;
+}
+
+std::string live_stack_blurb() { return live_stack_text(); }
+
+bool looks_like_jarvis_need_ask(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    if (has_word(t, "jarvis")) return true;
+    if (t.find("closer to") != std::string::npos) return true;
+    if (t.find("still need") != std::string::npos) return true;
+    if (t.find("still missing") != std::string::npos) return true;
+    if (has_word(t, "bottleneck")) return true;
+    if (t.find("what do you need") != std::string::npos) return true;
+    if (t.find("what else do you") != std::string::npos) return true;
+    return false;
+}
+
 std::string read_repo_rails(const std::string& user_msg) {
     if (looks_like_list_only_ask(user_msg)) return "";
     if (!looks_like_local_fs_ask(user_msg)) return "";
@@ -2485,11 +2722,12 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "C:\\Temp\\GitHub). "
             "To verify a path: get_file_info or list_local_dir, then say yes or no. "
             "read_local_file / write_local_file / edit_local_file / search_local / "
-            "create_local_dir / list_granted_roots. Authorized paths are that "
-            "jail, from the kernel, not Mongo. Call list_granted_roots. Never "
-            "say you cannot query Mongo. Not git push. Ordinary trivia: no tools. "
-            "Do not claim you lack a filesystem. Never say you do not have "
-            "access to the local file system; call get_file_info.";
+            "create_local_dir / list_granted_roots / host_snap. Authorized paths "
+            "are that jail, from the kernel, not Mongo. Call list_granted_roots. "
+            "Never say you cannot query Mongo. Not git push. Ordinary trivia: no "
+            "tools. Do not claim you lack a filesystem. Never say you do not have "
+            "access to the local file system; call get_file_info. "
+            "host_snap is the persistent FS+process feed; call it to refresh.";
     }
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "
@@ -2576,6 +2814,11 @@ nlohmann::json openai_tool_defs(bool full) {
         "list_granted_roots",
         "Print the kernel file-jail roots (live env). Not Mongo. Call this "
         "when asked which paths are authorized.",
+        json::object()));
+    tools.push_back(tool_fn(
+        "host_snap",
+        "Refresh the persistent host feed: process pid/ppid plus granted FS "
+        "depth-1 names. Kernel snap, not a watcher. No path.",
         json::object()));
     tools.push_back(tool_fn(
         "repo_map",
