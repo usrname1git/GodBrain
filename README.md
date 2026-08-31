@@ -183,4 +183,4 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 
 ## Credits
 
-This desk's TrustedInstaller shells use [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo` from PATH (`wsudo --ti`). GitHub release zips lag `master`; get a current binary with [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build Privexec from source. Do not copy `wsudo.exe` into this repo. Heal never calls it. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `--ti`. If you live on Windows, star [M2-Team](https://github.com/M2Team) — NanaZip, NanaRun, Privexec.
+TrustedInstaller on this desk is `wsudo -T` from conhost or Windows Terminal (`C:\Tools\TeamM2\wsudo.exe`). `Privexec.exe` in that folder is a GUI picker and is not used. Heal never calls `wsudo`. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `-T`. Chat `acl_takeover` / `acl_release` is the named `-T` door.
