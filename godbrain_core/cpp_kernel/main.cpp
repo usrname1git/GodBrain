@@ -4162,6 +4162,13 @@ int main() {
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
             }
+            if (local_fs_ask && !no_tools_ask && !continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg)) {
+                user_prompt =
+                    "Kernel: file tools are live on this PC. Call get_file_info. "
+                    "Never say you do not have access to the local file system.\n\n" +
+                    user_prompt;
+            }
 
             std::cout << "[RAG] Context built (" << context_text.size()
                       << " bytes) follow_up=" << (follow_up ? "1" : "0")
@@ -4200,7 +4207,8 @@ int main() {
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue](
+                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue,
+                     local_fs_ask, no_tools_ask](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -4244,8 +4252,17 @@ int main() {
                             &spoken,
                             asked_q);
                         std::string chunk = strip_coli_reply(combined);
-                        const std::string for_memory =
+                        std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
+                        if (local_fs_ask && !no_tools_ask &&
+                            local_tools::looks_like_fs_refuse(for_memory)) {
+                            const std::string probe =
+                                local_tools::answer_fs_ask(asked_q);
+                            chunk = probe;
+                            for_memory = probe;
+                            emit({{"type", "token"},
+                                  {"text", std::string("\n\n") + probe}});
+                        }
                         const auto edit = local_edit::maybe_apply(
                             asked_q,
                             for_memory,
@@ -4306,8 +4323,14 @@ int main() {
                 &spoken,
                 asked);
             std::string chunk = strip_coli_reply(combined);
-            const std::string for_memory =
+            std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
+            if (local_fs_ask && !no_tools_ask &&
+                local_tools::looks_like_fs_refuse(for_memory)) {
+                const std::string probe = local_tools::answer_fs_ask(asked);
+                chunk = probe;
+                for_memory = probe;
+            }
             const auto edit = local_edit::maybe_apply(
                 asked,
                 for_memory,

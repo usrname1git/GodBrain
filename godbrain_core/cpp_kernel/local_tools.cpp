@@ -893,9 +893,10 @@ bool env_token_ok(const std::string& tok) {
            name == "programfiles" || name == "programfiles(x86)";
 }
 
-bool granted_path_in_message(const std::string& msg) {
+std::string granted_path_from_message(const std::string& msg) {
+    std::string hit;
     const std::string t = ascii_lower(msg);
-    auto consider = [](std::string tok) {
+    auto consider = [&](std::string tok) {
         while (!tok.empty() &&
                (tok.back() == '.' || tok.back() == ']')) {
             tok.pop_back();
@@ -911,7 +912,10 @@ bool granted_path_in_message(const std::string& msg) {
         for (char& ch : tok) {
             if (ch == '/') ch = '\\';
         }
-        return path_is_granted(tok);
+        if (!path_is_granted(tok)) return false;
+        const std::string full = final_path(expand_env(tok));
+        hit = full.empty() ? tok : full;
+        return true;
     };
     auto consider_span = [&](std::string tok) {
         while (!tok.empty() &&
@@ -941,7 +945,7 @@ bool granted_path_in_message(const std::string& msg) {
                !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
             ++j;
         }
-        if (consider_span(t.substr(i, j - i))) return true;
+        if (consider_span(t.substr(i, j - i))) return hit;
         if (j > i) i = j - 1;
     }
 
@@ -953,7 +957,7 @@ bool granted_path_in_message(const std::string& msg) {
             ++j;
         }
         const std::string tok = t.substr(i, j - i);
-        if (env_token_ok(tok) && consider_span(tok)) return true;
+        if (env_token_ok(tok) && consider_span(tok)) return hit;
         if (j > i) i = j - 1;
     }
 
@@ -994,12 +998,16 @@ bool granted_path_in_message(const std::string& msg) {
                     pos = (j == pos) ? pos + 1 : j;
                     continue;
                 }
-                if (consider_span(drive + raw)) return true;
+                if (consider_span(drive + raw)) return hit;
                 pos = (j == pos) ? pos + 1 : j;
             }
         }
     }
-    return false;
+    return hit;
+}
+
+bool granted_path_in_message(const std::string& msg) {
+    return !granted_path_from_message(msg).empty();
 }
 
 }  // namespace
@@ -1960,6 +1968,37 @@ bool looks_like_no_tools(const std::string& msg) {
 
 // Skip RAG only for a granted-root path token or an explicit RW/jail ask.
 // Bare C:\ and substring read/ready/thread must not skip Golden Records.
+bool looks_like_fs_refuse(const std::string& text) {
+    const std::string t = ascii_lower(text);
+    static const char* k[] = {
+        "do not have access",
+        "don't have access",
+        "cannot access",
+        "can't access",
+        "no access to your local",
+        "lack a filesystem",
+        "cannot query your mongodb",
+        "cannot query mongodb",
+        "i cannot access files",
+        "no access to the local file",
+        nullptr};
+    for (int i = 0; k[i]; ++i) {
+        if (t.find(k[i]) != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::string answer_fs_ask(const std::string& user_msg) {
+    const std::string p = granted_path_from_message(user_msg);
+    if (!p.empty()) {
+        return run_tools_from_text(
+            std::string("*** TOOL\nname: get_file_info\npath: ") + p +
+            "\n*** END\n");
+    }
+    return run_tools_from_text(
+        "*** TOOL\nname: list_granted_roots\n*** END\n");
+}
+
 bool looks_like_local_fs_ask(const std::string& msg) {
     if (granted_path_in_message(msg)) return true;
     const std::string t = ascii_lower(msg);
@@ -2000,7 +2039,8 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "Authorized paths are those jail roots from the kernel, not Mongo. "
             "Call list_granted_roots. Never say you cannot query Mongo. "
             "Call tools when the operator asks to inspect the host or a granted folder. "
-            "Do not claim you lack a filesystem.";
+            "Do not claim you lack a filesystem. Never say you do not have "
+            "access to the local file system; call get_file_info.";
     } else {
         s = " You have built-in file tools (OpenAI tool_calls). The kernel executes. "
             "Jail: " + roots_join() +
@@ -2012,7 +2052,8 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "create_local_dir / list_granted_roots. Authorized paths are that "
             "jail, from the kernel, not Mongo. Call list_granted_roots. Never "
             "say you cannot query Mongo. Not git push. Ordinary trivia: no tools. "
-            "Do not claim you lack a filesystem.";
+            "Do not claim you lack a filesystem. Never say you do not have "
+            "access to the local file system; call get_file_info.";
     }
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "

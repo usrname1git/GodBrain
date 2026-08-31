@@ -317,6 +317,21 @@ int main() {
     pass &= expect(
         local_tools::looks_like_local_fs_ask("what are the authorized paths"),
         "authorized paths is local-fs");
+    pass &= expect(
+        local_tools::looks_like_fs_refuse(
+            "I do not have access to your local file system "
+            "(C:\\Users\\autismo\\Documents\\GitHub\\GodBrain)"),
+        "fs refuse detected");
+    pass &= expect(!local_tools::looks_like_fs_refuse("get_file_info ok bytes=12"),
+                   "tool result is not fs refuse");
+    {
+        const std::string probe = local_tools::answer_fs_ask(
+            "I do not have access to " + home +
+            "\\Documents\\GitHub\\GodBrain");
+        pass &= expect(probe.find("get_file_info") != std::string::npos &&
+                           probe.find("denied") == std::string::npos,
+                       "fs refuse probe hits repo");
+    }
     {
         const std::string roots = local_tools::run_tools_from_text(
             "*** TOOL\nname: list_granted_roots\n*** END\n");

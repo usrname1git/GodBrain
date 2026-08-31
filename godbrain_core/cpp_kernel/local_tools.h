@@ -35,6 +35,8 @@ nlohmann::json openai_tool_defs_for(const std::string& user_msg);
 bool looks_like_local_fs_ask(const std::string& msg);
 bool looks_like_host_inspect(const std::string& msg);
 bool looks_like_no_tools(const std::string& msg);
+bool looks_like_fs_refuse(const std::string& text);
+std::string answer_fs_ask(const std::string& user_msg);
 bool use_full_tool_defs(const std::string& user_msg);
 std::vector<Call> calls_from_openai(const nlohmann::json& tool_calls);
 
