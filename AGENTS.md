@@ -368,19 +368,20 @@ yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
 `C:\nvme`). Coding/tool fine-tune, not Watch default. MTP off unless `-UseDraft`.
 
 Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
-(`--jinja` is already on; do not pass llama-server `--tools all`, do not
+(`--jinja` is already on; `--no-cache-prompt` so a dead slot cannot
+unused49 the next chat; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
 **file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
 or the ask is host inspect (SysInternals/reg/events/schtasks). Non-YOLO
 `list` / r/w / jail asks never start the mouth: the kernel lists the
 granted path. A question that *contains* a granted path but asks what
-is wrong (Jarvis/fix/review) is not `dir`: the kernel lists depth=1
-into the prompt as evidence, tools off, **one** generate, `cache_prompt`
-false. Do not return the listing as the answer. Other non-YOLO tool
-chat is **one hop** (execute, return that output, no generate 2 —
-llama.cpp CUDA IMA on KV reuse after `role:tool`). If Gemma listed
-`C:\Temp\GitHub` instead of the named path, the kernel appends a list
-of that path. YOLO still loops (cap 8). A granted-root
+is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
+**flattens** the result into a fresh user turn and POSTs again with
+`cache_prompt` false — never `role:tool` back into the llama KV (that
+is the CUDA IMA). Cap 3 (last round speak-only). Do not return `dir`
+as the answer. If Gemma listed `C:\Temp\GitHub` instead of the named
+path, the kernel appends a list of that path. YOLO still loops (cap 8,
+same flatten). A granted-root
 path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
 `%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub`) or an
 explicit r/w / jail ask skips RAG and session dump

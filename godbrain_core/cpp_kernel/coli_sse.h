@@ -94,7 +94,14 @@ inline void handle_sse_event(
                 delta["reasoning_content"].is_string()) {
                 token = delta["reasoning_content"].get<std::string>();
             }
-            if (tool_calls) accumulate_tool_calls(*tool_calls, delta);
+            if (tool_calls) {
+                accumulate_tool_calls(*tool_calls, delta);
+                if (choice.contains("message") &&
+                    choice["message"].is_object() &&
+                    (!tool_calls->is_array() || tool_calls->empty())) {
+                    accumulate_tool_calls(*tool_calls, choice["message"]);
+                }
+            }
             if (token.empty() && !delta.contains("content") &&
                 !delta.contains("reasoning_content")) {
                 continue;

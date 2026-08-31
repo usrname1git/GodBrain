@@ -116,6 +116,17 @@ int main() {
         return 1;
     }
 
+    nlohmann::json msg_tools = nlohmann::json::array();
+    std::string msg_assembled;
+    godbrain_coli::handle_sse_event(
+        R"SSE(data: {"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c2","type":"function","function":{"name":"list_granted_roots","arguments":"{}"}}]},"finish_reason":"tool_calls"}]})SSE",
+        msg_assembled, on_token, on_ping, {}, nullptr, &msg_tools);
+    if (!expect(msg_tools.size() == 1 &&
+                    msg_tools[0]["function"]["name"] == "list_granted_roots",
+                "tool_calls on message not only delta")) {
+        return 1;
+    }
+
     std::cout << "coli_sse_test ok" << std::endl;
     return 0;
 }

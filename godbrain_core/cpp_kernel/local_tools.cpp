@@ -1176,7 +1176,8 @@ std::string yolo_status_line() {
 }
 
 bool has_tool_block(const std::string& text) {
-    return text.find("*** TOOL") != std::string::npos;
+    return text.find("*** TOOL") != std::string::npos ||
+           text.find("tool_call") != std::string::npos;
 }
 
 std::vector<Call> parse_tool_blocks(const std::string& text) {
@@ -1221,6 +1222,40 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
             else if (key == "dest") c.dest = val;
         }
         if (!c.name.empty()) calls.push_back(c);
+    }
+    if (calls.empty() && text.find("tool_call") != std::string::npos) {
+        static const char* names[] = {
+            "list_granted_roots", "list_local_dir", "read_local_file",
+            "get_file_info",      "search_local",   "write_local_file",
+            "edit_local_file",    "create_local_dir", "move_local_file",
+            nullptr};
+        const std::string lower = ascii_lower(text);
+        for (int i = 0; names[i]; ++i) {
+            const size_t p = lower.find(names[i]);
+            if (p == std::string::npos) continue;
+            Call c;
+            c.name = names[i];
+            const size_t brace = text.find('{', p);
+            if (brace != std::string::npos) {
+                const size_t close = text.find('}', brace);
+                if (close != std::string::npos && close > brace) {
+                    try {
+                        const json js = json::parse(
+                            text.substr(brace, close - brace + 1));
+                        if (js.contains("path") && js["path"].is_string()) {
+                            c.path = js["path"].get<std::string>();
+                        }
+                        if (js.contains("args") && js["args"].is_string()) {
+                            c.args = js["args"].get<std::string>();
+                        }
+                    } catch (const json::exception&) {
+                    }
+                }
+            }
+            if (c.path.empty()) c.path = granted_path_from_message(text);
+            calls.push_back(c);
+            break;
+        }
     }
     return calls;
 }

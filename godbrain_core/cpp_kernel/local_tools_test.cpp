@@ -301,6 +301,15 @@ int main() {
     const std::string jsres = local_tools::run_tools_from_text(js);
     pass &= expect(jsres.find("node-ok") != std::string::npos, "node inline");
 
+    const std::string gemma_tc =
+        "<|tool_call>_call:list_granted_roots{}<tool_call|>";
+    const std::string gemma_res = local_tools::run_tools_from_text(gemma_tc);
+    pass &= expect(local_tools::has_tool_block(gemma_tc) &&
+                       gemma_res.find("list_granted_roots") !=
+                           std::string::npos &&
+                       gemma_res.find("not Mongo") != std::string::npos,
+                   "gemma tool_call text runs");
+
     const std::string killp =
         "*** TOOL\nname: kill_process\nargs: 1\n*** END\n";
     pass &= expect(local_tools::run_tools_from_text(killp).find("denied") !=
