@@ -38,7 +38,9 @@ function Test-BadReply([string]$Text) {
     if ($Text -match 'CUDA abort') { return "cuda-abort" }
     if ($Text -match 'unused49') { return "unused49" }
     if ($Text -match '(?i)no response') { return "no-response" }
-    if ($Text -match 'tool_call') { return "tool-call-tags" }
+    if ($Text -match '<\|tool_call\|>' -or $Text -match '(?m)^(?:github_)?tool_call') {
+        return "tool-call-tags"
+    }
     if ($Text -match '(?m)^list_local_dir ') { return "dir-dump" }
     if ($Text -match 'Ask again in about a minute') { return "ask-again" }
     return $null
@@ -83,13 +85,13 @@ if ($LiveJarvis) {
         $sw.Stop()
         $text = [string]$out
         $bad = Test-BadReply $text
-        $named = ($text -match 'copilot-instructions') -or ($text -match 'temp_hermes') -or
-                 ($text -match 'one loop') -or ($text -match 'Heal')
-        $ok = (-not $bad) -and $named -and ($text.Length -gt 200)
+        $writeup = ($text -match 'Repo map') -or ($text -match 'Leftovers')
+        $named = ($text -match 'copilot-instructions') -or ($text -match 'temp_hermes')
+        $ok = (-not $bad) -and $writeup -and $named -and ($text.Length -gt 800)
         Add-Task "jarvis-repo-ask" $ok $sw.ElapsedMilliseconds $(
             if ($ok) { "ok bytes=$($text.Length)" }
             elseif ($bad) { $bad }
-            else { "shallow bytes=$($text.Length)" }
+            else { "truncated bytes=$($text.Length)" }
         )
     } catch {
         $sw.Stop()

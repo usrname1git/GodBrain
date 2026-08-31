@@ -325,19 +325,22 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 8, "files hop 8 tools");
+    pass &= expect(files.is_array() && files.size() == 10, "files hop 10 tools");
     bool files_has_sysint = false;
     bool files_has_info = false;
     bool files_has_roots = false;
+    bool files_has_map = false;
     for (const auto& t : files) {
         const std::string n = t["function"].value("name", "");
         if (n == "run_sysint") files_has_sysint = true;
         if (n == "get_file_info") files_has_info = true;
         if (n == "list_granted_roots") files_has_roots = true;
+        if (n == "repo_map") files_has_map = true;
     }
     pass &= expect(!files_has_sysint, "files hop no sysint");
     pass &= expect(files_has_info, "files hop has get_file_info");
     pass &= expect(files_has_roots, "files hop has list_granted_roots");
+    pass &= expect(files_has_map, "files hop has repo_map");
     const auto host_defs =
         local_tools::openai_tool_defs_for("run_sysint handle64 on CS2");
     pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
@@ -413,6 +416,30 @@ int main() {
         pass &= expect(local_tools::complete_fs_listing("what is 2+2", miss) ==
                            miss,
                        "non-fs hop is not padded");
+        const std::string map = local_tools::analysis_observe(longq);
+        int nlines = 0;
+        for (char ch : map) {
+            if (ch == '\n') ++nlines;
+        }
+        pass &= expect(map.find("Repo map") != std::string::npos &&
+                           map.find("list_local_dir") == std::string::npos &&
+                           map.find("AGENTS.md") != std::string::npos &&
+                           map.find("README.md") != std::string::npos &&
+                           map.find("copilot-instructions") != std::string::npos &&
+                           map.find("temp_hermes") != std::string::npos &&
+                           nlines >= 12 && map.size() > 800,
+                       "analysis observe is a writeup not 10 dir rows");
+        pass &= expect(local_tools::analysis_observe("list " + home +
+                                                     "\\Documents\\GitHub\\GodBrain")
+                           .empty(),
+                       "list-only ask is not a repo_map");
+        const std::string chg = local_tools::changed_context(
+            home + "\\Documents\\GitHub\\GodBrain");
+        pass &= expect(chg.find("Changed") != std::string::npos &&
+                           (chg.find("mouth-one-fs-hop") != std::string::npos ||
+                            chg.find("git") != std::string::npos ||
+                            chg.find("Recent") != std::string::npos),
+                       "changed_context has git");
     }
     {
         const std::string roots = local_tools::run_tools_from_text(
@@ -441,6 +468,14 @@ int main() {
     pass &= expect(
         local_tools::looks_like_local_fs_ask("is the tool jail granted"),
         "jail granted is local-fs");
+    {
+        const std::string jail =
+            local_tools::complete_fs_listing("is the tool jail granted", "");
+        pass &= expect(jail.find("list_granted_roots") != std::string::npos &&
+                           jail.find("not Mongo") != std::string::npos &&
+                           !jail.empty(),
+                       "jail grant with no path lists roots");
+    }
     pass &= expect(
         !local_tools::looks_like_local_fs_ask("is the local mouth ready"),
         "ready is not local-fs");

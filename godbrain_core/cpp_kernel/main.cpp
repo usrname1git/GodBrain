@@ -2801,10 +2801,9 @@ std::string run_colibri_serve(
     if (llama_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
-        std::string seed = local_tools::complete_fs_listing(hop_hint0, "");
-        if (seed.size() > 2200) seed.resize(2200);
-        seed += "\n";
-        seed += local_tools::jarvis_rails_blurb();
+        std::string seed = local_tools::analysis_observe(hop_hint0);
+        if (seed.empty()) seed = local_tools::complete_fs_listing(hop_hint0, "");
+        if (seed.size() > 12000) seed.resize(12000);
         tool_ledger = seed;
         last_tool_out = seed;
         chain_hops = 1;
@@ -2812,9 +2811,10 @@ std::string run_colibri_serve(
         messages.push_back(json{
             {"role", "user"},
             {"content",
-             std::string("Kernel listing plus rails:\n") + seed +
+             std::string("Kernel repo map (observe, not a listing):\n") + seed +
                  "\n\nOperator question:\n" + hop_hint0 +
-                 "\nConclude Z. Identities hold: 1+2=3, never 4. "
+                 "\nWrite Z as a technical note: what is live, leftovers, "
+                 "what is next. Sentences. Identities hold: 1+2=3, never 4. "
                  "Do not dump dir. Do not invent a persona file."}});
         std::cout << "[TOOLS] kernel observe (" << seed.size()
                   << " bytes) then speak" << std::endl;
@@ -3037,19 +3037,29 @@ std::string run_colibri_serve(
     }
     auto flatten_tool_turn = [&](std::string tool_out) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
-        tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
-        if (tool_out.size() > 2200) tool_out.resize(2200);
-        if (tool_ledger.find("Kernel rails") == std::string::npos &&
+        const bool analysis =
             local_tools::looks_like_local_fs_ask(hop_hint) &&
-            !local_tools::looks_like_list_only_ask(hop_hint)) {
-            if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
-            tool_out += local_tools::jarvis_rails_blurb();
+            !local_tools::looks_like_list_only_ask(hop_hint);
+        if (analysis) {
+            const std::string map = local_tools::analysis_observe(hop_hint);
+            if (!map.empty() &&
+                (tool_out.find("list_local_dir") != std::string::npos ||
+                 tool_out.size() < 400)) {
+                tool_out = map;
+            } else if (!map.empty() &&
+                       tool_out.find("Repo map") == std::string::npos) {
+                if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
+                tool_out += map;
+            }
+        } else {
+            tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
         }
+        if (tool_out.size() > 12000) tool_out.resize(12000);
         last_tool_out = tool_out;
         ++chain_hops;
         if (!tool_ledger.empty()) tool_ledger += "\n";
         tool_ledger += tool_out;
-        if (tool_ledger.size() > 6000) tool_ledger.resize(6000);
+        if (tool_ledger.size() > 12000) tool_ledger.resize(12000);
         messages = base_messages;
         messages.push_back(json{
             {"role", "user"},
@@ -3128,7 +3138,8 @@ std::string run_colibri_serve(
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         if (local_tools::looks_like_local_fs_ask(hop_hint) &&
             !local_tools::looks_like_list_only_ask(hop_hint)) {
-            assembled = local_tools::jarvis_rails_blurb();
+            assembled = local_tools::analysis_observe(hop_hint);
+            if (assembled.empty()) assembled = local_tools::jarvis_rails_blurb();
         } else if (!tool_ledger.empty()) {
             assembled = tool_ledger;
         }

@@ -62,9 +62,11 @@ to count how many nodes the problem actually has. Usually one.
   if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
   Galaxy preview + txn rollback (not a 7-step ceremony). **4a**
   `repo_map` / `changed_context` from git + nearest README (not a
-  symbol graph in Mongo). Item 1 chain is flatten hops +
-  `logs/last-chain.json` on `mouth-one-fs-hop`. Item 2 (full ledger)
-  after 1. Grow 3 toward ~20 only as 2/5/6 exist.
+  symbol graph in Mongo). Analysis asks seed and fallback Z from
+  that map — a technical note, not a truncated 10-row `list_local_dir`.
+  Item 1 chain is flatten hops + `logs/last-chain.json` on
+  `mouth-one-fs-hop`. Item 2 (full ledger) after 1. Grow 3 toward
+  ~20 only as 2/5/6 exist.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -449,7 +451,7 @@ reboot / SAM|SECURITY hives / GodBrain* task delete or disable /
 BFE|mpssvc|Dnscache|MongoDB stop. Heal still never launches SysInternals.
 CORS stays the kernel/localhost list.
 
-Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.6.2
+Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.10.0
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored
 1.1.1 tree under `LLM/colibri_LLM`. Cold-spawn of the GLM snapshot on
 16 GB is disabled. Do not set both `COLI_GPU` and `COLI_GPUS`. Colibri
