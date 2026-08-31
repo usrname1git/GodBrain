@@ -66,9 +66,11 @@ to count how many nodes the problem actually has. Usually one.
   `repo_map` / `changed_context` from git + nearest README (not a
   symbol graph in Mongo). Analysis asks seed and fallback Z from
   that map — a technical note, not a truncated 10-row `list_local_dir`.
-  Item 1 chain is flatten hops + `logs/last-chain.json` on
-  `mouth-one-fs-hop`. Item 2 (full ledger) after 1. Grow 3 toward
-  ~20 only as 2/5/6 exist.
+  Item 1 chain is flatten hops + `logs/last-chain.json`. Item 2
+  durable ledger: 12-char `id`, `running|done|cancelled`, `/chain`
+  (GET `/api/chain`, no GPU), `/cancel`, `/continue` resumes a
+  `running` ledger after kernel restart. One file, not `tasks/todo.md`.
+  Grow 3 toward ~20 only as 2/5/6 exist.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -329,7 +331,7 @@ reads the active RAG graph. Oracle search is verified-only.
 Ordinary Galaxy chat exposes `/observe`, `/host-snap` (kernel FS+process
 feed, no GPU), `/vram` (one GPU slot + next
 worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
-`/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, and `/pending`.
+`/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, `/chain` (durable ledger, no GPU), `/cancel`, and `/pending`.
 Whole-message `enable_thinking: false` / `enable_thinking: true` is a
 no-GPU desk command (writes `logs/thinking.txt`). Next llama generate
 sends `chat_template_kwargs.enable_thinking`. It is not `/edit` and not

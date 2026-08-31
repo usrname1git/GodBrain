@@ -1017,7 +1017,7 @@
                     });
                 return;
             }
-            if (/^\/(brief|vram|doors|heal|sre|last-edit|last|desk|pending)\b/i.test(text)) {
+            if (/^\/(brief|vram|doors|heal|sre|last-edit|last|desk|pending|chain)\b/i.test(text)) {
                 const path = '/api/' + text.split(/\s+/)[0].slice(1).toLowerCase();
                 fetch(path)
                     .then(res => res.json())
@@ -1355,6 +1355,15 @@
                     lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
                 } else {
                     lines.push('Edit: none');
+                }
+                const chainHost = (status && status.chain) || {};
+                if (chainHost.id) {
+                    lines.push(
+                        'Chain: ' + String(chainHost.id).slice(0, 12) + ' ' +
+                        (chainHost.status || '?') + ' hops=' +
+                        (chainHost.hops || 0));
+                } else {
+                    lines.push('Chain: none');
                 }
                 const volumes = Array.isArray(host.volumes) ? host.volumes : [];
                 volumes.forEach(volume => {
