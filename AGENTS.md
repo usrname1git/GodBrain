@@ -402,10 +402,14 @@ MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
 `run_logman query`, `run_schtasks /Query`, `run_host` (`tasklist` `whoami`
 `netstat` `fltmc` `ipconfig` show / `sc query`).
 `/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
-`run_elevate` (MinSudo / `wsudo -A -w`, never `--ti`),
-`acl_takeover` / `acl_release` (`takeown /f /r /d y` then
-`icacls /grant Administrators:F /t /q`, then restore the saved DACL — throw
-the key; not `/reset`),
+`run_elevate` (MinSudo / `wsudo -A -w`, never `--ti` / `-T`),
+`acl_takeover` / `acl_release` (the one TI door: `wsudo -T -w pwsh -NoProfile`
+then `takeown /F /R /A /D Y /SKIPSL` and
+`icacls /grant:r Administrators:(OI)(CI)F /T /C /Q`, then restore the saved
+DACL — throw the key; not `/reset`. Extra paths from the host manual:
+SystemProfile Windows Defender and `CodeIntegrity\CIPolicies\Active`).
+Heal never launches `wsudo -T`. The NuclearDefenderWipe IFEO/stub/DENY
+SYSTEM lock is not a kernel tool.
 `reg add|delete`, `schtasks /Create|/Change|/Delete|/Run`, `wevtutil cl`,
 `logman start|stop`, `sc start|stop`, `ipconfig /flushdns`. Never:
 `pskill` / `PsExec` / `psshutdown` / `pssuspend` / `pspasswd` /
