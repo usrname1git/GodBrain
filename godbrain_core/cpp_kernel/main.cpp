@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include <ctime>
 #include <functional>
 #include <atomic>
 #include <mutex>
@@ -85,6 +86,9 @@ static void handle_pending(const httplib::Request&, httplib::Response&);
 static void handle_heal(const httplib::Request&, httplib::Response&);
 static void handle_sre(const httplib::Request&, httplib::Response&);
 static void handle_last_edit(const httplib::Request&, httplib::Response&);
+static void handle_chain(const httplib::Request&, httplib::Response&);
+static void handle_cancel_chain(const httplib::Request&, httplib::Response&);
+static json load_chain();
 static json pending_body();
 static std::string clip_pending_line(std::string text, size_t max);
 static int file_age_minutes(const std::string& path);
@@ -447,6 +451,16 @@ static bool is_continue_command(const std::string& text) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
     return t == "continue" || t == "cont";
+}
+
+static bool is_cancel_command(const std::string& text) {
+    std::string t = trim_copy(text);
+    if (t.empty()) return false;
+    if (t[0] == '/') t.erase(0, 1);
+    for (char& ch : t) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return t == "cancel";
 }
 
 static bool is_refuse_answer(const std::string& answer) {
@@ -1026,6 +1040,7 @@ static json kernel_status_body() {
         {"last_oracle", last_oracle_json()},
         {"last_oracle_turns", turns},
         {"last_edit", load_last_edit()},
+        {"chain", load_chain()},
         {"desk_test", load_last_desk_test()},
         {"heal", heal},
         {"inbox", inbox_desk()},
@@ -1426,6 +1441,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_host_snap(req, res);
     });
+    server.Get("/api/chain", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_chain(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1578,19 +1597,64 @@ static std::string chain_path() {
     return repo_root_from_exe() + "\\logs\\last-chain.json";
 }
 
+static std::string mint_chain_id(const std::string& goal) {
+    uint32_t h = 2166136261u;
+    for (unsigned char ch : goal) {
+        h ^= ch;
+        h *= 16777619u;
+    }
+    h ^= GetTickCount();
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%08x%04x", h, GetTickCount() & 0xffff);
+    return std::string(buf, 12);
+}
+
+static std::string utc_stamp() {
+    time_t now = time(nullptr);
+    struct tm tm{};
+    gmtime_s(&tm, &now);
+    char iso[32];
+    std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%MZ", &tm);
+    return std::string(iso);
+}
+
 static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops) {
+    json prev;
+    {
+        std::ifstream in(chain_path(), std::ios::binary);
+        if (in) {
+            try {
+                prev = json::parse(in);
+            } catch (const json::exception&) {
+            }
+        }
+    }
+    std::string id = prev.value("id", "");
+    const std::string prev_goal = prev.value("goal", "");
+    const std::string prev_status = prev.value("status", "");
+    const bool reuse = !id.empty() && prev_status == "running" &&
+                       (goal == prev_goal || is_continue_command(goal));
+    if (!reuse) id = mint_chain_id(goal);
     json doc = {
+        {"id", id},
+        {"status", answer.empty() ? "running" : "done"},
         {"goal", goal.substr(0, 500)},
         {"ledger", ledger.substr(0, 4000)},
         {"answer", answer.substr(0, 2000)},
         {"hops", hops},
+        {"at", utc_stamp()},
         {"at_tick", static_cast<int>(GetTickCount())},
     };
     const std::string path = chain_path();
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << doc.dump();
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out << doc.dump();
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
 
 static json load_chain() {
@@ -1851,6 +1915,14 @@ static std::string format_brief_text() {
             get_exe_dir() + "\\..\\..\\logs\\last-host-snap.json");
         if (snap_age >= 0) reply << "\nsnap=" << snap_age << "m";
     }
+    {
+        const json ch = st.value("chain", json::object());
+        if (ch.contains("id")) {
+            reply << "\nchain=" << ch.value("id", "").substr(0, 12)
+                  << "/" << ch.value("status", "?")
+                  << " hops=" << ch.value("hops", 0);
+        }
+    }
     const std::string text = reply.str();
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
     const std::string tmp = path + ".tmp";
@@ -1982,6 +2054,58 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     res.set_content(body.dump(), "application/json");
+}
+
+static void write_chain_glance(httplib::Response& res, json body) {
+    std::ostringstream reply;
+    if (body.empty() || !body.contains("id")) {
+        reply << "chain=none";
+    } else {
+        reply << "chain=" << body.value("id", "")
+              << " " << body.value("status", "?")
+              << " hops=" << body.value("hops", 0);
+        const std::string goal = body.value("goal", "");
+        if (!goal.empty()) reply << "\n" << clip_pending_line(goal, 120);
+    }
+    const std::string text = reply.str();
+    body["response"] = text;
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-chain.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
+}
+
+static void handle_chain(const httplib::Request&, httplib::Response& res) {
+    write_chain_glance(res, load_chain());
+}
+
+static void handle_cancel_chain(const httplib::Request&, httplib::Response& res) {
+    json body = load_chain();
+    if (body.empty() || !body.contains("id")) {
+        write_chain_glance(res, json::object());
+        return;
+    }
+    if (body.value("status", "") != "cancelled") {
+        body["status"] = "cancelled";
+        body["at"] = utc_stamp();
+        const std::string path = chain_path();
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (out) out << body.dump();
+        }
+        MoveFileExA(tmp.c_str(), path.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
+    write_chain_glance(res, body);
 }
 
 static std::string clip_pending_line(std::string text, size_t max) {
@@ -2351,6 +2475,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"pending", lb + "/api/pending"},
         {"last_edit", lb + "/api/last-edit"},
         {"host_snap", lb + "/api/host-snap"},
+        {"chain", lb + "/api/chain"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -2377,6 +2502,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["pending"] = base + "/api/pending";
         ts["last_edit"] = base + "/api/last-edit";
         ts["host_snap"] = base + "/api/host-snap";
+        ts["chain"] = base + "/api/chain";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -3540,6 +3666,10 @@ int main() {
         set_cors(req, res);
         handle_host_snap(req, res);
     });
+    svr.Get("/api/chain", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_chain(req, res);
+    });
     svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
         handle_pending(req, res);
     });
@@ -3752,6 +3882,18 @@ int main() {
                 (user_msg.size() == 10 ||
                  std::isspace(static_cast<unsigned char>(user_msg[10])) != 0)) {
                 handle_last_edit(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/chain") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                handle_chain(req, res);
+                return;
+            }
+
+            if (is_cancel_command(user_msg)) {
+                handle_cancel_chain(req, res);
                 return;
             }
 
@@ -4392,14 +4534,32 @@ int main() {
             const std::string prior_q = have_prior ? prior_turn.question : std::string();
             const std::string prior_a =
                 have_prior ? last_coherent_essay(prior_turn.answer) : std::string();
+            if (continue_cmd) {
+                const json ch0 = load_chain();
+                if (ch0.value("status", "") == "cancelled") {
+                    res.set_content(
+                        json({{"response",
+                               "Chain cancelled. Ask the question again."}})
+                            .dump(),
+                        "application/json");
+                    return;
+                }
+            }
             if (continue_cmd && !have_prior) {
-                res.set_content(
-                    json({{"response",
-                           "Nothing real to continue. Last turn was a refuse, "
-                           "an error, or empty. Ask the question again."}})
-                        .dump(),
-                    "application/json");
-                return;
+                const json ch0 = load_chain();
+                const bool ledger_live =
+                    ch0.value("status", "") == "running" &&
+                    ch0.contains("ledger") && ch0["ledger"].is_string() &&
+                    !ch0["ledger"].get<std::string>().empty();
+                if (!ledger_live) {
+                    res.set_content(
+                        json({{"response",
+                               "Nothing real to continue. Last turn was a refuse, "
+                               "an error, or empty. Ask the question again."}})
+                            .dump(),
+                        "application/json");
+                    return;
+                }
             }
             const bool follow_up =
                 have_prior && !prior_q.empty() && !prior_a.empty() &&
@@ -4412,12 +4572,13 @@ int main() {
             std::string user_prompt = user_msg;
             std::string asked = user_msg;
             if (continue_cmd) {
-                asked = prior_q;
-                user_prompt = local_edit::looks_like_edit_request(prior_q)
+                const json ch = load_chain();
+                if (prior_q.empty()) asked = ch.value("goal", user_msg);
+                else asked = prior_q;
+                user_prompt = local_edit::looks_like_edit_request(asked)
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
-                const json ch = load_chain();
                 if (ch.contains("ledger") && ch["ledger"].is_string()) {
                     std::string led = ch["ledger"].get<std::string>();
                     if (led.size() > 2000) led.resize(2000);

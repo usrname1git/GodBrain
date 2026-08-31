@@ -55,6 +55,12 @@ try {
 } catch {
     if ("$_" -notmatch "404") { $fails.Add("last-edit: $_") }
 }
+try {
+    $chainApi = Get-Json "/api/chain"
+    if ($chainApi.response -notmatch "chain=") { $fails.Add("chain api missing chain=") }
+} catch {
+    $fails.Add("chain: $_")
+}
 $lastEditFile = Join-Path $RepoRoot "logs\last-edit.txt"
 if (-not (Test-Path -LiteralPath $lastEditFile)) {
     $fails.Add("missing logs/last-edit.txt")

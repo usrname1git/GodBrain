@@ -88,6 +88,7 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch 'Edit:\s*none') { throw "galaxy.html missing Edit none" }
     if ($text -notmatch 'Edit:\s*rolled') { throw "galaxy.html missing Edit rolled" }
     if ($text -notmatch 'Edit:\s*preview') { throw "galaxy.html missing Edit preview" }
+    if ($text -notmatch 'Chain:\s*none') { throw "galaxy.html missing Chain none" }
 }
 
 function Test-MemoryStoreGo {
