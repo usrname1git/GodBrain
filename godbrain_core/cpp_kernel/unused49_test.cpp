@@ -34,7 +34,9 @@ int main() {
     }
 
     if (!expect(!unused49::contains("2+2 is 4."), "clean text") ||
-        !expect(!unused49::is_junk("2+2 is 4."), "clean is not junk")) {
+        !expect(!unused49::is_junk("2+2 is 4."), "clean is not junk") ||
+        !expect(!unused49::contains("Golden Records are verified"),
+                "records is not unused49")) {
         return 1;
     }
 

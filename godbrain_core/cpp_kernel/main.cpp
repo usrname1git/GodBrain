@@ -3087,6 +3087,7 @@ std::string run_colibri_serve(
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
     int chain_hops = 0;
+    bool unused49_seen = false;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
@@ -3208,6 +3209,7 @@ std::string run_colibri_serve(
             });
         g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (heading_loop) {
+            if (unused49::contains(piece)) unused49_seen = true;
             piece = sanitize_oracle_body(piece);
             if (is_resume_jail(piece)) {
                 const size_t cut = piece.find("END>>");
@@ -3280,6 +3282,7 @@ std::string run_colibri_serve(
             if (piece.empty()) break;
         }
         const bool piece49 = unused49::contains(piece);
+        if (piece49) unused49_seen = true;
         piece = sanitize_oracle_body(piece);
         piece = strip_replayed_prefix(assembled, piece);
         assembled += piece;
@@ -3432,7 +3435,7 @@ std::string run_colibri_serve(
     }
     if (hit49 && unused49::keep_count(assembled) < 24) assembled.clear();
     if (hit49 && spoken && unused49::keep_count(*spoken) < 24) spoken->clear();
-    if (hit49 && llama_mouth) maybe_restart_mouth(true);
+    if ((unused49_seen || hit49) && llama_mouth) maybe_restart_mouth(true);
     if (assembled.empty()) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         if (local_tools::looks_like_jarvis_need_ask(hop_hint)) {
