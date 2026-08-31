@@ -1596,7 +1596,7 @@ static std::atomic<DWORD> g_mouth_restart_ms{0};
 // Start-LlamaServer kills leftover llama-server.exe. Do not re-kick while
 // weights are still loading. A hung IMA process that never binds :8000
 // must not block restart forever.
-static const DWORD kMouthLoadWaitMs = 90000;
+static const DWORD kMouthLoadWaitMs = 300000;
 
 static bool maybe_restart_mouth() {
     if (load_mouth().value("label", "") != "llama") return false;
@@ -2736,8 +2736,8 @@ std::string run_colibri_serve(
     const bool native_tools =
         llama_mouth && !wants_apply_continue(system, user) &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
-    // 12B on this 4080 IMA'd on the 4th native-tool generate (KV reuse).
-    // Three hops is list/read/answer. YOLO still gets more, then fail closed.
+    // Ordinary llama tool hops cap at 3 so a 4th generate cannot CUDA-abort
+    // the slot. YOLO still gets more, then fail closed.
     const int max_tool_rounds =
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     const json tool_defs =
@@ -4272,8 +4272,18 @@ int main() {
                             local_tools::looks_like_fs_refuse(for_memory)) {
                             const std::string probe =
                                 local_tools::answer_fs_ask(asked_q);
-                            chunk = probe;
-                            for_memory = probe;
+                            const bool keep =
+                                for_memory.find("list_local_dir ") !=
+                                    std::string::npos ||
+                                for_memory.find("get_file_info ") !=
+                                    std::string::npos;
+                            if (keep) {
+                                chunk += "\n\n" + probe;
+                                for_memory += "\n\n" + probe;
+                            } else {
+                                chunk = probe;
+                                for_memory = probe;
+                            }
                             emit({{"type", "token"},
                                   {"text", std::string("\n\n") + probe}});
                         }
@@ -4342,8 +4352,16 @@ int main() {
             if (local_fs_ask && !no_tools_ask &&
                 local_tools::looks_like_fs_refuse(for_memory)) {
                 const std::string probe = local_tools::answer_fs_ask(asked);
-                chunk = probe;
-                for_memory = probe;
+                const bool keep =
+                    for_memory.find("list_local_dir ") != std::string::npos ||
+                    for_memory.find("get_file_info ") != std::string::npos;
+                if (keep) {
+                    chunk += "\n\n" + probe;
+                    for_memory += "\n\n" + probe;
+                } else {
+                    chunk = probe;
+                    for_memory = probe;
+                }
             }
             const auto edit = local_edit::maybe_apply(
                 asked,

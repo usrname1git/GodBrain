@@ -206,6 +206,14 @@ int main() {
                        "path: C:\\Temp\\GitHub\\no-such-acl-key\n*** END\n")
                        .find("denied") != std::string::npos,
                    "acl release without key denied");
+    pass &= expect(local_tools::run_tools_from_text(
+                       "*** TOOL\nname: acl_takeover\npath: C:\\Tools\n*** END\n")
+                       .find("denied") != std::string::npos,
+                   "acl Tools root denied");
+    pass &= expect(local_tools::run_tools_from_text(
+                       "*** TOOL\nname: icacls\npath: C:\\Temp\\GitHub\n*** END\n")
+                       .find("unknown tool") != std::string::npos,
+                   "bare icacls is not takeover");
     local_tools::set_yolo_minutes(0);
 
     const std::string pwsh_ti =
@@ -213,6 +221,12 @@ int main() {
     pass &= expect(local_tools::run_tools_from_text(pwsh_ti).find("denied") !=
                        std::string::npos,
                    "wsudo -T denied on run_pwsh");
+    const std::string pingt =
+        "*** TOOL\nname: run_pwsh\n<<<<\n'ping -t is not ti'\n>>>>\n*** END\n";
+    const std::string pingr = local_tools::run_tools_from_text(pingt);
+    pass &= expect(pingr.find("denied") == std::string::npos &&
+                       pingr.find("ping -t is not ti") != std::string::npos,
+                   "ping -t is not TI deny");
     {
         char mod[MAX_PATH];
         GetModuleFileNameA(NULL, mod, MAX_PATH);
@@ -228,6 +242,12 @@ int main() {
         pass &= expect(local_tools::run_tools_from_text(wacl).find("denied") !=
                            std::string::npos,
                        "acl key dir not mouth-writable");
+        pass &= expect(
+            local_tools::run_tools_from_text(
+                "*** TOOL\nname: write_local_file\n"
+                "path: C:\\Tools\\TeamM2\\wsudo.exe\n<<<<\nx\n>>>>\n*** END\n")
+                .find("denied") != std::string::npos,
+            "wsudo.exe not mouth-writable");
     }
 
     const std::string clock =
@@ -324,6 +344,8 @@ int main() {
         "fs refuse detected");
     pass &= expect(!local_tools::looks_like_fs_refuse("get_file_info ok bytes=12"),
                    "tool result is not fs refuse");
+    pass &= expect(!local_tools::looks_like_fs_refuse("I cannot access the GPU"),
+                   "cannot access GPU is not fs refuse");
     {
         const std::string probe = local_tools::answer_fs_ask(
             "I do not have access to " + home +

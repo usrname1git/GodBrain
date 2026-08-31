@@ -479,15 +479,36 @@ bool has_wsudo_token(const std::string& low) {
     return false;
 }
 
+bool has_exe_token(const std::string& low, const std::string& stem) {
+    size_t pos = 0;
+    while ((pos = low.find(stem, pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 ||
+            (std::isalnum(static_cast<unsigned char>(low[pos - 1])) == 0 &&
+             low[pos - 1] != '_');
+        const size_t end = pos + stem.size();
+        bool right = end >= low.size();
+        if (!right) {
+            const unsigned char c = static_cast<unsigned char>(low[end]);
+            right = std::isalnum(c) == 0 && c != '_';
+            if (low.compare(end, 4, ".exe") == 0) right = true;
+        }
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
 bool elevate_flags_denied(const std::string& text) {
     const std::string low = ascii_lower(text);
     if (low.find("trustedinstaller") != std::string::npos) return true;
     if (has_cli_flag(low, "--ti") || has_cli_flag(low, "-ti") ||
-        has_cli_flag(low, "/ti") || has_cli_flag(low, "--system") ||
-        has_cli_flag(low, "-t")) {
+        has_cli_flag(low, "/ti") || has_cli_flag(low, "--system")) {
         return true;
     }
-    return has_wsudo_token(low);
+    const bool launcher = has_wsudo_token(low) || has_exe_token(low, "minsudo") ||
+                          has_exe_token(low, "privexec");
+    return launcher && has_cli_flag(low, "-t");
 }
 
 bool mentions_godbrain_task(const std::string& args) {
@@ -574,6 +595,15 @@ bool is_acl_store_path(const std::string& path) {
     return starts_with_ci(full, root + "\\");
 }
 
+bool is_protected_bin_path(const std::string& path) {
+    if (is_acl_store_path(path)) return true;
+    const std::string full = final_path(expand_env(path));
+    const std::string team = final_path("C:\\Tools\\TeamM2");
+    if (full.empty() || team.empty()) return false;
+    if (ascii_lower(full) == ascii_lower(team)) return true;
+    return starts_with_ci(full, team + "\\");
+}
+
 bool acl_hive_denied(const std::string& full) {
     std::string t = ascii_lower(full);
     for (char& ch : t) {
@@ -606,6 +636,24 @@ bool acl_manual_path(const std::string& full) {
         const std::string root = r.empty() ? extra[i] : r;
         if (ascii_lower(full) == ascii_lower(root)) return true;
         if (starts_with_ci(full, root + "\\")) return true;
+    }
+    return false;
+}
+
+bool acl_root_denied(const std::string& full) {
+    if (acl_manual_path(full)) return false;
+    std::string t = ascii_lower(full);
+    for (char& ch : t) {
+        if (ch == '/') ch = '\\';
+    }
+    while (!t.empty() && t.back() == '\\') t.pop_back();
+    for (const auto& root : default_roots()) {
+        std::string r = ascii_lower(final_path(root));
+        for (char& ch : r) {
+            if (ch == '/') ch = '\\';
+        }
+        while (!r.empty() && r.back() == '\\') r.pop_back();
+        if (!r.empty() && t == r) return true;
     }
     return false;
 }
@@ -797,6 +845,20 @@ std::string write_temp_script(const std::string& body, const char* ext) {
 
 std::string write_temp_ps1(const std::string& body) {
     return write_temp_script(body, ".ps1");
+}
+
+std::string write_acl_ps1(const std::string& body) {
+    const std::string dir = acl_store_dir();
+    if (dir.empty()) return "";
+    ensure_dir(dir);
+    char name[MAX_PATH];
+    snprintf(name, sizeof(name), "%s\\ti-%lu-%lu.ps1", dir.c_str(),
+             static_cast<unsigned long>(GetTickCount()),
+             static_cast<unsigned long>(GetCurrentProcessId()));
+    std::ofstream out(name, std::ios::binary | std::ios::trunc);
+    if (!out) return "";
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    return std::string(name);
 }
 
 std::string find_rg() {
@@ -1027,7 +1089,6 @@ bool granted_path_in_message(const std::string& msg) {
 }  // namespace
 
 std::vector<std::string> default_roots() {
-    // Windows env. POSIX jail is later.
     std::vector<std::string> roots;
     auto add = [&](const std::string& p) {
         if (p.empty()) return;
@@ -1184,19 +1245,8 @@ std::string execute_calls(const std::vector<Call>& calls) {
         } else if (c.name == "pwsh" || c.name == "powershell") c.name = "run_pwsh";
         else if (c.name == "elevate" || c.name == "wsudo" || c.name == "minsudo") {
             c.name = "run_elevate";
-        } else if (c.name == "takeown" || c.name == "run_takeown" ||
-                   c.name == "acl_takeover") {
+        } else if (c.name == "takeown" || c.name == "run_takeown") {
             c.name = "acl_takeover";
-        } else if (c.name == "icacls" || c.name == "run_icacls" ||
-                   c.name == "acl_release") {
-            if (contains_ci(c.args, "restore") || contains_ci(c.args, "release") ||
-                contains_ci(c.name, "release")) {
-                c.name = "acl_release";
-            } else if (c.name == "acl_release") {
-                c.name = "acl_release";
-            } else {
-                c.name = "acl_takeover";
-            }
         } else if (c.name == "wevtutil") c.name = "run_wevtutil";
         else if (c.name == "logman") c.name = "run_logman";
         else if (c.name == "schtasks") c.name = "run_schtasks";
@@ -1273,9 +1323,10 @@ std::string execute_calls(const std::vector<Call>& calls) {
             }
             if ((c.name == "write_local_file" || c.name == "edit_local_file" ||
                  c.name == "create_local_dir" || c.name == "move_local_file") &&
-                is_acl_store_path(c.path)) {
+                is_protected_bin_path(c.path)) {
                 out << c.name
-                    << " denied: ACL throwaway keys are not mouth-writable.\n";
+                    << " denied: ACL keys and TeamM2 launchers are not "
+                       "mouth-writable.\n";
                 continue;
             }
             const std::string full = canon_path(c.path);
@@ -1403,9 +1454,9 @@ std::string execute_calls(const std::vector<Call>& calls) {
                     out << "move_local_file denied dest: " << err << "\n";
                     continue;
                 }
-                if (is_acl_store_path(dest)) {
-                    out << "move_local_file denied dest: ACL throwaway keys "
-                           "are not mouth-writable.\n";
+                if (is_protected_bin_path(dest)) {
+                    out << "move_local_file denied dest: ACL keys and TeamM2 "
+                           "launchers are not mouth-writable.\n";
                     continue;
                 }
                 const std::string dst = canon_path(dest);
@@ -1816,6 +1867,12 @@ std::string execute_calls(const std::vector<Call>& calls) {
                        "and SAM/SECURITY/SYSTEM hives are operator GO.\n";
                 continue;
             }
+            if (acl_root_denied(full)) {
+                out << c.name
+                    << " denied: takeover a folder under the jail, not the "
+                       "granted root itself.\n";
+                continue;
+            }
             if (!path_is_granted(c.path, &err) && !acl_manual_path(full)) {
                 out << c.name << " denied: " << err << "\n";
                 continue;
@@ -1885,7 +1942,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                        "Remove-Item -LiteralPath $key -Force\n"
                        "Write-Output \"acl_release ok $p\"\n";
             }
-            const std::string tmp = write_temp_ps1(body);
+            const std::string tmp = write_acl_ps1(body);
             if (tmp.empty()) {
                 out << c.name << ": cannot write temp script\n";
                 continue;
@@ -1993,10 +2050,8 @@ std::string first_granted_path(const std::string& msg) {
 bool looks_like_fs_refuse(const std::string& text) {
     const std::string t = ascii_lower(text);
     static const char* k[] = {
-        "do not have access",
-        "don't have access",
-        "cannot access",
-        "can't access",
+        "do not have access to your local file",
+        "don't have access to your local",
         "no access to your local",
         "lack a filesystem",
         "cannot query your mongodb",
