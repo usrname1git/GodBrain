@@ -75,6 +75,10 @@ function Get-Cs2GoneMinutes([string]$RepoRoot) {
 
 function Test-GodBrainColiShouldSleep([string]$RepoRoot) {
     if (Test-Cs2Running) { return $true }
+    $st = Read-Cs2PauseState $RepoRoot
+    # Start-CS2 waiter: operator said done for today. Do not keep the
+    # mouth down just because last_seen is still inside the 10 min window.
+    if ([string]$st.last_action -eq "resume-now") { return $false }
     $gone = Get-Cs2GoneMinutes $RepoRoot
     if ($null -eq $gone) { return $false }
     return ($gone -lt (Get-Cs2ResumeDelayMinutes))
@@ -120,15 +124,36 @@ function Get-TailscaleExe {
 }
 
 # Disconnect only. Never logout, --reset, or stop the Windows service.
+# Native stderr ("Tailscale was already stopped.") must not abort Start-CS2
+# ($ErrorActionPreference Stop): 2>$null is not enough in Windows PowerShell.
+function Invoke-TailscaleCs2([string]$Exe, [string[]]$TsArgs) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & $Exe @TsArgs 2>&1
+        $code = $LASTEXITCODE
+        $text = (($out | ForEach-Object { "$_" }) -join " ").Trim()
+        if ($code -eq 0) { return }
+        if ($text -match 'already stopped') {
+            Write-Host "cs2: tailscale already down"
+            return
+        }
+        if ($text -match 'already running|Logged out') { return }
+        Write-Host ("cs2: tailscale {0} exit={1} {2}" -f ($TsArgs -join " "), $code, $text)
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
 function Set-TailscaleForCs2([bool]$Up) {
     $exe = Get-TailscaleExe
     if (-not $exe) { return }
     if ($Up) {
         Write-Host "cs2: tailscale up (existing node, no reset)"
-        & $exe up --unattended 2>$null | Out-Null
+        Invoke-TailscaleCs2 $exe @("up", "--unattended")
     } else {
         Write-Host "cs2: tailscale down (keep Valve away from the tailnet)"
-        & $exe down 2>$null | Out-Null
+        Invoke-TailscaleCs2 $exe @("down")
     }
 }
 
@@ -147,16 +172,24 @@ function Suspend-GodBrainForCs2([string]$RepoRoot) {
     Write-Host "cs2: GodBrain paused (mouth down, Tailscale down, Watch/Logon disabled)"
 }
 
-function Resume-GodBrainAfterCs2([string]$RepoRoot) {
+function Resume-GodBrainAfterCs2 {
+    param(
+        [string]$RepoRoot,
+        [switch]$Now
+    )
     foreach ($name in Get-GodBrainCs2PauseTasks) {
         Set-GodBrainTaskEnabled $name $true
     }
     Set-TailscaleForCs2 $true
     $state = Read-Cs2PauseState $RepoRoot
     $state.paused = $false
-    $state.last_action = "resume"
+    $state.last_action = $(if ($Now) { "resume-now" } else { "resume" })
     Write-Cs2PauseState $RepoRoot $state
-    Write-Host "cs2: tasks enabled, Tailscale up, starting GodBrain"
+    if ($Now) {
+        Write-Host "cs2: tasks enabled, Tailscale up, starting GodBrain now (operator done for today)"
+    } else {
+        Write-Host "cs2: tasks enabled, Tailscale up, starting GodBrain"
+    }
     $starter = Join-Path $RepoRoot "Start-GodBrain.ps1"
     if (Test-Path -LiteralPath $starter) {
         & $starter -RepoRoot $RepoRoot

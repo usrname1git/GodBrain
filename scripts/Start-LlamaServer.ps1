@@ -38,12 +38,52 @@ if ($Agentic -and -not $PSBoundParameters.ContainsKey('Model')) {
 }
 if (-not (Test-Path -LiteralPath $Model)) { throw "missing model $Model" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "missing llama-server $Server" }
+
+$logDir = Join-Path $RepoRoot "logs"
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+$mtpPath = Join-Path $logDir "mtp.txt"
+$mouthPath = Join-Path $logDir "mouth.txt"
+function Read-MtpPersist {
+    if (Test-Path -LiteralPath $mtpPath) {
+        $raw = (Get-Content -LiteralPath $mtpPath -Raw -ErrorAction SilentlyContinue)
+        if ($null -eq $raw) { return $null }
+        $t = $raw.Trim().ToLowerInvariant()
+        if ($t -eq "off" -or $t -eq "false" -or $t -eq "0") { return $false }
+        if ($t -eq "on" -or $t -eq "true" -or $t -eq "1") { return $true }
+    }
+    if (Test-Path -LiteralPath $mouthPath) {
+        $line = (Get-Content -LiteralPath $mouthPath -Raw -ErrorAction SilentlyContinue)
+        if ($line -match '(?i)\bmtp\b') { return $true }
+        if ($line -match '(?i)llama-server') { return $false }
+    }
+    return $null
+}
+function Write-MtpPersist([bool]$On) {
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $text = $(if ($On) { "on`n" } else { "off`n" })
+    [System.IO.File]::WriteAllText($mtpPath, $text, $utf8)
+}
+
+# Watch/kernel call this with no switches. Honor logs/mtp.txt so a
+# -NoDraft fail-closed mouth does not come back with MTP after CUDA IMA.
 if ($NoDraft) {
     $useDraft = $false
+    Write-MtpPersist $false
+} elseif ($UseDraft) {
+    $useDraft = $true
+    Write-MtpPersist $true
 } elseif ($Obliterated -or $Agentic) {
     $useDraft = [bool]$UseDraft
 } else {
-    $useDraft = $true
+    $persisted = Read-MtpPersist
+    if ($null -eq $persisted) {
+        $useDraft = $true
+        Write-MtpPersist $true
+    } else {
+        $useDraft = $persisted
+    }
 }
 $draftMissing = $false
 if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
@@ -51,11 +91,7 @@ if ($useDraft -and -not (Test-Path -LiteralPath $Draft)) {
     $useDraft = $false
     $draftMissing = $true
 }
-
-$logDir = Join-Path $RepoRoot "logs"
-if (-not (Test-Path -LiteralPath $logDir)) {
-    New-Item -ItemType Directory -Path $logDir | Out-Null
-}
+Write-Host ("Start-LlamaServer: MTP persist={0}" -f $(if ($useDraft) { "on" } else { "off" }))
 
 function Test-Port([int]$PortNum) {
     try {

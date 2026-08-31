@@ -3,7 +3,7 @@ setlocal
 set "HERE=%~dp0"
 title CS2 - GodBrain sleeps
 echo Pausing GodBrain and Tailscale, then launching CS2.
-echo After you quit, the mouth and Tailscale wake in 10 minutes.
+echo After you quit, this window asks: Y = start llama now, N = wait 10 minutes.
 echo.
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%HERE%Start-CS2.ps1" -RepoRoot "%HERE%."
 echo.

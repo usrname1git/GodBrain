@@ -1468,32 +1468,93 @@ std::string run_tools_from_text(const std::string& model_text) {
     return execute_calls(parse_tool_blocks(model_text));
 }
 
-std::string tool_system_addendum() {
-    std::string s =
-        " You have built-in host tools (OpenAI tool_calls). The kernel executes; "
-        "not MCP, not a plugin pile. You are not in a void. "
-        "Granted roots: C:\\Users\\autismo and C:\\Temp\\GitHub. "
-        "Always: list_local_dir (args depth=N), read_local_file (offset=/limit=, "
-        "offset=-N tail), write_local_file (args append), create_local_dir, "
-        "move_local_file, get_file_info, search_local (content:needle for "
-        "in-file), edit_local_file (replace_all), run_strings, run_sqlite3, "
-        "run_pwsh, run_python, run_node (60s Job; CSV/Excel/PDF via python "
-        "libs if installed). Aliases: read_file/write_file/edit_block/"
-        "start_search/execute_command/start_process/create_directory/move_file/"
-        "get_metadata/list_processes. run_sysint; run_reg query; run_wevtutil; "
-        "run_logman; run_schtasks /Query; run_host. "
-        "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti), reg add/delete, "
-        "schtasks mutate, wevtutil cl, sc start/stop. Never pskill/kill_process/"
-        "psexec/interactive SSH-DB/notmyfault/sysmon/MFIT/git push/DISM/reboot/"
-        "Mongo/GodBrain* task delete/BFE-mpssvc-Dnscache stop. "
-        "Calls append logs/tool-audit.jsonl (10MiB rotate). "
-        "Call tools when the operator asks to inspect the host or a granted folder. "
-        "Ordinary questions: no tools. Do not claim you lack a filesystem.";
+bool looks_like_host_inspect(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    static const char* keys[] = {
+        "run_sysint", "handle64", "tcpvcon", "psping", "whois64", "pslist",
+        "autoruns", "sysinternals", "wevtutil", "event log", "logman",
+        "schtasks", "tasklist", "netstat", "fltmc", "ipconfig", "sc query",
+        "reg query", "reg.exe", "registry", "run_elevate", "minsudo",
+        "run_pwsh", "run_python", "run_node", "run_host", "run_reg",
+        "run_wevtutil", "run_logman", "run_schtasks", "run_strings",
+        "sqlite", nullptr};
+    for (int i = 0; keys[i]; ++i) {
+        if (t.find(keys[i]) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool looks_like_no_tools(const std::string& msg) {
+    size_t i = 0;
+    while (i < msg.size() &&
+           std::isspace(static_cast<unsigned char>(msg[i])) != 0) {
+        ++i;
+    }
+    const std::string t = ascii_lower(msg.substr(i));
+    return t.compare(0, 8, "no tools") == 0;
+}
+
+bool looks_like_local_fs_ask(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    if (t.find("c:\\") != std::string::npos || t.find("c:/") != std::string::npos) {
+        return true;
+    }
+    if (t.find("users\\autismo") != std::string::npos ||
+        t.find("temp\\github") != std::string::npos) {
+        return true;
+    }
+    const bool access = t.find("access") != std::string::npos ||
+                        t.find("granted") != std::string::npos ||
+                        t.find("jail") != std::string::npos ||
+                        t.find("read") != std::string::npos ||
+                        t.find("write") != std::string::npos ||
+                        t.find("r/w") != std::string::npos;
+    const bool place = t.find("repo") != std::string::npos ||
+                       t.find("folder") != std::string::npos ||
+                       t.find("directory") != std::string::npos ||
+                       t.find("file") != std::string::npos ||
+                       t.find("path") != std::string::npos ||
+                       t.find("local") != std::string::npos;
+    return access && place;
+}
+
+bool use_full_tool_defs(const std::string& user_msg) {
+    return yolo_active() || looks_like_host_inspect(user_msg);
+}
+
+std::string tool_system_addendum_for(const std::string& user_msg) {
+    std::string s;
+    if (use_full_tool_defs(user_msg)) {
+        s = " You have built-in host tools (OpenAI tool_calls). The kernel executes; "
+            "not MCP, not a plugin pile. You are not in a void. "
+            "Granted roots: C:\\Users\\autismo and C:\\Temp\\GitHub. "
+            "Always: list_local_dir, read_local_file, write_local_file, "
+            "create_local_dir, get_file_info, search_local, edit_local_file, "
+            "run_strings, run_sqlite3, run_pwsh, run_python, run_node, "
+            "run_sysint, run_reg query, run_wevtutil, run_logman, "
+            "run_schtasks /Query, run_host. "
+            "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti). "
+            "Never pskill/git push/DISM/reboot/Mongo. "
+            "Call tools when the operator asks to inspect the host or a granted folder. "
+            "Do not claim you lack a filesystem.";
+    } else {
+        s = " You have built-in file tools (OpenAI tool_calls). The kernel executes. "
+            "Jail: C:\\Users\\autismo and C:\\Temp\\GitHub "
+            "(Documents\\GitHub\\GodBrain is already inside the first root). "
+            "To verify a path: get_file_info or list_local_dir, then say yes or no. "
+            "read_local_file / write_local_file / edit_local_file / search_local / "
+            "create_local_dir. Not git push. Ordinary trivia: no tools. "
+            "Do not claim you lack a filesystem.";
+    }
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "
              "(map, sort, patch). No ASCII art, no outline, no asking.";
     }
     return s;
+}
+
+std::string tool_system_addendum() {
+    return tool_system_addendum_for("");
 }
 
 static json tool_fn(const char* name, const char* desc, json props,
@@ -1509,7 +1570,15 @@ static json tool_fn(const char* name, const char* desc, json props,
     };
 }
 
+nlohmann::json openai_tool_defs_for(const std::string& user_msg) {
+    return openai_tool_defs(use_full_tool_defs(user_msg));
+}
+
 nlohmann::json openai_tool_defs() {
+    return openai_tool_defs(true);
+}
+
+nlohmann::json openai_tool_defs(bool full) {
     const json path = {
         {"type", "string"},
         {"description",
@@ -1538,13 +1607,29 @@ nlohmann::json openai_tool_defs() {
         "create_local_dir", "Create a directory under granted roots.",
         {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
+        "get_file_info", "Size, mtime, file vs dir for a granted path.",
+        {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "search_local",
+        "Recursive search. args is a name substring, or content:needle for in-file. "
+        "depth=N. Skips .git/node_modules/AppData. 80 hits.",
+        {{"path", path},
+         {"args", {{"type", "string"}, {"description", "Name or content:needle."}}}},
+        {"path", "args"}));
+    tools.push_back(tool_fn(
+        "edit_local_file",
+        "Replace old_text with content. args=replace_all for every occurrence.",
+        {{"path", path},
+         {"old_text", {{"type", "string"}, {"description", "Exact text to find."}}},
+         {"content", content},
+         {"args", args}},
+        {"path", "old_text", "content"}));
+    if (!full) return tools;
+    tools.push_back(tool_fn(
         "move_local_file", "Move/rename a granted path to dest (also granted).",
         {{"path", path},
          {"dest", {{"type", "string"}, {"description", "Destination path."}}}},
         {"path", "dest"}));
-    tools.push_back(tool_fn(
-        "get_file_info", "Size, mtime, file vs dir for a granted path.",
-        {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
         "run_strings", "strings64 on a granted file.", {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
@@ -1580,21 +1665,6 @@ nlohmann::json openai_tool_defs() {
         {{"exe", {{"type", "string"}, {"description", "Image stem, e.g. tasklist."}}},
          {"args", args}},
         {"exe"}));
-    tools.push_back(tool_fn(
-        "search_local",
-        "Recursive search. args is a name substring, or content:needle for in-file. "
-        "depth=N. Skips .git/node_modules/AppData. 80 hits.",
-        {{"path", path},
-         {"args", {{"type", "string"}, {"description", "Name or content:needle."}}}},
-        {"path", "args"}));
-    tools.push_back(tool_fn(
-        "edit_local_file",
-        "Replace old_text with content. args=replace_all for every occurrence.",
-        {{"path", path},
-         {"old_text", {{"type", "string"}, {"description", "Exact text to find."}}},
-         {"content", content},
-         {"args", args}},
-        {"path", "old_text", "content"}));
     tools.push_back(tool_fn(
         "run_pwsh",
         "Run pwsh. path = granted .ps1, or content/args = inline command. 60s Job. "

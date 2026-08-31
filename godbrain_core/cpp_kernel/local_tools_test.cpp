@@ -202,6 +202,34 @@ int main() {
 
     const auto defs = local_tools::openai_tool_defs();
     pass &= expect(defs.is_array() && defs.size() >= 8, "openai tool defs");
+    const std::string rw =
+        "Do you have read and write access to "
+        "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain";
+    pass &= expect(local_tools::looks_like_local_fs_ask(rw), "rw path is local-fs");
+    pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
+    pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
+    const auto files = local_tools::openai_tool_defs_for(rw);
+    pass &= expect(files.is_array() && files.size() == 7, "files hop 7 tools");
+    bool files_has_sysint = false;
+    bool files_has_info = false;
+    for (const auto& t : files) {
+        const std::string n = t["function"].value("name", "");
+        if (n == "run_sysint") files_has_sysint = true;
+        if (n == "get_file_info") files_has_info = true;
+    }
+    pass &= expect(!files_has_sysint, "files hop no sysint");
+    pass &= expect(files_has_info, "files hop has get_file_info");
+    const auto host_defs =
+        local_tools::openai_tool_defs_for("run_sysint handle64 on CS2");
+    pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
+    pass &= expect(!local_tools::looks_like_local_fs_ask("what is 2+2"),
+                   "math is not local-fs");
+    pass &= expect(local_tools::looks_like_no_tools("No tools.\nWhat is this PC?"),
+                   "no tools prefix");
+    pass &= expect(local_tools::looks_like_no_tools("no tools: advise"),
+                   "no tools colon");
+    pass &= expect(!local_tools::looks_like_no_tools("please use no tools if possible"),
+                   "no tools not mid-sentence");
     nlohmann::json tcs = nlohmann::json::array();
     tcs.push_back({
         {"id", "c1"},

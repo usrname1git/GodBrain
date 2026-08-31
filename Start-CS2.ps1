@@ -1,7 +1,8 @@
 # Play CS2 with the 4080 free and Tailscale off. Pause GodBrain first,
-# launch via Steam, wait until CS2.exe exits, wait 10 more minutes, then
-# wake the mouth and bring Tailscale back. Never uninstall or --reset.
-# Prefer this over clicking Play in Steam. Watch-Cs2Pause is the backup.
+# launch via Steam, wait until CS2.exe exits, then either wait 10 minutes
+# or (this window) Y = done for today and start llama now. Never uninstall
+# or --reset. Prefer this over clicking Play in Steam. Watch-Cs2Pause is
+# the backup and has no prompt (always 10 min).
 
 [CmdletBinding()]
 param(
@@ -65,6 +66,32 @@ function Set-StartCs2ConsoleVisible([bool]$Show) {
     }
 }
 
+# Y = skip the 10 min window. N or 60s timeout = keep it (between-match).
+# choice.exe native exit must not abort this script (ErrorAction Stop).
+function Read-StartCs2DoneForToday([int]$ResumeDelayMinutes) {
+    $msg = "Done for today? Y=start llama now  N=wait $ResumeDelayMinutes min (N in 60s)"
+    $exe = Join-Path $env:SystemRoot "System32\choice.exe"
+    if (-not (Test-Path -LiteralPath $exe)) {
+        Write-Host "Start-CS2: choice.exe missing; waiting $ResumeDelayMinutes min"
+        return $false
+    }
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $exe /C YN /N /T 60 /D N /M $msg
+        if ($LASTEXITCODE -eq 1) {
+            Write-Host "Start-CS2: done for today. Starting the mouth now."
+            return $true
+        }
+        return $false
+    } catch {
+        Write-Host "Start-CS2: prompt skipped ($($_.Exception.Message))"
+        return $false
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
 Write-Host "Start-CS2: pausing GodBrain before launch"
 Suspend-GodBrainForCs2 $RepoRoot
 # This script owns the wait. Do not let the 1-min backup task spawn a window.
@@ -96,13 +123,18 @@ while (Test-Cs2Running) {
 }
 
 Set-StartCs2ConsoleVisible $true
-Write-Host ("Start-CS2: CS2 exited. Waiting {0} min before waking GodBrain." -f $ResumeDelayMinutes)
+Write-Host "Start-CS2: CS2 exited."
 $state = Read-Cs2PauseState $RepoRoot
 $state.last_seen = (Get-Date).ToUniversalTime().ToString("o")
 $state.paused = $true
 $state.last_action = "pause"
 Write-Cs2PauseState $RepoRoot $state
-Start-Sleep -Seconds ($ResumeDelayMinutes * 60)
+
+$instant = Read-StartCs2DoneForToday -ResumeDelayMinutes $ResumeDelayMinutes
+if (-not $instant) {
+    Write-Host ("Start-CS2: waiting {0} min before waking GodBrain." -f $ResumeDelayMinutes)
+    Start-Sleep -Seconds ($ResumeDelayMinutes * 60)
+}
 
 if (Test-Cs2Running) {
     Write-Host "Start-CS2: CS2 came back. Staying paused."
@@ -110,6 +142,10 @@ if (Test-Cs2Running) {
 }
 
 Set-GodBrainTaskEnabled "GodBrainCs2Pause" $true
-Resume-GodBrainAfterCs2 $RepoRoot
+if ($instant) {
+    Resume-GodBrainAfterCs2 -RepoRoot $RepoRoot -Now
+} else {
+    Resume-GodBrainAfterCs2 -RepoRoot $RepoRoot
+}
 Write-Host "Start-CS2: done"
 exit 0
