@@ -166,7 +166,9 @@ type RecordSkillRunRequest struct {
 	SkillName           string            `json:"skill_name"`
 	OriginNodeID        string            `json:"origin_node_id"`
 	FixtureID           string            `json:"fixture_id"`
+	SuiteID             string            `json:"suite_id,omitempty"`
 	VerificationProfile string            `json:"verification_profile"`
+	VerificationVersion string            `json:"verification_version,omitempty"`
 	EnvironmentHash     string            `json:"environment_hash"`
 	Result              string            `json:"result"`
 	Checks              map[string]string `json:"checks"`

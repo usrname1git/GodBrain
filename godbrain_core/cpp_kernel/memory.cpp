@@ -656,6 +656,9 @@ json save_thought(const json& payload) {
     const std::string source_hash = keccak256(content);
     const std::string sector = trim_copy(payload.value("sector", "operator"));
     const std::string claim_type = sector.empty() ? "operator" : sector;
+    std::string source_type =
+        trim_copy(payload.value("source_type", "operator_thought"));
+    if (source_type.empty()) source_type = "operator_thought";
     json document = {
         {"extractor_id", "Kernel-Thought-CPP"},
         {"extractor_version", "1.0.0"},
@@ -666,7 +669,7 @@ json save_thought(const json& payload) {
          {{"trust_tier", "candidate"},
           {"provenance",
            {{"source_id", "thought:" + source_hash.substr(0, 16)},
-            {"source_type", "operator_thought"},
+            {"source_type", source_type},
             {"source_hash", source_hash},
             {"language", "mixed"},
             {"prompt_hash", "N/A"},
@@ -954,9 +957,9 @@ json copy_store_fields(const json& payload, const char* command,
 json record_skill_run(const json& payload) {
     return run_memory_store(copy_store_fields(
         payload, "record_skill_run",
-        {"skill_name", "origin_node_id", "fixture_id", "verification_profile",
-         "environment_hash", "result", "checks", "artifact_hash", "log_excerpt",
-         "reasoning"}));
+        {"skill_name", "origin_node_id", "fixture_id", "suite_id",
+         "verification_profile", "verification_version", "environment_hash",
+         "result", "checks", "artifact_hash", "log_excerpt", "reasoning"}));
 }
 
 json promote_skill(const json& payload) {

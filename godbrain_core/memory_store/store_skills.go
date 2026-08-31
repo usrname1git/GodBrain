@@ -26,6 +26,12 @@ var applyOnlySkillProfiles = map[string]struct{}{
 	"local-edit-apply-v1": {},
 }
 
+var suiteRequiredSkillProfiles = map[string]struct{}{
+	"galaxy-html-v1":     {},
+	"frontend-spa-v1":    {},
+	"frontend-nextjs-v1": {},
+}
+
 func latestSkillRunSort() bson.D {
 	return bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}
 }
@@ -117,6 +123,12 @@ func ValidateRecordSkillRun(request RecordSkillRunRequest) error {
 	if strings.TrimSpace(request.FixtureID) == "" || len(request.FixtureID) > 128 {
 		return ErrInvalidSkillRun
 	}
+	if len(strings.TrimSpace(request.SuiteID)) > 128 {
+		return ErrInvalidSkillRun
+	}
+	if len(strings.TrimSpace(request.VerificationVersion)) > 32 {
+		return ErrInvalidSkillRun
+	}
 	if _, ok := allowedSkillProfiles[request.VerificationProfile]; !ok {
 		return ErrInvalidSkillProfile
 	}
@@ -192,7 +204,9 @@ func (s *Store) RecordSkillVerificationRun(ctx context.Context, request RecordSk
 		SkillName:           request.SkillName,
 		OriginNodeID:        strings.TrimSpace(request.OriginNodeID),
 		FixtureID:           strings.TrimSpace(request.FixtureID),
+		SuiteID:             strings.TrimSpace(request.SuiteID),
 		VerificationProfile: request.VerificationProfile,
+		VerificationVersion: strings.TrimSpace(request.VerificationVersion),
 		EnvironmentHash:     strings.TrimSpace(request.EnvironmentHash),
 		Result:              request.Result,
 		Checks:              request.Checks,
@@ -226,7 +240,59 @@ func (s *Store) requirePassingSkillRun(ctx context.Context, originNodeID, skillN
 	if _, applyOnly := applyOnlySkillProfiles[latest.VerificationProfile]; applyOnly {
 		return nil, ErrSkillApplyOnlyProfile
 	}
+	if _, needSuite := suiteRequiredSkillProfiles[latest.VerificationProfile]; needSuite {
+		if err := s.requireDistinctPassingFixtures(
+			ctx, originNodeID, skillName, latest.VerificationProfile, 2); err != nil {
+			return nil, err
+		}
+	}
 	return &latest, nil
+}
+
+func suiteRequiredProfile(profile string) bool {
+	_, ok := suiteRequiredSkillProfiles[profile]
+	return ok
+}
+
+func (s *Store) requireDistinctPassingFixtures(
+	ctx context.Context,
+	originNodeID, skillName, profile string,
+	min int,
+) error {
+	opts := options.Find().SetSort(latestSkillRunSort()).SetLimit(50)
+	cursor, err := s.db.Collection("skill_verification_runs").Find(ctx, bson.M{
+		"origin_node_id":        originNodeID,
+		"skill_name":            skillName,
+		"verification_profile":  profile,
+		"result":                SkillRunPassed,
+	}, opts)
+	if err != nil {
+		return err
+	}
+	defer cursor.Close(ctx)
+	var runs []SkillVerificationRun
+	if err = cursor.All(ctx, &runs); err != nil {
+		return err
+	}
+	if distinctPassingFixtureCount(runs) < min {
+		return ErrSkillSuiteRequired
+	}
+	return nil
+}
+
+func distinctPassingFixtureCount(runs []SkillVerificationRun) int {
+	seen := map[string]struct{}{}
+	for _, run := range runs {
+		if run.Result != SkillRunPassed {
+			continue
+		}
+		id := strings.TrimSpace(run.FixtureID)
+		if id == "" {
+			continue
+		}
+		seen[id] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (s *Store) QueryPromotedSkills(ctx context.Context, query string, limit int) ([]Skill, error) {

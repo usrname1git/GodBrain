@@ -7,6 +7,7 @@ param(
     [string]$RepoRoot = $PSScriptRoot,
     [string]$Profile = "frontend-spa-v1",
     [string]$Fixture = "dashboard-shell-v1",
+    [string]$Suite = "frontend-spa-suite-v1",
     [string]$SkillName = "build-dashboard-shell",
     [string]$OriginNodeID = "",
     [string]$Reasoning = "skill lab npm run build",
@@ -113,7 +114,9 @@ if ($Record) {
         skill_name            = $SkillName
         origin_node_id        = $OriginNodeID
         fixture_id            = $Fixture
+        suite_id              = $Suite
         verification_profile  = $Profile
+        verification_version  = "v1"
         result                = $result
         checks                = @{ build = $build; docs = $doc }
         reasoning             = $Reasoning

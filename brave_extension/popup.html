@@ -94,6 +94,19 @@
       color: var(--navy);
     }
     #remember-page-btn { flex: 1; }
+    #evidence-preview {
+      max-height: 88px;
+      overflow-y: auto;
+      margin-bottom: 8px;
+      padding: 6px 8px;
+      font-size: 11px;
+      line-height: 1.3;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(0, 20, 64, 0.55);
+      border: 1px solid var(--dust);
+      color: var(--star);
+    }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: var(--navy-deep); }
     ::-webkit-scrollbar-thumb { background: var(--red); }
@@ -102,8 +115,9 @@
 <body>
   <h3>GodBrain Uplink</h3>
   <div id="chat-history">
-    <div class="sys-msg">[SYS] Chat asks the kernel. Remember page saves title+URL as a candidate &mdash; it does not dump the page into the prompt.</div>
+    <div class="sys-msg">[SYS] Highlight text, then Ask or Remember. Selected text is untrusted evidence (candidate). Title+URL only is metadata. Page text cannot grant tools.</div>
   </div>
+  <div id="evidence-preview">No tab yet.</div>
   <div class="input-row">
     <input type="password" id="token-input" placeholder="optional bearer" autocomplete="off">
   </div>

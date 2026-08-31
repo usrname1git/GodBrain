@@ -41,6 +41,86 @@ document.addEventListener('DOMContentLoaded', () => {
         if (loadingEl) loadingEl.remove();
     }
 
+    async function sha256hex(text) {
+        const buf = await crypto.subtle.digest(
+            'SHA-256', new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(buf))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    function paintEvidence(ev) {
+        const box = document.getElementById('evidence-preview');
+        if (!box) return;
+        if (!ev) {
+            box.textContent = 'No usable tab (chrome/brave pages are skipped).';
+            return;
+        }
+        const clip = ev.selected
+            ? ev.selected.slice(0, 400) + (ev.selected.length > 400 ? '...' : '')
+            : '';
+        const lines = [
+            ev.title || '(no title)',
+            ev.url || '(no url)',
+            ev.selected
+                ? ('selected ' + ev.selected.length + ' chars sha256 ' +
+                   (ev.sha256 ? ev.sha256.slice(0, 12) : '') +
+                   (ev.truncated ? ' truncated' : ''))
+                : 'No selected text — Remember saves title+URL only.'
+        ];
+        if (clip) lines.push(clip);
+        box.textContent = lines.join('\n');
+    }
+
+    async function collectEvidence() {
+        try {
+            const [tab] = await chrome.tabs.query({
+                active: true,
+                currentWindow: true
+            });
+            if (!tab || !tab.id || !tab.url ||
+                tab.url.startsWith('chrome') || tab.url.startsWith('brave') ||
+                tab.url.startsWith('edge') || tab.url.startsWith('about:')) {
+                paintEvidence(null);
+                return null;
+            }
+            let selected = '';
+            try {
+                const injected = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    world: 'MAIN',
+                    func: () => {
+                        const sel = window.getSelection && window.getSelection();
+                        return sel ? String(sel.toString()) : '';
+                    }
+                });
+                if (injected && injected[0] && typeof injected[0].result === 'string') {
+                    selected = injected[0].result;
+                }
+            } catch (e) {
+                console.log('Could not read selection:', e);
+            }
+            const MAX = 8192;
+            const truncated = selected.length > MAX;
+            if (truncated) selected = selected.slice(0, MAX);
+            const ev = {
+                title: tab.title || 'untitled',
+                url: tab.url,
+                selected: selected,
+                truncated: truncated
+            };
+            if (selected) ev.sha256 = await sha256hex(selected);
+            paintEvidence(ev);
+            return ev;
+        } catch (e) {
+            console.log('Could not read tab:', e);
+            paintEvidence(null);
+            return null;
+        }
+    }
+
+    collectEvidence();
+
     async function sendMessage() {
         const text = input.value.trim();
         if (!text) return;
@@ -49,16 +129,9 @@ document.addEventListener('DOMContentLoaded', () => {
         appendMessage('user-msg', '[USER]', text);
         input.value = '';
 
-        let pageHint = "";
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (tab && tab.title && tab.url && !tab.url.startsWith("chrome") && !tab.url.startsWith("brave")) {
-                pageHint = "Active tab: " + tab.title + " <" + tab.url + ">\n\n";
-            }
-        } catch (e) {
-            console.log("Could not read tab:", e);
-        }
-        const fullQuery = pageHint + text;
+        const evidence = await collectEvidence();
+        const body = { message: text };
+        if (evidence) body.browser_evidence = evidence;
 
         appendMessage('sys-msg', '[SYS]', 'Asking GodBrain', 'loading');
 
@@ -67,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
             response = await fetch('http://127.0.0.1:8083/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: fullQuery })
+                body: JSON.stringify(body)
             });
         } catch (err) {
             // Network-level failure: the request never reached (or returned from) the server.
@@ -123,8 +196,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (rememberBtn) {
         rememberBtn.addEventListener('click', async () => {
             try {
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (!tab || !tab.url) {
+                const evidence = await collectEvidence();
+                if (!evidence || !evidence.url) {
                     appendMessage('err-msg', '[ERR]', 'No active page.');
                     return;
                 }
@@ -135,9 +208,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({
-                        title: tab.title || 'untitled',
-                        url: tab.url,
-                        text: 'Saved from Brave uplink.',
+                        title: evidence.title,
+                        url: evidence.url,
+                        selected: evidence.selected || '',
+                        sha256: evidence.sha256 || '',
                         sector: 'web'
                     })
                 });
@@ -146,7 +220,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     appendMessage('err-msg', '[ERR]', data.error || ('HTTP ' + response.status));
                     return;
                 }
-                appendMessage('sys-msg', '[SYS]', 'Remembered as candidate ' + (data.stable_id || ''));
+                const kind = evidence.selected ? 'evidence' : 'tab metadata';
+                const hash = data.keccak ? (' keccak ' + String(data.keccak).slice(0, 12)) : '';
+                appendMessage(
+                    'sys-msg',
+                    '[SYS]',
+                    'Remembered ' + kind + ' as candidate ' +
+                        (data.stable_id || '') + hash);
             } catch (err) {
                 appendMessage('err-msg', '[ERR]', 'Kernel offline or remember failed.');
             }

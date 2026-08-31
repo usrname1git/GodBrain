@@ -21,6 +21,9 @@ Vite vs Next vs Node. Do not Exa Wikipedia for that table.
 Harness: `scripts\Verify-SkillLab.ps1`. It runs allowlisted `npm` commands
 off the GPU, then **fails if the fixture has no real README** (Brief, Stack,
 Run, Check, Not Galaxy). A green build without docs is not a product.
-Optional `-Record` writes `skill_verification_runs`. Apply-only `/edit`
-cannot promote. Promotion still needs a passing run plus `/verify` on the
-origin node.
+Optional `-Record` writes `skill_verification_runs` with `suite_id`.
+Apply-only `/edit` cannot promote. Broad profiles (`frontend-spa-v1`,
+`galaxy-html-v1`, `frontend-nextjs-v1`) need passing runs on **two**
+distinct fixtures before promote. `desk-v1` may stay one host fixture.
+Origin node still needs `/verify`. Not a popularity rank and not an
+automatic contradiction resolver.

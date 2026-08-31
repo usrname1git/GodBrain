@@ -1,4 +1,4 @@
-# Jarvis loop score. Default is no GPU (local_tools + tool-round + edit).
+# Jarvis loop score. Default is no GPU (tools + hop + edit + browser evidence).
 # -LiveMouth is the shredder gauntlet: a small prompt must get a real reply.
 # -LiveJarvis is the analysis ask (one GPU slot, ~10s).
 #
@@ -65,6 +65,7 @@ function Invoke-KernelTest([string]$Name, [string]$ExeName) {
 Invoke-KernelTest "local_tools_test" "local_tools_test.exe"
 Invoke-KernelTest "tool_round_test" "tool_round_test.exe"
 Invoke-KernelTest "local_edit_test" "local_edit_test.exe"
+Invoke-KernelTest "browser_evidence_test" "browser_evidence_test.exe"
 
 if ($LiveMouth) {
     $ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"

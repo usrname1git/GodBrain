@@ -61,6 +61,12 @@ try {
 } catch {
     $fails.Add("chain: $_")
 }
+try {
+    $eventsApi = Get-Json "/api/events"
+    if ($eventsApi.response -notmatch "events=") { $fails.Add("events api missing events=") }
+} catch {
+    $fails.Add("events: $_")
+}
 $lastEditFile = Join-Path $RepoRoot "logs\last-edit.txt"
 if (-not (Test-Path -LiteralPath $lastEditFile)) {
     $fails.Add("missing logs/last-edit.txt")
