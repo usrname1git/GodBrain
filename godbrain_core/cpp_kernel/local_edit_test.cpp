@@ -517,6 +517,44 @@ int main() {
         }
     }
 
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    local_edit::set_verify_script_for_test(
+        "C:\\no-such-GodBrain-Verify-LocalEdit.ps1");
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/cpp_kernel/local_edit_fixture.txt flip marker",
+        "*** APPLY\n"
+        "path: godbrain_core/cpp_kernel/local_edit_fixture.txt\n"
+        "<<<<\n"
+        "EDIT_FIXTURE=old\n"
+        "====\n"
+        "EDIT_FIXTURE=missing-check\n"
+        ">>>>\n"
+        "*** END\n",
+        {});
+    local_edit::set_verify_script_for_test("");
+    {
+        std::ifstream in(fixture, std::ios::binary);
+        body.assign((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    }
+    {
+        std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
+        out << "EDIT_FIXTURE=old\n";
+    }
+    if (!expect(result.rolled_back, "missing verifier rolled back") ||
+        !expect(!result.applied, "missing verifier not left applied") ||
+        !expect(!result.check_ran, "missing verifier did not run") ||
+        !expect(body == "EDIT_FIXTURE=old\n", "fixture restored") ||
+        !expect(result.report.find("check did not run") != std::string::npos,
+                "report says check did not run")) {
+        std::cerr << "missing verifier report=" << result.report
+                  << " body=" << body << std::endl;
+        return 1;
+    }
+
     std::cout << "local_edit_test ok" << std::endl;
     return 0;
 }

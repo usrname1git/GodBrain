@@ -1,4 +1,4 @@
-# Jarvis loop score. Default is no GPU (local_tools_test).
+# Jarvis loop score. Default is no GPU (local_tools + tool-round + edit).
 # -LiveMouth is the shredder gauntlet: a small prompt must get a real reply.
 # -LiveJarvis is the analysis ask (one GPU slot, ~10s).
 #
@@ -7,7 +7,9 @@
 #   .\scripts\Test-JarvisLoop.ps1 -LiveMouth -LiveJarvis
 #
 # Score is verified completion, not eloquence. Fail on dir dump, unused49,
-# CUDA abort, raw tool_call tags, or empty "No response."
+# CUDA abort, raw tool_call tags, or empty "No response." Offline cases
+# also prove hop-2 still advertises tools and a missing edit verifier
+# rolls the write back.
 
 [CmdletBinding()]
 param(
@@ -47,17 +49,22 @@ function Test-BadReply([string]$Text) {
 }
 
 $kernelDir = Join-Path $RepoRoot "godbrain_core\cpp_kernel"
-$toolsTest = Join-Path $kernelDir "local_tools_test.exe"
-if (Test-Path -LiteralPath $toolsTest) {
+function Invoke-KernelTest([string]$Name, [string]$ExeName) {
+    $exe = Join-Path $kernelDir $ExeName
+    if (-not (Test-Path -LiteralPath $exe)) {
+        Add-Task $Name $false 0 "missing $exe (build it)"
+        return
+    }
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath $toolsTest -WorkingDirectory $kernelDir -Wait -PassThru -NoNewWindow
+    $p = Start-Process -FilePath $exe -WorkingDirectory $kernelDir -Wait -PassThru -NoNewWindow
     $sw.Stop()
-    Add-Task "local_tools_test" ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
+    Add-Task $Name ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
         if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
     )
-} else {
-    Add-Task "local_tools_test" $false 0 "missing $toolsTest (build it)"
 }
+Invoke-KernelTest "local_tools_test" "local_tools_test.exe"
+Invoke-KernelTest "tool_round_test" "tool_round_test.exe"
+Invoke-KernelTest "local_edit_test" "local_edit_test.exe"
 
 if ($LiveMouth) {
     $ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"

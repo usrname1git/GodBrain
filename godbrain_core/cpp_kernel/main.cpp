@@ -22,6 +22,7 @@
 #include "local_edit.h"
 #include "local_tools.h"
 #include "thinking_cmd.h"
+#include "tool_round.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -2956,7 +2957,9 @@ std::string run_colibri_serve(
     }
     // llama.cpp CUDA IMA is KV reuse after role:tool, not "12B cannot
     // think twice." Flatten tool output into a fresh user turn, cache_prompt
-    // false, never send role:tool back. Last round is speak-only.
+    // false, never send role:tool back. Hops before the last keep the
+    // tools schema even after the ledger is non-empty. Last round is
+    // speak-only.
     const int max_tool_rounds =
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
@@ -2982,8 +2985,10 @@ std::string run_colibri_serve(
              std::string("Kernel repo map (observe, not a listing):\n") + seed +
                  "\n\nOperator question:\n" + hop_hint0 +
                  "\nWrite Z as a technical note: what is live, leftovers, "
-                 "what is next. Sentences. Identities hold: 1+2=3, never 4. "
-                 "Do not dump dir. Do not invent a persona file."}});
+                 "what is next. Sentences. If you still need a granted file, "
+                 "call read_local_file with args limit=40. Else answer Z. "
+                 "Identities hold: 1+2=3, never 4. Do not dump dir. Do not "
+                 "invent a persona file."}});
         std::cout << "[TOOLS] kernel observe (" << seed.size()
                   << " bytes) then speak" << std::endl;
     }
@@ -2993,8 +2998,7 @@ std::string run_colibri_serve(
     last_reason.clear();
     json tool_acc = json::array();
     const bool use_tools =
-        native_tools && (tool_round + 1 < max_tool_rounds) &&
-        tool_ledger.empty();
+        tools_schema_on_round(native_tools, tool_round, max_tool_rounds);
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -3231,13 +3235,9 @@ std::string run_colibri_serve(
         messages = base_messages;
         messages.push_back(json{
             {"role", "user"},
-            {"content",
-             std::string("TOOL_RESULT\n") + tool_ledger +
-                 "\nObserve is done. Conclude: if you still need a granted "
-                 "file, call read_local_file with args limit=40. Else answer "
-                 "Z. Identities hold: 1+2=3, never 4. Do not dump dir. "
-                 "Do not invent a persona file. Do not say you should read "
-                 "AGENTS.md without calling the tool."}});
+            {"content", flatten_continue_prompt(
+                            tool_ledger,
+                            next_round_speak_only(tool_round, max_tool_rounds))}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
                   << max_tool_rounds << " (" << tool_ledger.size()
                   << " bytes, cache_prompt=0)" << std::endl;
