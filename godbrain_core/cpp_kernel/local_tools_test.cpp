@@ -179,8 +179,14 @@ int main() {
     pass &= expect(local_tools::yolo_active(), "yolo latches");
     const std::string tres = local_tools::run_tools_from_text(ti);
     pass &= expect(tres.find("TrustedInstaller") != std::string::npos ||
-                       tres.find("--ti") != std::string::npos,
+                       tres.find("--ti") != std::string::npos ||
+                       tres.find("denied") != std::string::npos,
                    "ti denied even in yolo");
+    const std::string tflag =
+        "*** TOOL\nname: run_elevate\n<<<<\nwsudo -T cmd\n>>>>\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(tflag).find("denied") !=
+                       std::string::npos,
+                   "wsudo -T denied on run_elevate");
     const std::string gres2 = local_tools::run_tools_from_text(gb_del);
     pass &= expect(gres2.find("GodBrain") != std::string::npos,
                    "godbrain task delete blocked in yolo");
@@ -201,6 +207,28 @@ int main() {
                        .find("denied") != std::string::npos,
                    "acl release without key denied");
     local_tools::set_yolo_minutes(0);
+
+    const std::string pwsh_ti =
+        "*** TOOL\nname: run_pwsh\n<<<<\nwsudo -T cmd\n>>>>\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(pwsh_ti).find("denied") !=
+                       std::string::npos,
+                   "wsudo -T denied on run_pwsh");
+    {
+        char mod[MAX_PATH];
+        GetModuleFileNameA(NULL, mod, MAX_PATH);
+        std::string dir(mod);
+        const size_t slash = dir.find_last_of("\\/");
+        if (slash != std::string::npos) dir.resize(slash);
+        char plant[MAX_PATH];
+        GetFullPathNameA((dir + "\\..\\..\\logs\\acl\\plant.txt").c_str(), MAX_PATH,
+                         plant, nullptr);
+        const std::string wacl =
+            std::string("*** TOOL\nname: write_local_file\npath: ") + plant +
+            "\n<<<<\nplanted\n>>>>\n*** END\n";
+        pass &= expect(local_tools::run_tools_from_text(wacl).find("denied") !=
+                           std::string::npos,
+                       "acl key dir not mouth-writable");
+    }
 
     const std::string clock =
         "*** TOOL\nname: clockres64\n*** END\n";

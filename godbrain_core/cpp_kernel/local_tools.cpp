@@ -437,12 +437,57 @@ bool dangerous_script(const std::string& text) {
     return false;
 }
 
+bool cli_flag_at(const std::string& low, const std::string& flag, size_t pos) {
+    if (pos > 0) {
+        const unsigned char left = static_cast<unsigned char>(low[pos - 1]);
+        if (std::isspace(left) == 0 && left != '"' && left != '\'') return false;
+    }
+    const size_t end = pos + flag.size();
+    if (end < low.size()) {
+        const unsigned char right = static_cast<unsigned char>(low[end]);
+        if (std::isalnum(right) != 0 || right == '-') return false;
+    }
+    return true;
+}
+
+bool has_cli_flag(const std::string& low, const std::string& flag) {
+    size_t pos = 0;
+    while ((pos = low.find(flag, pos)) != std::string::npos) {
+        if (cli_flag_at(low, flag, pos)) return true;
+        ++pos;
+    }
+    return false;
+}
+
+bool has_wsudo_token(const std::string& low) {
+    size_t pos = 0;
+    while ((pos = low.find("wsudo", pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 ||
+            (std::isalnum(static_cast<unsigned char>(low[pos - 1])) == 0 &&
+             low[pos - 1] != '_');
+        const size_t end = pos + 5;
+        bool right = end >= low.size();
+        if (!right) {
+            const unsigned char c = static_cast<unsigned char>(low[end]);
+            right = std::isalnum(c) == 0 && c != '_';
+            if (low.compare(end, 4, ".exe") == 0) right = true;
+        }
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
 bool elevate_flags_denied(const std::string& text) {
     const std::string low = ascii_lower(text);
-    return low.find("--ti") != std::string::npos ||
-           low.find("-ti ") != std::string::npos ||
-           low.find("trustedinstaller") != std::string::npos ||
-           low.find("--system") != std::string::npos;
+    if (low.find("trustedinstaller") != std::string::npos) return true;
+    if (has_cli_flag(low, "--ti") || has_cli_flag(low, "-ti") ||
+        has_cli_flag(low, "/ti") || has_cli_flag(low, "--system") ||
+        has_cli_flag(low, "-t")) {
+        return true;
+    }
+    return has_wsudo_token(low);
 }
 
 bool mentions_godbrain_task(const std::string& args) {
@@ -509,7 +554,25 @@ std::string acl_id(const std::string& full) {
     return buf;
 }
 
-std::string acl_store_dir() { return "C:\\Temp\\GitHub\\.godbrain-acl"; }
+std::string acl_store_dir() {
+    const std::string logs = logs_dir();
+    if (logs.empty() || logs == "\\logs") return "";
+    return logs + "\\acl";
+}
+
+std::string acl_parent_path(const std::string& full) {
+    const size_t slash = full.find_last_of("\\/");
+    if (slash == std::string::npos || slash < 2) return full;
+    return full.substr(0, slash);
+}
+
+bool is_acl_store_path(const std::string& path) {
+    const std::string root = final_path(acl_store_dir());
+    const std::string full = final_path(expand_env(path));
+    if (root.empty() || full.empty()) return false;
+    if (ascii_lower(full) == ascii_lower(root)) return true;
+    return starts_with_ci(full, root + "\\");
+}
 
 bool acl_hive_denied(const std::string& full) {
     std::string t = ascii_lower(full);
@@ -1173,6 +1236,13 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 out << c.name << " denied: " << err << "\n";
                 continue;
             }
+            if ((c.name == "write_local_file" || c.name == "edit_local_file" ||
+                 c.name == "create_local_dir" || c.name == "move_local_file") &&
+                is_acl_store_path(c.path)) {
+                out << c.name
+                    << " denied: ACL throwaway keys are not mouth-writable.\n";
+                continue;
+            }
             const std::string full = canon_path(c.path);
             if (c.name == "list_local_dir") {
                 int depth = arg_int(c.args, "depth", 0);
@@ -1296,6 +1366,11 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 }
                 if (!path_is_granted(dest, &err)) {
                     out << "move_local_file denied dest: " << err << "\n";
+                    continue;
+                }
+                if (is_acl_store_path(dest)) {
+                    out << "move_local_file denied dest: ACL throwaway keys "
+                           "are not mouth-writable.\n";
                     continue;
                 }
                 const std::string dst = canon_path(dest);
@@ -1588,9 +1663,10 @@ std::string execute_calls(const std::vector<Call>& calls) {
 
         if (c.name == "run_pwsh") {
             if (dangerous_script(c.content) || dangerous_script(c.args) ||
-                dangerous_script(c.path)) {
+                dangerous_script(c.path) || elevate_flags_denied(c.content) ||
+                elevate_flags_denied(c.args) || elevate_flags_denied(c.path)) {
                 out << "run_pwsh denied: command hits a hard deny "
-                       "(git push/reboot/DISM/pskill/format).\n";
+                       "(git push/reboot/DISM/pskill/format/wsudo -T).\n";
                 continue;
             }
             const std::string pwsh = find_pwsh();
@@ -1607,7 +1683,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 bool trunc = false;
                 const std::string preview =
                     read_file_limited(full, kMaxPwshBytes, &trunc);
-                if (dangerous_script(preview)) {
+                if (dangerous_script(preview) || elevate_flags_denied(preview)) {
                     out << "run_pwsh denied: script hits a hard deny\n";
                     continue;
                 }
@@ -1709,10 +1785,14 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 out << c.name << " denied: " << err << "\n";
                 continue;
             }
-            ensure_dir(acl_store_dir());
-            const std::string id = acl_id(full);
-            const std::string key = acl_store_dir() + "\\" + id + ".txt";
-            const std::string meta = key + ".meta.json";
+            const std::string store = acl_store_dir();
+            if (store.empty()) {
+                out << c.name << " denied: cannot resolve logs\\acl\n";
+                continue;
+            }
+            ensure_dir(store);
+            const std::string key = store + "\\" + acl_id(full) + ".txt";
+            const std::string parent = acl_parent_path(full);
             std::string body;
             if (c.name == "acl_takeover") {
                 body = "$ErrorActionPreference = 'Continue'\n"
@@ -1722,36 +1802,53 @@ std::string execute_calls(const std::vector<Call>& calls) {
                        "$key = " +
                        ps_literal(key) +
                        "\n"
-                       "$meta = " +
-                       ps_literal(meta) +
-                       "\n"
-                       "$parent = Split-Path -Parent $p\n"
-                       "if ([string]::IsNullOrWhiteSpace($parent)) { $parent = $p }\n"
                        "icacls $p /save $key /t /c /q\n"
-                       "Write-Output \"icacls save exit $LASTEXITCODE\"\n"
-                       "@{ path = $p; parent = $parent; key = $key } | "
-                       "ConvertTo-Json | Set-Content -LiteralPath $meta -Encoding UTF8\n"
+                       "if ($LASTEXITCODE -ne 0) {\n"
+                       "  Write-Output \"acl_takeover denied: icacls save exit $LASTEXITCODE\"\n"
+                       "  exit 2\n"
+                       "}\n"
+                       "if (-not (Test-Path -LiteralPath $key) -or "
+                       "(Get-Item -LiteralPath $key).Length -lt 1) {\n"
+                       "  Write-Output 'acl_takeover denied: empty ACL save'\n"
+                       "  exit 2\n"
+                       "}\n"
                        "takeown /F $p /R /A /D Y /SKIPSL\n"
-                       "Write-Output \"takeown exit $LASTEXITCODE\"\n"
+                       "$to = $LASTEXITCODE\n"
+                       "Write-Output \"takeown exit $to\"\n"
                        "icacls $p /grant:r '*S-1-5-32-544:(OI)(CI)F' /T /C /Q\n"
-                       "Write-Output \"icacls grant Administrators:(OI)(CI)F exit $LASTEXITCODE\"\n"
+                       "$gr = $LASTEXITCODE\n"
+                       "Write-Output \"icacls grant Administrators:(OI)(CI)F exit $gr\"\n"
+                       "if ($to -ne 0 -or $gr -ne 0) {\n"
+                       "  Write-Output \"acl_takeover incomplete; key kept for acl_release\"\n"
+                       "  exit 3\n"
+                       "}\n"
                        "Write-Output \"acl_takeover ok $p\"\n"
                        "Write-Output \"acl_release the same path when the job is done\"\n";
             } else {
                 body = "$ErrorActionPreference = 'Continue'\n"
-                       "$metaPath = " +
-                       ps_literal(meta) +
+                       "$p = " +
+                       ps_literal(full) +
                        "\n"
-                       "if (-not (Test-Path -LiteralPath $metaPath)) {\n"
+                       "$parent = " +
+                       ps_literal(parent) +
+                       "\n"
+                       "$key = " +
+                       ps_literal(key) +
+                       "\n"
+                       "if (-not (Test-Path -LiteralPath $key) -or "
+                       "(Get-Item -LiteralPath $key).Length -lt 1) {\n"
                        "  Write-Output 'acl_release denied: no saved key for this path. "
                        "Not guessing icacls /reset.'\n"
                        "  exit 2\n"
                        "}\n"
-                       "$m = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json\n"
-                       "icacls $m.parent /restore $m.key /q\n"
-                       "Write-Output \"icacls restore exit $LASTEXITCODE\"\n"
-                       "Remove-Item -LiteralPath $m.key,$metaPath -Force -ErrorAction SilentlyContinue\n"
-                       "Write-Output \"acl_release ok $($m.path)\"\n";
+                       "icacls $parent /restore $key /q\n"
+                       "if ($LASTEXITCODE -ne 0) {\n"
+                       "  Write-Output \"acl_release denied: icacls restore exit $LASTEXITCODE "
+                       "(key kept)\"\n"
+                       "  exit 3\n"
+                       "}\n"
+                       "Remove-Item -LiteralPath $key -Force\n"
+                       "Write-Output \"acl_release ok $p\"\n";
             }
             const std::string tmp = write_temp_ps1(body);
             if (tmp.empty()) {
@@ -2051,8 +2148,9 @@ nlohmann::json openai_tool_defs(bool full) {
         {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
         "acl_release",
-        "YOLO only. wsudo -T. Throw away the takeover key: restore the saved "
-        "DACL for path. Fails closed if no save exists (will not icacls /reset).",
+        "YOLO only. wsudo -T. Restore the kernel-named save under logs\\acl "
+        "(not JSON). Fails closed if save missing or restore fails; key kept. "
+        "Will not icacls /reset.",
         {{"path", path}}, {"path"}));
     return tools;
 }

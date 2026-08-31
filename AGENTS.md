@@ -405,8 +405,10 @@ MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
 `run_elevate` (MinSudo / `wsudo -A -w`, never `--ti` / `-T`),
 `acl_takeover` / `acl_release` (the one TI door: `wsudo -T -w pwsh -NoProfile`
 then `takeown /F /R /A /D Y /SKIPSL` and
-`icacls /grant:r Administrators:(OI)(CI)F /T /C /Q`, then restore the saved
-DACL — throw the key; not `/reset`. Extra paths from the host manual:
+`icacls /grant:r Administrators:(OI)(CI)F /T /C /Q`, then restore the
+kernel-named save under `logs\acl` — throw the key; not `/reset`. Save must
+succeed before takeown; restore must succeed before the key is deleted.
+Extra paths from the host manual:
 SystemProfile Windows Defender and `CodeIntegrity\CIPolicies\Active`).
 Heal never launches `wsudo -T`. The NuclearDefenderWipe IFEO/stub/DENY
 SYSTEM lock is not a kernel tool.
