@@ -166,6 +166,30 @@ bool file_exists(const std::string& path) {
     return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
+std::string env_path(const char* name) {
+    char buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableA(name, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    return std::string(buf, n);
+}
+
+std::string expand_env(const std::string& path) {
+    if (path.find('%') == std::string::npos) return path;
+    char buf[32768];
+    const DWORD n = ExpandEnvironmentStringsA(path.c_str(), buf, 32768);
+    if (n == 0 || n > 32768) return path;
+    return std::string(buf);
+}
+
+std::string roots_join() {
+    std::string s;
+    for (const auto& r : default_roots()) {
+        if (!s.empty()) s += "; ";
+        s += r;
+    }
+    return s;
+}
+
 void close_handle(HANDLE& handle) {
     if (handle != nullptr && handle != INVALID_HANDLE_VALUE) {
         CloseHandle(handle);
@@ -638,13 +662,17 @@ std::string write_temp_ps1(const std::string& body) {
 std::string find_rg() {
     std::string p = find_on_path("rg");
     if (!p.empty()) return p;
-    const char* extra[] = {
-        "C:\\Users\\autismo\\scoop\\shims\\rg.exe",
-        "C:\\Users\\autismo\\AppData\\Local\\Programs\\Microsoft VS Code\\"
-        "resources\\app\\node_modules\\@vscode\\ripgrep\\bin\\rg.exe",
-        nullptr};
-    for (int i = 0; extra[i]; ++i) {
-        if (file_exists(extra[i])) return extra[i];
+    std::vector<std::string> extra;
+    const std::string home = env_path("USERPROFILE");
+    if (!home.empty()) extra.push_back(home + "\\scoop\\shims\\rg.exe");
+    const std::string local = env_path("LOCALAPPDATA");
+    if (!local.empty()) {
+        extra.push_back(local +
+                        "\\Programs\\Microsoft VS Code\\resources\\app\\"
+                        "node_modules\\@vscode\\ripgrep\\bin\\rg.exe");
+    }
+    for (const auto& cand : extra) {
+        if (file_exists(cand)) return cand;
     }
     return "";
 }
@@ -708,6 +736,20 @@ bool is_path_stop(unsigned char c) {
            c == '>' || c == '|' || c == '?' || c == '*' || c == ';' || c == ',';
 }
 
+bool is_path_left(unsigned char c) {
+    return is_ident_char(c) || c == '\\' || c == '/';
+}
+
+bool env_token_ok(const std::string& tok) {
+    if (tok.empty() || tok[0] != '%') return false;
+    const size_t end = tok.find('%', 1);
+    if (end == std::string::npos || end == 1) return false;
+    const std::string name = tok.substr(1, end - 1);
+    return name == "userprofile" || name == "appdata" ||
+           name == "localappdata" || name == "temp" || name == "homedrive" ||
+           name == "homepath";
+}
+
 bool granted_path_in_message(const std::string& msg) {
     const std::string t = ascii_lower(msg);
     auto consider = [](std::string tok) {
@@ -735,26 +777,57 @@ bool granted_path_in_message(const std::string& msg) {
         if (j > i) i = j - 1;
     }
 
-    const char* bare[] = {"users\\autismo", "users/autismo", "temp\\github",
-                          "temp/github", nullptr};
-    for (int p = 0; bare[p]; ++p) {
-        const std::string pre = bare[p];
-        size_t pos = 0;
-        while ((pos = t.find(pre, pos)) != std::string::npos) {
-            if (pos > 0 &&
-                is_ident_char(static_cast<unsigned char>(t[pos - 1]))) {
-                ++pos;
-                continue;
+    for (size_t i = 0; i < t.size(); ++i) {
+        if (t[i] != '%') continue;
+        size_t j = i + 1;
+        while (j < t.size() && !is_path_stop(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+        const std::string tok = t.substr(i, j - i);
+        if (env_token_ok(tok) && consider(tok)) return true;
+        if (j > i) i = j - 1;
+    }
+
+    for (const auto& root : default_roots()) {
+        std::string bare = ascii_lower(root);
+        for (char& ch : bare) {
+            if (ch == '/') ch = '\\';
+        }
+        std::string drive = "c:\\";
+        if (bare.size() >= 3 && bare[1] == ':' && bare[2] == '\\') {
+            drive = bare.substr(0, 3);
+            bare = bare.substr(3);
+        }
+        if (bare.empty()) continue;
+        std::string bare_fwd = bare;
+        for (char& ch : bare_fwd) {
+            if (ch == '\\') ch = '/';
+        }
+        const char* needles[2] = {bare.c_str(), bare_fwd.c_str()};
+        const int nneed = (bare_fwd == bare) ? 1 : 2;
+        for (int n = 0; n < nneed; ++n) {
+            const std::string needle = needles[n];
+            size_t pos = 0;
+            while ((pos = t.find(needle, pos)) != std::string::npos) {
+                if (pos > 0 &&
+                    is_path_left(static_cast<unsigned char>(t[pos - 1]))) {
+                    ++pos;
+                    continue;
+                }
+                size_t j = pos;
+                while (j < t.size() &&
+                       !is_path_stop(static_cast<unsigned char>(t[j]))) {
+                    ++j;
+                }
+                const std::string raw = t.substr(pos, j - pos);
+                if (raw.find('\\') == std::string::npos &&
+                    raw.find('/') == std::string::npos) {
+                    pos = (j == pos) ? pos + 1 : j;
+                    continue;
+                }
+                if (consider(drive + raw)) return true;
+                pos = (j == pos) ? pos + 1 : j;
             }
-            size_t j = pos;
-            while (j < t.size() &&
-                   !is_path_stop(static_cast<unsigned char>(t[j]))) {
-                ++j;
-            }
-            if (consider(std::string("c:\\") + t.substr(pos, j - pos))) {
-                return true;
-            }
-            pos = (j == pos) ? pos + 1 : j;
         }
     }
     return false;
@@ -763,14 +836,25 @@ bool granted_path_in_message(const std::string& msg) {
 }  // namespace
 
 std::vector<std::string> default_roots() {
-    return {
-        "C:\\Users\\autismo",
-        "C:\\Temp\\GitHub",
+    // Windows env. POSIX jail is later.
+    std::vector<std::string> roots;
+    auto add = [&](const std::string& p) {
+        if (p.empty()) return;
+        for (const auto& e : roots) {
+            if (ascii_lower(e) == ascii_lower(p)) return;
+        }
+        roots.push_back(p);
     };
+    add(env_path("USERPROFILE"));
+    add(env_path("APPDATA"));
+    add(env_path("LOCALAPPDATA"));
+    add("C:\\Tools");
+    add("C:\\Temp\\GitHub");
+    return roots;
 }
 
 bool path_is_granted(const std::string& path, std::string* err) {
-    const std::string full = final_path(path);
+    const std::string full = final_path(expand_env(path));
     if (full.empty()) {
         if (err) *err = "cannot canonicalize path";
         return false;
@@ -782,7 +866,7 @@ bool path_is_granted(const std::string& path, std::string* err) {
         const std::string prefix = r + "\\";
         if (starts_with_ci(full, prefix)) return true;
     }
-    if (err) *err = "path not in granted roots (C:\\Users\\autismo or C:\\Temp\\GitHub)";
+    if (err) *err = "path not in granted roots (" + roots_join() + ")";
     return false;
 }
 
@@ -1576,15 +1660,15 @@ bool looks_like_no_tools(const std::string& msg) {
 bool looks_like_local_fs_ask(const std::string& msg) {
     if (granted_path_in_message(msg)) return true;
     const std::string t = ascii_lower(msg);
+    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
+                       has_word(t, "directory") || has_word(t, "path") ||
+                       has_word(t, "files") || has_word(t, "file");
     const bool rw_phrase =
         t.find("r/w") != std::string::npos || has_word(t, "rw") ||
         t.find("read and write") != std::string::npos ||
         t.find("write access") != std::string::npos;
-    if (rw_phrase) return true;
+    if (rw_phrase && place) return true;
     const bool jail_granted = has_word(t, "granted") || has_word(t, "jail");
-    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
-                       has_word(t, "directory") || has_word(t, "path") ||
-                       has_word(t, "files") || has_word(t, "file");
     if (has_word(t, "granted") && has_word(t, "jail")) return true;
     return jail_granted && place;
 }
@@ -1598,7 +1682,7 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
     if (use_full_tool_defs(user_msg)) {
         s = " You have built-in host tools (OpenAI tool_calls). The kernel executes; "
             "not MCP, not a plugin pile. You are not in a void. "
-            "Granted roots: C:\\Users\\autismo and C:\\Temp\\GitHub. "
+            "Granted roots: " + roots_join() + ". "
             "Always: list_local_dir, read_local_file, write_local_file, "
             "create_local_dir, get_file_info, search_local, edit_local_file, "
             "run_strings, run_sqlite3, run_pwsh, run_python, run_node, "
@@ -1610,8 +1694,9 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "Do not claim you lack a filesystem.";
     } else {
         s = " You have built-in file tools (OpenAI tool_calls). The kernel executes. "
-            "Jail: C:\\Users\\autismo and C:\\Temp\\GitHub "
-            "(Documents\\GitHub\\GodBrain is already inside the first root). "
+            "Jail: " + roots_join() +
+            " (%USERPROFILE% / %APPDATA% / %LOCALAPPDATA% / C:\\Tools / "
+            "C:\\Temp\\GitHub). "
             "To verify a path: get_file_info or list_local_dir, then say yes or no. "
             "read_local_file / write_local_file / edit_local_file / search_local / "
             "create_local_dir. Not git push. Ordinary trivia: no tools. "
@@ -1653,7 +1738,8 @@ nlohmann::json openai_tool_defs(bool full) {
     const json path = {
         {"type", "string"},
         {"description",
-         "Absolute path. File tools jail to C:\\Users\\autismo or C:\\Temp\\GitHub."}};
+         std::string("Absolute path. File tools jail to ") + roots_join() +
+             "."}};
     const json args = {
         {"type", "string"},
         {"description", "One-line CLI arguments. No newlines."}};

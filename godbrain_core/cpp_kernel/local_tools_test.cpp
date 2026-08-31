@@ -11,20 +11,40 @@ static bool expect(bool ok, const char* msg) {
     return ok;
 }
 
+static std::string env_var(const char* name) {
+    char buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableA(name, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    return std::string(buf, n);
+}
+
 int main() {
     bool pass = true;
     std::string err;
+    const std::string home = env_var("USERPROFILE");
+    const std::string appdata = env_var("APPDATA");
+    const std::string local = env_var("LOCALAPPDATA");
+    pass &= expect(!home.empty(), "USERPROFILE set");
     pass &= expect(!local_tools::path_is_granted("C:\\Windows\\System32\\notepad.exe", &err),
                    "windows denied");
     pass &= expect(!local_tools::path_is_granted(
                        "C:\\Temp\\GitHub\\..\\..\\Windows\\System32\\cmd.exe", &err),
                    "dotdot denied");
     pass &= expect(local_tools::path_is_granted(
-                       "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain\\AGENTS.md", &err),
+                       home + "\\Documents\\GitHub\\GodBrain\\AGENTS.md", &err),
                    "repo granted");
     pass &= expect(local_tools::path_is_granted("C:\\Temp\\GitHub", &err), "temp github granted");
-    pass &= expect(local_tools::path_is_granted("C:\\Users\\autismo\\Desktop", &err),
+    pass &= expect(local_tools::path_is_granted(home + "\\Desktop", &err),
                    "profile desktop granted");
+    pass &= expect(local_tools::path_is_granted("%USERPROFILE%\\Desktop", &err),
+                   "env profile desktop granted");
+    pass &= expect(!appdata.empty() && local_tools::path_is_granted(appdata, &err),
+                   "APPDATA granted");
+    pass &= expect(!local.empty() && local_tools::path_is_granted(local, &err),
+                   "LOCALAPPDATA granted");
+    pass &= expect(local_tools::path_is_granted("C:\\Tools", &err), "Tools granted");
+    pass &= expect(local_tools::path_is_granted("C:\\Tools\\SysInternals\\pslist64.exe", &err),
+                   "Tools subdir granted");
     CreateDirectoryA("C:\\Temp\\GitHub", nullptr);
     const char kJunc[] = "C:\\Temp\\GitHub\\godbrain-junc-win";
     RemoveDirectoryA(kJunc);
@@ -203,8 +223,8 @@ int main() {
     const auto defs = local_tools::openai_tool_defs();
     pass &= expect(defs.is_array() && defs.size() >= 8, "openai tool defs");
     const std::string rw =
-        "Do you have read and write access to "
-        "C:\\Users\\autismo\\Documents\\GitHub\\GodBrain";
+        "Do you have read and write access to " + home +
+        "\\Documents\\GitHub\\GodBrain";
     pass &= expect(local_tools::looks_like_local_fs_ask(rw), "rw path is local-fs");
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
@@ -241,6 +261,20 @@ int main() {
     pass &= expect(
         !local_tools::looks_like_local_fs_ask("C:\\Windows\\System32"),
         "system32 is not local-fs");
+    pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Tools\\SysInternals"),
+                   "tools subdir is local-fs");
+    pass &= expect(local_tools::looks_like_local_fs_ask(
+                       "read %USERPROFILE%\\Desktop\\notes.txt"),
+                   "env profile path is local-fs");
+    pass &= expect(
+        !local_tools::looks_like_local_fs_ask("C:\\Windows\\Temp\\GitHub"),
+        "windows temp github suffix is not local-fs");
+    pass &= expect(!local_tools::looks_like_local_fs_ask(
+                       "https://github.com/users/autismo/GodBrain"),
+                   "github url is not local-fs");
+    pass &= expect(
+        !local_tools::looks_like_local_fs_ask("Does Heal have write access to Tcpip?"),
+        "write access without place is not local-fs");
     pass &= expect(local_tools::looks_like_no_tools("No tools.\nWhat is this PC?"),
                    "no tools prefix");
     pass &= expect(local_tools::looks_like_no_tools("no tools: advise"),
