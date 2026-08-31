@@ -372,9 +372,12 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 add Copilot MCP or any MCP server into this repo). First hop is the
 **file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
 or the ask is host inspect (SysInternals/reg/events/schtasks). Non-YOLO
-path/RW asks never start the mouth: the kernel lists the granted path
-named in the ask (`list_local_dir` / `get_file_info`). Other non-YOLO
-tool chat is **one hop** (execute, return the listing, no generate 2 —
+`list` / r/w / jail asks never start the mouth: the kernel lists the
+granted path. A question that *contains* a granted path but asks what
+is wrong (Jarvis/fix/review) is not `dir`: the kernel lists depth=1
+into the prompt as evidence, tools off, **one** generate, `cache_prompt`
+false. Do not return the listing as the answer. Other non-YOLO tool
+chat is **one hop** (execute, return that output, no generate 2 —
 llama.cpp CUDA IMA on KV reuse after `role:tool`). If Gemma listed
 `C:\Temp\GitHub` instead of the named path, the kernel appends a list
 of that path. YOLO still loops (cap 8). A granted-root

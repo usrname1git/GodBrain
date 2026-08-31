@@ -2076,7 +2076,7 @@ std::string answer_fs_ask(const std::string& user_msg) {
         (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
         return run_tools_from_text(
             std::string("*** TOOL\nname: list_local_dir\npath: ") + p +
-            "\nargs: depth=2\n*** END\n");
+            "\nargs: depth=1\n*** END\n");
     }
     return run_tools_from_text(
         std::string("*** TOOL\nname: get_file_info\npath: ") + p +
@@ -2099,6 +2099,33 @@ bool looks_like_local_fs_ask(const std::string& msg) {
                               has_word(t, "authorized") || has_word(t, "allowlist");
     if (has_word(t, "granted") && has_word(t, "jail")) return true;
     return jail_granted && place;
+}
+
+bool looks_like_list_only_ask(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
+                       has_word(t, "directory") || has_word(t, "path") ||
+                       has_word(t, "paths") || has_word(t, "files") ||
+                       has_word(t, "file");
+    const bool rw_phrase =
+        t.find("r/w") != std::string::npos || has_word(t, "rw") ||
+        t.find("read and write") != std::string::npos ||
+        t.find("write access") != std::string::npos;
+    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail") ||
+                              has_word(t, "authorized") || has_word(t, "allowlist");
+    if (rw_phrase && place) return true;
+    if (has_word(t, "granted") && has_word(t, "jail")) return true;
+    if (jail_granted && place) return true;
+    if (has_word(t, "jarvis") || has_word(t, "fixing") || has_word(t, "fix") ||
+        has_word(t, "apparent") || has_word(t, "become") ||
+        has_word(t, "review") ||
+        t.find("needs fixing") != std::string::npos) {
+        return false;
+    }
+    if (has_word(t, "list") || has_word(t, "ls") || has_word(t, "dir")) {
+        return granted_path_in_message(msg) || place;
+    }
+    return false;
 }
 
 std::string complete_fs_listing(const std::string& user_msg,

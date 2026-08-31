@@ -113,7 +113,7 @@ static json load_heal_last();
 static json inbox_desk();
 static json load_last_desk_test();
 static json gpu_desk();
-static bool maybe_restart_mouth();
+static bool maybe_restart_mouth(bool even_if_up = false);
 static bool cs2_should_sleep_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
@@ -1598,10 +1598,10 @@ static std::atomic<DWORD> g_mouth_restart_ms{0};
 // must not block restart forever.
 static const DWORD kMouthLoadWaitMs = 300000;
 
-static bool maybe_restart_mouth() {
+static bool maybe_restart_mouth(bool even_if_up) {
     if (load_mouth().value("label", "") != "llama") return false;
     if (cs2_should_sleep_mouth()) return false;
-    if (colibri_serve_up()) return false;
+    if (!even_if_up && colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
     if (last != 0 && now - last < kMouthLoadWaitMs) return true;
@@ -2770,6 +2770,11 @@ std::string run_colibri_serve(
             body["tool_choice"] = "auto";
             body["parse_tool_calls"] = true;
             body["parallel_tool_calls"] = true;
+        } else if (llama_mouth &&
+                   local_tools::looks_like_no_tools(
+                       tool_hint.empty() ? user : tool_hint)) {
+            // Analysis-with-path: do not reuse a poisoned KV slot.
+            body["cache_prompt"] = false;
         }
         std::string piece;
         std::string sse_buf;
@@ -4023,7 +4028,12 @@ int main() {
             }
             const bool local_fs_ask =
                 local_tools::looks_like_local_fs_ask(user_msg);
+            const bool list_only_ask =
+                local_tools::looks_like_list_only_ask(user_msg);
             const bool no_tools_ask = local_tools::looks_like_no_tools(user_msg);
+            const bool fs_analyze =
+                local_fs_ask && !list_only_ask && !no_tools_ask &&
+                !local_edit::looks_like_edit_request(user_msg);
             if ((local_edit::looks_like_edit_request(user_msg) || local_fs_ask ||
                  no_tools_ask) &&
                 !continue_cmd) {
@@ -4086,7 +4096,7 @@ int main() {
             // 16 GB still cannot eat a wiki dump (prefill tax). Llama 12B
             // can take a few KiB. Do not dump the whole vault.
             const bool llama_ctx = load_mouth().value("label", "") == "llama";
-            if (llama_ctx && !local_fs_ask && !no_tools_ask) {
+            if (llama_ctx && !list_only_ask && !no_tools_ask) {
                 const std::string digest_path =
                     get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
                 std::ifstream din(digest_path, std::ios::binary);
@@ -4137,8 +4147,19 @@ int main() {
                 "instead of tools. "
                 "Do not restate these rules. Do not emit constraint lists.";
             if (!local_edit::looks_like_edit_request(user_msg) &&
-                !no_tools_ask) {
+                !no_tools_ask &&
+                !(fs_analyze && !local_tools::yolo_active())) {
                 system_prompt += local_tools::tool_system_addendum_for(user_msg);
+            }
+            if (fs_analyze && !local_tools::yolo_active()) {
+                system_prompt +=
+                    " A kernel listing of the named folder is already in the "
+                    "user message as evidence. Answer the operator question. "
+                    "Do not reprint the listing. Do not dump dir. "
+                    "Jarvis on this PC is Heal/Watch, kernel tools, Golden "
+                    "Records, and /verify — not a butler persona file. "
+                    "From the listing, name leftovers vs the live loop. "
+                    "Never say you lack a filesystem.";
             }
             if (local_edit::looks_like_edit_request(user_msg)) {
                 if (cs2_should_sleep_mouth()) {
@@ -4193,27 +4214,44 @@ int main() {
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
             }
+            std::string tool_hint = asked;
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
-                const std::string gp = local_tools::first_granted_path(user_msg);
-                user_prompt =
-                    "Kernel: file tools are live on this PC. " +
-                    (gp.empty()
-                         ? std::string("Call list_granted_roots or list_local_dir.")
-                         : ("Exact folder: " + gp +
-                            ". Call list_local_dir on that path, not C:\\Temp\\GitHub.")) +
-                    " Never say you do not have access to the local file system.\n\n" +
-                    user_prompt;
+                if (fs_analyze && !local_tools::yolo_active()) {
+                    std::string listing =
+                        local_tools::complete_fs_listing(user_msg, "");
+                    if (listing.size() > 3500) listing.resize(3500);
+                    user_prompt =
+                        "Kernel listing of the named folder (evidence, not "
+                        "the answer):\n" +
+                        listing + "\n\nOperator question:\n" + user_msg +
+                        "\nAnswer the question. Do not dump dir.";
+                    tool_hint = std::string("No tools.\n") + asked;
+                } else {
+                    const std::string gp =
+                        local_tools::first_granted_path(user_msg);
+                    user_prompt =
+                        "Kernel: file tools are live on this PC. " +
+                        (gp.empty()
+                             ? std::string(
+                                   "Call list_granted_roots or list_local_dir.")
+                             : ("Exact folder: " + gp +
+                                ". Call list_local_dir on that path, not "
+                                "C:\\Temp\\GitHub.")) +
+                        " Never say you do not have access to the local file "
+                        "system.\n\n" +
+                        user_prompt;
+                }
             }
 
             const bool want_stream =
                 payload.value("stream", false) ||
                 req.get_header_value("Accept").find("text/event-stream") !=
                     std::string::npos;
-            // Path/RW: kernel lists the named folder. Do not spend the GPU
-            // slot; generate 2 after tools is the CUDA IMA, and a poisoned
-            // slot returns unused49 in under a second.
-            if (local_fs_ask && !no_tools_ask && !continue_cmd &&
+            // Explicit list/r/w/jail: kernel listing is the answer. Analysis
+            // over a named folder still gets one GPU generate with that
+            // listing already in the prompt (tools off so no IMA hop).
+            if (list_only_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg) &&
                 !local_tools::yolo_active()) {
                 const std::string listing =
@@ -4284,8 +4322,8 @@ int main() {
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue,
-                     local_fs_ask, no_tools_ask](
+                    [sys, usr, asked_q, tool_hint, hist_q, hist_a,
+                     stitch_continue, local_fs_ask, no_tools_ask](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -4327,10 +4365,19 @@ int main() {
                             hist_q,
                             hist_a,
                             &spoken,
-                            asked_q);
+                            tool_hint);
                         std::string chunk = strip_coli_reply(combined);
                         std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
+                        if (is_unused49_junk(chunk) ||
+                            is_unused49_junk(for_memory)) {
+                            maybe_restart_mouth(true);
+                            chunk =
+                                "Error: llama-server dumped unused49 "
+                                "(poisoned KV slot). Recycled. Ask again in "
+                                "about a minute. Not Colibri.";
+                            for_memory = chunk;
+                        }
                         if (local_fs_ask && !no_tools_ask &&
                             local_tools::looks_like_fs_refuse(for_memory)) {
                             const std::string probe =
@@ -4408,10 +4455,17 @@ int main() {
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
                 &spoken,
-                asked);
+                tool_hint);
             std::string chunk = strip_coli_reply(combined);
             std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
+            if (is_unused49_junk(chunk) || is_unused49_junk(for_memory)) {
+                maybe_restart_mouth(true);
+                chunk =
+                    "Error: llama-server dumped unused49 (poisoned KV slot). "
+                    "Recycled. Ask again in about a minute. Not Colibri.";
+                for_memory = chunk;
+            }
             if (local_fs_ask && !no_tools_ask &&
                 local_tools::looks_like_fs_refuse(for_memory)) {
                 const std::string probe = local_tools::answer_fs_ask(asked);

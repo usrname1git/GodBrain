@@ -366,6 +366,8 @@ int main() {
                        "path stops at GodBrain not English tail");
         pass &= expect(local_tools::looks_like_local_fs_ask(longq),
                        "jarvis repo ask is local-fs");
+        pass &= expect(!local_tools::looks_like_list_only_ask(longq),
+                       "jarvis repo ask is not list-only");
         const std::string miss =
             "search_local C:\\Temp\\GitHub name q=GodBrain repo hits=0 "
             "scanned=400\n";
@@ -397,6 +399,16 @@ int main() {
     }
     pass &= expect(local_tools::looks_like_local_fs_ask("list C:\\Temp\\GitHub"),
                    "list granted temp is local-fs");
+    pass &= expect(local_tools::looks_like_list_only_ask("list C:\\Temp\\GitHub"),
+                   "list temp is list-only");
+    pass &= expect(
+        local_tools::looks_like_list_only_ask("do you have r/w to the repo"),
+        "rw repo is list-only");
+    pass &= expect(
+        local_tools::looks_like_list_only_ask("what are the authorized paths"),
+        "authorized paths is list-only");
+    pass &= expect(!local_tools::looks_like_list_only_ask("what is 2+2"),
+                   "math is not list-only");
     pass &= expect(
         local_tools::looks_like_local_fs_ask("do you have r/w to the repo"),
         "rw repo is local-fs");
