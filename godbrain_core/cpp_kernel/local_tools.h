@@ -49,6 +49,11 @@ std::string complete_fs_listing(const std::string& user_msg,
 std::string repo_map(const std::string& dir);
 std::string changed_context(const std::string& dir);
 std::string analysis_observe(const std::string& user_msg);
+// logs/last-host-snap.txt; process pid/ppid + granted FS depth-1.
+std::string host_snap();
+std::string host_snap_clip(size_t max_bytes);
+std::string live_stack_blurb();
+bool looks_like_jarvis_need_ask(const std::string& msg);
 // Analysis asks: kernel-read AGENTS.md and Heal-GodBrain.ps1 under the
 // named folder (for tests / ledger). Do not paste those files into the
 // 12B prompt — that unused49's / IMA's. Use jarvis_rails_blurb().

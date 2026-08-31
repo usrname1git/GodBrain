@@ -86,6 +86,8 @@ function Test-GalaxyHtml([string]$Full) {
     if ($text -notmatch 'Edit:\s*ok') { throw "galaxy.html missing Edit ok" }
     if ($text -notmatch 'Edit:\s*fail') { throw "galaxy.html missing Edit fail" }
     if ($text -notmatch 'Edit:\s*none') { throw "galaxy.html missing Edit none" }
+    if ($text -notmatch 'Edit:\s*rolled') { throw "galaxy.html missing Edit rolled" }
+    if ($text -notmatch 'Edit:\s*preview') { throw "galaxy.html missing Edit preview" }
 }
 
 function Test-MemoryStoreGo {
@@ -204,9 +206,11 @@ try {
 } catch {
     $err = $_.Exception.Message
     if ([string]::IsNullOrWhiteSpace($err)) { $err = "$_" }
+    $failProfile = 'local-edit-apply-v1'
+    if ($rels.Count -gt 0) { $failProfile = Get-EditCheckProfile $rels[0] }
     $payload = @{
         ok      = $false
-        profile = 'local-edit-apply-v1'
+        profile = $failProfile
         detail  = $err
     } | ConvertTo-Json -Compress
     Write-Output $payload

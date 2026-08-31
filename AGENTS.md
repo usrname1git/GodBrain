@@ -60,7 +60,9 @@ to count how many nodes the problem actually has. Usually one.
   no-GPU benches + `-LiveMouth` small-prompt gauntlet
   (`scripts\Test-JarvisLoop.ps1`; shred llama only if 2+2 fails, not
   if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
-  Galaxy preview + txn rollback (not a 7-step ceremony). **4a**
+  Galaxy preview + txn rollback (not a 7-step ceremony): Keccak of
+  the file before apply; last-edit/Galaxy show path+hash+hunk;
+  Verify-LocalEdit fail restores the original bytes. **4a**
   `repo_map` / `changed_context` from git + nearest README (not a
   symbol graph in Mongo). Analysis asks seed and fallback Z from
   that map — a technical note, not a truncated 10-row `list_local_dir`.
@@ -324,7 +326,8 @@ reads the active RAG graph. Oracle search is verified-only.
 
 ### Galaxy chat and GET doors (no GPU)
 
-Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next
+Ordinary Galaxy chat exposes `/observe`, `/host-snap` (kernel FS+process
+feed, no GPU), `/vram` (one GPU slot + next
 worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
 `/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, and `/pending`.
 Whole-message `enable_thinking: false` / `enable_thinking: true` is a
@@ -420,7 +423,8 @@ fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
 `C:\Temp\GitHub` (Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
 `write_local_file` (append), `create_local_dir`, `move_local_file`,
-`get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `search_local` (name or `content:`), `edit_local_file`
+`get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `host_snap`
+(persistent FS+process feed), `search_local` (name or `content:`), `edit_local_file`
 (`replace_all`), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
 `run_node`. Excel/PDF/DOCX go through host Python libs, not C++ parsers.
 Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
@@ -471,6 +475,13 @@ Unready RAG is repaired with `rag-rebuild.exe` (30 min cooldown, never
 kills rag-service). Oldest `inbox\*.txt` is Librarian-ingested when the
 mouth is healthy and not busy; a failed extract moves to `inbox\failed\`
 so the next tick does not steal the GPU. Claims stay candidate.
+
+`GET /api/host-snap` and `/host-snap` refresh `logs/last-host-snap.txt`
+(process pid/ppid + granted FS depth-1). Same snap runs on `/observe`
+and ordinary chat. Not a second watcher process. Jarvis/need asks also
+get a short live-stack blurb (mouth `:8000`, RAG `:8084`, one GPU slot).
+A 3090 replacing the 4080 is still that slot, not a second card and not
+auto-GLM.
 
 Each Heal tick POSTs `/api/observe` (idempotent host pin) and, when the
 kernel is up, refreshes `logs/last-brief.txt`, `logs/last-pending.json`,

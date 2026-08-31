@@ -325,22 +325,25 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 10, "files hop 10 tools");
+    pass &= expect(files.is_array() && files.size() == 11, "files hop 11 tools");
     bool files_has_sysint = false;
     bool files_has_info = false;
     bool files_has_roots = false;
     bool files_has_map = false;
+    bool files_has_snap = false;
     for (const auto& t : files) {
         const std::string n = t["function"].value("name", "");
         if (n == "run_sysint") files_has_sysint = true;
         if (n == "get_file_info") files_has_info = true;
         if (n == "list_granted_roots") files_has_roots = true;
         if (n == "repo_map") files_has_map = true;
+        if (n == "host_snap") files_has_snap = true;
     }
     pass &= expect(!files_has_sysint, "files hop no sysint");
     pass &= expect(files_has_info, "files hop has get_file_info");
     pass &= expect(files_has_roots, "files hop has list_granted_roots");
     pass &= expect(files_has_map, "files hop has repo_map");
+    pass &= expect(files_has_snap, "files hop has host_snap");
     const auto host_defs =
         local_tools::openai_tool_defs_for("run_sysint handle64 on CS2");
     pass &= expect(host_defs.size() > files.size(), "host inspect full tools");
@@ -440,6 +443,35 @@ int main() {
                             chg.find("git") != std::string::npos ||
                             chg.find("Recent") != std::string::npos),
                        "changed_context has git");
+        const std::string snap = local_tools::host_snap();
+        pass &= expect(snap.find("Host snap") != std::string::npos &&
+                           snap.find("Process tree") != std::string::npos &&
+                           snap.find("pid=") != std::string::npos &&
+                           snap.find("list_local_dir") == std::string::npos &&
+                           snap.find("Live stack") != std::string::npos &&
+                           snap.size() > 200,
+                       "host_snap is FS+process feed not a dir dump");
+        const std::string clip = local_tools::host_snap_clip(1400);
+        pass &= expect(clip.find("Live stack") == std::string::npos &&
+                           clip.find("Process tree") != std::string::npos,
+                       "chat clip is process+FS without live-stack rails");
+        pass &= expect(
+            snap.find("godbrain-kernel") != std::string::npos ||
+                snap.find("llama-server") != std::string::npos ||
+                snap.find("rag-service") != std::string::npos,
+            "host_snap names a live mouth/kernel process");
+        const std::string stack = local_tools::live_stack_blurb();
+        pass &= expect(stack.find("one generate slot") != std::string::npos &&
+                           stack.find("8084") != std::string::npos &&
+                           stack.find("second vector") != std::string::npos &&
+                           stack.find("same slot") != std::string::npos,
+                       "live stack names mouth, RAG, one slot");
+        pass &= expect(local_tools::looks_like_jarvis_need_ask(
+                           "what else do you still need to be Jarvis"),
+                       "jarvis need ask");
+        pass &= expect(!local_tools::looks_like_jarvis_need_ask(
+                           "No tools. What is 2+2?"),
+                       "2+2 is not a need ask");
     }
     {
         const std::string roots = local_tools::run_tools_from_text(

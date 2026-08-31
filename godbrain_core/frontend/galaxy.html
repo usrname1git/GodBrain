@@ -928,9 +928,14 @@
                 lines.push('  A: ' + a);
             }
             const edit = (status && status.last_edit) || {};
-            if (edit.report) {
-                const er = String(edit.report).replace(/\n/g, ' ').slice(0, 80);
-                lines.push('edit ' + (edit.applied ? 'done' : 'fail') + ' ' + er);
+            if (edit.report || edit.preview_path) {
+                const er = String(edit.report || '').replace(/\n/g, ' ').slice(0, 80);
+                const st = edit.rolled_back ? 'rolled' : (edit.applied ? 'done' : 'fail');
+                const h = String(edit.before_hash || '').slice(0, 12);
+                lines.push('edit ' + st + (h ? (' ' + h) : '') + (er ? (' ' + er) : ''));
+                if (edit.preview_path) {
+                    lines.push('  preview ' + String(edit.preview_path).slice(0, 48));
+                }
             }
             if (tail.up) {
                 lines.push(
@@ -1336,10 +1341,18 @@
                     lines.push('Judge: none');
                 }
                 const editHost = (status && status.last_edit) || {};
-                if (editHost.applied === true) {
-                    lines.push('Edit: ok');
+                if (editHost.rolled_back === true) {
+                    lines.push('Edit: rolled');
+                } else if (editHost.applied === true) {
+                    const h = String(editHost.before_hash || '').slice(0, 12);
+                    lines.push('Edit: ok' + (h ? (' ' + h) : ''));
                 } else if (editHost.applied === false || editHost.report) {
                     lines.push('Edit: fail');
+                    if (editHost.preview_path) {
+                        lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
+                    }
+                } else if (editHost.preview_path) {
+                    lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
                 } else {
                     lines.push('Edit: none');
                 }

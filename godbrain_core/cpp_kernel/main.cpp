@@ -78,6 +78,7 @@ static json last_oracle_turns_json();
 static std::string format_brief_text();
 static void handle_brief(const httplib::Request&, httplib::Response&);
 static void handle_vram(const httplib::Request&, httplib::Response&);
+static void handle_host_snap(const httplib::Request&, httplib::Response&);
 static void handle_doors(const httplib::Request&, httplib::Response&);
 static void handle_desk(const httplib::Request&, httplib::Response&);
 static void handle_pending(const httplib::Request&, httplib::Response&);
@@ -1238,6 +1239,7 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
 static void handle_observe(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
+        local_tools::host_snap();
         res.set_content(memory::observe_host().dump(), "application/json");
     } catch (const std::exception& error) {
         res.status = 503;
@@ -1419,6 +1421,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
     server.Get("/api/last-edit", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
         handle_last_edit(req, res);
+    });
+    server.Get("/api/host-snap", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_host_snap(req, res);
     });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
@@ -1840,6 +1846,11 @@ static std::string format_brief_text() {
         reply << "\nedit "
               << (edit.value("applied", false) ? "done" : "fail");
     }
+    {
+        const int snap_age = file_age_minutes(
+            get_exe_dir() + "\\..\\..\\logs\\last-host-snap.json");
+        if (snap_age >= 0) reply << "\nsnap=" << snap_age << "m";
+    }
     const std::string text = reply.str();
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-brief.txt";
     const std::string tmp = path + ".tmp";
@@ -1907,6 +1918,15 @@ static void handle_desk(const httplib::Request&, httplib::Response& res) {
     res.set_content(body.dump(), "application/json");
 }
 
+static void handle_host_snap(const httplib::Request&, httplib::Response& res) {
+    const std::string text = local_tools::host_snap();
+    json body = {
+        {"response", text},
+        {"bytes", static_cast<int>(text.size())},
+    };
+    res.set_content(body.dump(), "application/json");
+}
+
 static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
     json body = load_last_edit();
     std::ostringstream reply;
@@ -1914,7 +1934,21 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
         reply << "edit=missing";
         res.status = 404;
     } else {
-        reply << "edit=" << (body.value("applied", false) ? "done" : "fail");
+        if (body.value("rolled_back", false)) {
+            reply << "edit=rolled";
+        } else {
+            reply << "edit=" << (body.value("applied", false) ? "done" : "fail");
+        }
+        const std::string before = body.value("before_hash", "");
+        if (before.size() >= 12) {
+            reply << " hash=" << before.substr(0, 12);
+            const std::string after = body.value("after_hash", "");
+            if (after.size() >= 12 && after != before) {
+                reply << "->" << after.substr(0, 12);
+            }
+        }
+        const std::string ppath = body.value("preview_path", "");
+        if (!ppath.empty()) reply << " path=" << ppath;
         const std::string check_profile = body.value("check_profile", "");
         if (!check_profile.empty()) {
             const char* check_state = !body.value("check_ran", false)
@@ -1923,6 +1957,12 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
             reply << " check=" << check_profile << "/" << check_state;
         }
         reply << " promote=no";
+        const std::string pold = body.value("preview_old", "");
+        const std::string pnew = body.value("preview_new", "");
+        if (!pold.empty() || !pnew.empty()) {
+            reply << "\npreview " << clip_pending_line(pold, 80)
+                  << " => " << clip_pending_line(pnew, 80);
+        }
         const std::string report = body.value("report", "");
         if (!report.empty()) {
             reply << "\n" << clip_pending_line(report, 200);
@@ -2310,6 +2350,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"desk", lb + "/api/desk"},
         {"pending", lb + "/api/pending"},
         {"last_edit", lb + "/api/last-edit"},
+        {"host_snap", lb + "/api/host-snap"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -2335,6 +2376,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["desk"] = base + "/api/desk";
         ts["pending"] = base + "/api/pending";
         ts["last_edit"] = base + "/api/last-edit";
+        ts["host_snap"] = base + "/api/host-snap";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -3494,6 +3536,10 @@ int main() {
     svr.Get("/api/last-edit", [&](const httplib::Request& req, httplib::Response& res) {
         handle_last_edit(req, res);
     });
+    svr.Get("/api/host-snap", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_host_snap(req, res);
+    });
     svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
         handle_pending(req, res);
     });
@@ -3833,6 +3879,13 @@ int main() {
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
                 handle_vram(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/host-snap") &&
+                (user_msg.size() == 10 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[10])) != 0)) {
+                handle_host_snap(req, res);
                 return;
             }
 
@@ -4417,6 +4470,25 @@ int main() {
                 payload.value("stream", false) ||
                 req.get_header_value("Accept").find("text/event-stream") !=
                     std::string::npos;
+            if (!continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg)) {
+                if (local_tools::looks_like_jarvis_need_ask(user_msg)) {
+                    const std::string stack = local_tools::live_stack_blurb();
+                    if (!stack.empty()) {
+                        user_prompt =
+                            "Kernel live stack (already built; do not ask for "
+                            "a second engine or vector DB):\n" +
+                            stack + "\n\n" + user_prompt;
+                    }
+                } else if (!no_tools_ask && !list_only_ask && !fs_analyze) {
+                    const std::string clip = local_tools::host_snap_clip(1400);
+                    if (!clip.empty()) {
+                        user_prompt =
+                            "Kernel host snap (this turn):\n" + clip +
+                            "\n\n" + user_prompt;
+                    }
+                }
+            }
             // Explicit list/r/w/jail: kernel listing is the answer. Analysis
             // over a named folder uses tools; the kernel flattens results
             // into a fresh llama request (no role:tool KV reuse).
