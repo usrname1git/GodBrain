@@ -364,6 +364,27 @@ int main() {
                            longp.find("GodBrain") != std::string::npos &&
                            longp.find("missing") == std::string::npos,
                        "path stops at GodBrain not English tail");
+        pass &= expect(local_tools::looks_like_local_fs_ask(longq),
+                       "jarvis repo ask is local-fs");
+        const std::string miss =
+            "search_local C:\\Temp\\GitHub name q=GodBrain repo hits=0 "
+            "scanned=400\n";
+        const std::string padded =
+            local_tools::complete_fs_listing(longq, miss);
+        pass &= expect(padded.find("search_local") != std::string::npos &&
+                           padded.find("list_local_dir") != std::string::npos &&
+                           padded.find("GodBrain") != std::string::npos &&
+                           padded.find("repo that needs") == std::string::npos,
+                       "missed Temp hop still lists named repo");
+        const std::string already =
+            "list_local_dir " + home +
+            "\\Documents\\GitHub\\GodBrain depth=1\n";
+        pass &= expect(local_tools::complete_fs_listing(longq, already) ==
+                           already,
+                       "complete_fs_listing is idempotent");
+        pass &= expect(local_tools::complete_fs_listing("what is 2+2", miss) ==
+                           miss,
+                       "non-fs hop is not padded");
     }
     {
         const std::string roots = local_tools::run_tools_from_text(

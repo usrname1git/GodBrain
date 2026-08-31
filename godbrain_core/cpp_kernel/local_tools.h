@@ -38,6 +38,10 @@ bool looks_like_no_tools(const std::string& msg);
 bool looks_like_fs_refuse(const std::string& text);
 std::string first_granted_path(const std::string& msg);
 std::string answer_fs_ask(const std::string& user_msg);
+// If the hop missed the granted path named in the ask, append a kernel
+// list/info of that path. No GPU.
+std::string complete_fs_listing(const std::string& user_msg,
+                                const std::string& tool_out);
 bool use_full_tool_defs(const std::string& user_msg);
 std::vector<Call> calls_from_openai(const nlohmann::json& tool_calls);
 

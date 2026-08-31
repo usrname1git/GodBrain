@@ -2736,10 +2736,11 @@ std::string run_colibri_serve(
     const bool native_tools =
         llama_mouth && !wants_apply_continue(system, user) &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
-    // Ordinary llama tool hops cap at 3 so a 4th generate cannot CUDA-abort
-    // the slot. YOLO still gets more, then fail closed.
+    // Non-YOLO: one generate + one execute, then stop. A follow-up generate
+    // after role:tool is the CUDA IMA (KV reuse). YOLO still loops, then
+    // fail closed.
     const int max_tool_rounds =
-        native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
+        native_tools ? (local_tools::yolo_active() ? 8 : 1) : 1;
     const json tool_defs =
         native_tools ? local_tools::openai_tool_defs_for(
                            tool_hint.empty() ? user : tool_hint)
@@ -2946,6 +2947,17 @@ std::string run_colibri_serve(
             });
         }
         last_tool_out = tool_out;
+        const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
+        if (!local_tools::yolo_active()) {
+            const std::string out =
+                local_tools::complete_fs_listing(hop_hint, tool_out);
+            assembled = out;
+            last_tool_out = out;
+            if (spoken) *spoken = out;
+            std::cout << "[TOOLS] one hop stop (" << out.size()
+                      << " bytes)" << std::endl;
+            break;
+        }
         if (tool_round + 1 >= max_tool_rounds) {
             if (assembled.empty()) assembled = tool_out;
             assembled += "\n[tool cap]";
@@ -2956,6 +2968,16 @@ std::string run_colibri_serve(
     if (!local_tools::has_tool_block(assembled)) break;
     const std::string tool_out = local_tools::run_tools_from_text(assembled);
     if (tool_out.empty()) break;
+    last_tool_out = tool_out;
+    const std::string hop_hint2 = tool_hint.empty() ? user : tool_hint;
+    if (!local_tools::yolo_active()) {
+        const std::string out =
+            local_tools::complete_fs_listing(hop_hint2, tool_out);
+        assembled = out;
+        last_tool_out = out;
+        if (spoken) *spoken = out;
+        break;
+    }
     messages.push_back(json{{"role", "assistant"}, {"content", assembled}});
     messages.push_back(json{
         {"role", "user"},
@@ -4184,14 +4206,55 @@ int main() {
                     user_prompt;
             }
 
-            std::cout << "[RAG] Context built (" << context_text.size()
-                      << " bytes) follow_up=" << (follow_up ? "1" : "0")
-                      << " continue=" << (continue_cmd ? "1" : "0")
-                      << ". Asking Colibri..." << std::endl;
             const bool want_stream =
                 payload.value("stream", false) ||
                 req.get_header_value("Accept").find("text/event-stream") !=
                     std::string::npos;
+            // Path/RW: kernel lists the named folder. Do not spend the GPU
+            // slot; generate 2 after tools is the CUDA IMA, and a poisoned
+            // slot returns unused49 in under a second.
+            if (local_fs_ask && !no_tools_ask && !continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg) &&
+                !local_tools::yolo_active()) {
+                const std::string listing =
+                    local_tools::complete_fs_listing(user_msg, "");
+                std::cout << "[TOOLS] fs ask; kernel list, no GPU ("
+                          << listing.size() << " bytes)" << std::endl;
+                remember_oracle_turn(asked, listing, 0);
+                if (want_stream) {
+                    res.set_header("Cache-Control", "no-cache");
+                    res.set_header("X-Accel-Buffering", "no");
+                    const std::string note = listing;
+                    res.set_chunked_content_provider(
+                        "text/event-stream",
+                        [note](size_t, httplib::DataSink& sink) {
+                            const std::string tok =
+                                std::string("data: ") +
+                                json({{"type", "token"}, {"text", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(tok.data(), tok.size());
+                            const std::string done =
+                                std::string("data: ") +
+                                json({{"type", "done"}, {"response", note}})
+                                    .dump() +
+                                "\n\n";
+                            sink.write(done.data(), done.size());
+                            sink.done();
+                            return true;
+                        });
+                    return;
+                }
+                res.set_content(
+                    json({{"response", listing}}).dump(),
+                    "application/json");
+                return;
+            }
+
+            std::cout << "[RAG] Context built (" << context_text.size()
+                      << " bytes) follow_up=" << (follow_up ? "1" : "0")
+                      << " continue=" << (continue_cmd ? "1" : "0")
+                      << ". Asking Colibri..." << std::endl;
             auto stitch_continue = [continue_cmd, prior_a](const std::string& next) {
                 if (!continue_cmd || prior_a.empty()) return next;
                 if (next.compare(0, 6, "Error:") == 0) return next;

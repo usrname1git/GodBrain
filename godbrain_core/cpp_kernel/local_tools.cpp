@@ -2101,6 +2101,24 @@ bool looks_like_local_fs_ask(const std::string& msg) {
     return jail_granted && place;
 }
 
+std::string complete_fs_listing(const std::string& user_msg,
+                                const std::string& tool_out) {
+    if (!looks_like_local_fs_ask(user_msg)) return tool_out;
+    const std::string gp = first_granted_path(user_msg);
+    if (gp.empty()) return tool_out;
+    const std::string full = canon_path(gp);
+    const std::string needle = full.empty() ? gp : full;
+    if (contains_ci(tool_out, needle) || contains_ci(tool_out, gp)) {
+        return tool_out;
+    }
+    const std::string extra = answer_fs_ask(user_msg);
+    if (extra.empty()) return tool_out;
+    std::string out = tool_out;
+    if (!out.empty() && out.back() != '\n') out += '\n';
+    out += extra;
+    return out;
+}
+
 bool use_full_tool_defs(const std::string& user_msg) {
     return yolo_active() || looks_like_host_inspect(user_msg);
 }
