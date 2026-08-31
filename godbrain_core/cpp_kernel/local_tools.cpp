@@ -581,19 +581,7 @@ struct HostSnap {
 HostSnap build_host_snap() {
     HostSnap s;
     std::ostringstream o;
-    o << live_stack_text();
-    o << "Host snap (kernel, this turn; not a watcher).\n";
-    {
-        HWND fg = GetForegroundWindow();
-        if (fg) {
-            char title[256];
-            title[0] = 0;
-            GetWindowTextA(fg, title, 256);
-            DWORD pid = 0;
-            GetWindowThreadProcessId(fg, &pid);
-            o << "foreground=\"" << title << "\" pid=" << pid << "\n";
-        }
-    }
+    o << "Host snap (kernel, this turn).\n";
     struct Row {
         DWORD pid;
         DWORD ppid;
@@ -2620,13 +2608,17 @@ std::string analysis_observe(const std::string& user_msg) {
 }
 
 std::string host_snap() {
-    const HostSnap s = build_host_snap();
+    HostSnap s = build_host_snap();
+    s.text = live_stack_text() + s.text;
     write_host_snap_files(s);
     return s.text;
 }
 
 std::string host_snap_clip(size_t max_bytes) {
-    std::string t = host_snap();
+    HostSnap s = build_host_snap();
+    std::string t = s.text;
+    s.text = live_stack_text() + t;
+    write_host_snap_files(s);
     if (max_bytes < 64) max_bytes = 64;
     if (t.size() <= max_bytes) return t;
     t.resize(max_bytes);

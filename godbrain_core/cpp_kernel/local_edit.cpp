@@ -680,7 +680,10 @@ struct ApplyOutcome {
     std::string preview_path;
     std::string preview_old;
     std::string preview_new;
+    bool wrote = false;
 };
+
+bool restore_originals(const std::map<std::string, std::string>& originals);
 
 ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint) {
     ApplyOutcome out;
@@ -706,7 +709,9 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint
             continue;
         } else {
             out.originals[hunk.path] = body;
-            if (out.before_hash.empty()) out.before_hash = content_hash(body);
+            if (out.preview_path.empty()) {
+                out.before_hash = content_hash(body);
+            }
         }
         if (out.preview_path.empty()) {
             out.preview_path = hunk.path;
@@ -757,11 +762,16 @@ ApplyOutcome apply_hunks(const std::vector<Hunk>& hunks, const std::string& hint
     for (const auto& kv : working) {
         const std::string full = root + "\\" + kv.first;
         if (!write_all(full, kv.second)) {
+            restore_originals(out.originals);
+            DeleteFileA((full + ".edit.tmp").c_str());
             out.report = "FAIL\nwrite failed " + kv.first + "\n" + report.str();
             out.ok = false;
             return out;
         }
-        if (out.after_hash.empty()) out.after_hash = content_hash(kv.second);
+        out.wrote = true;
+    }
+    if (!out.preview_path.empty() && working.count(out.preview_path)) {
+        out.after_hash = content_hash(working[out.preview_path]);
     }
     out.ok = true;
     out.report = "DONE\n" + report.str();
@@ -859,7 +869,7 @@ Result maybe_apply(
 
     ApplyOutcome applied;
     if (!hunks.empty()) applied = apply_hunks(hunks, user_msg);
-    if (!applied.ok && generate) {
+    if (!applied.ok && generate && !applied.wrote) {
         std::ostringstream usr;
         usr << "First pass did not apply. "
             << local_edit::edit_user_with_excerpt(user_msg);

@@ -49,8 +49,7 @@ std::string complete_fs_listing(const std::string& user_msg,
 std::string repo_map(const std::string& dir);
 std::string changed_context(const std::string& dir);
 std::string analysis_observe(const std::string& user_msg);
-// Persistent host feed (FS depth-1 + process pid/ppid). Kernel snap on
-// chat/Heal/observe, not a second watcher. logs/last-host-snap.txt.
+// logs/last-host-snap.txt; process pid/ppid + granted FS depth-1.
 std::string host_snap();
 std::string host_snap_clip(size_t max_bytes);
 std::string live_stack_blurb();

@@ -4480,16 +4480,13 @@ int main() {
                             "a second engine or vector DB):\n" +
                             stack + "\n\n" + user_prompt;
                     }
-                }
-                const std::string snap = local_tools::host_snap();
-                if (!no_tools_ask && !list_only_ask && !fs_analyze &&
-                    !snap.empty()) {
-                    std::string clip = snap;
-                    if (clip.size() > 1400) clip.resize(1400);
-                    user_prompt =
-                        "Kernel host snap (persistent feed this turn, not a "
-                        "watcher):\n" +
-                        clip + "\n\n" + user_prompt;
+                } else if (!no_tools_ask && !list_only_ask && !fs_analyze) {
+                    const std::string clip = local_tools::host_snap_clip(1400);
+                    if (!clip.empty()) {
+                        user_prompt =
+                            "Kernel host snap (this turn):\n" + clip +
+                            "\n\n" + user_prompt;
+                    }
                 }
             }
             // Explicit list/r/w/jail: kernel listing is the answer. Analysis

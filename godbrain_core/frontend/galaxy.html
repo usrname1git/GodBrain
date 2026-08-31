@@ -1346,10 +1346,13 @@
                 } else if (editHost.applied === true) {
                     const h = String(editHost.before_hash || '').slice(0, 12);
                     lines.push('Edit: ok' + (h ? (' ' + h) : ''));
-                } else if (editHost.preview_path) {
-                    lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
                 } else if (editHost.applied === false || editHost.report) {
                     lines.push('Edit: fail');
+                    if (editHost.preview_path) {
+                        lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
+                    }
+                } else if (editHost.preview_path) {
+                    lines.push('Edit: preview ' + String(editHost.preview_path).slice(0, 40));
                 } else {
                     lines.push('Edit: none');
                 }

@@ -448,8 +448,13 @@ int main() {
                            snap.find("Process tree") != std::string::npos &&
                            snap.find("pid=") != std::string::npos &&
                            snap.find("list_local_dir") == std::string::npos &&
+                           snap.find("Live stack") != std::string::npos &&
                            snap.size() > 200,
                        "host_snap is FS+process feed not a dir dump");
+        const std::string clip = local_tools::host_snap_clip(1400);
+        pass &= expect(clip.find("Live stack") == std::string::npos &&
+                           clip.find("Process tree") != std::string::npos,
+                       "chat clip is process+FS without live-stack rails");
         pass &= expect(
             snap.find("godbrain-kernel") != std::string::npos ||
                 snap.find("llama-server") != std::string::npos ||
