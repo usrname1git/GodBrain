@@ -176,7 +176,10 @@ Optional operator chrome (not a runtime door):
 .\scripts\Show-SystemFlex.ps1
 ```
 
-`ti` on this host is [M2-Team Privexec](https://github.com/M2Team/Privexec) `wsudo --ti` from PATH. GitHub release zips lag `master`; install via [baulk](https://github.com/baulk/baulk) (`baulk install wsudo`) or build from source. Do not copy `wsudo.exe` into this repo. Heal never calls it. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `--ti`.
+`ti` on this host is `wsudo -T` from conhost or Windows Terminal
+(`C:\Tools\TeamM2\wsudo.exe`). `Privexec.exe` is a GUI launcher and is not
+used. Heal never calls `wsudo`. Chat `run_elevate` under `/yolo` uses MinSudo /
+`wsudo -A -w`, never `-T`. `acl_takeover` / `acl_release` is the named `-T` door.
 
 ## 7. First check
 

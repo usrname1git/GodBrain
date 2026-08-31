@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const fullQuery = pageHint + text;
 
-        appendMessage('sys-msg', '[SYS]', 'Transmitting to Colibri...', 'loading');
+        appendMessage('sys-msg', '[SYS]', 'Asking GodBrain', 'loading');
 
         let response;
         try {

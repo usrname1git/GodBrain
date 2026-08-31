@@ -32,6 +32,7 @@ constexpr size_t kMaxListEntries = 500;
 constexpr size_t kMaxPwshBytes = 64 * 1024;
 constexpr DWORD kToolTimeoutMs = 30000;
 constexpr DWORD kPwshTimeoutMs = 60000;
+constexpr DWORD kAclTimeoutMs = 120000;
 
 const char kSysintDir[] = "C:\\Tools\\SysInternals";
 const char kMinSudo[] = "C:\\Tools\\TeamM2\\MinSudo.exe";
@@ -164,6 +165,30 @@ std::string final_path(const std::string& path) {
 
 bool file_exists(const std::string& path) {
     return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+std::string env_path(const char* name) {
+    char buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableA(name, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    return std::string(buf, n);
+}
+
+std::string expand_env(const std::string& path) {
+    if (path.find('%') == std::string::npos) return path;
+    char buf[32768];
+    const DWORD n = ExpandEnvironmentStringsA(path.c_str(), buf, 32768);
+    if (n == 0 || n > 32768) return path;
+    return std::string(buf);
+}
+
+std::string roots_join() {
+    std::string s;
+    for (const auto& r : default_roots()) {
+        if (!s.empty()) s += "; ";
+        s += r;
+    }
+    return s;
 }
 
 void close_handle(HANDLE& handle) {
@@ -412,12 +437,78 @@ bool dangerous_script(const std::string& text) {
     return false;
 }
 
+bool cli_flag_at(const std::string& low, const std::string& flag, size_t pos) {
+    if (pos > 0) {
+        const unsigned char left = static_cast<unsigned char>(low[pos - 1]);
+        if (std::isspace(left) == 0 && left != '"' && left != '\'') return false;
+    }
+    const size_t end = pos + flag.size();
+    if (end < low.size()) {
+        const unsigned char right = static_cast<unsigned char>(low[end]);
+        if (std::isalnum(right) != 0 || right == '-') return false;
+    }
+    return true;
+}
+
+bool has_cli_flag(const std::string& low, const std::string& flag) {
+    size_t pos = 0;
+    while ((pos = low.find(flag, pos)) != std::string::npos) {
+        if (cli_flag_at(low, flag, pos)) return true;
+        ++pos;
+    }
+    return false;
+}
+
+bool has_wsudo_token(const std::string& low) {
+    size_t pos = 0;
+    while ((pos = low.find("wsudo", pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 ||
+            (std::isalnum(static_cast<unsigned char>(low[pos - 1])) == 0 &&
+             low[pos - 1] != '_');
+        const size_t end = pos + 5;
+        bool right = end >= low.size();
+        if (!right) {
+            const unsigned char c = static_cast<unsigned char>(low[end]);
+            right = std::isalnum(c) == 0 && c != '_';
+            if (low.compare(end, 4, ".exe") == 0) right = true;
+        }
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
+bool has_exe_token(const std::string& low, const std::string& stem) {
+    size_t pos = 0;
+    while ((pos = low.find(stem, pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 ||
+            (std::isalnum(static_cast<unsigned char>(low[pos - 1])) == 0 &&
+             low[pos - 1] != '_');
+        const size_t end = pos + stem.size();
+        bool right = end >= low.size();
+        if (!right) {
+            const unsigned char c = static_cast<unsigned char>(low[end]);
+            right = std::isalnum(c) == 0 && c != '_';
+            if (low.compare(end, 4, ".exe") == 0) right = true;
+        }
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
 bool elevate_flags_denied(const std::string& text) {
     const std::string low = ascii_lower(text);
-    return low.find("--ti") != std::string::npos ||
-           low.find("-ti ") != std::string::npos ||
-           low.find("trustedinstaller") != std::string::npos ||
-           low.find("--system") != std::string::npos;
+    if (low.find("trustedinstaller") != std::string::npos) return true;
+    if (has_cli_flag(low, "--ti") || has_cli_flag(low, "-ti") ||
+        has_cli_flag(low, "/ti") || has_cli_flag(low, "--system")) {
+        return true;
+    }
+    const bool launcher = has_wsudo_token(low) || has_exe_token(low, "minsudo") ||
+                          has_exe_token(low, "privexec");
+    return launcher && has_cli_flag(low, "-t");
 }
 
 bool mentions_godbrain_task(const std::string& args) {
@@ -456,8 +547,129 @@ std::string system32(const char* name) {
     return std::string(buf) + "\\" + name;
 }
 
+std::string find_pwsh();
+
 std::string quote_path(const std::string& path) {
     return "\"" + path + "\"";
+}
+
+std::string ps_literal(const std::string& path) {
+    std::string out = "'";
+    for (char ch : path) {
+        if (ch == '\'') out += "''";
+        else out.push_back(ch);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+std::string acl_id(const std::string& full) {
+    uint64_t h = 14695981039346656037ull;
+    const std::string low = ascii_lower(full);
+    for (unsigned char c : low) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+
+std::string acl_store_dir() {
+    const std::string logs = logs_dir();
+    if (logs.empty() || logs == "\\logs") return "";
+    return logs + "\\acl";
+}
+
+std::string acl_parent_path(const std::string& full) {
+    const size_t slash = full.find_last_of("\\/");
+    if (slash == std::string::npos || slash < 2) return full;
+    return full.substr(0, slash);
+}
+
+bool is_acl_store_path(const std::string& path) {
+    const std::string root = final_path(acl_store_dir());
+    const std::string full = final_path(expand_env(path));
+    if (root.empty() || full.empty()) return false;
+    if (ascii_lower(full) == ascii_lower(root)) return true;
+    return starts_with_ci(full, root + "\\");
+}
+
+bool is_protected_bin_path(const std::string& path) {
+    if (is_acl_store_path(path)) return true;
+    const std::string full = final_path(expand_env(path));
+    const std::string team = final_path("C:\\Tools\\TeamM2");
+    if (full.empty() || team.empty()) return false;
+    if (ascii_lower(full) == ascii_lower(team)) return true;
+    return starts_with_ci(full, team + "\\");
+}
+
+bool acl_hive_denied(const std::string& full) {
+    std::string t = ascii_lower(full);
+    for (char& ch : t) {
+        if (ch == '/') ch = '\\';
+    }
+    while (!t.empty() && t.back() == '\\') t.pop_back();
+    if (t == "c:" || t == "c:\\windows" || t == "c:\\windows\\system32") {
+        return true;
+    }
+    const char* hives[] = {"sam", "security", "system", nullptr};
+    for (int i = 0; hives[i]; ++i) {
+        const std::string needle =
+            std::string("\\system32\\config\\") + hives[i];
+        const size_t p = t.find(needle);
+        if (p == std::string::npos) continue;
+        const size_t after = p + needle.size();
+        if (after == t.size() || t[after] == '\\' || t[after] == '.') return true;
+    }
+    return false;
+}
+
+bool acl_manual_path(const std::string& full) {
+    static const char* extra[] = {
+        "C:\\Windows\\System32\\Config\\SystemProfile\\AppData\\Local\\"
+        "Microsoft\\Windows Defender",
+        "C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Active",
+        nullptr};
+    for (int i = 0; extra[i]; ++i) {
+        const std::string r = final_path(extra[i]);
+        const std::string root = r.empty() ? extra[i] : r;
+        if (ascii_lower(full) == ascii_lower(root)) return true;
+        if (starts_with_ci(full, root + "\\")) return true;
+    }
+    return false;
+}
+
+bool acl_root_denied(const std::string& full) {
+    if (acl_manual_path(full)) return false;
+    std::string t = ascii_lower(full);
+    for (char& ch : t) {
+        if (ch == '/') ch = '\\';
+    }
+    while (!t.empty() && t.back() == '\\') t.pop_back();
+    for (const auto& root : default_roots()) {
+        std::string r = ascii_lower(final_path(root));
+        for (char& ch : r) {
+            if (ch == '/') ch = '\\';
+        }
+        while (!r.empty() && r.back() == '\\') r.pop_back();
+        if (!r.empty() && t == r) return true;
+    }
+    return false;
+}
+
+std::string run_ti_file(const std::string& tmp) {
+    const std::string pwsh = find_pwsh();
+    if (pwsh.empty()) return "pwsh.exe not found";
+    if (!file_exists(kWsudo)) {
+        return "acl: wsudo.exe missing under C:\\Tools\\TeamM2. "
+               "takeown/icacls need wsudo -T (TrustedInstaller).";
+    }
+    return run_process(kWsudo,
+                       "-T -w " + quote_path(pwsh) +
+                           " -NoProfile -NonInteractive -File " +
+                           quote_path(tmp),
+                       kAclTimeoutMs);
 }
 
 std::string with_accepteula(const std::string& args) {
@@ -635,16 +847,34 @@ std::string write_temp_ps1(const std::string& body) {
     return write_temp_script(body, ".ps1");
 }
 
+std::string write_acl_ps1(const std::string& body) {
+    const std::string dir = acl_store_dir();
+    if (dir.empty()) return "";
+    ensure_dir(dir);
+    char name[MAX_PATH];
+    snprintf(name, sizeof(name), "%s\\ti-%lu-%lu.ps1", dir.c_str(),
+             static_cast<unsigned long>(GetTickCount()),
+             static_cast<unsigned long>(GetCurrentProcessId()));
+    std::ofstream out(name, std::ios::binary | std::ios::trunc);
+    if (!out) return "";
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    return std::string(name);
+}
+
 std::string find_rg() {
     std::string p = find_on_path("rg");
     if (!p.empty()) return p;
-    const char* extra[] = {
-        "C:\\Users\\autismo\\scoop\\shims\\rg.exe",
-        "C:\\Users\\autismo\\AppData\\Local\\Programs\\Microsoft VS Code\\"
-        "resources\\app\\node_modules\\@vscode\\ripgrep\\bin\\rg.exe",
-        nullptr};
-    for (int i = 0; extra[i]; ++i) {
-        if (file_exists(extra[i])) return extra[i];
+    std::vector<std::string> extra;
+    const std::string home = env_path("USERPROFILE");
+    if (!home.empty()) extra.push_back(home + "\\scoop\\shims\\rg.exe");
+    const std::string local = env_path("LOCALAPPDATA");
+    if (!local.empty()) {
+        extra.push_back(local +
+                        "\\Programs\\Microsoft VS Code\\resources\\app\\"
+                        "node_modules\\@vscode\\ripgrep\\bin\\rg.exe");
+    }
+    for (const auto& cand : extra) {
+        if (file_exists(cand)) return cand;
     }
     return "";
 }
@@ -678,22 +908,208 @@ std::string unknown_tool_msg(const std::string& name) {
            " (list_local_dir read_local_file write_local_file create_local_dir "
            "move_local_file get_file_info search_local edit_local_file "
            "run_strings run_sqlite3 run_sysint run_reg run_wevtutil run_logman "
-           "run_schtasks run_pwsh run_python run_node run_elevate run_host). "
+           "run_schtasks run_pwsh run_python run_node run_elevate run_host "
+           "acl_takeover acl_release list_granted_roots). "
            "Never pskill/kill_process/psexec/psshutdown/notmyfault/sysmon/MFIT/"
            "--ti/mongo. Heal never launches these.\n";
+}
+
+bool is_ident_char(unsigned char c) {
+    return std::isalnum(c) != 0 || c == '_' || c == '-';
+}
+
+bool has_word(const std::string& hay, const std::string& word) {
+    if (word.empty()) return false;
+    size_t pos = 0;
+    while ((pos = hay.find(word, pos)) != std::string::npos) {
+        const bool left =
+            pos == 0 || !is_ident_char(static_cast<unsigned char>(hay[pos - 1]));
+        const size_t end = pos + word.size();
+        const bool right =
+            end >= hay.size() ||
+            !is_ident_char(static_cast<unsigned char>(hay[end]));
+        if (left && right) return true;
+        ++pos;
+    }
+    return false;
+}
+
+bool is_path_hard_stop(unsigned char c) {
+    return c == '"' || c == '\'' || c == '<' || c == '>' || c == '|' ||
+           c == '?' || c == '*' || c == ';' || c == ',' || c == '\n' ||
+           c == '\r';
+}
+
+bool is_path_left(unsigned char c) {
+    return is_ident_char(c) || c == '\\' || c == '/';
+}
+
+bool env_token_ok(const std::string& tok) {
+    if (tok.empty() || tok[0] != '%') return false;
+    const size_t end = tok.find('%', 1);
+    if (end == std::string::npos || end == 1) return false;
+    const std::string name = tok.substr(1, end - 1);
+    return name == "userprofile" || name == "appdata" ||
+           name == "localappdata" || name == "temp" || name == "homedrive" ||
+           name == "homepath" || name == "programdata" ||
+           name == "programfiles" || name == "programfiles(x86)";
+}
+
+std::string granted_path_from_message(const std::string& msg) {
+    std::string hit;
+    const std::string t = ascii_lower(msg);
+    auto consider = [&](std::string tok) {
+        while (!tok.empty() &&
+               (tok.back() == '.' || tok.back() == ']')) {
+            tok.pop_back();
+        }
+        while (!tok.empty() && tok.back() == ')') {
+            if (tok.size() >= 5 &&
+                ascii_lower(tok.substr(tok.size() - 5)) == "(x86)") {
+                break;
+            }
+            tok.pop_back();
+        }
+        if (tok.size() < 2) return false;
+        for (char& ch : tok) {
+            if (ch == '/') ch = '\\';
+        }
+        if (!path_is_granted(tok)) return false;
+        const std::string full = final_path(expand_env(tok));
+        const std::string use = full.empty() ? tok : full;
+        const bool spaced = tok.find(' ') != std::string::npos ||
+                            tok.find('\t') != std::string::npos;
+        if (spaced && !file_exists(use)) {
+            bool exact_root = false;
+            for (const auto& r : default_roots()) {
+                const std::string rr = final_path(r);
+                if (!rr.empty() && ascii_lower(use) == ascii_lower(rr)) {
+                    exact_root = true;
+                    break;
+                }
+            }
+            if (!exact_root) return false;
+        }
+        hit = use;
+        return true;
+    };
+    auto consider_span = [&](std::string tok) {
+        while (!tok.empty() &&
+               std::isspace(static_cast<unsigned char>(tok.back())) != 0) {
+            tok.pop_back();
+        }
+        while (!tok.empty()) {
+            if (consider(tok)) return true;
+            const size_t sp = tok.find_last_of(" \t");
+            if (sp == std::string::npos) break;
+            tok.resize(sp);
+            while (!tok.empty() &&
+                   std::isspace(static_cast<unsigned char>(tok.back())) != 0) {
+                tok.pop_back();
+            }
+        }
+        return false;
+    };
+
+    for (size_t i = 0; i + 2 < t.size(); ++i) {
+        if (std::isalpha(static_cast<unsigned char>(t[i])) == 0 ||
+            t[i + 1] != ':' || (t[i + 2] != '\\' && t[i + 2] != '/')) {
+            continue;
+        }
+        size_t j = i;
+        while (j < t.size() &&
+               !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+        if (consider_span(t.substr(i, j - i))) return hit;
+        if (j > i) i = j - 1;
+    }
+
+    for (size_t i = 0; i < t.size(); ++i) {
+        if (t[i] != '%') continue;
+        size_t j = i + 1;
+        while (j < t.size() &&
+               !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+        const std::string tok = t.substr(i, j - i);
+        if (env_token_ok(tok) && consider_span(tok)) return hit;
+        if (j > i) i = j - 1;
+    }
+
+    for (const auto& root : default_roots()) {
+        std::string bare = ascii_lower(root);
+        for (char& ch : bare) {
+            if (ch == '/') ch = '\\';
+        }
+        std::string drive = "c:\\";
+        if (bare.size() >= 3 && bare[1] == ':' && bare[2] == '\\') {
+            drive = bare.substr(0, 3);
+            bare = bare.substr(3);
+        }
+        if (bare.empty()) continue;
+        std::string bare_fwd = bare;
+        for (char& ch : bare_fwd) {
+            if (ch == '\\') ch = '/';
+        }
+        const char* needles[2] = {bare.c_str(), bare_fwd.c_str()};
+        const int nneed = (bare_fwd == bare) ? 1 : 2;
+        for (int n = 0; n < nneed; ++n) {
+            const std::string needle = needles[n];
+            size_t pos = 0;
+            while ((pos = t.find(needle, pos)) != std::string::npos) {
+                if (pos > 0 &&
+                    is_path_left(static_cast<unsigned char>(t[pos - 1]))) {
+                    ++pos;
+                    continue;
+                }
+                size_t j = pos;
+                while (j < t.size() &&
+                       !is_path_hard_stop(static_cast<unsigned char>(t[j]))) {
+                    ++j;
+                }
+                const std::string raw = t.substr(pos, j - pos);
+                if (raw.find('\\') == std::string::npos &&
+                    raw.find('/') == std::string::npos) {
+                    pos = (j == pos) ? pos + 1 : j;
+                    continue;
+                }
+                if (consider_span(drive + raw)) return hit;
+                pos = (j == pos) ? pos + 1 : j;
+            }
+        }
+    }
+    return hit;
+}
+
+bool granted_path_in_message(const std::string& msg) {
+    return !granted_path_from_message(msg).empty();
 }
 
 }  // namespace
 
 std::vector<std::string> default_roots() {
-    return {
-        "C:\\Users\\autismo",
-        "C:\\Temp\\GitHub",
+    std::vector<std::string> roots;
+    auto add = [&](const std::string& p) {
+        if (p.empty()) return;
+        for (const auto& e : roots) {
+            if (ascii_lower(e) == ascii_lower(p)) return;
+        }
+        roots.push_back(p);
     };
+    add(env_path("USERPROFILE"));
+    add(env_path("APPDATA"));
+    add(env_path("LOCALAPPDATA"));
+    add(env_path("ProgramData"));
+    add(env_path("ProgramFiles"));
+    add(env_path("ProgramFiles(x86)"));
+    add("C:\\Tools");
+    add("C:\\Temp\\GitHub");
+    return roots;
 }
 
 bool path_is_granted(const std::string& path, std::string* err) {
-    const std::string full = final_path(path);
+    const std::string full = final_path(expand_env(path));
     if (full.empty()) {
         if (err) *err = "cannot canonicalize path";
         return false;
@@ -705,7 +1121,7 @@ bool path_is_granted(const std::string& path, std::string* err) {
         const std::string prefix = r + "\\";
         if (starts_with_ci(full, prefix)) return true;
     }
-    if (err) *err = "path not in granted roots (C:\\Users\\autismo or C:\\Temp\\GitHub)";
+    if (err) *err = "path not in granted roots (" + roots_join() + ")";
     return false;
 }
 
@@ -829,6 +1245,8 @@ std::string execute_calls(const std::vector<Call>& calls) {
         } else if (c.name == "pwsh" || c.name == "powershell") c.name = "run_pwsh";
         else if (c.name == "elevate" || c.name == "wsudo" || c.name == "minsudo") {
             c.name = "run_elevate";
+        } else if (c.name == "takeown" || c.name == "run_takeown") {
+            c.name = "acl_takeover";
         } else if (c.name == "wevtutil") c.name = "run_wevtutil";
         else if (c.name == "logman") c.name = "run_logman";
         else if (c.name == "schtasks") c.name = "run_schtasks";
@@ -851,6 +1269,9 @@ std::string execute_calls(const std::vector<Call>& calls) {
             c.name = "move_local_file";
         } else if (c.name == "get_metadata") {
             c.name = "get_file_info";
+        } else if (c.name == "list_authorized_paths" ||
+                   c.name == "authorized_paths" || c.name == "granted_roots") {
+            c.name = "list_granted_roots";
         } else if (c.name == "python") {
             c.name = "run_python";
         } else if (c.name == "node") {
@@ -881,13 +1302,31 @@ std::string execute_calls(const std::vector<Call>& calls) {
             continue;
         }
 
+        if (c.name == "list_granted_roots") {
+            out << "list_granted_roots\n" << roots_join() << "\n"
+                << "Kernel jail, not Mongo. get_file_info to probe a path.\n";
+            continue;
+        }
+
         if (c.name == "list_local_dir" || c.name == "read_local_file" ||
             c.name == "write_local_file" || c.name == "run_strings" ||
             c.name == "run_sqlite3" || c.name == "search_local" ||
             c.name == "edit_local_file" || c.name == "create_local_dir" ||
             c.name == "move_local_file" || c.name == "get_file_info") {
+            if (!file_exists(canon_path(c.path))) {
+                const std::string hit = granted_path_from_message(c.path);
+                if (!hit.empty() && file_exists(hit)) c.path = hit;
+            }
             if (!path_is_granted(c.path, &err)) {
                 out << c.name << " denied: " << err << "\n";
+                continue;
+            }
+            if ((c.name == "write_local_file" || c.name == "edit_local_file" ||
+                 c.name == "create_local_dir" || c.name == "move_local_file") &&
+                is_protected_bin_path(c.path)) {
+                out << c.name
+                    << " denied: ACL keys and TeamM2 launchers are not "
+                       "mouth-writable.\n";
                 continue;
             }
             const std::string full = canon_path(c.path);
@@ -1013,6 +1452,11 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 }
                 if (!path_is_granted(dest, &err)) {
                     out << "move_local_file denied dest: " << err << "\n";
+                    continue;
+                }
+                if (is_protected_bin_path(dest)) {
+                    out << "move_local_file denied dest: ACL keys and TeamM2 "
+                           "launchers are not mouth-writable.\n";
                     continue;
                 }
                 const std::string dst = canon_path(dest);
@@ -1305,9 +1749,10 @@ std::string execute_calls(const std::vector<Call>& calls) {
 
         if (c.name == "run_pwsh") {
             if (dangerous_script(c.content) || dangerous_script(c.args) ||
-                dangerous_script(c.path)) {
+                dangerous_script(c.path) || elevate_flags_denied(c.content) ||
+                elevate_flags_denied(c.args) || elevate_flags_denied(c.path)) {
                 out << "run_pwsh denied: command hits a hard deny "
-                       "(git push/reboot/DISM/pskill/format).\n";
+                       "(git push/reboot/DISM/pskill/format/wsudo -T).\n";
                 continue;
             }
             const std::string pwsh = find_pwsh();
@@ -1324,7 +1769,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 bool trunc = false;
                 const std::string preview =
                     read_file_limited(full, kMaxPwshBytes, &trunc);
-                if (dangerous_script(preview)) {
+                if (dangerous_script(preview) || elevate_flags_denied(preview)) {
                     out << "run_pwsh denied: script hits a hard deny\n";
                     continue;
                 }
@@ -1405,6 +1850,108 @@ std::string execute_calls(const std::vector<Call>& calls) {
             continue;
         }
 
+        if (c.name == "acl_takeover" || c.name == "acl_release") {
+            if (yolo_required_msg(out, c.name)) continue;
+            if (c.path.empty()) {
+                out << c.name << ": path required\n";
+                continue;
+            }
+            const std::string full = final_path(expand_env(c.path));
+            if (full.empty()) {
+                out << c.name << " denied: cannot canonicalize path\n";
+                continue;
+            }
+            if (acl_hive_denied(full)) {
+                out << c.name
+                    << " denied: C:\\, C:\\Windows, C:\\Windows\\System32, "
+                       "and SAM/SECURITY/SYSTEM hives are operator GO.\n";
+                continue;
+            }
+            if (acl_root_denied(full)) {
+                out << c.name
+                    << " denied: takeover a folder under the jail, not the "
+                       "granted root itself.\n";
+                continue;
+            }
+            if (!path_is_granted(c.path, &err) && !acl_manual_path(full)) {
+                out << c.name << " denied: " << err << "\n";
+                continue;
+            }
+            const std::string store = acl_store_dir();
+            if (store.empty()) {
+                out << c.name << " denied: cannot resolve logs\\acl\n";
+                continue;
+            }
+            ensure_dir(store);
+            const std::string key = store + "\\" + acl_id(full) + ".txt";
+            const std::string parent = acl_parent_path(full);
+            std::string body;
+            if (c.name == "acl_takeover") {
+                body = "$ErrorActionPreference = 'Continue'\n"
+                       "$p = " +
+                       ps_literal(full) +
+                       "\n"
+                       "$key = " +
+                       ps_literal(key) +
+                       "\n"
+                       "icacls $p /save $key /t /c /q\n"
+                       "if ($LASTEXITCODE -ne 0) {\n"
+                       "  Write-Output \"acl_takeover denied: icacls save exit $LASTEXITCODE\"\n"
+                       "  exit 2\n"
+                       "}\n"
+                       "if (-not (Test-Path -LiteralPath $key) -or "
+                       "(Get-Item -LiteralPath $key).Length -lt 1) {\n"
+                       "  Write-Output 'acl_takeover denied: empty ACL save'\n"
+                       "  exit 2\n"
+                       "}\n"
+                       "takeown /F $p /R /A /D Y /SKIPSL\n"
+                       "$to = $LASTEXITCODE\n"
+                       "Write-Output \"takeown exit $to\"\n"
+                       "icacls $p /grant:r '*S-1-5-32-544:(OI)(CI)F' /T /C /Q\n"
+                       "$gr = $LASTEXITCODE\n"
+                       "Write-Output \"icacls grant Administrators:(OI)(CI)F exit $gr\"\n"
+                       "if ($to -ne 0 -or $gr -ne 0) {\n"
+                       "  Write-Output \"acl_takeover incomplete; key kept for acl_release\"\n"
+                       "  exit 3\n"
+                       "}\n"
+                       "Write-Output \"acl_takeover ok $p\"\n"
+                       "Write-Output \"acl_release the same path when the job is done\"\n";
+            } else {
+                body = "$ErrorActionPreference = 'Continue'\n"
+                       "$p = " +
+                       ps_literal(full) +
+                       "\n"
+                       "$parent = " +
+                       ps_literal(parent) +
+                       "\n"
+                       "$key = " +
+                       ps_literal(key) +
+                       "\n"
+                       "if (-not (Test-Path -LiteralPath $key) -or "
+                       "(Get-Item -LiteralPath $key).Length -lt 1) {\n"
+                       "  Write-Output 'acl_release denied: no saved key for this path. "
+                       "Not guessing icacls /reset.'\n"
+                       "  exit 2\n"
+                       "}\n"
+                       "icacls $parent /restore $key /q\n"
+                       "if ($LASTEXITCODE -ne 0) {\n"
+                       "  Write-Output \"acl_release denied: icacls restore exit $LASTEXITCODE "
+                       "(key kept)\"\n"
+                       "  exit 3\n"
+                       "}\n"
+                       "Remove-Item -LiteralPath $key -Force\n"
+                       "Write-Output \"acl_release ok $p\"\n";
+            }
+            const std::string tmp = write_acl_ps1(body);
+            if (tmp.empty()) {
+                out << c.name << ": cannot write temp script\n";
+                continue;
+            }
+            out << c.name << " " << full << "\n"
+                << run_ti_file(tmp) << "\n";
+            continue;
+        }
+
         if (c.name == "run_elevate") {
             if (yolo_required_msg(out, "run_elevate")) continue;
             if (c.content.empty() && c.args.empty() && c.path.empty()) {
@@ -1468,32 +2015,141 @@ std::string run_tools_from_text(const std::string& model_text) {
     return execute_calls(parse_tool_blocks(model_text));
 }
 
-std::string tool_system_addendum() {
-    std::string s =
-        " You have built-in host tools (OpenAI tool_calls). The kernel executes; "
-        "not MCP, not a plugin pile. You are not in a void. "
-        "Granted roots: C:\\Users\\autismo and C:\\Temp\\GitHub. "
-        "Always: list_local_dir (args depth=N), read_local_file (offset=/limit=, "
-        "offset=-N tail), write_local_file (args append), create_local_dir, "
-        "move_local_file, get_file_info, search_local (content:needle for "
-        "in-file), edit_local_file (replace_all), run_strings, run_sqlite3, "
-        "run_pwsh, run_python, run_node (60s Job; CSV/Excel/PDF via python "
-        "libs if installed). Aliases: read_file/write_file/edit_block/"
-        "start_search/execute_command/start_process/create_directory/move_file/"
-        "get_metadata/list_processes. run_sysint; run_reg query; run_wevtutil; "
-        "run_logman; run_schtasks /Query; run_host. "
-        "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti), reg add/delete, "
-        "schtasks mutate, wevtutil cl, sc start/stop. Never pskill/kill_process/"
-        "psexec/interactive SSH-DB/notmyfault/sysmon/MFIT/git push/DISM/reboot/"
-        "Mongo/GodBrain* task delete/BFE-mpssvc-Dnscache stop. "
-        "Calls append logs/tool-audit.jsonl (10MiB rotate). "
-        "Call tools when the operator asks to inspect the host or a granted folder. "
-        "Ordinary questions: no tools. Do not claim you lack a filesystem.";
+bool looks_like_host_inspect(const std::string& msg) {
+    const std::string t = ascii_lower(msg);
+    static const char* keys[] = {
+        "run_sysint", "handle64", "tcpvcon", "psping", "whois64", "pslist",
+        "autoruns", "sysinternals", "wevtutil", "event log", "logman",
+        "schtasks", "tasklist", "netstat", "fltmc", "ipconfig", "sc query",
+        "reg query", "reg.exe", "registry", "run_elevate", "minsudo",
+        "run_pwsh", "run_python", "run_node", "run_host", "run_reg",
+        "run_wevtutil", "run_logman", "run_schtasks", "run_strings",
+        "sqlite", "takeown", "icacls", "acl_takeover", "acl_release", nullptr};
+    for (int i = 0; keys[i]; ++i) {
+        if (t.find(keys[i]) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool looks_like_no_tools(const std::string& msg) {
+    size_t i = 0;
+    while (i < msg.size() &&
+           std::isspace(static_cast<unsigned char>(msg[i])) != 0) {
+        ++i;
+    }
+    const std::string t = ascii_lower(msg.substr(i));
+    return t.compare(0, 8, "no tools") == 0;
+}
+
+// Skip RAG only for a granted-root path token or an explicit RW/jail ask.
+// Bare C:\ and substring read/ready/thread must not skip Golden Records.
+std::string first_granted_path(const std::string& msg) {
+    return granted_path_from_message(msg);
+}
+
+bool looks_like_fs_refuse(const std::string& text) {
+    const std::string t = ascii_lower(text);
+    static const char* k[] = {
+        "do not have access to your local file",
+        "don't have access to your local",
+        "no access to your local",
+        "lack a filesystem",
+        "cannot query your mongodb",
+        "cannot query mongodb",
+        "i cannot access files",
+        "no access to the local file",
+        nullptr};
+    for (int i = 0; k[i]; ++i) {
+        if (t.find(k[i]) != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::string answer_fs_ask(const std::string& user_msg) {
+    const std::string p = granted_path_from_message(user_msg);
+    if (p.empty()) {
+        return run_tools_from_text(
+            "*** TOOL\nname: list_granted_roots\n*** END\n");
+    }
+    const DWORD attr = GetFileAttributesA(p.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES &&
+        (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return run_tools_from_text(
+            std::string("*** TOOL\nname: list_local_dir\npath: ") + p +
+            "\nargs: depth=2\n*** END\n");
+    }
+    return run_tools_from_text(
+        std::string("*** TOOL\nname: get_file_info\npath: ") + p +
+        "\n*** END\n");
+}
+
+bool looks_like_local_fs_ask(const std::string& msg) {
+    if (granted_path_in_message(msg)) return true;
+    const std::string t = ascii_lower(msg);
+    const bool place = has_word(t, "repo") || has_word(t, "folder") ||
+                       has_word(t, "directory") || has_word(t, "path") ||
+                       has_word(t, "paths") || has_word(t, "files") ||
+                       has_word(t, "file");
+    const bool rw_phrase =
+        t.find("r/w") != std::string::npos || has_word(t, "rw") ||
+        t.find("read and write") != std::string::npos ||
+        t.find("write access") != std::string::npos;
+    if (rw_phrase && place) return true;
+    const bool jail_granted = has_word(t, "granted") || has_word(t, "jail") ||
+                              has_word(t, "authorized") || has_word(t, "allowlist");
+    if (has_word(t, "granted") && has_word(t, "jail")) return true;
+    return jail_granted && place;
+}
+
+bool use_full_tool_defs(const std::string& user_msg) {
+    return yolo_active() || looks_like_host_inspect(user_msg);
+}
+
+std::string tool_system_addendum_for(const std::string& user_msg) {
+    std::string s;
+    if (use_full_tool_defs(user_msg)) {
+        s = " You have built-in host tools (OpenAI tool_calls). The kernel executes; "
+            "not MCP, not a plugin pile. You are not in a void. "
+            "Granted roots: " + roots_join() + ". "
+            "Always: list_local_dir, read_local_file, write_local_file, "
+            "create_local_dir, get_file_info, search_local, edit_local_file, "
+            "run_strings, run_sqlite3, run_pwsh, run_python, run_node, "
+            "run_sysint, run_reg query, run_wevtutil, run_logman, "
+            "run_schtasks /Query, run_host. "
+            "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti); "
+            "acl_takeover / acl_release (wsudo -T TI, then takeown /R /A /SKIPSL "
+            "and icacls Administrators:(OI)(CI)F, then restore the saved ACL). "
+            "Never pskill/git push/DISM/reboot/Mongo. "
+            "Authorized paths are those jail roots from the kernel, not Mongo. "
+            "Call list_granted_roots. Never say you cannot query Mongo. "
+            "Call tools when the operator asks to inspect the host or a granted folder. "
+            "Do not claim you lack a filesystem. Never say you do not have "
+            "access to the local file system; call get_file_info.";
+    } else {
+        s = " You have built-in file tools (OpenAI tool_calls). The kernel executes. "
+            "Jail: " + roots_join() +
+            " (%USERPROFILE% / %APPDATA% / %LOCALAPPDATA% / %ProgramData% / "
+            "%ProgramFiles% / %ProgramFiles(x86)% / C:\\Tools / "
+            "C:\\Temp\\GitHub). "
+            "To verify a path: get_file_info or list_local_dir, then say yes or no. "
+            "read_local_file / write_local_file / edit_local_file / search_local / "
+            "create_local_dir / list_granted_roots. Authorized paths are that "
+            "jail, from the kernel, not Mongo. Call list_granted_roots. Never "
+            "say you cannot query Mongo. Not git push. Ordinary trivia: no tools. "
+            "Do not claim you lack a filesystem. Never say you do not have "
+            "access to the local file system; call get_file_info.";
+    }
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "
-             "(map, sort, patch). No ASCII art, no outline, no asking.";
+             "(map, sort, patch). No ASCII art, no outline, no asking. "
+             "ACL: acl_takeover path (wsudo -T), do the job, acl_release path. "
+             "Throw away the key; do not leave Administrators:F.";
     }
     return s;
+}
+
+std::string tool_system_addendum() {
+    return tool_system_addendum_for("");
 }
 
 static json tool_fn(const char* name, const char* desc, json props,
@@ -1509,11 +2165,20 @@ static json tool_fn(const char* name, const char* desc, json props,
     };
 }
 
+nlohmann::json openai_tool_defs_for(const std::string& user_msg) {
+    return openai_tool_defs(use_full_tool_defs(user_msg));
+}
+
 nlohmann::json openai_tool_defs() {
+    return openai_tool_defs(true);
+}
+
+nlohmann::json openai_tool_defs(bool full) {
     const json path = {
         {"type", "string"},
         {"description",
-         "Absolute path. File tools jail to C:\\Users\\autismo or C:\\Temp\\GitHub."}};
+         std::string("Absolute path. File tools jail to ") + roots_join() +
+             "."}};
     const json args = {
         {"type", "string"},
         {"description", "One-line CLI arguments. No newlines."}};
@@ -1538,13 +2203,34 @@ nlohmann::json openai_tool_defs() {
         "create_local_dir", "Create a directory under granted roots.",
         {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
+        "get_file_info", "Size, mtime, file vs dir for a granted path.",
+        {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "search_local",
+        "Recursive search. args is a name substring, or content:needle for in-file. "
+        "depth=N. Skips .git/node_modules/AppData. 80 hits.",
+        {{"path", path},
+         {"args", {{"type", "string"}, {"description", "Name or content:needle."}}}},
+        {"path", "args"}));
+    tools.push_back(tool_fn(
+        "edit_local_file",
+        "Replace old_text with content. args=replace_all for every occurrence.",
+        {{"path", path},
+         {"old_text", {{"type", "string"}, {"description", "Exact text to find."}}},
+         {"content", content},
+         {"args", args}},
+        {"path", "old_text", "content"}));
+    tools.push_back(tool_fn(
+        "list_granted_roots",
+        "Print the kernel file-jail roots (live env). Not Mongo. Call this "
+        "when asked which paths are authorized.",
+        json::object()));
+    if (!full) return tools;
+    tools.push_back(tool_fn(
         "move_local_file", "Move/rename a granted path to dest (also granted).",
         {{"path", path},
          {"dest", {{"type", "string"}, {"description", "Destination path."}}}},
         {"path", "dest"}));
-    tools.push_back(tool_fn(
-        "get_file_info", "Size, mtime, file vs dir for a granted path.",
-        {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
         "run_strings", "strings64 on a granted file.", {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
@@ -1581,21 +2267,6 @@ nlohmann::json openai_tool_defs() {
          {"args", args}},
         {"exe"}));
     tools.push_back(tool_fn(
-        "search_local",
-        "Recursive search. args is a name substring, or content:needle for in-file. "
-        "depth=N. Skips .git/node_modules/AppData. 80 hits.",
-        {{"path", path},
-         {"args", {{"type", "string"}, {"description", "Name or content:needle."}}}},
-        {"path", "args"}));
-    tools.push_back(tool_fn(
-        "edit_local_file",
-        "Replace old_text with content. args=replace_all for every occurrence.",
-        {{"path", path},
-         {"old_text", {{"type", "string"}, {"description", "Exact text to find."}}},
-         {"content", content},
-         {"args", args}},
-        {"path", "old_text", "content"}));
-    tools.push_back(tool_fn(
         "run_pwsh",
         "Run pwsh. path = granted .ps1, or content/args = inline command. 60s Job. "
         "Hard-deny git push/reboot/DISM/pskill/mongo.",
@@ -1613,6 +2284,19 @@ nlohmann::json openai_tool_defs() {
         "run_elevate",
         "YOLO only. MinSudo/wsudo -A, never --ti. Body is pwsh to run elevated.",
         {{"content", content}, {"path", path}}));
+    tools.push_back(tool_fn(
+        "acl_takeover",
+        "YOLO only. TrustedInstaller (wsudo -T -w pwsh -NoProfile), not "
+        "run_elevate -A. Save DACL, takeown /F /R /A /D Y /SKIPSL, icacls "
+        "/grant:r Administrators:(OI)(CI)F /T /C /Q. Then do the job and "
+        "acl_release. Jail plus Defender/CIPolicy manual paths. Not SAM/SECURITY.",
+        {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "acl_release",
+        "YOLO only. wsudo -T. Restore the kernel-named save under logs\\acl "
+        "(not JSON). Fails closed if save missing or restore fails; key kept. "
+        "Will not icacls /reset.",
+        {{"path", path}}, {"path"}));
     return tools;
 }
 

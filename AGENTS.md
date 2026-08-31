@@ -257,13 +257,16 @@ push from the mouth.
 
 Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause the mouth (coli
 and `llama-server`) and `tailscale down` first, launch Steam app 730,
-wait until `CS2.exe` exits, wait 10 minutes, then
+wait until `CS2.exe` exits. The Start-CS2 window then asks: **Y** = done
+for today (start llama now, `last_action=resume-now` so Start/Heal do not
+keep skipping the mouth), **N** or 60s timeout = wait 10 minutes. Then
 `tailscale up --unattended` and Start-GodBrain. Never logout,
 `--reset`, or uninstall Tailscale.
 
 `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is only the backup if CS2 is
-started from Steam Play. Start/Heal skip the mouth while CS2 is running
-or has been gone under 10 minutes.
+started from Steam Play (no prompt; always 10 min). Start/Heal skip the
+mouth while CS2 is running or has been gone under 10 minutes, unless
+`last_action` is `resume-now`.
 
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   mouth (desk default `llama-server`; Colibri is interchangeable). Reserve a
@@ -306,6 +309,12 @@ reads the active RAG graph. Oracle search is verified-only.
 Ordinary Galaxy chat exposes `/observe`, `/vram` (one GPU slot + next
 worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
 `/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, and `/pending`.
+Whole-message `enable_thinking: false` / `enable_thinking: true` is a
+no-GPU desk command (writes `logs/thinking.txt`). Next llama generate
+sends `chat_template_kwargs.enable_thinking`. It is not `/edit` and not
+a model weight switch. `/edit` apply is always thinking-off. Missing
+file = llama.cpp default (on). After unused49, restart llama — the slot
+KV stays poisoned until then.
 
 - `/verify last <why>` and `/reject last <why>` judge the newest on-disk
   Oracle turn.
@@ -336,7 +345,9 @@ worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
 If `logs/mouth.txt` says llama and `:8000` is down, `/api/status` and
 `/brief` kick `scripts\Start-LlamaServer.ps1` via `run_hidden` (skip CS2, skip a
 loading `llama-server.exe`, 5 min cooldown) and report `llama=starting`
-so Galaxy does not wait on the 5 min Watch tick.
+so Galaxy does not wait on the 5 min Watch tick. That starter honors
+`logs/mtp.txt` (`on`/`off`). `-NoDraft` persists off; `-UseDraft` persists
+on. Watch/kernel must not restore MTP after a CUDA IMA fail-closed start.
 
 The Galaxy node panel and `POST /api/judge` are the same judgment path.
 `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after Start-GodBrain.
@@ -345,9 +356,12 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 
 Live `/edit` works on the Gemma 12B IT mouth. Desk default is
 `scripts\Start-LlamaServer.ps1` bartowski Gemma 4 IT **Q6_K_L with MTP**
-when `mtp-gemma-4-12B-it-Q8_0.gguf` is on disk. Hauhau QAT+MTP IMA'd
-Librarian extracts and was removed (different draft). `-NoDraft` disables.
-`scripts\Invoke-MtpSoak.ps1` is the IMA soak (CUDA abort or garbled generate).
+when `mtp-gemma-4-12B-it-Q8_0.gguf` is on disk **and** `logs/mtp.txt` is
+not `off`. Hauhau QAT+MTP IMA'd Librarian extracts and was removed
+(different draft). `-NoDraft` disables and persists `mtp.txt=off`.
+`-UseDraft` persists on. `scripts\Invoke-MtpSoak.ps1` is the IMA soak
+(CUDA abort or garbled generate). Empty llama POST errors say llama-dead
+or llama HTTP N, not Colibri 1200s / GLM paging.
 OBLITERATUS Gemma 4 12B is a named lab switch (`-Obliterated`, v2 Q8_0 on
 `C:\nvme`). Not the Watch default. MTP off unless `-UseDraft`.
 yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
@@ -355,16 +369,27 @@ yuxinlu1 Gemma 4 12B agentic v2 is a gym switch (`-Agentic`, Q6_K on
 
 Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 (`--jinja` is already on; do not pass llama-server `--tools all`, do not
-add Copilot MCP or any MCP server into this repo). This host does not
+add Copilot MCP or any MCP server into this repo). First hop is the
+**file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
+or the ask is host inspect (SysInternals/reg/events/schtasks). A granted-root
+path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
+`%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub`) or an
+explicit r/w / jail ask skips RAG and session dump
+so Gemma can `get_file_info` instead of unused49. Bare `C:\Windows` and
+“read the Heal file” still RTFM. A message that starts with `No tools` skips RAG,
+session dump, and the tools schema so a long advisory prompt can answer
+instead of unused49. Full tool dump is still there for SRE asks. This host does not
 dual-run Copilot as the hands. GodBrain is the replacement: one built-in
 kernel tool surface, not a plugin pile. Gemma 4 emits `tool_calls`;
 llama.cpp folds `role:tool` into Gemma's `tool_responses`. llama-server is
 a swappable mouth, not the product. A GodBrain llama fork is later, only
 if stock ggml gimp or sunsets the tool path. `*** TOOL` text blocks still work as a
-fallback. Sticky under `C:\Users\autismo` and `C:\Temp\GitHub`:
+fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
+`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
+`C:\Temp\GitHub` (Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
 `write_local_file` (append), `create_local_dir`, `move_local_file`,
-`get_file_info`, `search_local` (name or `content:`), `edit_local_file`
+`get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `search_local` (name or `content:`), `edit_local_file`
 (`replace_all`), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
 `run_node`. Excel/PDF/DOCX go through host Python libs, not C++ parsers.
 Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
@@ -377,7 +402,16 @@ MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
 `run_logman query`, `run_schtasks /Query`, `run_host` (`tasklist` `whoami`
 `netstat` `fltmc` `ipconfig` show / `sc query`).
 `/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
-`run_elevate` (MinSudo / `wsudo -A -w`, never `--ti`),
+`run_elevate` (MinSudo / `wsudo -A -w`, never `--ti` / `-T`),
+`acl_takeover` / `acl_release` (the one TI door: `wsudo -T -w pwsh -NoProfile`
+then `takeown /F /R /A /D Y /SKIPSL` and
+`icacls /grant:r Administrators:(OI)(CI)F /T /C /Q`, then restore the
+kernel-named save under `logs\acl` — throw the key; not `/reset`. Save must
+succeed before takeown; restore must succeed before the key is deleted.
+Extra paths from the host manual:
+SystemProfile Windows Defender and `CodeIntegrity\CIPolicies\Active`).
+Heal never launches `wsudo -T`. The NuclearDefenderWipe IFEO/stub/DENY
+SYSTEM lock is not a kernel tool.
 `reg add|delete`, `schtasks /Create|/Change|/Delete|/Run`, `wevtutil cl`,
 `logman start|stop`, `sc start|stop`, `ipconfig /flushdns`. Never:
 `pskill` / `PsExec` / `psshutdown` / `pssuspend` / `pspasswd` /

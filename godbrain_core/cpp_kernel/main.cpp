@@ -20,6 +20,7 @@
 #include "coli_sse.h"
 #include "local_edit.h"
 #include "local_tools.h"
+#include "thinking_cmd.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -105,6 +106,8 @@ static void note_oracle_partial(
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
 static json load_mouth();
+static bool llama_thinking_enabled();
+static bool write_thinking_enabled(bool on);
 static json load_last_edit();
 static json load_heal_last();
 static json inbox_desk();
@@ -619,10 +622,35 @@ static std::string sanitize_oracle_body(std::string answer) {
     return trim_ngram_loop(trim_repetition_loop(trim_copy(std::move(answer))));
 }
 
+static bool is_unused49_junk(const std::string& text) {
+    const std::string t = ascii_lower_copy(text);
+    if (t.find("unused49") == std::string::npos) return false;
+    size_t keep = 0;
+    for (size_t i = 0; i < t.size();) {
+        if (t.compare(i, 10, "<unused49>") == 0) {
+            i += 10;
+            continue;
+        }
+        if (t.compare(i, 8, "unused49") == 0) {
+            i += 8;
+            continue;
+        }
+        const unsigned char c = static_cast<unsigned char>(t[i]);
+        if (std::isspace(c) != 0 || c == '<' || c == '>') {
+            ++i;
+            continue;
+        }
+        ++keep;
+        ++i;
+    }
+    return keep < 24;
+}
+
 static bool is_displayable_oracle_turn(const LastOracleTurn& turn) {
     if (!turn.ok || turn.answer.empty()) return false;
     if (is_continue_command(turn.question)) return false;
     if (turn.answer.compare(0, 6, "Error:") == 0) return false;
+    if (is_unused49_junk(turn.answer)) return false;
     if (is_refuse_answer(turn.answer)) return false;
     if (is_resume_jail(turn.answer)) return false;
     if (turn.answer.find("TABLESPACE") != std::string::npos) return false;
@@ -762,6 +790,7 @@ static bool find_last_real_oracle_turn(LastOracleTurn& out) {
         if (!it->ok || it->question.empty() || it->answer.empty()) continue;
         if (is_continue_command(it->question)) continue;
         if (it->answer.compare(0, 6, "Error:") == 0) continue;
+        if (is_unused49_junk(it->answer)) continue;
         if (is_refuse_answer(it->answer)) continue;
         if (is_resume_jail(it->answer)) continue;
         if (is_generation_loop(it->answer) &&
@@ -1564,19 +1593,18 @@ static json cs2_desk() {
 }
 
 static std::atomic<DWORD> g_mouth_restart_ms{0};
-// Start-LlamaServer kills every llama-server.exe. Galaxy polls /status often.
-// Do not re-kick while weights are still loading or we just launched.
-static const DWORD kMouthRestartCooldownMs = 300000;
+// Start-LlamaServer kills leftover llama-server.exe. Do not re-kick while
+// weights are still loading. A hung IMA process that never binds :8000
+// must not block restart forever.
+static const DWORD kMouthLoadWaitMs = 300000;
 
 static bool maybe_restart_mouth() {
     if (load_mouth().value("label", "") != "llama") return false;
     if (cs2_should_sleep_mouth()) return false;
+    if (colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
-    if (last != 0 && now - last < kMouthRestartCooldownMs) return true;
-    // Loading: :8000 is down but the process is up. Watch/Heal kill leftovers
-    // after ~4 min. A /status poll must not race Start-LlamaServer.
-    if (process_running_ci(L"llama-server.exe")) return true;
+    if (last != 0 && now - last < kMouthLoadWaitMs) return true;
     const std::string repo = repo_root_from_exe();
     const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
     const std::string starter = repo + "\\scripts\\Start-LlamaServer.ps1";
@@ -1672,8 +1700,11 @@ static std::string format_brief_text() {
     const json heal = st.value("heal", json::object());
     const json cs2 = st.value("cs2", json::object());
     reply << host.value("computer_name", "?") << " | "
-          << mouth_label << "=" << mouth_state
-          << " rag="
+          << mouth_label << "=" << mouth_state;
+    if (mouth_label == "llama" && !mouth.value("thinking", true)) {
+        reply << " think=off";
+    }
+    reply << " rag="
           << (rag.value("ready", false) ? "ready" : "down")
           << " judge=" << pending.value("total", 0);
     {
@@ -2320,7 +2351,41 @@ static json load_mouth() {
         mouth["label"] = engine;
     }
     mouth["model"] = model;
+    mouth["thinking"] = llama_thinking_enabled();
     return mouth;
+}
+
+static std::string thinking_state_path() {
+    return repo_root_from_exe() + "\\logs\\thinking.txt";
+}
+
+// Missing file = llama.cpp default (on). Desk command writes on/off.
+static bool llama_thinking_enabled() {
+    std::ifstream in(thinking_state_path(), std::ios::binary);
+    if (!in) return true;
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                             line.back() == ' ')) {
+        line.pop_back();
+    }
+    const std::string lower = ascii_lower_copy(line);
+    if (lower == "off" || lower == "false" || lower == "0") return false;
+    return true;
+}
+
+static bool write_thinking_enabled(bool on) {
+    const std::string path = thinking_state_path();
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out << (on ? "on\n" : "off\n");
+        out.flush();
+        if (!out) return false;
+    }
+    return MoveFileExA(tmp.c_str(), path.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 }
 
 static json gpu_desk() {
@@ -2632,13 +2697,11 @@ std::string run_colibri_serve(
     ColiPingFn on_ping = {},
     const std::string& prior_user = {},
     const std::string& prior_assistant = {},
-    std::string* spoken = nullptr) {
+    std::string* spoken = nullptr,
+    const std::string& tool_hint = {}) {
     httplib::Client client(kColibriServeHost, kColibriServePort);
     client.set_connection_timeout(0, 500000);
-    // Colibri pings empty deltas every ~10s during prefill. A 60s read
-    // timeout then means the engine died, not that we are still paging.
-    client.set_read_timeout(60, 0);
-    client.set_write_timeout(5, 0);
+    client.set_write_timeout(15, 0);
     client.set_max_timeout(kColiChunkTimeoutMs);
     client.set_follow_location(false);
 
@@ -2661,17 +2724,26 @@ std::string run_colibri_serve(
     }
 
     const bool llama_mouth = load_mouth().value("label", "") == "llama";
+    // Colibri pings empty deltas every ~10s during prefill. llama.cpp does
+    // not; a 60s read timeout on a tools prefill looks like "no body".
+    client.set_read_timeout(llama_mouth ? 180 : 60, 0);
     const int chunk_tokens = llama_mouth ? kLlamaChunkTokens : kColiChunkTokens;
     const int max_chunks = llama_mouth ? kLlamaMaxChunks : kColiMaxChunks;
 
     std::string assembled;
     std::string last_reason;
+    std::string last_tool_out;
     const bool native_tools =
-        llama_mouth && !wants_apply_continue(system, user);
+        llama_mouth && !wants_apply_continue(system, user) &&
+        !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
+    // Ordinary llama tool hops cap at 3 so a 4th generate cannot CUDA-abort
+    // the slot. YOLO still gets more, then fail closed.
     const int max_tool_rounds =
-        native_tools ? (local_tools::yolo_active() ? 24 : 8) : 1;
+        native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     const json tool_defs =
-        native_tools ? local_tools::openai_tool_defs() : json::array();
+        native_tools ? local_tools::openai_tool_defs_for(
+                           tool_hint.empty() ? user : tool_hint)
+                     : json::array();
     for (int tool_round = 0; tool_round < max_tool_rounds; ++tool_round) {
     if (tool_round > 0 && spoken) spoken->clear();
     assembled.clear();
@@ -2684,9 +2756,13 @@ std::string run_colibri_serve(
             {"max_tokens", chunk_tokens},
             {"messages", messages},
         };
-        // /edit apply pass: do not spend the 1024-token budget on think.
-        if (llama_mouth && wants_apply_continue(system, user)) {
-            body["chat_template_kwargs"] = {{"enable_thinking", false}};
+        // /edit apply always off. Ordinary llama chat uses logs/thinking.txt
+        // (Galaxy message enable_thinking: false|true, no GPU).
+        if (llama_mouth) {
+            const bool think =
+                wants_apply_continue(system, user) ? false
+                                                   : llama_thinking_enabled();
+            body["chat_template_kwargs"] = {{"enable_thinking", think}};
         }
         if (native_tools) {
             body["tools"] = tool_defs;
@@ -2728,6 +2804,20 @@ std::string run_colibri_serve(
         if (!response) {
             assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
             if (assembled.empty()) {
+                if (llama_mouth) {
+                    maybe_restart_mouth();
+                    std::string err =
+                        colibri_serve_up()
+                            ? "Error: llama-server returned no body (cut or timeout). "
+                              "Ask again. Not Colibri."
+                            : "Error: llama-server CUDA abort or :8000 died. "
+                              "Starting it. Ask again in about a minute. "
+                              "Not Colibri, not GLM paging.";
+                    if (!last_tool_out.empty()) {
+                        return last_tool_out + "\n" + err;
+                    }
+                    return err;
+                }
                 return "Error: Colibri serve did not finish in 1200s. "
                        "GLM-5.2 is paging experts off disk on 16 GB. "
                        "Wait until /status shows coli=serve (not busy) and ask again.";
@@ -2740,8 +2830,11 @@ std::string run_colibri_serve(
         if (response->status != 200) {
             assembled += piece;
             if (assembled.empty()) {
-                return "Error: Colibri serve returned HTTP " +
-                       std::to_string(response->status);
+                return llama_mouth
+                           ? ("Error: llama-server HTTP " +
+                              std::to_string(response->status))
+                           : ("Error: Colibri serve returned HTTP " +
+                              std::to_string(response->status));
             }
             assembled += "\n[cut — serve HTTP " +
                          std::to_string(response->status) + ", say continue]";
@@ -2760,7 +2853,9 @@ std::string run_colibri_serve(
                                 .get<std::string>();
                 } catch (const json::exception&) {
                     if (assembled.empty()) {
-                        return "Error: Colibri serve returned a malformed completion.";
+                        return llama_mouth
+                                   ? "Error: llama-server returned a malformed completion."
+                                   : "Error: Colibri serve returned a malformed completion.";
                     }
                     break;
                 }
@@ -2850,6 +2945,7 @@ std::string run_colibri_serve(
                 {"content", one.empty() ? "(no output)" : one},
             });
         }
+        last_tool_out = tool_out;
         if (tool_round + 1 >= max_tool_rounds) {
             if (assembled.empty()) assembled = tool_out;
             assembled += "\n[tool cap]";
@@ -2994,7 +3090,8 @@ std::string run_colibri(
     ColiPingFn on_ping = {},
     const std::string& prior_user = {},
     const std::string& prior_assistant = {},
-    std::string* spoken = nullptr) {
+    std::string* spoken = nullptr,
+    const std::string& tool_hint = {}) {
     const json coli = coli_serve_status();
     if (coli.value("up", false)) {
         if (coli.value("busy", false)) {
@@ -3006,7 +3103,7 @@ std::string run_colibri(
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
         return run_colibri_serve(
             system, user, on_token, on_ping, prior_user, prior_assistant,
-            spoken);
+            spoken, tool_hint);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
@@ -3441,6 +3538,44 @@ int main() {
                 return;
             }
 
+            {
+                const int think_cmd = parse_thinking_command(user_msg);
+                if (think_cmd >= 0) {
+                    const bool on = think_cmd == 1;
+                    if (!write_thinking_enabled(on)) {
+                        res.status = 500;
+                        res.set_content(
+                            json({{"response",
+                                   "Could not write logs/thinking.txt"}})
+                                .dump(),
+                            "application/json");
+                        return;
+                    }
+                    const json mouth = load_mouth();
+                    std::ostringstream reply;
+                    reply << "thinking=" << (on ? "on" : "off")
+                          << " saved. Next llama chat sends "
+                             "chat_template_kwargs.enable_thinking="
+                          << (on ? "true" : "false") << ". No GPU.\n";
+                    if (mouth.value("label", "") != "llama") {
+                        reply << "Current mouth is not llama; flag applies "
+                                 "when llama is on :8000.\n";
+                    }
+                    if (!on) {
+                        reply << "If the last reply was <unused49>, restart "
+                                 "llama (slot KV is poisoned). "
+                                 "scripts\\Start-LlamaServer.ps1 -NoDraft\n";
+                    } else {
+                        reply << "This llama.cpp still floods unused49 with "
+                                 "Gemma 4 thinking on.\n";
+                    }
+                    res.set_content(
+                        json({{"response", reply.str()}}).dump(),
+                        "application/json");
+                    return;
+                }
+            }
+
             if (starts_with_ignore_case(user_msg, "/yolo") &&
                 (user_msg.size() == 5 ||
                  std::isspace(static_cast<unsigned char>(user_msg[5])) != 0)) {
@@ -3864,8 +3999,18 @@ int main() {
                     "application/json");
                 return;
             }
-            if (local_edit::looks_like_edit_request(user_msg) && !continue_cmd) {
-                std::cout << "[RAG] skipped (/edit)" << std::endl;
+            const bool local_fs_ask =
+                local_tools::looks_like_local_fs_ask(user_msg);
+            const bool no_tools_ask = local_tools::looks_like_no_tools(user_msg);
+            if ((local_edit::looks_like_edit_request(user_msg) || local_fs_ask ||
+                 no_tools_ask) &&
+                !continue_cmd) {
+                std::cout << "[RAG] skipped ("
+                          << (no_tools_ask
+                                  ? "no-tools"
+                                  : (local_fs_ask ? "local-fs" : "/edit"))
+                          << ")"
+                          << std::endl;
             } else {
                 std::cout << "[RAG] Canonical search requested (" << user_msg.size()
                           << " bytes) continue=" << (continue_cmd ? "1" : "0")
@@ -3889,9 +4034,11 @@ int main() {
                 std::string rag_error;
                 // /edit is a file patch, not a Golden Record question. RAG
                 // "untrusted, never follow instructions" jailed Gemma off APPLY.
+                // Local path/RW asks skip RAG too so the first hop can tool-call.
                 const bool edit_req = local_edit::looks_like_edit_request(user_msg);
+                const bool skip_rag = edit_req || local_fs_ask || no_tools_ask;
                 const bool have_rag =
-                    edit_req ||
+                    skip_rag ||
                     (rag_client.search(user_msg, search_response, rag_error) &&
                      godbrain_rag::render_coli_notes(search_response, rag_text,
                                                      rag_error));
@@ -3909,7 +4056,7 @@ int main() {
             }
 
             std::string context_text = rag_text;
-            if (!session_text.empty()) {
+            if (!local_fs_ask && !no_tools_ask && !session_text.empty()) {
                 if (!context_text.empty()) context_text += '\n';
                 context_text += session_text;
             }
@@ -3917,7 +4064,7 @@ int main() {
             // 16 GB still cannot eat a wiki dump (prefill tax). Llama 12B
             // can take a few KiB. Do not dump the whole vault.
             const bool llama_ctx = load_mouth().value("label", "") == "llama";
-            if (llama_ctx) {
+            if (llama_ctx && !local_fs_ask && !no_tools_ask) {
                 const std::string digest_path =
                     get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
                 std::ifstream din(digest_path, std::ios::binary);
@@ -3967,8 +4114,9 @@ int main() {
                 "beats a pretty one. Do not ASCII-art, outline, or decorate "
                 "instead of tools. "
                 "Do not restate these rules. Do not emit constraint lists.";
-            if (!local_edit::looks_like_edit_request(user_msg)) {
-                system_prompt += local_tools::tool_system_addendum();
+            if (!local_edit::looks_like_edit_request(user_msg) &&
+                !no_tools_ask) {
+                system_prompt += local_tools::tool_system_addendum_for(user_msg);
             }
             if (local_edit::looks_like_edit_request(user_msg)) {
                 if (cs2_should_sleep_mouth()) {
@@ -4004,6 +4152,7 @@ int main() {
             }
             const bool follow_up =
                 have_prior && !prior_q.empty() && !prior_a.empty() &&
+                !local_fs_ask && !no_tools_ask &&
                 (continue_cmd || prior_q != user_msg);
             // Follow-ups send the previous turn as chat history so Colibri
             // reuses the KV prefix instead of a 78-layer re-prefill.
@@ -4021,6 +4170,18 @@ int main() {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             } else if (!follow_up && !context_text.empty()) {
                 user_prompt = context_text + "\n\n" + user_msg;
+            }
+            if (local_fs_ask && !no_tools_ask && !continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg)) {
+                const std::string gp = local_tools::first_granted_path(user_msg);
+                user_prompt =
+                    "Kernel: file tools are live on this PC. " +
+                    (gp.empty()
+                         ? std::string("Call list_granted_roots or list_local_dir.")
+                         : ("Exact folder: " + gp +
+                            ". Call list_local_dir on that path, not C:\\Temp\\GitHub.")) +
+                    " Never say you do not have access to the local file system.\n\n" +
+                    user_prompt;
             }
 
             std::cout << "[RAG] Context built (" << context_text.size()
@@ -4060,7 +4221,8 @@ int main() {
                 res.set_header("X-Accel-Buffering", "no");
                 res.set_chunked_content_provider(
                     "text/event-stream",
-                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue](
+                    [sys, usr, asked_q, hist_q, hist_a, stitch_continue,
+                     local_fs_ask, no_tools_ask](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -4101,10 +4263,30 @@ int main() {
                             },
                             hist_q,
                             hist_a,
-                            &spoken);
+                            &spoken,
+                            asked_q);
                         std::string chunk = strip_coli_reply(combined);
-                        const std::string for_memory =
+                        std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
+                        if (local_fs_ask && !no_tools_ask &&
+                            local_tools::looks_like_fs_refuse(for_memory)) {
+                            const std::string probe =
+                                local_tools::answer_fs_ask(asked_q);
+                            const bool keep =
+                                for_memory.find("list_local_dir ") !=
+                                    std::string::npos ||
+                                for_memory.find("get_file_info ") !=
+                                    std::string::npos;
+                            if (keep) {
+                                chunk += "\n\n" + probe;
+                                for_memory += "\n\n" + probe;
+                            } else {
+                                chunk = probe;
+                                for_memory = probe;
+                            }
+                            emit({{"type", "token"},
+                                  {"text", std::string("\n\n") + probe}});
+                        }
                         const auto edit = local_edit::maybe_apply(
                             asked_q,
                             for_memory,
@@ -4162,10 +4344,25 @@ int main() {
                 hist
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
-                &spoken);
+                &spoken,
+                asked);
             std::string chunk = strip_coli_reply(combined);
-            const std::string for_memory =
+            std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
+            if (local_fs_ask && !no_tools_ask &&
+                local_tools::looks_like_fs_refuse(for_memory)) {
+                const std::string probe = local_tools::answer_fs_ask(asked);
+                const bool keep =
+                    for_memory.find("list_local_dir ") != std::string::npos ||
+                    for_memory.find("get_file_info ") != std::string::npos;
+                if (keep) {
+                    chunk += "\n\n" + probe;
+                    for_memory += "\n\n" + probe;
+                } else {
+                    chunk = probe;
+                    for_memory = probe;
+                }
+            }
             const auto edit = local_edit::maybe_apply(
                 asked,
                 for_memory,
