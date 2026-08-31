@@ -3313,8 +3313,10 @@ std::string run_colibri_serve(
         }
     }
     if (spoken && spoken->empty()) *spoken = assembled;
-    save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
-               chain_hops);
+    if (chain_hops > 0 || !tool_ledger.empty()) {
+        save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
+                   chain_hops);
+    }
     {
         std::ofstream dbg(
             (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
