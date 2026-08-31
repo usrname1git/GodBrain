@@ -131,7 +131,9 @@ type SkillVerificationRun struct {
 	SkillName           string             `bson:"skill_name" json:"skill_name"`
 	OriginNodeID        string             `bson:"origin_node_id" json:"origin_node_id"`
 	FixtureID           string             `bson:"fixture_id" json:"fixture_id"`
+	SuiteID             string             `bson:"suite_id,omitempty" json:"suite_id,omitempty"`
 	VerificationProfile string             `bson:"verification_profile" json:"verification_profile"`
+	VerificationVersion string             `bson:"verification_version,omitempty" json:"verification_version,omitempty"`
 	EnvironmentHash     string             `bson:"environment_hash,omitempty" json:"environment_hash,omitempty"`
 	Result              string             `bson:"result" json:"result"`
 	Checks              map[string]string  `bson:"checks,omitempty" json:"checks,omitempty"`

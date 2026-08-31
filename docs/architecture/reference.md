@@ -62,10 +62,11 @@ never changes; only status does.
 | `GET` | `/api/pending` | None on loopback | Candidate Oracle, candidate host, newest unverified cards (skip `kind=concept` and Heal-loop labels); writes `logs/last-pending.json` |
 | `GET` | `/api/last` | None on loopback | On-disk Oracle glance (no mouth); writes `logs/last-oracle.txt` |
 | `GET` | `/api/last-edit` | None on loopback | Last local-edit result (no GPU); writes `logs/last-edit.txt` |
+| `GET` | `/api/events` | None on loopback | Tail of `logs/core-events.jsonl` (no GPU); writes `logs/last-events.txt` |
 | `GET` | `/api/vram` | None on loopback | One GPU slot + next worker size; writes `logs/last-vram.json` |
 | `GET` | `/api/doors` | None on loopback | Loopback and Tailscale URLs; chat stays loopback-only |
 | `GET` | `/api/desk` | None on loopback | Desk health used by `Test-GodBrainDesk.ps1` |
-| `POST` | `/api/remember` | Bearer if token set | Save a candidate idea |
+| `POST` | `/api/remember` | Bearer if token set | Save a candidate idea, or Brave selected-text evidence (`title`/`url`/`selected`) as untrusted `browser_selection` |
 | `POST` | `/api/librarian` | Bearer if token set | Distill `text` via live `:8000`; fail-closed if CS2 sleeping, mouth busy, or `:8000` down |
 | `POST` | `/api/observe` | Bearer if token set | Host inventory (Heal each tick; unchanged is idempotent) |
 | `POST` | `/api/truth` | Bearer if token set | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
@@ -345,6 +346,9 @@ execution — which this host is not doing.
 | `logs/last-desk-test.json` | `Test-GodBrainDesk.ps1` |
 | `logs/last-sre-diagnose.txt` | Heal `sre_surgeon --diagnose` |
 | `logs/last-skill-lab.json` | `Verify-SkillLab.ps1` |
+| `logs/core-events.jsonl` | Kernel no-GPU door snapshots (brief/pending/heal/vram/chain/edit) |
+| `logs/last-events.txt` | GET `/api/events` glance |
+| `logs/last-core-gate.json` | `scripts\Test-GodBrainCore.ps1` |
 | `logs/coli-model.txt` | Colibri snapshot pin |
 | `logs/cs2-pause.json` | CS2 pause gate |
 | `logs/godbrain-logon.log` | `Start-GodBrain.ps1` |

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "GodBrain Sovereign Uplink",
-  "version": "1.1",
-  "description": "Direct RAG pipeline to the local GodBrain Colibri engine.",
+  "version": "1.2",
+  "description": "Loopback GodBrain uplink. Selected text is untrusted evidence.",
   "action": {
     "default_popup": "popup.html"
   },

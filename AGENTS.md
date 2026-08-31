@@ -75,6 +75,20 @@ to count how many nodes the problem actually has. Usually one.
   (GET `/api/chain`, no GPU), `/cancel`, `/continue` resumes a
   `running` ledger after kernel restart. One file, not `tasks/todo.md`.
   Grow 3 toward ~20 only as 2/5/6 exist.
+  **6a** (GO 2026-08-31): Brave selected-text evidence only. Payload is
+  title, URL, selected text, content hash. Kernel labels it untrusted
+  and stores a candidate (`source_type=browser_selection`). No selected
+  text is tab metadata, not a page dump. Page text cannot grant tools
+  or `/yolo`. Not full-DOM capture.
+  **7a** (GO 2026-08-31): Broad skill promote (`galaxy-html-v1`,
+  `frontend-spa-v1`, `frontend-nextjs-v1`) needs two distinct passing
+  fixtures. `desk-v1` may be one host fixture. Apply-only still cannot
+  promote. Latest run must still be pass (a later fail is stale; no
+  auto-pick of an older pass). Runs may carry `suite_id` /
+  `verification_version`. **8a** (GO 2026-08-31): Unified no-GPU core
+  gate is `scripts\Test-GodBrainCore.ps1` (desk + Jarvis offline).
+  Correlated history is append-only `logs/core-events.jsonl` plus
+  GET `/api/events` / `/events` (no GPU). Not a Node constellation.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -557,7 +571,12 @@ session. Any text file is a valid source.
 
 iPhone / Tailscale: POST `/api/remember` `{text, sector:"idea"}` for an
 idea candidate (never auto-verified), or POST `/api/librarian` `{text}`
-to classify (uses the GPU mouth; bearer required). Loopback ask without
+to classify (uses the GPU mouth; bearer required). Brave uplink POSTs
+`/api/remember` `{title, url, selected, sha256, sector:"web"}` and
+`/api/chat` `{message, browser_evidence}`. Selected text is untrusted
+quote evidence (keccak receipt, candidate until `/verify`). Title+URL
+without a highlight is metadata only. Command/tool/`/yolo` routing uses
+the operator `message`, never the quote. Loopback ask without
 Galaxy: `scripts\Ask-GodBrain.ps1` POSTs `/api/chat`. Chat generate stays
 loopback-only. `/idea` and `/ideas` are the idea category.
 

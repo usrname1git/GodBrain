@@ -23,6 +23,7 @@
 #include "local_tools.h"
 #include "thinking_cmd.h"
 #include "tool_round.h"
+#include "browser_evidence.h"
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
@@ -88,6 +89,7 @@ static void handle_heal(const httplib::Request&, httplib::Response&);
 static void handle_sre(const httplib::Request&, httplib::Response&);
 static void handle_last_edit(const httplib::Request&, httplib::Response&);
 static void handle_chain(const httplib::Request&, httplib::Response&);
+static void handle_events(const httplib::Request&, httplib::Response&);
 static void handle_cancel_chain(const httplib::Request&, httplib::Response&);
 static json load_chain();
 static json pending_body();
@@ -1056,23 +1058,60 @@ static json kernel_status_body() {
     };
 }
 
+static browser_evidence::Evidence parse_browser_evidence(const json& payload,
+                                                         bool top_level) {
+    json src = json::object();
+    if (payload.contains("browser_evidence") &&
+        payload["browser_evidence"].is_object()) {
+        src = payload["browser_evidence"];
+    } else if (top_level) {
+        src = payload;
+    } else {
+        return {};
+    }
+    auto str = [&](const char* key) -> std::string {
+        if (src.contains(key) && src[key].is_string()) {
+            return src[key].get<std::string>();
+        }
+        return "";
+    };
+    browser_evidence::Evidence e;
+    e.title = str("title");
+    e.url = str("url");
+    e.selected = str("selected");
+    if (e.selected.empty()) e.selected = str("selected_text");
+    e.client_sha256 = str("sha256");
+    if (e.client_sha256.empty()) e.client_sha256 = str("content_hash");
+    browser_evidence::normalize(e);
+    return e;
+}
+
 static void handle_remember(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
-        std::string text = payload.value(
-            "text", payload.value("message", payload.value("idea", "")));
-        if (payload.contains("title") || payload.contains("url")) {
-            std::ostringstream composed;
-            if (payload.contains("title")) composed << payload["title"].get<std::string>() << '\n';
-            if (payload.contains("url")) composed << payload["url"].get<std::string>() << '\n';
-            if (!text.empty()) composed << text;
-            text = composed.str();
+        const browser_evidence::Evidence ev = parse_browser_evidence(payload, true);
+        std::string text;
+        std::string source_type = "operator_thought";
+        std::string sector = payload.value("sector", "operator");
+        if (browser_evidence::has_quote(ev) || browser_evidence::has_tab(ev)) {
+            text = browser_evidence::format_remember_body(ev);
+            source_type = browser_evidence::source_type_for(ev);
+            if (!payload.contains("sector")) sector = "web";
+        } else {
+            text = payload.value(
+                "text", payload.value("message", payload.value("idea", "")));
         }
         json stored = memory::save_thought({
             {"content", text},
-            {"sector", payload.value("sector", "operator")},
+            {"sector", sector},
+            {"source_type", source_type},
         });
+        if (browser_evidence::has_quote(ev) || browser_evidence::has_tab(ev)) {
+            stored["untrusted"] = true;
+            if (!ev.keccak.empty()) stored["keccak"] = ev.keccak;
+            if (ev.truncated) stored["truncated"] = true;
+        }
         res.set_content(stored.dump(), "application/json");
     } catch (const json::exception&) {
         res.status = 400;
@@ -1446,6 +1485,10 @@ static void attach_shortcut_routes(httplib::Server& server) {
         if (!write_authorized(req, res)) return;
         handle_chain(req, res);
     });
+    server.Get("/api/events", [](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        handle_events(req, res);
+    });
     server.Post("/api/remember", handle_remember);
     server.Post("/api/librarian", handle_librarian);
     server.Post("/api/observe", handle_observe);
@@ -1619,6 +1662,62 @@ static std::string utc_stamp() {
     return std::string(iso);
 }
 
+static std::string core_events_path() {
+    return repo_root_from_exe() + "\\logs\\core-events.jsonl";
+}
+
+static std::mutex g_core_events_mu;
+
+static void append_core_event(const std::string& kind, const std::string& detail) {
+    if (kind.empty()) return;
+    std::lock_guard<std::mutex> lock(g_core_events_mu);
+    const std::string dir = repo_root_from_exe() + "\\logs";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    const std::string path = core_events_path();
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad)) {
+        ULARGE_INTEGER sz;
+        sz.LowPart = fad.nFileSizeLow;
+        sz.HighPart = fad.nFileSizeHigh;
+        if (sz.QuadPart > 256ull * 1024ull) {
+            const std::string bak = path + ".1";
+            DeleteFileA(bak.c_str());
+            MoveFileA(path.c_str(), bak.c_str());
+        }
+    }
+    json row = {
+        {"at", utc_stamp()},
+        {"kind", kind.substr(0, 32)},
+        {"detail", detail.substr(0, 240)},
+    };
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    if (out) out << row.dump() << "\n";
+}
+
+static std::vector<json> load_core_event_tail(size_t n) {
+    std::lock_guard<std::mutex> lock(g_core_events_mu);
+    std::vector<json> all;
+    std::ifstream in(core_events_path(), std::ios::binary);
+    if (!in) return all;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        try {
+            json parsed = json::parse(line);
+            if (!parsed.is_object()) continue;
+            all.push_back(parsed);
+        } catch (const json::exception&) {
+        }
+        if (all.size() > 200) {
+            all.erase(all.begin(), all.begin() + static_cast<int>(all.size() - 200));
+        }
+    }
+    if (all.size() > n) {
+        all.erase(all.begin(), all.begin() + static_cast<int>(all.size() - n));
+    }
+    return all;
+}
+
 static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops) {
     json prev;
@@ -1656,6 +1755,8 @@ static void save_chain(const std::string& goal, const std::string& ledger,
     }
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    append_core_event("chain", doc.value("status", "") + " hops=" +
+                                   std::to_string(hops));
 }
 
 static json load_chain() {
@@ -1936,6 +2037,7 @@ static std::string format_brief_text() {
     }
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    append_core_event("brief", text.substr(0, 120));
     return text;
 }
 
@@ -1973,6 +2075,7 @@ static void handle_vram(const httplib::Request&, httplib::Response& res) {
     }
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    append_core_event("vram", plan.value("mouth_label", "gpu"));
     res.set_content(body.dump(), "application/json");
 }
 
@@ -2086,6 +2189,40 @@ static void write_chain_glance(httplib::Response& res, json body) {
 
 static void handle_chain(const httplib::Request&, httplib::Response& res) {
     write_chain_glance(res, load_chain());
+}
+
+static void handle_events(const httplib::Request&, httplib::Response& res) {
+    const auto tail = load_core_event_tail(12);
+    std::ostringstream reply;
+    reply << "events=" << tail.size();
+    if (!tail.empty()) {
+        const json& last = tail.back();
+        reply << " last=" << last.value("kind", "?") << "/"
+              << last.value("at", "");
+        for (const auto& row : tail) {
+            reply << "\n  " << row.value("at", "") << " "
+                  << row.value("kind", "?") << " "
+                  << clip_pending_line(row.value("detail", ""), 80);
+        }
+    }
+    const std::string text = reply.str();
+    json body = {
+        {"response", text},
+        {"count", static_cast<int>(tail.size())},
+        {"items", tail},
+    };
+    const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-events.txt";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << text;
+            out.flush();
+        }
+    }
+    MoveFileExA(tmp.c_str(), path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    res.set_content(body.dump(), "application/json");
 }
 
 static void handle_cancel_chain(const httplib::Request&, httplib::Response& res) {
@@ -2258,6 +2395,7 @@ static json pending_body() {
     }
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    append_core_event("pending", "judge=" + std::to_string(items.size()));
     return body;
 }
 
@@ -2477,6 +2615,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         {"last_edit", lb + "/api/last-edit"},
         {"host_snap", lb + "/api/host-snap"},
         {"chain", lb + "/api/chain"},
+        {"events", lb + "/api/events"},
         {"remember", lb + "/api/remember"},
         {"librarian", lb + "/api/librarian"},
         {"observe", lb + "/api/observe"},
@@ -2504,6 +2643,7 @@ static void handle_doors(const httplib::Request&, httplib::Response& res) {
         ts["last_edit"] = base + "/api/last-edit";
         ts["host_snap"] = base + "/api/host-snap";
         ts["chain"] = base + "/api/chain";
+        ts["events"] = base + "/api/events";
         ts["remember"] = base + "/api/remember";
         ts["librarian"] = base + "/api/librarian";
         ts["observe"] = base + "/api/observe";
@@ -2805,6 +2945,7 @@ static void handle_heal(const httplib::Request&, httplib::Response& res) {
     }
     MoveFileExA(tmp.c_str(), path.c_str(),
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    append_core_event("heal", text.substr(0, 120));
     res.set_content(heal.dump(), "application/json");
 }
 
@@ -3672,6 +3813,10 @@ int main() {
         set_cors(req, res);
         handle_chain(req, res);
     });
+    svr.Get("/api/events", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_events(req, res);
+    });
     svr.Get("/api/pending", [&](const httplib::Request& req, httplib::Response& res) {
         handle_pending(req, res);
     });
@@ -3714,6 +3859,10 @@ int main() {
         try {
             json payload = json::parse(req.body);
             std::string user_msg = payload.value("message", "");
+            const browser_evidence::Evidence ev =
+                parse_browser_evidence(payload, false);
+            const std::string evidence_block =
+                browser_evidence::format_prompt_block(ev);
             
             // Check if it's a kernel command directly. This is the deliberately
             // powerful arbitrary-command / self-modification surface, so it is
@@ -3891,6 +4040,13 @@ int main() {
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
                 handle_chain(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/events") &&
+                (user_msg.size() == 7 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[7])) != 0)) {
+                handle_events(req, res);
                 return;
             }
 
@@ -4652,6 +4808,10 @@ int main() {
                     }
                 }
             }
+            if (!evidence_block.empty() && !continue_cmd &&
+                !local_edit::looks_like_edit_request(user_msg)) {
+                user_prompt += "\n\n" + evidence_block;
+            }
             // Explicit list/r/w/jail: kernel listing is the answer. Analysis
             // over a named folder uses tools; the kernel flattens results
             // into a fresh llama request (no role:tool KV reuse).
@@ -4818,6 +4978,11 @@ int main() {
                             chunk += "\n\n";
                             chunk += edit.report;
                             emit({{"type", "token"}, {"text", "\n\n" + edit.report}});
+                            append_core_event(
+                                "edit",
+                                edit.rolled_back
+                                    ? "rolled"
+                                    : (edit.applied ? "done" : "fail"));
                         }
                         std::string mem = for_memory;
                         if (edit.attempted) {
@@ -4896,6 +5061,10 @@ int main() {
             if (edit.attempted) {
                 chunk += "\n\n";
                 chunk += edit.report;
+                append_core_event(
+                    "edit",
+                    edit.rolled_back ? "rolled"
+                                     : (edit.applied ? "done" : "fail"));
             }
             std::string mem = for_memory;
             if (edit.attempted) {

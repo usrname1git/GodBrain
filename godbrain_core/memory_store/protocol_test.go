@@ -36,11 +36,38 @@ func TestValidateSkillExtractedAndRuns(t *testing.T) {
 		SkillName:           "build-dashboard-shell",
 		OriginNodeID:        "0123456789abcdef01234567",
 		FixtureID:           "dashboard-shell-v1",
+		SuiteID:             "frontend-spa-suite-v1",
 		VerificationProfile: "frontend-spa-v1",
+		VerificationVersion: "v1",
 		Result:              SkillRunPassed,
 		Reasoning:           "skill lab npm run build",
 	}); err != nil {
 		t.Fatalf("spa lab profile rejected: %v", err)
+	}
+	if !suiteRequiredProfile("galaxy-html-v1") ||
+		!suiteRequiredProfile("frontend-spa-v1") ||
+		suiteRequiredProfile("desk-v1") {
+		t.Fatalf("suite required profiles")
+	}
+	if currentPassingFixtureCount([]SkillVerificationRun{
+		{FixtureID: "a", Result: SkillRunPassed},
+		{FixtureID: "a", Result: SkillRunPassed},
+		{FixtureID: "b", Result: SkillRunFailed},
+	}) != 1 {
+		t.Fatalf("same fixture twice is not a suite")
+	}
+	if currentPassingFixtureCount([]SkillVerificationRun{
+		{FixtureID: "a", Result: SkillRunFailed},
+		{FixtureID: "a", Result: SkillRunPassed},
+		{FixtureID: "b", Result: SkillRunPassed},
+	}) != 1 {
+		t.Fatalf("later fail on A drops A; leftover pass must not count")
+	}
+	if currentPassingFixtureCount([]SkillVerificationRun{
+		{FixtureID: "a", Result: SkillRunPassed},
+		{FixtureID: "b", Result: SkillRunPassed},
+	}) != 2 {
+		t.Fatalf("two passing fixtures")
 	}
 	badProfile := RecordSkillRunRequest{
 		Command:             RecordSkillRunCommand,

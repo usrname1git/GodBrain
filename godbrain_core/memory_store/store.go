@@ -31,6 +31,7 @@ var (
 	ErrSkillApplyOnlyProfile     = errors.New("apply-only verification cannot promote a skill")
 	ErrSkillContentMismatch      = errors.New("promoted content must match the origin node")
 	ErrSkillProfileMismatch      = errors.New("verification_profile does not match the passing run")
+	ErrSkillSuiteRequired        = errors.New("broad skill needs passing runs on two fixtures")
 	ErrTooManyExtractedSkills    = errors.New("skills_extracted exceeds the cap")
 	ErrKnowledgeNodeNotFound     = errors.New("knowledge node not found")
 	ErrJudgmentIDRequired        = errors.New("judgment id is required")

@@ -224,6 +224,25 @@ func TestPromoteSkillRequiresPassingRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record passing run: %v", err)
 	}
+	_, err = store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0", "galaxy-html-v1")
+	if !errors.Is(err, memorystore.ErrSkillSuiteRequired) {
+		t.Fatalf("one galaxy fixture must not promote, got %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "build-galaxy-glance",
+		OriginNodeID:        nodeID.Hex(),
+		FixtureID:           "galaxy-host-card-v1",
+		SuiteID:             "galaxy-html-suite-v1",
+		VerificationProfile: "galaxy-html-v1",
+		Result:              memorystore.SkillRunPassed,
+		Checks:              map[string]string{"overlay": "passed"},
+		Reasoning:           "host card overlay still paints",
+	})
+	if err != nil {
+		t.Fatalf("record second galaxy fixture: %v", err)
+	}
 	skill, err := store.PromoteSkill(ctx, "build-galaxy-glance", content, nodeID.Hex(), "v1", originHash, "1.0", "galaxy-html-v1")
 	if err != nil {
 		t.Fatalf("promote after passing run: %v", err)
@@ -279,6 +298,19 @@ func TestPromoteSkillRequiresPassingRun(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("record content-lock run: %v", err)
+	}
+	_, err = store.RecordSkillVerificationRun(ctx, memorystore.RecordSkillRunRequest{
+		Command:             memorystore.RecordSkillRunCommand,
+		SkillName:           "content-lock",
+		OriginNodeID:        mismatchNode.Hex(),
+		FixtureID:           "lab-docs",
+		SuiteID:             "frontend-spa-suite-v1",
+		VerificationProfile: "frontend-spa-v1",
+		Result:              memorystore.SkillRunPassed,
+		Reasoning:           "second spa fixture passed with docs",
+	})
+	if err != nil {
+		t.Fatalf("record content-lock second fixture: %v", err)
 	}
 	_, err = store.PromoteSkill(ctx, "content-lock", "unrelated published text", mismatchNode.Hex(), "v1", mismatchHash, "1.0", "")
 	if !errors.Is(err, memorystore.ErrSkillContentMismatch) {
