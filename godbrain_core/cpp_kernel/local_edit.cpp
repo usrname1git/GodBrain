@@ -24,6 +24,9 @@
 #endif
 
 namespace local_edit {
+
+static std::string g_verify_script_override;
+
 namespace {
 
 using json = nlohmann::json;
@@ -156,7 +159,10 @@ CheckOutcome run_edit_check(const std::vector<std::string>& edited) {
     }
     out.profile = joined.str();
     const std::string root = repo_root();
-    const std::string script = root + "\\scripts\\Verify-LocalEdit.ps1";
+    const std::string script =
+        g_verify_script_override.empty()
+            ? (root + "\\scripts\\Verify-LocalEdit.ps1")
+            : g_verify_script_override;
     if (root.empty() || GetFileAttributesA(script.c_str()) == INVALID_FILE_ATTRIBUTES) {
         out.detail = "missing Verify-LocalEdit.ps1";
         return out;
@@ -795,6 +801,10 @@ std::string check_profile_for(const std::string& rel) {
     return check_profile_for_impl(rel);
 }
 
+void set_verify_script_for_test(const std::string& path) {
+    g_verify_script_override = path;
+}
+
 bool apply_still_open(const std::string& text) {
     const size_t apply_sp = text.rfind("*** APPLY");
     const size_t apply_t = text.rfind("***APPLY");
@@ -916,12 +926,13 @@ Result maybe_apply(
                              (check.ok ? "ok" : "fail") + " " + check.detail +
                              "\n";
         }
-        if (check.ran && !check.ok) {
+        if (!check.ran || !check.ok) {
+            result.applied = false;
             if (restore_originals(applied.originals)) {
-                result.applied = false;
                 result.rolled_back = true;
                 result.after_hash = result.before_hash;
-                result.report += "rolled back (check failed)\n";
+                result.report += check.ran ? "rolled back (check failed)\n"
+                                           : "rolled back (check did not run)\n";
             } else {
                 result.report += "rollback write failed\n";
             }

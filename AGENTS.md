@@ -62,11 +62,15 @@ to count how many nodes the problem actually has. Usually one.
   if an AGENTS.md dump unused49's). **5a** `/edit` content-hash +
   Galaxy preview + txn rollback (not a 7-step ceremony): Keccak of
   the file before apply; last-edit/Galaxy show path+hash+hunk;
-  Verify-LocalEdit fail restores the original bytes. **4a**
+  Verify-LocalEdit fail restores the original bytes. A missing
+  verifier also restores (fail-closed; check did not run). **4a**
   `repo_map` / `changed_context` from git + nearest README (not a
   symbol graph in Mongo). Analysis asks seed and fallback Z from
   that map — a technical note, not a truncated 10-row `list_local_dir`.
-  Item 1 chain is flatten hops + `logs/last-chain.json`. Item 2
+  Item 1 chain is flatten hops + `logs/last-chain.json`. Hops
+  before the last keep the OpenAI tools schema even after the
+  ledger is non-empty; the last flatten prompt says answer Z,
+  do not call tools. Item 2
   durable ledger: 12-char `id`, `running|done|cancelled`, `/chain`
   (GET `/api/chain`, no GPU), `/cancel`, `/continue` resumes a
   `running` ledger after kernel restart. One file, not `tasks/todo.md`.
@@ -270,7 +274,8 @@ writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
 or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
 apply, `scripts\Verify-LocalEdit.ps1` runs a **bounded** check by path
 (PowerShell parse, kernel file non-empty/NUL check, memory-store `go test -short`,
-Galaxy HTML markers, or `librarian --self-test`). Receipt stays
+Galaxy HTML markers, or `librarian --self-test`). If that script is
+missing or the check never runs, originals are restored. Receipt stays
 `verification_profile=local-edit-apply-v1` and `skill_promote_eligible=false`.
 `local_edit_test` applies a real fixture file offline (no GPU). Never git
 push from the mouth.
@@ -403,7 +408,9 @@ is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
 `cache_prompt` false — never `role:tool` back into the llama KV (that
 is the CUDA IMA). Chain: after each execute, flatten into a fresh user turn
 (`cache_prompt` false, never `role:tool`). Non-YOLO cap 3 (last round
-speak-only). `read_local_file` of `AGENTS.md` / `Heal-GodBrain.ps1`
+speak-only). Mid hops keep the tools schema after the ledger has
+bytes; the last flatten says answer Z and does not invite another
+read. `read_local_file` of `AGENTS.md` / `Heal-GodBrain.ps1`
 returns the short rails blurb, not the file (12B unused49's on a dump).
 Observe/conclude buffer: `logs/last-chain.json`. Continue reloads it. If Gemma listed `C:\Temp\GitHub` instead of the named
 path, the kernel appends a list of that path. YOLO still loops (cap 8,

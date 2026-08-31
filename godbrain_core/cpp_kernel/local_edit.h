@@ -35,6 +35,7 @@ bool apply_still_open(const std::string& text);
 std::string edit_user_with_excerpt(const std::string& user_msg);
 Preview preview_apply_blocks(const std::string& text);
 std::string check_profile_for(const std::string& rel);
+void set_verify_script_for_test(const std::string& path);
 
 Result maybe_apply(
     const std::string& user_msg,
