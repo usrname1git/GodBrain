@@ -2181,6 +2181,47 @@ std::string complete_fs_listing(const std::string& user_msg,
     return out;
 }
 
+std::string read_repo_rails(const std::string& user_msg) {
+    if (looks_like_list_only_ask(user_msg)) return "";
+    if (!looks_like_local_fs_ask(user_msg)) return "";
+    const std::string gp = first_granted_path(user_msg);
+    if (gp.empty()) return "";
+    const std::string full = canon_path(gp);
+    if (full.empty()) return "";
+    const DWORD attr = GetFileAttributesA(full.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES ||
+        (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return "";
+    }
+    static const char* names[] = {"AGENTS.md", "Heal-GodBrain.ps1", nullptr};
+    std::string out;
+    for (int i = 0; names[i]; ++i) {
+        Call c;
+        c.name = "read_local_file";
+        c.path = full + "\\" + names[i];
+        c.args = "limit=80";
+        const std::string one = execute_calls({c});
+        if (one.find("denied") != std::string::npos) continue;
+        if (one.find("read_local_file") == std::string::npos) continue;
+        std::string clip = one;
+        if (clip.size() > 1400) clip.resize(1400);
+        if (!out.empty()) out += "\n";
+        out += clip;
+    }
+    return out;
+}
+
+std::string jarvis_rails_blurb() {
+    return "Kernel rails (not a file dump; 12B unused49's if you paste "
+           "AGENTS.md): one loop on this host. Heal never kills a process. "
+           "Hands are kernel local_tools, not MCP. Golden Records + /verify "
+           "are the manual. Jarvis is that loop, not a persona file. "
+           "Leftovers in the listing: .github/copilot-instructions.md, "
+           ".vscode/mcp.json (empty servers), godbrain_core/temp_hermes, "
+           "archive/godbrain-llama-chat-extensions.extract.cpp. "
+           "Do not staff a factory.";
+}
+
 bool use_full_tool_defs(const std::string& user_msg) {
     return yolo_active() || looks_like_host_inspect(user_msg);
 }

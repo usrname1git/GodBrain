@@ -377,6 +377,16 @@ int main() {
                        "jarvis repo ask is local-fs");
         pass &= expect(!local_tools::looks_like_list_only_ask(longq),
                        "jarvis repo ask is not list-only");
+        const std::string rails = local_tools::read_repo_rails(longq);
+        pass &= expect(rails.find("read_local_file") != std::string::npos &&
+                           rails.find("AGENTS.md") != std::string::npos &&
+                           rails.find("Heal-GodBrain.ps1") != std::string::npos,
+                       "rails read AGENTS and Heal");
+        const std::string blurb = local_tools::jarvis_rails_blurb();
+        pass &= expect(blurb.find("one loop") != std::string::npos &&
+                           blurb.find("copilot-instructions") != std::string::npos &&
+                           blurb.find("temp_hermes") != std::string::npos,
+                       "jarvis blurb names leftovers");
         const std::string miss =
             "search_local C:\\Temp\\GitHub name q=GodBrain repo hits=0 "
             "scanned=400\n";

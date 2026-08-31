@@ -44,6 +44,11 @@ std::string answer_fs_ask(const std::string& user_msg);
 // list/info of that path. No GPU.
 std::string complete_fs_listing(const std::string& user_msg,
                                 const std::string& tool_out);
+// Analysis asks: kernel-read AGENTS.md and Heal-GodBrain.ps1 under the
+// named folder (for tests / ledger). Do not paste those files into the
+// 12B prompt — that unused49's / IMA's. Use jarvis_rails_blurb().
+std::string read_repo_rails(const std::string& user_msg);
+std::string jarvis_rails_blurb();
 bool use_full_tool_defs(const std::string& user_msg);
 std::vector<Call> calls_from_openai(const nlohmann::json& tool_calls);
 

@@ -2744,7 +2744,8 @@ std::string run_colibri_serve(
             (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
             std::ios::trunc);
         dbg << "llama=" << llama_mouth << " native=" << native_tools
-            << " yolo=" << local_tools::yolo_active() << "\n";
+            << " yolo=" << local_tools::yolo_active()
+            << " user_len=" << user.size() << "\n";
         dbg << "hint=" << (tool_hint.empty() ? user : tool_hint).substr(0, 240)
             << "\n";
     }
@@ -2764,9 +2765,9 @@ std::string run_colibri_serve(
     last_reason.clear();
     json tool_acc = json::array();
     const bool use_tools =
-        native_tools &&
-        (local_tools::yolo_active() ? (tool_round + 1 < max_tool_rounds)
-                                    : (tool_round == 0));
+        native_tools && (tool_round + 1 < max_tool_rounds) &&
+        (local_tools::yolo_active() ||
+         tool_ledger.find("Kernel rails") == std::string::npos);
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -2975,18 +2976,25 @@ std::string run_colibri_serve(
     auto flatten_tool_turn = [&](std::string tool_out) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
+        if (tool_out.size() > 2200) tool_out.resize(2200);
+        if (tool_ledger.find("Kernel rails") == std::string::npos &&
+            local_tools::looks_like_local_fs_ask(hop_hint) &&
+            !local_tools::looks_like_list_only_ask(hop_hint)) {
+            if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
+            tool_out += local_tools::jarvis_rails_blurb();
+        }
         last_tool_out = tool_out;
         if (!tool_ledger.empty()) tool_ledger += "\n";
         tool_ledger += tool_out;
-        if (tool_ledger.size() > 8000) tool_ledger.resize(8000);
+        if (tool_ledger.size() > 6000) tool_ledger.resize(6000);
         messages = base_messages;
         messages.push_back(json{
             {"role", "user"},
             {"content",
              std::string("TOOL_RESULT\n") + tool_ledger +
-                 "\nThe kernel already ran that. Write the answer in English "
-                 "sentences. Do not emit tool_call tags. Do not dump dir. "
-                 "Do not invent a Jarvis persona file."}});
+                 "\nThe kernel already listed the folder. Answer from "
+                 "TOOL_RESULT. Do not say you should read AGENTS.md. "
+                 "Do not dump dir. Do not invent a Jarvis persona file."}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
                   << max_tool_rounds << " (" << tool_ledger.size()
                   << " bytes, cache_prompt=0)" << std::endl;
@@ -4259,20 +4267,36 @@ int main() {
             std::string tool_hint = asked;
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
-                const std::string gp =
-                    local_tools::first_granted_path(user_msg);
-                user_prompt =
-                    "Kernel: file tools are live on this PC. " +
-                    (gp.empty()
-                         ? std::string(
-                               "Call list_granted_roots or list_local_dir.")
-                         : ("Exact folder: " + gp +
-                            ". Call list_local_dir on that path, then "
-                            "read_local_file if the question needs a file, "
-                            "not C:\\Temp\\GitHub.")) +
-                    " Never say you do not have access to the local file "
-                    "system. Do not dump dir as the answer.\n\n" +
-                    user_prompt;
+                if (fs_analyze && !local_tools::yolo_active()) {
+                    std::string ev =
+                        local_tools::complete_fs_listing(user_msg, "");
+                    if (ev.size() > 2200) ev.resize(2200);
+                    ev += "\n";
+                    ev += local_tools::jarvis_rails_blurb();
+                    user_prompt =
+                        "Kernel listing plus rails (files were read by the "
+                        "kernel; do not paste AGENTS.md):\n" +
+                        ev + "\n\nOperator question:\n" + user_msg +
+                        "\nAnswer from that. Do not say you should read "
+                        "AGENTS.md. Do not dump dir. Do not invent a persona "
+                        "file. Name live loop vs leftovers vs blockers.";
+                    tool_hint = std::string("No tools.\n") + asked;
+                } else {
+                    const std::string gp =
+                        local_tools::first_granted_path(user_msg);
+                    user_prompt =
+                        "Kernel: file tools are live on this PC. " +
+                        (gp.empty()
+                             ? std::string(
+                                   "Call list_granted_roots or list_local_dir.")
+                             : ("Exact folder: " + gp +
+                                ". Call list_local_dir on that path, then "
+                                "read_local_file if the question needs a file, "
+                                "not C:\\Temp\\GitHub.")) +
+                        " Never say you do not have access to the local file "
+                        "system. Do not dump dir as the answer.\n\n" +
+                        user_prompt;
+                }
             }
 
             const bool want_stream =

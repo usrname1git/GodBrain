@@ -49,6 +49,15 @@ to count how many nodes the problem actually has. Usually one.
 - **Keep it collapsible.** If deleting a node leaves the same result, delete
   it. Coordination is latency and another failure point (two starters racing
   `:8000` is the tax).
+- **Operator GO (2026-08-31):** GPT Copilot's Jarvis order is accepted:
+  (1) stateless multi-tool continuation, (2) durable task ledger with
+  cancel/resume, (3) end-to-end Jarvis benchmark, (4) volatile repo/symbol
+  index, (5) transactional patch preview/apply/verify, (6) browser evidence
+  capture, (7) multi-fixture skill verification, (8) unified core gate and
+  correlated event history. Destination: task ID, bounded tool rounds,
+  hash-bound diff, verify, survive restart, verified lesson to Alexandria.
+  Implement in that order. Item 1 is in flight on `mouth-one-fs-hop`.
+  Items 2–8 wait until 1 can read-then-speak without IMA or dir.
 - **Stop and re-loop when sideways.** Do not keep pushing the same generate
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
@@ -378,8 +387,10 @@ granted path. A question that *contains* a granted path but asks what
 is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
 **flattens** the result into a fresh user turn and POSTs again with
 `cache_prompt` false — never `role:tool` back into the llama KV (that
-is the CUDA IMA). Cap 3 (last round speak-only). Do not return `dir`
-as the answer. If Gemma listed `C:\Temp\GitHub` instead of the named
+is the CUDA IMA). On a repo analysis ask the kernel lists the folder and injects a
+**short rails blurb** (one loop, Heal never kills, leftovers). Do not
+paste `AGENTS.md` into the 12B prompt — that unused49's. Cap 3 (last
+round speak-only). Do not return `dir` as the answer. If Gemma listed `C:\Temp\GitHub` instead of the named
 path, the kernel appends a list of that path. YOLO still loops (cap 8,
 same flatten). A granted-root
 path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
