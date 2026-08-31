@@ -355,8 +355,10 @@ Whole-message `enable_thinking: false` / `enable_thinking: true` is a
 no-GPU desk command (writes `logs/thinking.txt`). Next llama generate
 sends `chat_template_kwargs.enable_thinking`. It is not `/edit` and not
 a model weight switch. `/edit` apply is always thinking-off. Missing
-file = llama.cpp default (on). After unused49, restart llama — the slot
-KV stays poisoned until then.
+file = llama.cpp default (on). After unused49, cut at the first tag and
+keep the sentence prefix if it is already an answer; recycle the slot.
+Do not dump the repo map as Z on a Jarvis-need ask. `/continue` uses
+the prefix. A tags-only dump still recycles and asks again.
 
 - `/verify last <why>` and `/reject last <why>` judge the newest on-disk
   Oracle turn.
