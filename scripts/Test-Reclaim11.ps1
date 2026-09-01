@@ -51,6 +51,14 @@ $sbOff = [pscustomobject]@{
 $gOff = Get-Reclaim11Gates -Inventory $sbOff
 if (-not $gOff.stub_wdboot) { throw "Test-Reclaim11: SB off must allow WdBoot stub" }
 
+$sbNa = [pscustomobject]@{
+    secure_boot    = [pscustomobject]@{ enabled = $false; available = $false; error = "probe failed" }
+    never_touch_ok = $true
+}
+$gNa = Get-Reclaim11Gates -Inventory $sbNa
+if ($gNa.stub_wdboot) { throw "Test-Reclaim11: SB n/a must refuse WdBoot stub" }
+if ($gNa.reason_wdboot -notmatch 'n/a') { throw "Test-Reclaim11: SB n/a reason" }
+
 $tmpLog = Join-Path $env:TEMP "reclaim11-winpe-test.log"
 Set-Content -LiteralPath $tmpLog -Value "winpe ok" -Encoding ASCII
 $gLog = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog $tmpLog
@@ -97,8 +105,24 @@ if ($lock -match 'DownloadRestrictions') { throw "Test-Reclaim11: lockdown must 
 if ($lock -match 'override-download-danger') { throw "Test-Reclaim11: lockdown must not set labs flags" }
 if ($dang -notmatch 'WARNING DO NOT DISABLE') { throw "Test-Reclaim11: danger reg missing warning" }
 if ($dang -notmatch 'DownloadRestrictions') { throw "Test-Reclaim11: danger reg missing DownloadRestrictions" }
-if (-not (Test-Path -LiteralPath (Join-Path $braveDir "Apply-BravePolicy.ps1"))) {
+$applyPath = Join-Path $braveDir "Apply-BravePolicy.ps1"
+if (-not (Test-Path -LiteralPath $applyPath)) {
     throw "Test-Reclaim11: missing Apply-BravePolicy.ps1"
+}
+. $applyPath
+$labDir = Join-Path $env:TEMP "reclaim11-labs-test"
+New-Item -ItemType Directory -Force -Path $labDir | Out-Null
+$emptyBrowser = Join-Path $labDir "empty-browser.json"
+$noBrowser = Join-Path $labDir "no-browser.json"
+Set-Content -LiteralPath $emptyBrowser -Value '{"browser":{}}' -Encoding UTF8
+Set-Content -LiteralPath $noBrowser -Value '{"os_crypt":{"encrypted_key":"x"}}' -Encoding UTF8
+Set-Reclaim11DownloadLabs -PrefsPath $emptyBrowser -NoKill
+Set-Reclaim11DownloadLabs -PrefsPath $noBrowser -NoKill
+foreach ($f in @($emptyBrowser, $noBrowser)) {
+    $got = Get-Content -LiteralPath $f -Raw -Encoding UTF8
+    if ($got -notmatch 'brave-override-download-danger-level@1') {
+        throw "Test-Reclaim11: labs flag missing in $f"
+    }
 }
 
 Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy os_pin={0} sb={1} stub_wdboot={2}" -f `

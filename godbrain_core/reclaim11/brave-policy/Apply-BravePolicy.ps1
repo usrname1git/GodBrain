@@ -61,30 +61,42 @@ function Import-Reclaim11Reg([string]$Name) {
 }
 
 function Set-Reclaim11DownloadLabs {
-    $prefs = Join-Path $env:LOCALAPPDATA "BraveSoftware\Brave-Browser\User Data\Local State"
-    if (-not (Test-Path -LiteralPath $prefs)) {
+    param(
+        [string]$PrefsPath = "",
+        [switch]$NoKill
+    )
+    if (-not $PrefsPath) {
+        $PrefsPath = Join-Path $env:LOCALAPPDATA "BraveSoftware\Brave-Browser\User Data\Local State"
+    }
+    if (-not (Test-Path -LiteralPath $PrefsPath)) {
         Write-Host "Brave Local State not found. GPO applied. Run Brave once, then re-run -AllowDangerousDownloads for the labs flag."
         return
     }
-    $running = Get-Process -Name brave -ErrorAction SilentlyContinue
-    if ($running) {
-        Write-Host "Closing Brave to write Local State..."
-        Stop-Process -Name brave -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-    }
-    $json = Get-Content -LiteralPath $prefs -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($null -eq $json.browser) {
+    $json = Get-Content -LiteralPath $PrefsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $json.PSObject.Properties['browser']) {
         $json | Add-Member -NotePropertyName browser -NotePropertyValue ([pscustomobject]@{})
     }
     $want = "brave-override-download-danger-level@1"
     $cur = @()
-    if ($json.browser.enabled_labs_experiments) {
+    if ($json.browser.PSObject.Properties['enabled_labs_experiments'] -and
+        $null -ne $json.browser.enabled_labs_experiments) {
         $cur = @($json.browser.enabled_labs_experiments)
     }
     if ($cur -notcontains $want) { $cur += $want }
-    $json.browser.enabled_labs_experiments = $cur
-    $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $prefs -Encoding UTF8
-    Write-Host "labs: $want"
+    $json.browser | Add-Member -NotePropertyName enabled_labs_experiments -NotePropertyValue $cur -Force
+    $bak = $PrefsPath + ".reclaim11.bak"
+    $tmp = $PrefsPath + ".reclaim11.tmp"
+    Copy-Item -LiteralPath $PrefsPath -Destination $bak -Force
+    $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $tmp -Encoding UTF8
+    if (-not $NoKill) {
+        $sid = [Diagnostics.Process]::GetCurrentProcess().SessionId
+        Get-Process -Name brave -ErrorAction SilentlyContinue |
+            Where-Object { $_.SessionId -eq $sid } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+    Move-Item -LiteralPath $tmp -Destination $PrefsPath -Force
+    Write-Host "labs: $want bak=$bak"
 }
 
 function Invoke-Reclaim11BraveApply([bool]$Danger) {
@@ -96,6 +108,8 @@ function Invoke-Reclaim11BraveApply([bool]$Danger) {
     }
     Write-Host "done. Restart Brave. Home: no gpedit; registry is the policy."
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 if ($Headless -or $LockdownOnly -or $AllowDangerousDownloads) {
     Invoke-Reclaim11BraveApply -Danger:([bool]$AllowDangerousDownloads)

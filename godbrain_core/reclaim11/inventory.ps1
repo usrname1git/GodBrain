@@ -37,6 +37,17 @@ function Get-Reclaim11OsPin {
 }
 
 function Get-Reclaim11SecureBoot {
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State"
+    try {
+        $v = Get-ItemProperty -LiteralPath $regPath -Name UEFISecureBootEnabled -ErrorAction Stop
+        return [pscustomobject]@{
+            available = $true
+            enabled   = [bool]$v.UEFISecureBootEnabled
+            error     = $null
+        }
+    } catch {
+        # fall through to Confirm-SecureBootUEFI
+    }
     try {
         $on = Confirm-SecureBootUEFI
         [pscustomobject]@{
@@ -130,19 +141,29 @@ function Get-Reclaim11Gates {
         $Inventory,
         [string]$WinPeLog = ""
     )
+    $avail = $false
     $sb = $false
+    $sbErr = ""
     if ($Inventory -and $Inventory.secure_boot) {
+        $avail = [bool]$Inventory.secure_boot.available
         $sb = [bool]$Inventory.secure_boot.enabled
+        if ($Inventory.secure_boot.PSObject.Properties['error']) {
+            $sbErr = [string]$Inventory.secure_boot.error
+        }
     }
     $log = Get-Reclaim11WinPeLog -Path $WinPeLog
-    $wdbootReason = if ($sb) {
+    $allowStub = $avail -and -not $sb
+    $wdbootReason = if (-not $avail) {
+        $tail = if ($sbErr) { " $sbErr" } else { "" }
+        "Secure Boot n/a: refuse WdBoot stub (ELAM).$tail"
+    } elseif ($sb) {
         "Secure Boot on: refuse WdBoot stub (ELAM). Firmware off, or skip ELAM."
     } else {
         "Secure Boot off: WdBoot stub allowed on the offline volume."
     }
     [pscustomobject]@{
         prep_media              = $true
-        stub_wdboot             = -not $sb
+        stub_wdboot             = $allowStub
         killing_blows           = [bool]$log
         never_touch_ok          = [bool]$Inventory.never_touch_ok
         winpe_log               = $log
