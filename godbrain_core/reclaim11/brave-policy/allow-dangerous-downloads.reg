@@ -1,0 +1,16 @@
+Windows Registry Editor Version 5.00
+
+; POWER USER ONLY. Do not send this file as the default pack.
+; WARNING DO NOT DISABLE IF YOU'RE NOT A POWER USER
+; DownloadRestrictions=0 is Chromium "no extra policy blocks".
+; DisableSafeBrowsingProceedAnyway=0 keeps "proceed anyway" clickable.
+; The random .exe interstitial may still appear until labs override is applied
+; by Apply-BravePolicy.ps1 -AllowDangerousDownloads.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\BraveSoftware\Brave]
+"DownloadRestrictions"=dword:00000000
+"DisableSafeBrowsingProceedAnyway"=dword:00000000
+
+[HKEY_CURRENT_USER\SOFTWARE\Policies\BraveSoftware\Brave]
+"DownloadRestrictions"=dword:00000000
+"DisableSafeBrowsingProceedAnyway"=dword:00000000

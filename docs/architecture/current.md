@@ -172,6 +172,13 @@ until `CS2.exe` exits, waits 10 minutes, then `tailscale up --unattended` and
 Start-GodBrain. Never logout, `--reset`, or uninstall Tailscale. Start/Heal
 skip the mouth while CS2 is running or has been gone under 10 minutes.
 
+`godbrain_core/reclaim11/` is a WPF kit (Reclaim11), not Heal and not
+Galaxy. Pack A = Defender / PPL / Sense / AppID. Inventory-only in v1;
+`WdBoot` stub is refused when Secure Boot is on; killing blows stay locked
+until a WinPE log exists. Never BFE / `mpssvc` / `FltMgr`. Test in VMware
+(ISO, snapshot) before a physical USB. Check:
+`scripts\Test-Reclaim11.ps1`.
+
 ## Also in the tree, not the Jarvis path
 
 Go and Rust routers on `:8082`, paper/read-only market tools, and the Foundry

@@ -1,0 +1,132 @@
+# Reclaim11 launcher. WPF around inventory. Not Heal. Not Galaxy. No irm|iex.
+[CmdletBinding()]
+param(
+    [switch]$InventoryOnly,
+    [string]$OutJson = "",
+    [string]$WinPeLog = ""
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $here "inventory.ps1")
+
+function Write-Reclaim11InventoryFile {
+    param($Inventory, [string]$Path)
+    $json = ConvertTo-Reclaim11Json -Inventory $Inventory
+    if ($Path) {
+        $dir = Split-Path -Parent $Path
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir | Out-Null
+        }
+        Set-Content -LiteralPath $Path -Value $json -Encoding UTF8
+    }
+    $json
+}
+
+if ($InventoryOnly) {
+    $inv = Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog
+    $json = Write-Reclaim11InventoryFile -Inventory $inv -Path $OutJson
+    Write-Output $json
+    return
+}
+
+$sta = [Threading.Thread]::CurrentThread.GetApartmentState()
+if ($sta -ne "STA") {
+    $pwsh = Join-Path $PSHOME "pwsh.exe"
+    if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
+    $arg = @(
+        "-STA", "-NoProfile", "-File", $MyInvocation.MyCommand.Path
+    )
+    if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
+    Start-Process -FilePath $pwsh -ArgumentList $arg
+    return
+}
+
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
+
+$xamlPath = Join-Path $here "ui\MainWindow.xaml"
+[xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
+$reader = New-Object System.Xml.XmlNodeReader $xaml
+$window = [Windows.Markup.XamlReader]::Load($reader)
+
+function Get-Ui([string]$Name) { $window.FindName($Name) }
+
+$btnScan = Get-Ui BtnScan
+$btnPrep = Get-Ui BtnPrep
+$btnKill = Get-Ui BtnKill
+$logBox  = Get-Ui LogBox
+$script:LastInventory = $null
+
+function Add-Log([string]$Line) {
+    $logBox.AppendText($Line + [Environment]::NewLine)
+    $logBox.ScrollToEnd()
+}
+
+function Show-Inventory($inv) {
+    $script:LastInventory = $inv
+    (Get-Ui OsPin).Text = $inv.os.os_pin
+    $sb = $inv.secure_boot
+    (Get-Ui SecureBoot).Text = if ($sb.available) {
+        if ($sb.enabled) { "ON  (WdBoot stub refused)" } else { "off  (WdBoot stub allowed offline)" }
+    } else { "n/a  $($sb.error)" }
+    $bl = $inv.bitlocker_c
+    (Get-Ui BitLocker).Text = if ($bl.present) { "$($bl.protection) / $($bl.volume_status)" } else { "not present / $($bl.error)" }
+    (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
+    (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
+    $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
+    $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
+    $logBox.Clear()
+    Add-Log ("at        {0}" -f $inv.at)
+    Add-Log ("catalog   {0}" -f $inv.catalog)
+    Add-Log ("os_pin    {0}" -f $inv.os.os_pin)
+    Add-Log ("sku       {0}" -f $inv.os.edition_id)
+    Add-Log ("firmware  {0}" -f $inv.os.firmware)
+    Add-Log ("secure_boot enabled={0} available={1}" -f $inv.secure_boot.enabled, $inv.secure_boot.available)
+    Add-Log ("bitlocker {0}" -f (Get-Ui BitLocker).Text)
+    Add-Log ("never_touch_ok {0}" -f $inv.never_touch_ok)
+    Add-Log ("stub_exe  exists={0} {1}" -f $inv.stub_exe_exists, $inv.stub_exe)
+    Add-Log ("prep_media={0} stub_wdboot={1} killing_blows={2}" -f $inv.gates.prep_media, $inv.gates.stub_wdboot, $inv.gates.killing_blows)
+    Add-Log $inv.gates.reason_wdboot
+    Add-Log $inv.gates.reason_killing_blows
+    Add-Log "--- services (pack A + never-touch) ---"
+    foreach ($s in $inv.services) {
+        Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
+    }
+    Add-Log "mutate=false  (this build does not wipe)"
+}
+
+$btnScan.Add_Click({
+    try {
+        $inv = Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog
+        Show-Inventory $inv
+    } catch {
+        Add-Log ("SCAN FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 scan failed") | Out-Null
+    }
+})
+
+$btnPrep.Add_Click({
+    [System.Windows.MessageBox]::Show(
+        "Prep media is not in this build. Next: WinPE ISO for VMware (not a physical USB first). Snapshot the VM before that.",
+        "Reclaim11") | Out-Null
+})
+
+$btnKill.Add_Click({
+    [System.Windows.MessageBox]::Show(
+        "Killing blows stay locked until a WinPE log exists. This build does not mutate.",
+        "Reclaim11") | Out-Null
+})
+
+$window.Add_Loaded({
+    try {
+        Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
+    } catch {
+        Add-Log ("boot scan FAIL  {0}" -f $_.Exception.Message)
+    }
+})
+
+[void]$window.ShowDialog()

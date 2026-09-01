@@ -1,0 +1,65 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reclaim11  pack A  (not Heal, not Galaxy)"
+        Width="920" Height="640"
+        MinWidth="760" MinHeight="520"
+        Background="#12141A" Foreground="#E6E8EE"
+        FontFamily="Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterScreen">
+  <DockPanel Margin="16">
+    <TextBlock DockPanel.Dock="Top" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"
+               Text="Reclaim11"/>
+    <TextBlock x:Name="Subtitle" DockPanel.Dock="Top" Foreground="#9AA3B2" Margin="0,0,0,12"
+               Text="Inventory only in this build. USB/ISO and killing blows stay gated. Never BFE / mpssvc / FltMgr."/>
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
+      <Button x:Name="BtnScan" Content="Scan" Width="120" Height="32" Margin="0,0,8,0"/>
+      <Button x:Name="BtnPrep" Content="Prep media" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <Button x:Name="BtnKill" Content="Killing blows" Width="140" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A8494"
+                 Text="Read-only until a WinPE log exists."/>
+    </StackPanel>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="280"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0">
+        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
+          <StackPanel>
+            <TextBlock Text="os_pin" Foreground="#7A8494"/>
+            <TextBlock x:Name="OsPin" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
+          <StackPanel>
+            <TextBlock Text="Secure Boot" Foreground="#7A8494"/>
+            <TextBlock x:Name="SecureBoot" Text="(scan)" FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
+          <StackPanel>
+            <TextBlock Text="BitLocker C:" Foreground="#7A8494"/>
+            <TextBlock x:Name="BitLocker" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
+          <StackPanel>
+            <TextBlock Text="Firewall (never touch)" Foreground="#7A8494"/>
+            <TextBlock x:Name="NeverTouch" Text="(scan)" FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+        <Border Background="#1C2028" Padding="12" CornerRadius="6">
+          <StackPanel>
+            <TextBlock Text="WdBoot / ELAM" Foreground="#7A8494"/>
+            <TextBlock x:Name="WdBootGate" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+      <TextBox Grid.Column="2" x:Name="LogBox"
+               IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+               Background="#0E1014" Foreground="#C9D1D9" BorderBrush="#2A3140"
+               FontFamily="Consolas" FontSize="12" Padding="8"/>
+    </Grid>
+  </DockPanel>
+</Window>

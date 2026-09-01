@@ -1,0 +1,13 @@
+Official Brave policy templates (do not vendor the zip):
+
+  https://support.brave.app/hc/en-us/articles/360039248271-Group-Policy
+  https://brave-browser-downloads.s3.brave.com/latest/policy_templates.zip
+
+Fetched 2026-09-02:
+  VERSION=152.1.96.35
+  windows/admx/brave.admx
+  windows/examples/brave.reg   (ALL policies with SAMPLE values — do not import whole)
+
+Home: Brave documents registry because gpedit is not on Home.
+Reclaim11 lockdown.reg is a curated subset (bloat + desk Shields), HKLM+HKCU.
+Local cache (outside git): C:\nvme\godbrain-hf-raw\brave-policy-templates\
