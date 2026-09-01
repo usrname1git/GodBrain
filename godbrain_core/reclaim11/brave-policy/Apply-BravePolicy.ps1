@@ -1,4 +1,4 @@
-# Reclaim11 Brave policy. Stock Brave + HKLM GPO. Not a forked browser.
+# Reclaim11 Brave policy. Stock Brave + HKCU always, HKLM if elevated. Not a forked browser.
 [CmdletBinding()]
 param(
     [switch]$LockdownOnly,
@@ -139,7 +139,7 @@ $xaml = @"
     <TextBlock DockPanel.Dock="Top" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,8"
                Text="Brave policy"/>
     <TextBlock DockPanel.Dock="Top" Foreground="#9AA3B2" TextWrapping="Wrap" Margin="0,0,0,12"
-               Text="Stock Brave from brave.com. Machine GPO only. Rewards/Wallet/VPN/Talk/News/Leo/Tor/metrics off. Not a modded browser."/>
+               Text="Stock Brave from brave.com. HKCU always. HKLM if elevated. Home: no gpedit. Rewards/Wallet/VPN/Talk/News/Leo/Tor/metrics off. Not a modded browser."/>
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
       <Button x:Name="BtnApply" Content="Apply" Width="120" Height="32" Margin="0,0,8,0"/>
       <TextBlock x:Name="Status" VerticalAlignment="Center" Foreground="#7A8494" Text="HKCU always. HKLM if elevated. Home: no gpedit."/>

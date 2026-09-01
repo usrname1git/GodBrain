@@ -37,7 +37,7 @@ if ($sta -ne "STA") {
     $pwsh = Join-Path $PSHOME "pwsh.exe"
     if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
     $arg = @(
-        "-STA", "-NoProfile", "-File", $MyInvocation.MyCommand.Path
+        "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
     if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
     Start-Process -FilePath $pwsh -ArgumentList $arg
@@ -116,9 +116,16 @@ $btnPrep.Add_Click({
 })
 
 $btnKill.Add_Click({
-    [System.Windows.MessageBox]::Show(
-        "Killing blows stay locked until a WinPE log exists. This build does not mutate.",
-        "Reclaim11") | Out-Null
+    $unlocked = $false
+    if ($script:LastInventory -and $script:LastInventory.gates) {
+        $unlocked = [bool]$script:LastInventory.gates.killing_blows
+    }
+    $msg = if ($unlocked) {
+        "Killing blows are unlocked by a WinPE log, but this build does not mutate."
+    } else {
+        "Killing blows stay locked until a WinPE log exists. This build does not mutate."
+    }
+    [System.Windows.MessageBox]::Show($msg, "Reclaim11") | Out-Null
 })
 
 $window.Add_Loaded({

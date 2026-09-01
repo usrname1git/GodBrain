@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Reclaim11  pack A  (not Heal, not Galaxy)"
+        Title="Reclaim11 pack A (not Heal, not Galaxy)"
         Width="920" Height="640"
         MinWidth="760" MinHeight="520"
         Background="#12141A" Foreground="#E6E8EE"

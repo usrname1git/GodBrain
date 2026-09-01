@@ -85,7 +85,10 @@ if ($p.ExitCode -ne 0) { throw "Test-Reclaim11: XAML load failed (exit $($p.Exit
 $inv = Get-Reclaim11Inventory -Root $root
 if ($inv.mutate) { throw "Test-Reclaim11: inventory must not mutate" }
 if (-not $inv.os.os_pin) { throw "Test-Reclaim11: missing os_pin" }
-if ($inv.os.os_pin -notmatch "26100") { throw "Test-Reclaim11: unexpected os_pin $($inv.os.os_pin)" }
+# Host is IoT LTSC 26100; the stated VM bench is 25H2 Pro 26200.
+if ($inv.os.os_pin -notmatch '^[^/]+/(26100|26200)\.\d+$') {
+    throw "Test-Reclaim11: unexpected os_pin $($inv.os.os_pin) (want EditionID/26100.x or 26200.x)"
+}
 if (-not $inv.never_touch_ok) { throw "Test-Reclaim11: BFE/mpssvc must be RUNNING on this host" }
 if ($inv.gates.killing_blows) { throw "Test-Reclaim11: live host has no WinPE log; blows must stay locked" }
 

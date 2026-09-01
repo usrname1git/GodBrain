@@ -14,7 +14,8 @@ every policy with **sample** values — do not import the whole file.
 ## Default (friend-safe)
 
 Rewards, Wallet, VPN, Talk, News, Leo, P3A, metrics, Tor, stats ping:
-**off**. Safe Browsing stays on. Download warnings stay on.
+**off**. Home button off (`ShowHomeButton=0`). Safe Browsing stays on.
+Download warnings stay on.
 
 Shields (GPO, from the desk profile — not a 40-click Settings tour):
 
@@ -64,6 +65,5 @@ pwsh -STA -NoProfile -ExecutionPolicy Bypass -File Apply-BravePolicy.ps1 -AllowD
 
 ## Not in this pack
 
-Galaxy Brave extension (`6a`). `ShowHomeButton`. Wallet/rewards labs
-flags. `Stop-Process` unless the power-user labs write needs a closed
-browser.
+Galaxy Brave extension (`6a`). Wallet/rewards labs flags. `Stop-Process`
+unless the power-user labs write needs a closed browser.
