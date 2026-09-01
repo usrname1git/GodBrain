@@ -1,0 +1,72 @@
+{
+  "id": "reclaim11-pack-a-v1",
+  "pack": "A",
+  "trust": "candidate",
+  "auto_verify": "never",
+  "not_heal": true,
+  "not_galaxy": true,
+  "not": [
+    "dism",
+    "sfc /scannow",
+    "netsh winsock reset",
+    "netsh int ip reset",
+    "BFE",
+    "mpssvc",
+    "FltMgr",
+    "EventLog",
+    "irm | iex",
+    "twitter release"
+  ],
+  "ppl_offline": [
+    "MsMpEng.exe",
+    "NisSrv.exe",
+    "WdFilter.sys",
+    "WdBoot.sys",
+    "WdNisDrv.sys",
+    "WdDevFlt.sys"
+  ],
+  "elam": ["WdBoot.sys"],
+  "usermode_ifeo": [
+    "MsMpEng.exe",
+    "NisSrv.exe",
+    "smartscreen.exe",
+    "SecurityHealthHost.exe",
+    "SecurityHealthService.exe",
+    "SecurityHealthSystray.exe",
+    "MsSense.exe",
+    "MpDefenderCoreService.exe"
+  ],
+  "services_pack_a": [
+    "WinDefend",
+    "WdNisSvc",
+    "WdNisDrv",
+    "WdFilter",
+    "WdBoot",
+    "WdDevFlt",
+    "Sense",
+    "MDCoreSvc",
+    "SecurityHealthService",
+    "AppIDSvc",
+    "AppID"
+  ],
+  "never_touch_services": [
+    "BFE",
+    "mpssvc",
+    "mpsdrv",
+    "Dnscache",
+    "EventLog",
+    "RpcSs",
+    "DcomLaunch",
+    "PlugPlay",
+    "SamSs",
+    "Winmgmt",
+    "MongoDB",
+    "FltMgr"
+  ],
+  "stub_exe": "C:\\Tools\\DefenderStub.exe",
+  "gates": {
+    "stub_wdboot_if_secure_boot": "refuse",
+    "prep_media": "after-inventory",
+    "killing_blows": "after-winpe-log"
+  }
+}
