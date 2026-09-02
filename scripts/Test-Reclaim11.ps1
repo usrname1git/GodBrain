@@ -82,6 +82,8 @@ if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
 if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
+if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
+if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
 `$w.Close()
 'xaml-ok'
 "@

@@ -169,7 +169,8 @@ function Write-Reclaim11XboxManifest {
 function Invoke-Reclaim11XboxCleanse {
     param(
         [string]$Root,
-        [switch]$WhatIf
+        [switch]$WhatIf,
+        [switch]$KeepCaptures
     )
     if ([string]::IsNullOrWhiteSpace($Root)) {
         $Root = Split-Path -Parent $PSCommandPath
@@ -211,7 +212,11 @@ function Invoke-Reclaim11XboxCleanse {
     if (Test-Path -LiteralPath $pol) {
         $cur = [string](Get-ItemProperty -LiteralPath $pol -ErrorAction SilentlyContinue).SettingsPageVisibility
     }
-    $merged = Merge-Reclaim11HidePages -Current $cur -Hide $script:XboxHidePages
+    $hide = @($script:XboxHidePages)
+    if ($KeepCaptures) {
+        $hide = @($hide | Where-Object { $_ -ne "gaming-captures" })
+    }
+    $merged = Merge-Reclaim11HidePages -Current $cur -Hide $hide
 
     $gpo = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
     $gpoBefore = $null

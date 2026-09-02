@@ -70,6 +70,8 @@ $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
 $btnXbox = Get-Ui BtnXbox
 $btnKill = Get-Ui BtnKill
+$btnRun  = Get-Ui BtnRun
+$togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
 
@@ -90,9 +92,12 @@ function Show-Inventory($inv) {
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
-    $btnSafe.IsEnabled = [bool]$inv.gates.killing_blows
+    $pe = [bool]$inv.gates.killing_blows
+    $btnSafe.IsEnabled = $pe
+    if (-not $pe) { $btnSafe.IsChecked = $false }
     $btnXbox.IsEnabled = $true
-    $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
+    $btnKill.IsEnabled = $pe
+    if (-not $pe) { $btnKill.IsChecked = $false }
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
     Add-Log ("catalog   {0}" -f $inv.catalog)
@@ -124,54 +129,59 @@ $btnScan.Add_Click({
     }
 })
 
-$btnSafe.Add_Click({
+$btnRun.Add_Click({
+    $doSafe = [bool]$btnSafe.IsChecked
+    $doXbox = [bool]$btnXbox.IsChecked
+    $doKill = [bool]$btnKill.IsChecked
+    if (-not ($doSafe -or $doXbox -or $doKill)) {
+        [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, and/or Killing blows.", "Reclaim11") | Out-Null
+        return
+    }
     $unlocked = $false
     if ($script:LastInventory -and $script:LastInventory.gates) {
         $unlocked = [bool]$script:LastInventory.gates.killing_blows
     }
-    if (-not $unlocked) {
+    if (($doSafe -or $doKill) -and -not $unlocked) {
         [System.Windows.MessageBox]::Show(
-            "Safe cleanse stays locked until a WinPE receipt exists.",
+            "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
             "Reclaim11") | Out-Null
         return
     }
     $q = [System.Windows.MessageBox]::Show(
-        "Move pack-A files to C:\reclaim11\backup\<stamp>\ and write restore.json. Does not delete. Never BFE/mpssvc/FltMgr. Continue?",
-        "Reclaim11 Safe cleanse",
+        "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+        "Reclaim11 RUN SELECTED",
         "YesNo",
         "Warning")
     if ($q -ne "Yes") { return }
-    try {
-        $plan = Invoke-Reclaim11NoobCleanse -Root $here
-        Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
-        Add-Log ("manifest {0}" -f $plan.manifest_path)
-        [System.Windows.MessageBox]::Show(
-            ("Moved {0} files.`n{1}`nRestore: Restore-Reclaim11Noob.ps1 -Manifest restore.json" -f @($plan.items).Count, $plan.manifest_path),
-            "Reclaim11 Safe cleanse") | Out-Null
-    } catch {
-        Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+    if ($doSafe) {
+        try {
+            $plan = Invoke-Reclaim11NoobCleanse -Root $here
+            Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
+            Add-Log ("manifest {0}" -f $plan.manifest_path)
+        } catch {
+            Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+        }
     }
-})
-
-$btnXbox.Add_Click({
-    $q = [System.Windows.MessageBox]::Show(
-        "Hide Xbox Game Bar and Captures in Settings (Game Mode stays), sc delete Xbox usermode services, remove the Appx bloat list. Writes restore.json first. Does not delete xboxgip (controller). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
-        "Reclaim11 Hide Xbox",
-        "YesNo",
-        "Warning")
-    if ($q -ne "Yes") { return }
-    try {
-        $plan = Invoke-Reclaim11XboxCleanse -Root $here
-        Add-Log ("xbox hide {0}" -f $plan.settings_page_visibility.after)
-        Add-Log ("xbox sc_delete {0}" -f (@($plan.sc_delete) -join ", "))
-        Add-Log ("manifest {0}" -f $plan.manifest_path)
-        [System.Windows.MessageBox]::Show(
-            ("Moved Settings/Appx/services.`n{0}`nRestore: pwsh -File xbox_cleanse.ps1 -Restore restore.json`nRe-open Settings. Game Mode stays." -f $plan.manifest_path),
-            "Reclaim11 Hide Xbox") | Out-Null
-    } catch {
-        Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+    if ($doXbox) {
+        try {
+            $keepCap = -not [bool]$togHideCaptures.IsChecked
+            $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+            Add-Log ("xbox hide {0}" -f $plan.settings_page_visibility.after)
+            Add-Log ("manifest {0}" -f $plan.manifest_path)
+        } catch {
+            Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+        }
+    }
+    if ($doKill) {
+        try {
+            $plan = Invoke-Reclaim11KillingBlows -Root $here
+            Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+        } catch {
+            Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+        }
     }
 })
 
@@ -186,34 +196,6 @@ $btnPrep.Add_Click({
         "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
     }
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
-})
-
-$btnKill.Add_Click({
-    $unlocked = $false
-    if ($script:LastInventory -and $script:LastInventory.gates) {
-        $unlocked = [bool]$script:LastInventory.gates.killing_blows
-    }
-    if (-not $unlocked) {
-        [System.Windows.MessageBox]::Show(
-            "Killing blows stay locked until a WinPE receipt exists.",
-            "Reclaim11") | Out-Null
-        return
-    }
-    $q = [System.Windows.MessageBox]::Show(
-        "Mutate pack A on THIS Windows (IFEO + sc delete WinDefend/Sense/AppID). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
-        "Reclaim11 killing blows",
-        "YesNo",
-        "Warning")
-    if ($q -ne "Yes") { return }
-    try {
-        $plan = Invoke-Reclaim11KillingBlows -Root $here
-        Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
-        foreach ($a in @($plan.applied)) { Add-Log ("  {0}" -f $a) }
-        [System.Windows.MessageBox]::Show("Pack A killing blows applied. BFE/mpssvc must still be Running.", "Reclaim11") | Out-Null
-    } catch {
-        Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
-    }
 })
 
 $window.Add_Loaded({
