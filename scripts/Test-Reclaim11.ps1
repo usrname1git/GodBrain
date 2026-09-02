@@ -351,6 +351,30 @@ try {
         throw "Test-Reclaim11: expected xbox desk refuse, got $($_.Exception.Message)"
     }
 }
+if ($script:XboxAppx -notcontains "Microsoft.BingNews") { throw "Test-Reclaim11: bloat list missing BingNews" }
+if ($script:XboxAppx -notcontains "Microsoft.WindowsFeedbackHub") { throw "Test-Reclaim11: bloat list missing FeedbackHub" }
+if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") { throw "Test-Reclaim11: XboxGameCallableUI must stay" }
+$badMan = Join-Path $env:TEMP "reclaim11-xbox-bad.json"
+Set-Content -LiteralPath $badMan -Value '{"id":"nope"}' -Encoding UTF8
+try {
+    Restore-Reclaim11XboxBackup -Manifest $badMan
+    throw "Test-Reclaim11: bad xbox manifest must throw"
+} catch {
+    if ($_.Exception.Message -notmatch "not an Xbox") {
+        throw "Test-Reclaim11: expected xbox manifest refuse, got $($_.Exception.Message)"
+    }
+}
+$okMan = Join-Path $env:TEMP "reclaim11-xbox-ok.json"
+Set-Content -LiteralPath $okMan -Value '{"id":"reclaim11-xbox-v1","settings_page_visibility":{"before":"","after":""},"services":[],"appx":[]}' -Encoding UTF8
+try {
+    Restore-Reclaim11XboxBackup -Manifest $okMan
+    throw "Test-Reclaim11: xbox restore must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected xbox restore desk refuse, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath $badMan, $okMan -Force
 
 Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy winpe blows os_pin={0} sb={1} stub_wdboot={2}" -f `
     $inv.os.os_pin, $inv.secure_boot.enabled, $inv.gates.stub_wdboot)

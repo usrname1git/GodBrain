@@ -74,13 +74,16 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 7. Physical USB only after the ISO path is green.
 
-**Hide Xbox** (in-Windows, not PE): machine `SettingsPageVisibility`
+**Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
+first, then machine `SettingsPageVisibility`
 `hide:gaming-gamebar;hide:gaming-gamedvr;hide:gaming-trueplay;hide:gaming-broadcasting`
-so Settings → Gaming matches Captures + Game Mode only. `sc delete` Xbox
+so Settings → Gaming is Captures + Game Mode only. `sc delete` Xbox
 usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
-`GamingServices`, `BcastDVRUserService*`). Does **not** delete `xboxgip`
-(controller). Does **not** remove `Microsoft.XboxGameCallableUI`. Desk
-SKU refused. Not DISM.
+`GamingServices`, `BcastDVRUserService*`). Removes the Appx bloat list
+(Game Bar, Bing News, Get Help, Solitaire, Zune, Feedback Hub, Your Phone,
+…). Restore: `pwsh -File xbox_cleanse.ps1 -Restore restore.json`. Does
+**not** delete `xboxgip` (controller). Does **not** remove
+`Microsoft.XboxGameCallableUI`. Desk SKU refused.
 
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 

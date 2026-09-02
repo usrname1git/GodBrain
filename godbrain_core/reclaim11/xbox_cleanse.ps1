@@ -1,6 +1,14 @@
-# Hide Xbox Game Bar in Settings and sc-delete Xbox usermode services.
-# Matches this desk: Captures + Game Mode stay. Never xboxgip (controller).
-# Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused. Not DISM.
+# Hide Xbox Game Bar in Settings, sc-delete Xbox usermode services,
+# remove the Appx bloat list. Writes restore.json first (Safe-cleanse style).
+# Captures + Game Mode stay. Never xboxgip (controller). Never XboxGameCallableUI.
+# Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused.
+# Provisioned Appx remove is the old script's Store-seed wipe (VM-only).
+
+[CmdletBinding()]
+param(
+    [string]$Restore = "",
+    [switch]$WhatIf
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -29,14 +37,33 @@ $script:XboxNeverDelete = @(
     "xboxgip"
 )
 
+# Old Appx list + remaining Xbox overlays. Not XboxGameCallableUI (desk kept it).
 $script:XboxAppx = @(
-    "Microsoft.XboxGamingOverlay",
+    "Microsoft.3DBuilder",
     "Microsoft.XboxGameOverlay",
+    "Microsoft.Xbox.TCUI",
+    "Microsoft.XboxApp",
+    "Microsoft.XboxGamingOverlay",
     "Microsoft.XboxIdentityProvider",
     "Microsoft.XboxSpeechToTextOverlay",
-    "Microsoft.XboxApp",
-    "Microsoft.GamingApp",
-    "Microsoft.Xbox.TCUI"
+    "Microsoft.BingNews",
+    "Microsoft.GetHelp",
+    "Microsoft.Getstarted",
+    "Microsoft.Microsoft3DViewer",
+    "Microsoft.MicrosoftOfficeHub",
+    "Microsoft.MicrosoftSolitaireCollection",
+    "Microsoft.MSPaint",
+    "Microsoft.SkypeApp",
+    "Microsoft.ZuneMusic",
+    "Microsoft.ZuneVideo",
+    "Microsoft.People",
+    "Microsoft.MicrosoftStickyNotes",
+    "Microsoft.MixedReality.Portal",
+    "Microsoft.WindowsMaps",
+    "Microsoft.YourPhone",
+    "Microsoft.OneConnect",
+    "Microsoft.WindowsFeedbackHub",
+    "Microsoft.GamingApp"
 )
 
 function Merge-Reclaim11HidePages {
@@ -85,6 +112,60 @@ function Get-Reclaim11XboxServiceCandidates {
     @($names)
 }
 
+function Get-Reclaim11ServiceSnapshot {
+    param([string]$Name)
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    if (-not (Test-Path -LiteralPath $key)) { return $null }
+    $p = Get-ItemProperty -LiteralPath $key
+    $start = $null
+    if ($p.PSObject.Properties["Start"]) { $start = [int]$p.Start }
+    [pscustomobject]@{
+        name         = $Name
+        start        = $start
+        image_path   = [string]$p.ImagePath
+        display_name = [string]$p.DisplayName
+        object_name  = [string]$p.ObjectName
+        type         = $p.Type
+    }
+}
+
+function Get-Reclaim11AppxSnapshot {
+    param([string]$Name)
+    $rows = @()
+    $pkgs = @(Get-AppxPackage -AllUsers -Name $Name -ErrorAction SilentlyContinue)
+    foreach ($p in $pkgs) {
+        $rows += [pscustomobject]@{
+            name               = [string]$p.Name
+            package_full_name  = [string]$p.PackageFullName
+            install_location   = [string]$p.InstallLocation
+            provisioned        = $false
+        }
+    }
+    try {
+        $prov = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $Name })
+        foreach ($p in $prov) {
+            $rows += [pscustomobject]@{
+                name               = [string]$p.DisplayName
+                package_full_name  = [string]$p.PackageName
+                install_location   = [string]$p.InstallLocation
+                provisioned        = $true
+            }
+        }
+    } catch {
+        # no DISM / not elevated
+    }
+    $rows
+}
+
+function Write-Reclaim11XboxManifest {
+    param($Manifest, [string]$Path)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    ($Manifest | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 function Invoke-Reclaim11XboxCleanse {
     param(
         [string]$Root,
@@ -104,6 +185,9 @@ function Invoke-Reclaim11XboxCleanse {
             if ($s -ieq $n) { throw "Refuse: Xbox list includes controller driver $s" }
         }
     }
+    if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") {
+        throw "Refuse: XboxGameCallableUI stays (desk kept it)"
+    }
     if (Test-Reclaim11DeskHost) {
         throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
     }
@@ -115,34 +199,73 @@ function Invoke-Reclaim11XboxCleanse {
     }
     $merged = Merge-Reclaim11HidePages -Current $cur -Hide $script:XboxHidePages
 
-    $deleted = @()
-    $removedAppx = @()
-    if ($WhatIf) {
-        return [pscustomobject]@{
-            id           = "reclaim11-xbox-hide-v1"
-            what_if      = $true
-            hide_pages   = $merged
-            services     = @(Get-Reclaim11XboxServiceCandidates)
-            appx         = @($script:XboxAppx)
-            keep_pages   = @($script:XboxKeepPages)
-            skip_driver  = @($script:XboxNeverDelete)
+    $gpo = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
+    $gpoBefore = $null
+    if (Test-Path -LiteralPath $gpo) {
+        $gp = Get-ItemProperty -LiteralPath $gpo -ErrorAction SilentlyContinue
+        if ($gp -and $gp.PSObject.Properties["AllowGameDVR"]) { $gpoBefore = [int]$gp.AllowGameDVR }
+    }
+    $gb = "HKCU:\Software\Microsoft\GameBar"
+    $nexusBefore = $null
+    $chordBefore = $null
+    if (Test-Path -LiteralPath $gb) {
+        $gbi = Get-ItemProperty -LiteralPath $gb -ErrorAction SilentlyContinue
+        if ($gbi.PSObject.Properties["UseNexusForGameBarEnabled"]) { $nexusBefore = [int]$gbi.UseNexusForGameBarEnabled }
+        if ($gbi.PSObject.Properties["GamepadNexusChordEnabled"]) { $chordBefore = [int]$gbi.GamepadNexusChordEnabled }
+    }
+
+    $svcSnap = @()
+    foreach ($svc in @(Get-Reclaim11XboxServiceCandidates)) {
+        if (@($script:XboxNeverDelete) -contains $svc) { continue }
+        $shot = Get-Reclaim11ServiceSnapshot -Name $svc
+        if ($shot) { $svcSnap += $shot }
+    }
+    $appxSnap = @()
+    foreach ($n in $script:XboxAppx) {
+        foreach ($row in @(Get-Reclaim11AppxSnapshot -Name $n)) {
+            $appxSnap += $row
         }
     }
+
+    $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + $stamp)
+    $manPath = Join-Path $backupRoot "restore.json"
+    $manifest = [pscustomobject]@{
+        id                         = "reclaim11-xbox-v1"
+        at                         = [datetime]::UtcNow.ToString("o")
+        settings_page_visibility   = [pscustomobject]@{ before = $cur; after = $merged }
+        gamedvr_allow              = $gpoBefore
+        gamebar_nexus              = $nexusBefore
+        gamebar_chord              = $chordBefore
+        services                   = $svcSnap
+        appx                       = $appxSnap
+        keep_pages                 = @($script:XboxKeepPages)
+        skip_driver                = @($script:XboxNeverDelete)
+        backup_root                = $backupRoot
+        note                       = "Restore with pwsh -File xbox_cleanse.ps1 -Restore restore.json. Captures + Game Mode stay. xboxgip stays."
+    }
+
+    if ($WhatIf) {
+        $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
+        $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
+        return $manifest
+    }
+
+    Write-Reclaim11XboxManifest -Manifest $manifest -Path $manPath
 
     if (-not (Test-Path -LiteralPath $pol)) {
         New-Item -Path $pol -Force | Out-Null
     }
     New-ItemProperty -Path $pol -Name SettingsPageVisibility -Value $merged -PropertyType String -Force | Out-Null
 
-    $gpo = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
     if (-not (Test-Path -LiteralPath $gpo)) { New-Item -Path $gpo -Force | Out-Null }
     New-ItemProperty -Path $gpo -Name AllowGameDVR -Value 0 -PropertyType DWord -Force | Out-Null
 
-    $gb = "HKCU:\Software\Microsoft\GameBar"
     if (-not (Test-Path -LiteralPath $gb)) { New-Item -Path $gb -Force | Out-Null }
     New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value 0 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value 0 -PropertyType DWord -Force | Out-Null
 
+    $deleted = @()
     foreach ($svc in @(Get-Reclaim11XboxServiceCandidates)) {
         if (@($cat.never_touch_services) -contains $svc) { continue }
         if (@($script:XboxNeverDelete) -contains $svc) { continue }
@@ -153,6 +276,7 @@ function Invoke-Reclaim11XboxCleanse {
         $deleted += $svc
     }
 
+    $removedAppx = @()
     foreach ($n in $script:XboxAppx) {
         $pkgs = @(Get-AppxPackage -AllUsers -Name $n -ErrorAction SilentlyContinue)
         foreach ($p in $pkgs) {
@@ -163,27 +287,107 @@ function Invoke-Reclaim11XboxCleanse {
                 try {
                     Remove-AppxPackage -Package $p.PackageFullName -ErrorAction Stop
                     $removedAppx += $p.Name
-                } catch {
-                    # in use / store lock
-                }
+                } catch { }
             }
         }
+        try {
+            $prov = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $n })
+            foreach ($p in $prov) {
+                Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction SilentlyContinue | Out-Null
+            }
+        } catch { }
     }
 
-    [pscustomobject]@{
-        id          = "reclaim11-xbox-hide-v1"
-        hide_pages  = $merged
-        sc_delete   = @($deleted)
-        appx        = @($removedAppx)
-        keep_pages  = @($script:XboxKeepPages)
-        skip_driver = @($script:XboxNeverDelete)
-        note        = "Settings hide only. Captures + Game Mode stay. xboxgip (controller) stays. XboxGameCallableUI stays."
+    $manifest | Add-Member -NotePropertyName sc_delete -NotePropertyValue $deleted
+    $manifest | Add-Member -NotePropertyName appx_removed -NotePropertyValue $removedAppx
+    $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
+    Write-Reclaim11XboxManifest -Manifest $manifest -Path $manPath
+    $manifest
+}
+
+function Restore-Reclaim11XboxBackup {
+    param(
+        [string]$Manifest,
+        [string]$Root
+    )
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        $Root = Split-Path -Parent $PSCommandPath
     }
+    $invPath = Join-Path $Root "inventory.ps1"
+    if (Test-Path -LiteralPath $invPath) { . $invPath }
+    if (-not (Test-Path -LiteralPath $Manifest)) {
+        throw "Restore-Reclaim11XboxBackup: missing $Manifest"
+    }
+    $m = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$m.id -notlike "reclaim11-xbox*") {
+        throw "Restore-Reclaim11XboxBackup: not an Xbox/debloat manifest"
+    }
+    if (Get-Command Test-Reclaim11DeskHost -ErrorAction SilentlyContinue) {
+        if (Test-Reclaim11DeskHost) {
+            throw "Refuse: desk (IoTEnterpriseS). Xbox restore is VM-only. Not M1ABRAMS."
+        }
+    }
+    $restored = @()
+
+    $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (-not (Test-Path -LiteralPath $pol)) { New-Item -Path $pol -Force | Out-Null }
+    $before = [string]$m.settings_page_visibility.before
+    New-ItemProperty -Path $pol -Name SettingsPageVisibility -Value $before -PropertyType String -Force | Out-Null
+    $restored += "SettingsPageVisibility"
+
+    $gpo = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
+    if ($null -ne $m.gamedvr_allow -and $m.gamedvr_allow -ne "") {
+        if (-not (Test-Path -LiteralPath $gpo)) { New-Item -Path $gpo -Force | Out-Null }
+        New-ItemProperty -Path $gpo -Name AllowGameDVR -Value ([int]$m.gamedvr_allow) -PropertyType DWord -Force | Out-Null
+        $restored += "AllowGameDVR"
+    }
+    $gb = "HKCU:\Software\Microsoft\GameBar"
+    if (-not (Test-Path -LiteralPath $gb)) { New-Item -Path $gb -Force | Out-Null }
+    if ($null -ne $m.gamebar_nexus -and $m.gamebar_nexus -ne "") {
+        New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value ([int]$m.gamebar_nexus) -PropertyType DWord -Force | Out-Null
+    }
+    if ($null -ne $m.gamebar_chord -and $m.gamebar_chord -ne "") {
+        New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value ([int]$m.gamebar_chord) -PropertyType DWord -Force | Out-Null
+    }
+
+    foreach ($s in @($m.services)) {
+        $name = [string]$s.name
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if (@("xboxgip") -contains $name) { continue }
+        $bin = [string]$s.image_path
+        if ([string]::IsNullOrWhiteSpace($bin)) { continue }
+        $q = sc.exe query $name 2>&1 | Out-String
+        if ($q -notmatch "FAILED 1060") { continue }
+        $start = "demand"
+        if ([int]$s.start -eq 2) { $start = "auto" }
+        if ([int]$s.start -eq 4) { $start = "disabled" }
+        & sc.exe create $name binPath= $bin start= $start | Out-Null
+        $restored += ("service:" + $name)
+    }
+
+    foreach ($a in @($m.appx)) {
+        $loc = [string]$a.install_location
+        if ([string]::IsNullOrWhiteSpace($loc)) { continue }
+        $manifestXml = Join-Path $loc "AppxManifest.xml"
+        if (-not (Test-Path -LiteralPath $manifestXml)) { continue }
+        try {
+            Add-AppxPackage -DisableDevelopmentMode -Register $manifestXml -ErrorAction Stop
+            $restored += ("appx:" + [string]$a.name)
+        } catch { }
+    }
+
+    [pscustomobject]@{ manifest = $Manifest; restored = $restored }
 }
 
 # -File runs. Dot-source (GUI / Test-Reclaim11) only loads functions.
 if ($MyInvocation.InvocationName -ne ".") {
-    $plan = Invoke-Reclaim11XboxCleanse
-    $plan | ConvertTo-Json -Depth 6
-    Write-Host ("xbox hide pages={0} sc_delete={1}" -f $plan.hide_pages, @($plan.sc_delete).Count)
+    if (-not [string]::IsNullOrWhiteSpace($Restore)) {
+        Restore-Reclaim11XboxBackup -Manifest $Restore | ConvertTo-Json -Depth 6
+    } else {
+        $plan = Invoke-Reclaim11XboxCleanse -WhatIf:$WhatIf
+        $plan | ConvertTo-Json -Depth 8
+        if ($plan.manifest_path) {
+            Write-Host ("restore.json {0}" -f $plan.manifest_path)
+        }
+    }
 }
