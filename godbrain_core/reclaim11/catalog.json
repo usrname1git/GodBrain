@@ -69,10 +69,5 @@
     "stub_wdboot_if_secure_boot": "refuse",
     "prep_media": "winpe-iso",
     "killing_blows": "after-winpe-log"
-  },
-  "ctt": {
-    "allow": "ctt/allow.json",
-    "first": "WPFTweaksTelemetry",
-    "skip_invoke": ["Set-MpPreference"]
   }
 }

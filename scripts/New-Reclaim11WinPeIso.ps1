@@ -178,9 +178,6 @@ try {
         if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11WinPeIso: missing $s" }
         Copy-Item -LiteralPath $s -Destination (Join-Path $dest $n) -Force
     }
-    $ctt = Join-Path $reclaim "ctt"
-    if (-not (Test-Path -LiteralPath $ctt)) { throw "New-Reclaim11WinPeIso: missing $ctt" }
-    Copy-Item -LiteralPath $ctt -Destination (Join-Path $dest "ctt") -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $winpeSrc "startnet.cmd") -Destination (Join-Path $mount "Windows\System32\startnet.cmd") -Force
 
     $ps = Join-Path $mount "Windows\System32\WindowsPowerShell\v1.0\powershell.exe"

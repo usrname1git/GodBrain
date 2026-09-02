@@ -508,13 +508,6 @@ function Invoke-Reclaim11OfflineApply {
             Copy-Item -LiteralPath $s -Destination (Join-Path $kitDst $n) -Force
         }
     }
-    $cttSrc = Join-Path $kitFrom "ctt"
-    if (-not (Test-Path -LiteralPath $cttSrc)) {
-        $cttSrc = Join-Path (Split-Path -Parent $kitFrom) "ctt"
-    }
-    if (Test-Path -LiteralPath $cttSrc) {
-        Copy-Item -LiteralPath $cttSrc -Destination (Join-Path $kitDst "ctt") -Recurse -Force
-    }
     $receiptPath = Write-Reclaim11WinPeReceipt -Receipt $receipt -WindowsRoot $winResolved
     $receipt | Add-Member -NotePropertyName receipt_path -NotePropertyValue $receiptPath
     $receipt | Add-Member -NotePropertyName stub_on_volume -NotePropertyValue $stubOnVol

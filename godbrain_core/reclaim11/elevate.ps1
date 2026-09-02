@@ -207,13 +207,21 @@ function Invoke-Reclaim11AsTrustedInstaller {
     if (Test-Path -LiteralPath $done) {
         $code = [int]((Get-Content -LiteralPath $done -Raw).Trim())
     }
-    $out = ""
-    if (Test-Path -LiteralPath $log) { $out = Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue }
+    $chunks = @()
+    if (Test-Path -LiteralPath $log) {
+        $chunks += Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue
+    }
+    $errLog = $log + ".err"
+    if (Test-Path -LiteralPath $errLog) {
+        $chunks += Get-Content -LiteralPath $errLog -Raw -ErrorAction SilentlyContinue
+    }
+    $out = (($chunks | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n")
     [pscustomobject]@{
         continue  = $false
         reason    = "spawned-ti"
         exit_code = $code
         log       = $log
+        err_log   = $errLog
         output    = $out
     }
 }

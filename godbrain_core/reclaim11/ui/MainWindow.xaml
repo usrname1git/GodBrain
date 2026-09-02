@@ -127,7 +127,7 @@
           <TextBlock Text="ACTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <CheckBox x:Name="BtnSafe" Content="Safe cleanse  (move + restore.json)" IsEnabled="False"/>
           <CheckBox x:Name="BtnXbox" Content="Hide Xbox + Appx bloat  (restore.json)"/>
-          <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (CTT, restore.json)"/>
+          <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (restore.json)"/>
           <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
           <TextBlock Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
                      Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>

@@ -38,11 +38,9 @@ pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
 ```
 
 GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
-transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. From CTT start/main we
-took ConstrainedLanguage refuse, `-Verb RunAs`, transcript, XAML
-try/catch, run lock, DragMove, screen clamp, Esc/Ctrl+Q. Not taken:
-`irm | iex`, `wt.exe`, winget/choco, runspaces, theme Auto, MicroWin
-USB, sponsors. `-InventoryOnly` still skips UAC.
+transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. ConstrainedLanguage
+refuse, `-Verb RunAs`, XAML try/catch, run lock, DragMove, screen clamp,
+Esc/Ctrl+Q. `-InventoryOnly` still skips UAC. Not `irm | iex`.
 
 Check:
 
@@ -81,17 +79,11 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 7. Physical USB only after the ISO path is green.
 
-**Disable telemetry** (in-Windows, not PE; CTT `WPFTweaksTelemetry`):
-pinned JSON in `ctt/WPFTweaksTelemetry.json`. Writes `restore.json` first,
-then AllowTelemetry=0, advertising/tailored-experiences/SIUF HKCU, DiagTrack
-+ WerSvc start=disabled, `POWERSHELL_TELEMETRY_OPTOUT=1`. **Skips**
-`Set-MpPreference` (pack A kills Defender). CTT's `wermgr` is `WerSvc`.
-Desk SKU refused. No TI hop (HKCU must stay the user). Restore:
+**Disable telemetry** (in-Windows, not PE): `restore.json` first, then
+`AllowTelemetry=0`, `DiagTrack` + `dmwappushservice` start=disabled (same
+pair the old autom8ed nuke lists used). Not `sc delete`. Not a scheduled-task
+glob. Desk SKU refused. Restore:
 `pwsh -File telemetry_cleanse.ps1 -Restore restore.json`.
-
-A later tested CTT export (Settings → Export JSON, `{ "WPFTweaks": ["WPFTweaksTelemetry"] }`)
-is gated by `ctt/allow.json`. Unknown IDs fail closed. Not `irm | iex`.
-Not winget. Not `WPFTweaksServices`.
 
 **Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
 first, then machine `SettingsPageVisibility`
@@ -102,9 +94,10 @@ usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
 (Game Bar, Bing News, Get Help, Solitaire, Zune, Feedback Hub, Your Phone,
 …). Restore: `pwsh -File xbox_cleanse.ps1 -Restore restore.json`. Does
 **not** delete `xboxgip` (controller). Does **not** remove
-`Microsoft.XboxGameCallableUI`. Desk SKU refused. Live mutate (Hide Xbox, killing blows, Nuclear) self-elevates
-to TrustedInstaller via Task Scheduler (Admin → SYSTEM → TI). No wsudo /
-MinSudo. WinPE is already SYSTEM and skips that hop.
+`Microsoft.XboxGameCallableUI`. Desk SKU refused. Hide Xbox is admin
+(UAC); killing blows / Nuclear self-elevate to TrustedInstaller via Task
+Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
+SYSTEM and skips that hop.
 
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 

@@ -68,7 +68,8 @@ $script:XboxAppx = @(
     "Microsoft.YourPhone",
     "Microsoft.OneConnect",
     "Microsoft.WindowsFeedbackHub",
-    "Microsoft.GamingApp"
+    "Microsoft.GamingApp",
+    "Microsoft.GamingServices"
 )
 
 function Merge-Reclaim11HidePages {
@@ -207,25 +208,17 @@ function Invoke-Reclaim11XboxCleanse {
     if (Test-Reclaim11XboxDeskHost) {
         throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
     }
-    if (-not $WhatIf) {
-        $el = Join-Path $Root "elevate.ps1"
-        if (Test-Path -LiteralPath $el) {
-            . $el
-            $self = Join-Path $Root "xbox_cleanse.ps1"
-            $hop = Invoke-Reclaim11AsTrustedInstaller -File $self -TimeoutSec 180
-            if (-not $hop.continue) {
-                if ([int]$hop.exit_code -ne 0) {
-                    throw ("TI xbox_cleanse exit {0}`n{1}" -f $hop.exit_code, $hop.output)
-                }
-                try { return ($hop.output | ConvertFrom-Json) } catch { return $hop.output }
-            }
-        }
-    }
+    # Admin is enough (KillXbox.ps1). TI hop broke Appx + StrictMode on a
+    # missing SettingsPageVisibility and swallowed stderr. Pack-A killing
+    # blows / Nuclear still use elevate.ps1.
 
     $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
     $cur = ""
     if (Test-Path -LiteralPath $pol) {
-        $cur = [string](Get-ItemProperty -LiteralPath $pol -ErrorAction SilentlyContinue).SettingsPageVisibility
+        $ip = Get-ItemProperty -LiteralPath $pol -ErrorAction SilentlyContinue
+        if ($ip -and $ip.PSObject.Properties["SettingsPageVisibility"]) {
+            $cur = [string]$ip.SettingsPageVisibility
+        }
     }
     $hide = @($script:XboxHidePages)
     if ($KeepCaptures) {
@@ -242,10 +235,18 @@ function Invoke-Reclaim11XboxCleanse {
     $gb = "HKCU:\Software\Microsoft\GameBar"
     $nexusBefore = $null
     $chordBefore = $null
+    $startupBefore = $null
     if (Test-Path -LiteralPath $gb) {
         $gbi = Get-ItemProperty -LiteralPath $gb -ErrorAction SilentlyContinue
-        if ($gbi.PSObject.Properties["UseNexusForGameBarEnabled"]) { $nexusBefore = [int]$gbi.UseNexusForGameBarEnabled }
-        if ($gbi.PSObject.Properties["GamepadNexusChordEnabled"]) { $chordBefore = [int]$gbi.GamepadNexusChordEnabled }
+        if ($gbi -and $gbi.PSObject.Properties["UseNexusForGameBarEnabled"]) { $nexusBefore = [int]$gbi.UseNexusForGameBarEnabled }
+        if ($gbi -and $gbi.PSObject.Properties["GamepadNexusChordEnabled"]) { $chordBefore = [int]$gbi.GamepadNexusChordEnabled }
+        if ($gbi -and $gbi.PSObject.Properties["ShowStartupPanel"]) { $startupBefore = [int]$gbi.ShowStartupPanel }
+    }
+    $dvr = "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR"
+    $dvrCaptureBefore = $null
+    if (Test-Path -LiteralPath $dvr) {
+        $dvri = Get-ItemProperty -LiteralPath $dvr -ErrorAction SilentlyContinue
+        if ($dvri -and $dvri.PSObject.Properties["AppCaptureEnabled"]) { $dvrCaptureBefore = [int]$dvri.AppCaptureEnabled }
     }
 
     $svcSnap = @()
@@ -271,6 +272,8 @@ function Invoke-Reclaim11XboxCleanse {
         gamedvr_allow              = $gpoBefore
         gamebar_nexus              = $nexusBefore
         gamebar_chord              = $chordBefore
+        gamebar_startup            = $startupBefore
+        gamedvr_capture            = $dvrCaptureBefore
         services                   = $svcSnap
         appx                       = $appxSnap
         keep_pages                 = @($script:XboxKeepPages)
@@ -298,6 +301,9 @@ function Invoke-Reclaim11XboxCleanse {
     if (-not (Test-Path -LiteralPath $gb)) { New-Item -Path $gb -Force | Out-Null }
     New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value 0 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value 0 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $gb -Name ShowStartupPanel -Value 0 -PropertyType DWord -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $dvr)) { New-Item -Path $dvr -Force | Out-Null }
+    New-ItemProperty -Path $dvr -Name AppCaptureEnabled -Value 0 -PropertyType DWord -Force | Out-Null
 
     $deleted = @()
     foreach ($svc in @(Get-Reclaim11XboxServiceCandidates)) {
@@ -380,6 +386,14 @@ function Restore-Reclaim11XboxBackup {
     }
     if ($null -ne $m.gamebar_chord -and $m.gamebar_chord -ne "") {
         New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value ([int]$m.gamebar_chord) -PropertyType DWord -Force | Out-Null
+    }
+    if ($null -ne $m.gamebar_startup -and $m.gamebar_startup -ne "") {
+        New-ItemProperty -Path $gb -Name ShowStartupPanel -Value ([int]$m.gamebar_startup) -PropertyType DWord -Force | Out-Null
+    }
+    $dvr = "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR"
+    if ($null -ne $m.gamedvr_capture -and $m.gamedvr_capture -ne "") {
+        if (-not (Test-Path -LiteralPath $dvr)) { New-Item -Path $dvr -Force | Out-Null }
+        New-ItemProperty -Path $dvr -Name AppCaptureEnabled -Value ([int]$m.gamedvr_capture) -PropertyType DWord -Force | Out-Null
     }
 
     foreach ($s in @($m.services)) {

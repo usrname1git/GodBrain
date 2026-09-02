@@ -213,7 +213,7 @@ $btnRun.Add_Click({
         if ($doTelemetry) {
             try {
                 $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
-                Add-Log ("telemetry {0} skip={1}" -f $plan.ctt_id, ($plan.skip -join ","))
+                Add-Log ("telemetry disabled {0}" -f (@($plan.sc_disabled) -join ","))
                 Add-Log ("manifest {0}" -f $plan.manifest_path)
             } catch {
                 Add-Log ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
