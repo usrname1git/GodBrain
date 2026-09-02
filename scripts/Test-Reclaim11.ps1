@@ -325,10 +325,11 @@ try {
 }
 
 . (Join-Path $root "xbox_cleanse.ps1")
-$hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting")
+$hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
 if ($hid -notmatch "hide:gaming-gamebar") { throw "Test-Reclaim11: xbox hide gamebar" }
-if ($hid -match "gamemode" -or $hid -match "gaming-captures") {
-    throw "Test-Reclaim11: xbox hide must not hide Game Mode / Captures"
+if ($hid -notmatch "hide:gaming-captures") { throw "Test-Reclaim11: xbox hide captures" }
+if ($hid -match "gamemode") {
+    throw "Test-Reclaim11: xbox hide must not hide Game Mode"
 }
 $hid2 = Merge-Reclaim11HidePages -Current "hide:foo" -Hide @("gaming-gamebar")
 if ($hid2 -notmatch "hide:foo") { throw "Test-Reclaim11: xbox hide must keep existing pages" }

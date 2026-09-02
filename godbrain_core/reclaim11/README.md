@@ -77,7 +77,7 @@ Do **not** nuke the desk. Snapshot a VM, then:
 **Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
 first, then machine `SettingsPageVisibility`
 `hide:gaming-gamebar;hide:gaming-gamedvr;hide:gaming-trueplay;hide:gaming-broadcasting`
-so Settings → Gaming is Captures + Game Mode only. `sc delete` Xbox
+so Settings → Gaming is Game Mode only (Captures hidden; OBS / ShadowPlay / AMD). `sc delete` Xbox
 usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
 `GamingServices`, `BcastDVRUserService*`). Removes the Appx bloat list
 (Game Bar, Bing News, Get Help, Solitaire, Zune, Feedback Hub, Your Phone,

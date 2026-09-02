@@ -156,7 +156,7 @@ $btnSafe.Add_Click({
 
 $btnXbox.Add_Click({
     $q = [System.Windows.MessageBox]::Show(
-        "Hide Xbox Game Bar in Settings (Captures + Game Mode stay), sc delete Xbox usermode services, remove the Appx bloat list. Writes restore.json first. Does not delete xboxgip (controller). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+        "Hide Xbox Game Bar and Captures in Settings (Game Mode stays), sc delete Xbox usermode services, remove the Appx bloat list. Writes restore.json first. Does not delete xboxgip (controller). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
         "Reclaim11 Hide Xbox",
         "YesNo",
         "Warning")
@@ -167,7 +167,7 @@ $btnXbox.Add_Click({
         Add-Log ("xbox sc_delete {0}" -f (@($plan.sc_delete) -join ", "))
         Add-Log ("manifest {0}" -f $plan.manifest_path)
         [System.Windows.MessageBox]::Show(
-            ("Moved Settings/Appx/services.`n{0}`nRestore: pwsh -File xbox_cleanse.ps1 -Restore restore.json`nRe-open Settings. Captures + Game Mode stay." -f $plan.manifest_path),
+            ("Moved Settings/Appx/services.`n{0}`nRestore: pwsh -File xbox_cleanse.ps1 -Restore restore.json`nRe-open Settings. Game Mode stays." -f $plan.manifest_path),
             "Reclaim11 Hide Xbox") | Out-Null
     } catch {
         Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)

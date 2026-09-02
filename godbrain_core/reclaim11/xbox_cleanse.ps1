@@ -1,6 +1,6 @@
 # Hide Xbox Game Bar in Settings, sc-delete Xbox usermode services,
 # remove the Appx bloat list. Writes restore.json first (Safe-cleanse style).
-# Captures + Game Mode stay. Never xboxgip (controller). Never XboxGameCallableUI.
+# Game Mode stays. Captures hidden (OBS / ShadowPlay / AMD). Never xboxgip. Never XboxGameCallableUI.
 # Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused.
 # Provisioned Appx remove is the old script's Store-seed wipe (VM-only).
 
@@ -17,12 +17,12 @@ $script:XboxHidePages = @(
     "gaming-gamebar",
     "gaming-gamedvr",
     "gaming-trueplay",
-    "gaming-broadcasting"
+    "gaming-broadcasting",
+    "gaming-captures"
 )
 
 $script:XboxKeepPages = @(
-    "gaming-gamemode",
-    "gaming-captures"
+    "gaming-gamemode"
 )
 
 $script:XboxServices = @(
@@ -88,7 +88,7 @@ function Merge-Reclaim11HidePages {
         $leaf = $h.Trim()
         foreach ($keep in $script:XboxKeepPages) {
             if ($leaf -ieq $keep) {
-                throw "Merge-Reclaim11HidePages: refuse hide $leaf (Captures/Game Mode stay)"
+                throw "Merge-Reclaim11HidePages: refuse hide $leaf (Game Mode stays)"
             }
         }
         $tok = if ($leaf -like "hide:*") { $leaf } else { "hide:$leaf" }
@@ -242,7 +242,7 @@ function Invoke-Reclaim11XboxCleanse {
         keep_pages                 = @($script:XboxKeepPages)
         skip_driver                = @($script:XboxNeverDelete)
         backup_root                = $backupRoot
-        note                       = "Restore with pwsh -File xbox_cleanse.ps1 -Restore restore.json. Captures + Game Mode stay. xboxgip stays."
+        note                       = "Restore with pwsh -File xbox_cleanse.ps1 -Restore restore.json. Game Mode stays. xboxgip stays."
     }
 
     if ($WhatIf) {
