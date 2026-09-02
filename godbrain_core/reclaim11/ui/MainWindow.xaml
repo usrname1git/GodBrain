@@ -10,11 +10,12 @@
     <TextBlock DockPanel.Dock="Top" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"
                Text="Reclaim11"/>
     <TextBlock x:Name="Subtitle" DockPanel.Dock="Top" Foreground="#9AA3B2" Margin="0,0,0,12"
-               Text="WinPE park, then killing blows (IFEO + sc delete pack A). Never BFE / mpssvc / FltMgr."/>
+               Text="PE operator delete. GUI noob cleanse moves to backup + restore.json. Never BFE / mpssvc / FltMgr."/>
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
-      <Button x:Name="BtnScan" Content="Scan" Width="120" Height="32" Margin="0,0,8,0"/>
-      <Button x:Name="BtnPrep" Content="Prep media" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-      <Button x:Name="BtnKill" Content="Killing blows" Width="140" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <Button x:Name="BtnScan" Content="Scan" Width="90" Height="32" Margin="0,0,8,0"/>
+      <Button x:Name="BtnPrep" Content="Prep media" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <Button x:Name="BtnNoob" Content="Noob cleanse" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <Button x:Name="BtnKill" Content="Killing blows" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A8494"
                  Text="Read-only until a WinPE log exists."/>
     </StackPanel>

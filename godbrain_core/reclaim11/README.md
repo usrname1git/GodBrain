@@ -4,11 +4,19 @@ One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
 Not `irm | iex`. Not DISM. Never BFE / `mpssvc` /
 `FltMgr` / EventLog.
 
-Inventory plus a **WinPE ISO** that parks pack-A `.sys` on an offline
-Windows volume (never a usermode EXE over a driver) and copies
-`C:\reclaim11\` for the online remainder. Killing blows (IFEO + `sc delete`
-pack A) run only after a WinPE receipt, and **refuse this desk**
-(`IoTEnterpriseS`). Never BFE / `mpssvc` / `FltMgr`.
+Inventory plus a **WinPE ISO**. Two cleanse profiles:
+
+- **Operator PE:** `reg delete` pack-A service keys in the offline hive
+  and **delete** catalog `.sys` (no sidecar `.bak` in `drivers\`).
+  Never a usermode EXE over a driver.
+- **GUI Noob cleanse:** move-only into `C:\reclaim11\backup\<stamp>\`
+  plus `restore.json` (`original` / `backup` / `relative` / `sha256` /
+  `length`). Restore with `Restore-Reclaim11Noob.ps1 -Manifest restore.json`.
+  Does not delete.
+
+Killing blows (IFEO + `sc delete` pack A) and Noob cleanse run only after
+a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
+`mpssvc` / `FltMgr`.
 
 ## Rails
 
@@ -47,14 +55,15 @@ Do **not** nuke the desk. Snapshot a VM, then:
    pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
    ```
 
-   Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v3.iso` (outside git).
+   Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso` (outside git).
    v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
-4. Snapshot, attach **v5** (`Reclaim11-WinPE-v5.iso`). PE is the kill:
-   parks `drivers\Wd*.sys`, stubs catalog usermode EXEs, writes IFEO +
-   `DisableAntiSpyware` + service `Start=4` into the **offline hives**.
-   Live Windows IFEO is the wrong door (Tamper/PPL ACL). Disconnect ISO.
-   `wpeutil reboot`.
-5. SB-on VM must refuse `WdBoot` park and still boot. SB-off may park ELAM.
+4. Snapshot, attach **v7**. PE is the kill: **deletes** catalog
+   `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
+   (exact names, never a `Wd*.sys` glob), stubs catalog usermode EXEs,
+   `reg delete` pack-A keys then Start=4 fallback, IFEO +
+   `DisableAntiSpyware` in the **offline hives**. Live Windows IFEO is
+   the wrong door (Tamper/PPL ACL). Disconnect ISO. `wpeutil reboot`.
+5. SB-on VM must refuse `WdBoot` delete and still boot. SB-off may drop ELAM.
 6. After reboot, BFE/`mpssvc` must be RUNNING. In-Windows
    `Apply-KillingBlows.ps1` is leftover `sc delete` only.
 

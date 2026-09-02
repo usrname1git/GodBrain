@@ -80,6 +80,7 @@ Add-Type -AssemblyName PresentationFramework
 if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
+if (-not `$w.FindName('BtnNoob')) { throw 'no BtnNoob' }
 `$w.Close()
 'xaml-ok'
 "@
@@ -138,7 +139,7 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
@@ -206,8 +207,8 @@ $bootOffPath = Join-Path $fxWd "WdBoot.sys"
 if (Test-Path -LiteralPath $bootOffPath) {
     throw "Test-Reclaim11: SB off must park WdBoot (do not copy usermode EXE over .sys)"
 }
-if (-not (Test-Path -LiteralPath ($bootOffPath + ".reclaim11.bak"))) {
-    throw "Test-Reclaim11: WdBoot.bak missing"
+if (Test-Path -LiteralPath ($bootOffPath + ".reclaim11.bak")) {
+    throw "Test-Reclaim11: operator PE must not leave sidecar .bak in drivers"
 }
 $fltAfterOff = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
 if ($fltAfterOff.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys must not change after SB-off apply" }
@@ -254,11 +255,52 @@ $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
     throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
 }
+[IO.File]::WriteAllBytes((Join-Path $fx25Drv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
 $r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
 if (@($r25b.missing) -contains "WdFilter.sys") {
     throw "Test-Reclaim11: existing .bak must count as parked, not missing"
 }
-Remove-Item -LiteralPath $fx, $fx25 -Recurse -Force
+
+. (Join-Path $root "noob_cleanse.ps1")
+$fxNoob = Join-Path $env:TEMP "reclaim11-noob-fx"
+if (Test-Path -LiteralPath $fxNoob) { Remove-Item -LiteralPath $fxNoob -Recurse -Force }
+$fxNoobWin = Join-Path $fxNoob "Windows"
+$fxNoobDrv = Join-Path $fxNoobWin "System32\drivers"
+New-Item -ItemType Directory -Force -Path $fxNoobDrv | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "wdf01000.sys"), ([byte[]](9, 9, 9, 9)))
+$noob = Invoke-Reclaim11NoobCleanse -Root $root -VolumeRoot $fxNoob
+if (@($noob.items).Count -lt 1) { throw "Test-Reclaim11: noob cleanse must move the bak" }
+if (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak")) {
+    throw "Test-Reclaim11: noob cleanse must move, not leave, the bak"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "wdf01000.sys"))) {
+    throw "Test-Reclaim11: noob cleanse must not touch wdf01000.sys"
+}
+if (-not (Test-Path -LiteralPath $noob.manifest_path)) {
+    throw "Test-Reclaim11: noob restore.json missing"
+}
+$man = Get-Content -LiteralPath $noob.manifest_path -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($man.id -ne "reclaim11-noob-v1") { throw "Test-Reclaim11: restore.json id" }
+$row = @($man.items) | Where-Object { $_.relative -like "*WdFilter.sys.reclaim11.bak" } | Select-Object -First 1
+if (-not $row) { throw "Test-Reclaim11: restore.json missing bak path" }
+foreach ($k in @("original", "backup", "relative", "sha256", "length")) {
+    if (-not $row.PSObject.Properties[$k]) { throw "Test-Reclaim11: restore.json missing $k" }
+}
+if ([string]$row.sha256.Length -ne 64) { throw "Test-Reclaim11: restore.json sha256" }
+$rst = Restore-Reclaim11NoobBackup -Manifest $noob.manifest_path
+if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"))) {
+    throw "Test-Reclaim11: noob restore must put the file back"
+}
+try {
+    Invoke-Reclaim11NoobCleanse -Root $root
+    throw "Test-Reclaim11: noob cleanse must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected noob desk refuse, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force
 
 . (Join-Path $root "killing_blows.ps1")
 foreach ($s in @($cat.services_pack_a)) {

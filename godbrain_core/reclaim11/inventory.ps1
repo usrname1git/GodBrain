@@ -5,6 +5,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Test-Reclaim11DeskHost {
+    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    [string]$n.EditionID -eq "IoTEnterpriseS"
+}
+
 function Get-Reclaim11Root {
     if ($PSScriptRoot) { return $PSScriptRoot }
     if ($MyInvocation.MyCommand.Path) {

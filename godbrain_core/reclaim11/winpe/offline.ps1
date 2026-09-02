@@ -235,10 +235,6 @@ function Set-Reclaim11OfflineStub {
     if (-not (Test-Reclaim11PeMz -Path $StubPath)) {
         throw "Set-Reclaim11OfflineStub: stub is not MZ: $StubPath"
     }
-    $bak = $Path + ".reclaim11.bak"
-    if (-not (Test-Path -LiteralPath $bak)) {
-        Copy-Item -LiteralPath $Path -Destination $bak -Force
-    }
     try {
         Copy-Item -LiteralPath $StubPath -Destination $Path -Force
     } catch {
@@ -248,33 +244,26 @@ function Set-Reclaim11OfflineStub {
     if (-not (Test-Reclaim11PeMz -Path $Path)) {
         throw "Set-Reclaim11OfflineStub: target is not MZ after copy: $Path"
     }
-    [pscustomobject]@{ path = $Path; action = "stubbed"; bak = $bak }
+    [pscustomobject]@{ path = $Path; action = "stubbed" }
 }
 
 function Set-Reclaim11OfflineDriver {
-    # Kernel .sys cannot be replaced with the usermode IFEO stub (that bootloops).
-    # Park the file next to a .bak and leave the original path absent.
+    # Kernel .sys cannot be replaced with the usermode IFEO stub (that bootlooped).
+    # Operator PE: delete. No sidecar .bak in drivers\ (noob GUI keeps a catalog).
     param([string]$Path)
-    $bak = $Path + ".reclaim11.bak"
     if (-not (Test-Path -LiteralPath $Path)) {
-        return [pscustomobject]@{ path = $Path; action = "already-parked"; bak = $bak }
+        return [pscustomobject]@{ path = $Path; action = "already-gone" }
     }
     try {
-        if (-not (Test-Path -LiteralPath $bak)) {
-            Copy-Item -LiteralPath $Path -Destination $bak -Force
-        }
         Remove-Item -LiteralPath $Path -Force
     } catch {
         Unlock-Reclaim11OfflineFile -Path $Path
-        if (-not (Test-Path -LiteralPath $bak)) {
-            Copy-Item -LiteralPath $Path -Destination $bak -Force
-        }
         Remove-Item -LiteralPath $Path -Force
     }
     if (Test-Path -LiteralPath $Path) {
         throw "Set-Reclaim11OfflineDriver: still present $Path"
     }
-    [pscustomobject]@{ path = $Path; action = "parked"; bak = $bak }
+    [pscustomobject]@{ path = $Path; action = "deleted" }
 }
 
 function Disable-Reclaim11OfflineDriverServices {
@@ -507,8 +496,11 @@ function Invoke-Reclaim11OfflineApply {
     if (-not (Test-Path -LiteralPath $kitDst)) {
         New-Item -ItemType Directory -Path $kitDst | Out-Null
     }
-    foreach ($n in @("catalog.json", "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1")) {
+    foreach ($n in @("catalog.json", "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "offline.ps1")) {
         $s = Join-Path $kitFrom $n
+        if (-not (Test-Path -LiteralPath $s) -and $n -eq "offline.ps1") {
+            $s = Join-Path $kitFrom "winpe\offline.ps1"
+        }
         if (-not (Test-Path -LiteralPath $s)) {
             $s = Join-Path (Split-Path -Parent $kitFrom) $n
         }
