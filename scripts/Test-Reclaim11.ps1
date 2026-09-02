@@ -254,6 +254,10 @@ $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
     throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
 }
+$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+if (@($r25b.missing) -contains "WdFilter.sys") {
+    throw "Test-Reclaim11: existing .bak must count as parked, not missing"
+}
 Remove-Item -LiteralPath $fx, $fx25 -Recurse -Force
 
 . (Join-Path $root "killing_blows.ps1")

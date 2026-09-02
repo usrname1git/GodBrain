@@ -300,6 +300,11 @@ function Disable-Reclaim11OfflineDriverServices {
         foreach ($n in $ServiceNames) {
             if ([string]::IsNullOrWhiteSpace($n)) { continue }
             $regPath = "$key\$cs\Services\$n"
+            & reg.exe delete $regPath /f | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                [void]$done.Add($n)
+                continue
+            }
             & reg.exe add $regPath /v Start /t REG_DWORD /d 4 /f | Out-Null
             if ($LASTEXITCODE -eq 0) { [void]$done.Add($n) }
         }
@@ -445,6 +450,20 @@ function Invoke-Reclaim11OfflineApply {
     }
     foreach ($n in $named) {
         if (-not $seen.ContainsKey($n)) { [void]$missing.Add($n) }
+    }
+    foreach ($n in @($missing.ToArray())) {
+        if ($n -notlike "*.sys") { continue }
+        $foundBak = $false
+        foreach ($rel in Get-Reclaim11PplOfflineRelPaths) {
+            if ((Split-Path -Leaf $rel) -ne $n) { continue }
+            $orig = Join-Path $volumeRoot $rel
+            $bak = $orig + ".reclaim11.bak"
+            if (Test-Path -LiteralPath $bak) {
+                [void]$parked.Add($orig)
+                $foundBak = $true
+            }
+        }
+        if ($foundBak) { [void]$missing.Remove($n) }
     }
     $svcAll = @()
     foreach ($s in @($cat.services_pack_a)) {
