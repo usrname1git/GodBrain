@@ -14,6 +14,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "inventory.ps1")
 . (Join-Path $here "killing_blows.ps1")
 . (Join-Path $here "noob_cleanse.ps1")
+. (Join-Path $here "xbox_cleanse.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -67,6 +68,7 @@ function Get-Ui([string]$Name) { $window.FindName($Name) }
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
+$btnXbox = Get-Ui BtnXbox
 $btnKill = Get-Ui BtnKill
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
@@ -89,6 +91,7 @@ function Show-Inventory($inv) {
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
     $btnSafe.IsEnabled = [bool]$inv.gates.killing_blows
+    $btnXbox.IsEnabled = $true
     $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
@@ -148,6 +151,26 @@ $btnSafe.Add_Click({
     } catch {
         Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+    }
+})
+
+$btnXbox.Add_Click({
+    $q = [System.Windows.MessageBox]::Show(
+        "Hide Xbox Game Bar in Settings (Captures + Game Mode stay) and sc delete Xbox usermode services. Does not delete xboxgip (controller). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+        "Reclaim11 Hide Xbox",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    try {
+        $plan = Invoke-Reclaim11XboxCleanse -Root $here
+        Add-Log ("xbox hide {0}" -f $plan.hide_pages)
+        Add-Log ("xbox sc_delete {0}" -f (@($plan.sc_delete) -join ", "))
+        [System.Windows.MessageBox]::Show(
+            ("Settings hide set.`nsc delete: {0}`nRe-open Settings. Captures + Game Mode stay." -f ((@($plan.sc_delete) -join ", "))),
+            "Reclaim11 Hide Xbox") | Out-Null
+    } catch {
+        Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
     }
 })
 

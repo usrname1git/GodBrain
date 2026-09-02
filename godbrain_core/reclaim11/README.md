@@ -74,6 +74,14 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 7. Physical USB only after the ISO path is green.
 
+**Hide Xbox** (in-Windows, not PE): machine `SettingsPageVisibility`
+`hide:gaming-gamebar;hide:gaming-gamedvr;hide:gaming-trueplay;hide:gaming-broadcasting`
+so Settings → Gaming matches Captures + Game Mode only. `sc delete` Xbox
+usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
+`GamingServices`, `BcastDVRUserService*`). Does **not** delete `xboxgip`
+(controller). Does **not** remove `Microsoft.XboxGameCallableUI`. Desk
+SKU refused. Not DISM.
+
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 
 ![Reclaim11 GUI](ui/MainWindow.png)

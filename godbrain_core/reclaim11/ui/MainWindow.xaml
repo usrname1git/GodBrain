@@ -15,6 +15,7 @@
       <Button x:Name="BtnScan" Content="Scan" Width="90" Height="32" Margin="0,0,8,0"/>
       <Button x:Name="BtnPrep" Content="Prep media" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
       <Button x:Name="BtnSafe" Content="Safe cleanse" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
+      <Button x:Name="BtnXbox" Content="Hide Xbox" Width="100" Height="32" Margin="0,0,8,0"/>
       <Button x:Name="BtnKill" Content="Killing blows" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A8494"
                  Text="Read-only until a WinPE log exists."/>

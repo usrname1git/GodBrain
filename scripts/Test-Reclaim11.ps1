@@ -81,6 +81,7 @@ if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
 if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
+if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
 `$w.Close()
 'xaml-ok'
 "@
@@ -139,7 +140,7 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
@@ -320,6 +321,34 @@ try {
 } catch {
     if ($_.Exception.Message -notmatch "Refuse: desk") {
         throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
+    }
+}
+
+. (Join-Path $root "xbox_cleanse.ps1")
+$hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting")
+if ($hid -notmatch "hide:gaming-gamebar") { throw "Test-Reclaim11: xbox hide gamebar" }
+if ($hid -match "gamemode" -or $hid -match "gaming-captures") {
+    throw "Test-Reclaim11: xbox hide must not hide Game Mode / Captures"
+}
+$hid2 = Merge-Reclaim11HidePages -Current "hide:foo" -Hide @("gaming-gamebar")
+if ($hid2 -notmatch "hide:foo") { throw "Test-Reclaim11: xbox hide must keep existing pages" }
+try {
+    Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamemode") | Out-Null
+    throw "Test-Reclaim11: hide gamemode must refuse"
+} catch {
+    if ($_.Exception.Message -notmatch "refuse hide") {
+        throw "Test-Reclaim11: expected gamemode refuse, got $($_.Exception.Message)"
+    }
+}
+$cands = @(Get-Reclaim11XboxServiceCandidates)
+if ($cands -contains "xboxgip") { throw "Test-Reclaim11: xboxgip is the controller driver" }
+if ($cands -contains "BFE") { throw "Test-Reclaim11: Xbox list hit BFE" }
+try {
+    Invoke-Reclaim11XboxCleanse -Root $root
+    throw "Test-Reclaim11: xbox hide must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected xbox desk refuse, got $($_.Exception.Message)"
     }
 }
 
