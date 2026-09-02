@@ -333,6 +333,28 @@ function Remove-WipeDriver([string]$Path) {
     }
 }
 
+function Remove-WipePackAScheduledTasks {
+    # Named Defender/ExploitGuard folders only. Never a host-wide task glob.
+    $allow = @(
+        "\Microsoft\Windows\Windows Defender",
+        "\Microsoft\Windows\ExploitGuard"
+    )
+    $n = 0
+    $tasks = @()
+    try { $tasks = @(Get-ScheduledTask -ErrorAction Stop) } catch { return 0 }
+    foreach ($t in $tasks) {
+        $p = ([string]$t.TaskPath).Replace("/", "\").TrimEnd("\")
+        $ok = $false
+        foreach ($a in $allow) { if ($p -ieq $a) { $ok = $true } }
+        if (-not $ok) { continue }
+        $full = $p + "\" + [string]$t.TaskName
+        schtasks.exe /Delete /TN $full /F 2>&1 | Out-Null
+        Write-Host "  deltask $full" -ForegroundColor Yellow
+        $n++
+    }
+    $n
+}
+
 function Remove-RegKey([string]$Path) {
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
@@ -513,6 +535,10 @@ try {
             }
         }
     }
+
+    Write-Host "Removing Defender scheduled tasks (named folders only)..." -ForegroundColor Cyan
+    $goneTasks = Remove-WipePackAScheduledTasks
+    Write-Host ("  tasks deleted={0}" -f $goneTasks) -ForegroundColor Yellow
 
     Write-Host "Cleaning Defender registry leftovers..." -ForegroundColor Cyan
     foreach ($k in $RegKeysToDelete) { Remove-RegKey $k }

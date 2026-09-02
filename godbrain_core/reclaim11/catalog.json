@@ -49,6 +49,14 @@
     "AppIDSvc",
     "AppID"
   ],
+  "scheduled_task_paths_pack_a": [
+    "\\Microsoft\\Windows\\Windows Defender\\",
+    "\\Microsoft\\Windows\\ExploitGuard\\"
+  ],
+  "registry_lock_pack_a": [
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows Defender",
+    "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows Defender"
+  ],
   "never_touch_services": [
     "BFE",
     "mpssvc",

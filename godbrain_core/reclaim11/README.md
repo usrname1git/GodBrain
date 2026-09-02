@@ -70,7 +70,10 @@ Do **not** nuke the desk. Snapshot a VM, then:
    the wrong door (Tamper/PPL ACL). Disconnect ISO. `wpeutil reboot`.
 5. SB-on VM must refuse `WdBoot` delete and still boot. SB-off may drop ELAM.
 6. After reboot, BFE/`mpssvc` must be RUNNING. In-Windows
-   `Apply-KillingBlows.ps1` is leftover `sc delete` only.
+   `Apply-KillingBlows.ps1` is leftover `sc delete`, Defender/ExploitGuard
+   scheduled tasks (those two folders only), and delete of
+   `HKLM\SOFTWARE\Microsoft\Windows Defender` (resurrection lock). GPO
+   `DisableAntiSpyware=1` stays. Not a host-wide task glob.
    Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
    v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
    **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
@@ -78,6 +81,9 @@ Do **not** nuke the desk. Snapshot a VM, then:
    Not this desk.
 
 7. Physical USB only after the ISO path is green.
+
+Killing blows also writes `restore.json` (task XML under `tasks\`) before
+the deletes. COM CLSID wipe is not pack A (7-Zip / PowerRename stay).
 
 **Disable telemetry** (in-Windows, not PE): `restore.json` first, then
 `AllowTelemetry=0`, `DiagTrack` + `dmwappushservice` start=disabled (same

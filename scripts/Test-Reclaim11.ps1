@@ -343,6 +343,33 @@ foreach ($s in @($cat.services_pack_a)) {
         throw "Test-Reclaim11: pack A collides never-touch $s"
     }
 }
+$taskPaths = @($cat.scheduled_task_paths_pack_a)
+if ($taskPaths -notcontains "\Microsoft\Windows\Windows Defender\") {
+    throw "Test-Reclaim11: catalog missing Defender task folder"
+}
+if ($taskPaths -notcontains "\Microsoft\Windows\ExploitGuard\") {
+    throw "Test-Reclaim11: catalog missing ExploitGuard task folder"
+}
+if (@($taskPaths | Where-Object { $_ -eq "\" -or $_ -eq "\Microsoft\Windows\" }).Count -gt 0) {
+    throw "Test-Reclaim11: scheduled-task paths must stay named folders"
+}
+$regLock = @($cat.registry_lock_pack_a)
+if ($regLock -notcontains "HKLM:\SOFTWARE\Microsoft\Windows Defender") {
+    throw "Test-Reclaim11: catalog missing Defender software key lock"
+}
+if (@($regLock | Where-Object { $_ -like "*\Policies\Microsoft\Windows Defender*" }).Count -gt 0) {
+    throw "Test-Reclaim11: GPO DisableAntiSpyware key must not be deleted"
+}
+if (-not (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\Windows Defender\")) {
+    throw "Test-Reclaim11: Defender task path must match"
+}
+if (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\") {
+    throw "Test-Reclaim11: must not match all Microsoft\Windows tasks"
+}
+$kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -Encoding UTF8
+if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
+$nukeSrc = Get-Content -LiteralPath (Join-Path $root "NuclearDefenderWipe-V6_3.ps1") -Raw -Encoding UTF8
+if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
 try {
     Invoke-Reclaim11KillingBlows -Root $root
     throw "Test-Reclaim11: killing blows must refuse this desk"

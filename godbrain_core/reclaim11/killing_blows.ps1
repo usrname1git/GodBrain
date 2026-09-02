@@ -15,6 +15,34 @@ function Test-Reclaim11DeskHost {
     [string]$n.EditionID -eq "IoTEnterpriseS"
 }
 
+function Test-Reclaim11PackATaskPath {
+    param($Catalog, [string]$Path)
+    $p = ([string]$Path).Replace("/", "\").TrimEnd("\")
+    if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+    foreach ($a in @($Catalog.scheduled_task_paths_pack_a)) {
+        $want = ([string]$a).Replace("/", "\").TrimEnd("\")
+        if ($p -ieq $want) { return $true }
+    }
+    $false
+}
+
+function Get-Reclaim11PackAScheduledTasks {
+    param($Catalog)
+    $out = @()
+    $tasks = @()
+    try { $tasks = @(Get-ScheduledTask -ErrorAction Stop) } catch { return $out }
+    foreach ($t in $tasks) {
+        if (-not (Test-Reclaim11PackATaskPath -Catalog $Catalog -Path ([string]$t.TaskPath))) { continue }
+        $full = ([string]$t.TaskPath).TrimEnd("\") + "\" + [string]$t.TaskName
+        $out += [pscustomobject]@{
+            path = [string]$t.TaskPath
+            name = [string]$t.TaskName
+            full = $full
+        }
+    }
+    $out
+}
+
 function Get-Reclaim11KillingStub {
     param($Catalog)
     $cands = @(
@@ -39,6 +67,12 @@ function Invoke-Reclaim11KillingBlows {
     if (-not (Test-Path -LiteralPath $invPath)) { throw "Invoke-Reclaim11KillingBlows: missing inventory.ps1" }
     . $invPath
     $cat = Get-Reclaim11Catalog -Root $Root
+    if (-not $cat.PSObject.Properties["scheduled_task_paths_pack_a"]) {
+        throw "Invoke-Reclaim11KillingBlows: catalog missing scheduled_task_paths_pack_a"
+    }
+    if (-not $cat.PSObject.Properties["registry_lock_pack_a"]) {
+        throw "Invoke-Reclaim11KillingBlows: catalog missing registry_lock_pack_a"
+    }
 
     foreach ($s in @($cat.services_pack_a)) {
         if (@($cat.never_touch_services) -contains $s) {
@@ -80,20 +114,57 @@ function Invoke-Reclaim11KillingBlows {
         throw "Refuse: no reclaim11-stub.exe on this volume (PE should have copied it)."
     }
 
+    $taskSnap = @(Get-Reclaim11PackAScheduledTasks -Catalog $cat)
+    $regLock = @($cat.registry_lock_pack_a)
+    foreach ($rk in $regLock) {
+        if ([string]$rk -like "*\Policies\Microsoft\Windows Defender*") {
+            throw "Refuse: GPO DisableAntiSpyware key is not a delete target"
+        }
+    }
+    $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + $stamp)
     $plan = [pscustomobject]@{
-        receipt     = $receipt
-        stub        = $stub
-        ifeo        = @($cat.usermode_ifeo)
-        services    = @($cat.services_pack_a)
-        never_touch = @($cat.never_touch_services)
-        what_if     = [bool]$WhatIf
-        applied     = @()
-        failed      = @()
+        receipt      = $receipt
+        stub         = $stub
+        ifeo         = @($cat.usermode_ifeo)
+        services     = @($cat.services_pack_a)
+        never_touch  = @($cat.never_touch_services)
+        tasks        = @($taskSnap)
+        registry     = @($regLock)
+        backup_root  = $backupRoot
+        what_if      = [bool]$WhatIf
+        applied      = @()
+        failed       = @()
     }
     if ($WhatIf) { return $plan }
 
     $applied = New-Object System.Collections.Generic.List[string]
     $failed = New-Object System.Collections.Generic.List[string]
+
+    if (-not (Test-Path -LiteralPath $backupRoot)) {
+        New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    }
+    $taskDir = Join-Path $backupRoot "tasks"
+    New-Item -ItemType Directory -Path $taskDir -Force | Out-Null
+    foreach ($row in $taskSnap) {
+        $safe = ([string]$row.name) -replace '[^\w\.-]', '_'
+        $xmlPath = Join-Path $taskDir ($safe + ".xml")
+        try {
+            $xml = Export-ScheduledTask -TaskName $row.name -TaskPath $row.path
+            if ($xml) { Set-Content -LiteralPath $xmlPath -Value $xml -Encoding Unicode }
+        } catch { }
+    }
+    $manPath = Join-Path $backupRoot "restore.json"
+    $manifest = [pscustomobject]@{
+        id          = "reclaim11-killing-blows-v1"
+        at          = [datetime]::UtcNow.ToString("o")
+        tasks       = @($taskSnap)
+        registry    = @($regLock)
+        backup_root = $backupRoot
+        note        = "Task XML under tasks\. GPO DisableAntiSpyware stays. Restore is manual."
+    }
+    ($manifest | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $manPath -Encoding UTF8
+    [void]$applied.Add("manifest:$manPath")
 
     $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
     if (-not (Test-Path -LiteralPath $pol)) {
@@ -101,6 +172,26 @@ function Invoke-Reclaim11KillingBlows {
     }
     Set-ItemProperty -LiteralPath $pol -Name DisableAntiSpyware -Value 1 -Type DWord
     [void]$applied.Add("policy:DisableAntiSpyware=1")
+
+    foreach ($row in $taskSnap) {
+        & schtasks.exe /Delete /TN $row.full /F 2>&1 | Out-Null
+        [void]$applied.Add("task:" + $row.full)
+    }
+
+    foreach ($rk in $regLock) {
+        if (Test-Path -LiteralPath $rk) {
+            Remove-Item -LiteralPath $rk -Recurse -Force -ErrorAction SilentlyContinue
+            [void]$applied.Add("reglock:$rk")
+        }
+    }
+    $runKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    if (Test-Path -LiteralPath $runKey) {
+        $rp = Get-ItemProperty -LiteralPath $runKey -ErrorAction SilentlyContinue
+        if ($rp -and $rp.PSObject.Properties["SecurityHealth"]) {
+            Remove-ItemProperty -LiteralPath $runKey -Name SecurityHealth -ErrorAction SilentlyContinue
+            [void]$applied.Add("regval:SecurityHealth")
+        }
+    }
 
     foreach ($svc in @($cat.services_pack_a)) {
         if (@($cat.never_touch_services) -contains $svc) {
@@ -123,6 +214,7 @@ function Invoke-Reclaim11KillingBlows {
         }
     }
     $plan | Add-Member -NotePropertyName failed -NotePropertyValue @($failed) -Force
+    $plan | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath -Force
 
     $plan.applied = @($applied)
     $plan
