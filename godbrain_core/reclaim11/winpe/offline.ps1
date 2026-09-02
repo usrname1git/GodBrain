@@ -249,7 +249,7 @@ function Set-Reclaim11OfflineStub {
 
 function Set-Reclaim11OfflineDriver {
     # Kernel .sys cannot be replaced with the usermode IFEO stub (that bootlooped).
-    # Operator PE: delete. No sidecar .bak in drivers\ (noob GUI keeps a catalog).
+    # Operator PE: delete. No sidecar .bak in drivers\ (Safe cleanse GUI keeps a catalog).
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
         return [pscustomobject]@{ path = $Path; action = "already-gone" }

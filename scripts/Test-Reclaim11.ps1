@@ -80,7 +80,7 @@ Add-Type -AssemblyName PresentationFramework
 if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
-if (-not `$w.FindName('BtnNoob')) { throw 'no BtnNoob' }
+if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 `$w.Close()
 'xaml-ok'
 "@
@@ -276,12 +276,12 @@ New-Item -ItemType Directory -Force -Path $fxNoobDrv | Out-Null
 [IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
 [IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "wdf01000.sys"), ([byte[]](9, 9, 9, 9)))
 $noob = Invoke-Reclaim11NoobCleanse -Root $root -VolumeRoot $fxNoob
-if (@($noob.items).Count -lt 1) { throw "Test-Reclaim11: noob cleanse must move the bak" }
+if (@($noob.items).Count -lt 1) { throw "Test-Reclaim11: safe cleanse must move the bak" }
 if (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak")) {
-    throw "Test-Reclaim11: noob cleanse must move, not leave, the bak"
+    throw "Test-Reclaim11: safe cleanse must move, not leave, the bak"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "wdf01000.sys"))) {
-    throw "Test-Reclaim11: noob cleanse must not touch wdf01000.sys"
+    throw "Test-Reclaim11: safe cleanse must not touch wdf01000.sys"
 }
 if (-not (Test-Path -LiteralPath $noob.manifest_path)) {
     throw "Test-Reclaim11: noob restore.json missing"
@@ -300,10 +300,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.b
 }
 try {
     Invoke-Reclaim11NoobCleanse -Root $root
-    throw "Test-Reclaim11: noob cleanse must refuse this desk"
+    throw "Test-Reclaim11: safe cleanse must refuse this desk"
 } catch {
     if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected noob desk refuse, got $($_.Exception.Message)"
+        throw "Test-Reclaim11: expected safe-cleanse desk refuse, got $($_.Exception.Message)"
     }
 }
 Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force

@@ -66,7 +66,7 @@ function Get-Ui([string]$Name) { $window.FindName($Name) }
 
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
-$btnNoob = Get-Ui BtnNoob
+$btnSafe = Get-Ui BtnSafe
 $btnKill = Get-Ui BtnKill
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
@@ -88,7 +88,7 @@ function Show-Inventory($inv) {
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
-    $btnNoob.IsEnabled = [bool]$inv.gates.killing_blows
+    $btnSafe.IsEnabled = [bool]$inv.gates.killing_blows
     $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
@@ -108,7 +108,7 @@ function Show-Inventory($inv) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
     Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
-    Add-Log "mutate=false  (online killing blows still do not wipe)"
+    Add-Log "scan is read-only. Safe cleanse / killing blows mutate only after a WinPE receipt, not on IoTEnterpriseS."
 }
 
 $btnScan.Add_Click({
@@ -121,33 +121,33 @@ $btnScan.Add_Click({
     }
 })
 
-$btnNoob.Add_Click({
+$btnSafe.Add_Click({
     $unlocked = $false
     if ($script:LastInventory -and $script:LastInventory.gates) {
         $unlocked = [bool]$script:LastInventory.gates.killing_blows
     }
     if (-not $unlocked) {
         [System.Windows.MessageBox]::Show(
-            "Noob cleanse stays locked until a WinPE receipt exists.",
+            "Safe cleanse stays locked until a WinPE receipt exists.",
             "Reclaim11") | Out-Null
         return
     }
     $q = [System.Windows.MessageBox]::Show(
         "Move pack-A files to C:\reclaim11\backup\<stamp>\ and write restore.json. Does not delete. Never BFE/mpssvc/FltMgr. Continue?",
-        "Reclaim11 noob cleanse",
+        "Reclaim11 Safe cleanse",
         "YesNo",
         "Warning")
     if ($q -ne "Yes") { return }
     try {
         $plan = Invoke-Reclaim11NoobCleanse -Root $here
-        Add-Log ("noob cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
+        Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
         Add-Log ("manifest {0}" -f $plan.manifest_path)
         [System.Windows.MessageBox]::Show(
             ("Moved {0} files.`n{1}`nRestore: Restore-Reclaim11Noob.ps1 -Manifest restore.json" -f @($plan.items).Count, $plan.manifest_path),
-            "Reclaim11 noob cleanse") | Out-Null
+            "Reclaim11 Safe cleanse") | Out-Null
     } catch {
-        Add-Log ("NOOB FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 noob cleanse") | Out-Null
+        Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
     }
 })
 
@@ -157,7 +157,7 @@ $btnPrep.Add_Click({
     $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso"
     if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
     $msg = if (Test-Path -LiteralPath $iso) {
-        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Noob cleanse moves files to backup + restore.json."
+        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
     } else {
         "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
     }

@@ -44,7 +44,7 @@ $bl = $inv.bitlocker_c
 (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
 (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
 (Get-Ui BtnPrep).IsEnabled = [bool]$inv.gates.prep_media
-(Get-Ui BtnNoob).IsEnabled = [bool]$inv.gates.killing_blows
+(Get-Ui BtnSafe).IsEnabled = [bool]$inv.gates.killing_blows
 (Get-Ui BtnKill).IsEnabled = [bool]$inv.gates.killing_blows
 $log = Get-Ui LogBox
 $lines = @(
@@ -63,7 +63,7 @@ $lines = @(
 foreach ($s in $inv.services) {
     $lines += ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
 }
-$lines += "mutate=false  (Noob cleanse + killing blows locked until WinPE receipt)"
+$lines += "scan is read-only. Safe cleanse / killing blows locked until WinPE receipt"
 $log.Text = $lines -join [Environment]::NewLine
 
 $window.Add_ContentRendered({

@@ -1,4 +1,4 @@
-# Noob cleanse: move pack-A files to backup + restore.json. Never delete.
+# Safe cleanse: move pack-A files to backup + restore.json. Never delete.
 [CmdletBinding()]
 param()
 Set-StrictMode -Version Latest

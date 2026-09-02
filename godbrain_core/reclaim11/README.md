@@ -9,12 +9,12 @@ Inventory plus a **WinPE ISO**. Two cleanse profiles:
 - **Operator PE:** `reg delete` pack-A service keys in the offline hive
   and **delete** catalog `.sys` (no sidecar `.bak` in `drivers\`).
   Never a usermode EXE over a driver.
-- **GUI Noob cleanse:** move-only into `C:\reclaim11\backup\<stamp>\`
+- **GUI Safe cleanse:** move-only into `C:\reclaim11\backup\<stamp>\`
   plus `restore.json` (`original` / `backup` / `relative` / `sha256` /
   `length`). Restore with `Restore-Reclaim11Noob.ps1 -Manifest restore.json`.
   Does not delete.
 
-Killing blows (IFEO + `sc delete` pack A) and Noob cleanse run only after
+Killing blows (IFEO + `sc delete` pack A) and Safe cleanse run only after
 a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 `mpssvc` / `FltMgr`.
 
@@ -74,7 +74,7 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 7. Physical USB only after the ISO path is green.
 
-GUI (this desk scan, Noob/Kill locked until a WinPE receipt):
+GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 
 ![Reclaim11 GUI](ui/MainWindow.png)
 

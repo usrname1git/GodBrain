@@ -1,4 +1,4 @@
-# Restore a noob-cleanse catalog. Usage: -Manifest C:\reclaim11\backup\<stamp>\restore.json
+# Restore a Safe-cleanse catalog. Usage: -Manifest C:\reclaim11\backup\<stamp>\restore.json
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]

@@ -1,4 +1,4 @@
-# Noob cleanse: move pack-A files to a backup catalog + restore.json. Never delete.
+# Safe cleanse: move pack-A files to a backup catalog + restore.json. Never delete.
 # Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused when targeting this OS.
 
 Set-StrictMode -Version Latest
@@ -29,7 +29,7 @@ function Invoke-Reclaim11NoobCleanse {
     $VolumeRoot = $VolumeRoot.TrimEnd("\")
     $sysDrive = $env:SystemDrive.TrimEnd("\")
     if ((Test-Reclaim11DeskHost) -and ($VolumeRoot -eq $sysDrive)) {
-        throw "Refuse: desk (IoTEnterpriseS). Noob cleanse is VM-only. Not M1ABRAMS."
+        throw "Refuse: desk (IoTEnterpriseS). Safe cleanse is VM-only. Not M1ABRAMS."
     }
     foreach ($s in @($cat.never_touch_services)) {
         if (@($cat.services_pack_a) -contains $s) {
@@ -111,7 +111,7 @@ function Restore-Reclaim11NoobBackup {
     }
     $m = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$m.id -notlike "reclaim11-noob*") {
-        throw "Restore-Reclaim11NoobBackup: not a noob manifest"
+        throw "Restore-Reclaim11NoobBackup: not a Safe cleanse manifest"
     }
     $restored = @()
     foreach ($it in @($m.items)) {
