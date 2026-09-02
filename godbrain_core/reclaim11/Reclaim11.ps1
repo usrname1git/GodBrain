@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$InventoryOnly,
+    [switch]$KillingBlows,
     [string]$OutJson = "",
     [string]$WinPeLog = ""
 )
@@ -11,6 +12,8 @@ $ErrorActionPreference = "Stop"
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "inventory.ps1")
+. (Join-Path $here "killing_blows.ps1")
+. (Join-Path $here "noob_cleanse.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -29,6 +32,12 @@ if ($InventoryOnly) {
     $inv = Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog
     $json = Write-Reclaim11InventoryFile -Inventory $inv -Path $OutJson
     Write-Output $json
+    return
+}
+
+if ($KillingBlows) {
+    $plan = Invoke-Reclaim11KillingBlows -Root $here
+    $plan | ConvertTo-Json -Depth 6
     return
 }
 
@@ -57,6 +66,7 @@ function Get-Ui([string]$Name) { $window.FindName($Name) }
 
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
+$btnSafe = Get-Ui BtnSafe
 $btnKill = Get-Ui BtnKill
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
@@ -78,6 +88,7 @@ function Show-Inventory($inv) {
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
+    $btnSafe.IsEnabled = [bool]$inv.gates.killing_blows
     $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
@@ -96,7 +107,8 @@ function Show-Inventory($inv) {
     foreach ($s in $inv.services) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
-    Add-Log "mutate=false  (this build does not wipe)"
+    Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
+    Add-Log "scan is read-only. Safe cleanse / killing blows mutate only after a WinPE receipt, not on IoTEnterpriseS."
 }
 
 $btnScan.Add_Click({
@@ -109,10 +121,47 @@ $btnScan.Add_Click({
     }
 })
 
+$btnSafe.Add_Click({
+    $unlocked = $false
+    if ($script:LastInventory -and $script:LastInventory.gates) {
+        $unlocked = [bool]$script:LastInventory.gates.killing_blows
+    }
+    if (-not $unlocked) {
+        [System.Windows.MessageBox]::Show(
+            "Safe cleanse stays locked until a WinPE receipt exists.",
+            "Reclaim11") | Out-Null
+        return
+    }
+    $q = [System.Windows.MessageBox]::Show(
+        "Move pack-A files to C:\reclaim11\backup\<stamp>\ and write restore.json. Does not delete. Never BFE/mpssvc/FltMgr. Continue?",
+        "Reclaim11 Safe cleanse",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    try {
+        $plan = Invoke-Reclaim11NoobCleanse -Root $here
+        Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
+        Add-Log ("manifest {0}" -f $plan.manifest_path)
+        [System.Windows.MessageBox]::Show(
+            ("Moved {0} files.`n{1}`nRestore: Restore-Reclaim11Noob.ps1 -Manifest restore.json" -f @($plan.items).Count, $plan.manifest_path),
+            "Reclaim11 Safe cleanse") | Out-Null
+    } catch {
+        Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+    }
+})
+
 $btnPrep.Add_Click({
-    [System.Windows.MessageBox]::Show(
-        "Prep media is not in this build. Next: WinPE ISO for VMware (not a physical USB first). Snapshot the VM before that.",
-        "Reclaim11") | Out-Null
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
+    $build = Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+    $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso"
+    if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
+    $msg = if (Test-Path -LiteralPath $iso) {
+        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
+    } else {
+        "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
+    }
+    [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })
 
 $btnKill.Add_Click({
@@ -120,12 +169,27 @@ $btnKill.Add_Click({
     if ($script:LastInventory -and $script:LastInventory.gates) {
         $unlocked = [bool]$script:LastInventory.gates.killing_blows
     }
-    $msg = if ($unlocked) {
-        "Killing blows are unlocked by a WinPE log, but this build does not mutate."
-    } else {
-        "Killing blows stay locked until a WinPE log exists. This build does not mutate."
+    if (-not $unlocked) {
+        [System.Windows.MessageBox]::Show(
+            "Killing blows stay locked until a WinPE receipt exists.",
+            "Reclaim11") | Out-Null
+        return
     }
-    [System.Windows.MessageBox]::Show($msg, "Reclaim11") | Out-Null
+    $q = [System.Windows.MessageBox]::Show(
+        "Mutate pack A on THIS Windows (IFEO + sc delete WinDefend/Sense/AppID). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+        "Reclaim11 killing blows",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    try {
+        $plan = Invoke-Reclaim11KillingBlows -Root $here
+        Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+        foreach ($a in @($plan.applied)) { Add-Log ("  {0}" -f $a) }
+        [System.Windows.MessageBox]::Show("Pack A killing blows applied. BFE/mpssvc must still be Running.", "Reclaim11") | Out-Null
+    } catch {
+        Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+    }
 })
 
 $window.Add_Loaded({

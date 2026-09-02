@@ -5,6 +5,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Test-Reclaim11DeskHost {
+    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    [string]$n.EditionID -eq "IoTEnterpriseS"
+}
+
 function Get-Reclaim11Root {
     if ($PSScriptRoot) { return $PSScriptRoot }
     if ($MyInvocation.MyCommand.Path) {
@@ -124,11 +129,41 @@ function Test-Reclaim11NeverTouchOk {
            $fw -and $fw.present -and $fw.status -eq "Running")
 }
 
-function Get-Reclaim11WinPeLog {
-    param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
-    if (Test-Path -LiteralPath $Path) { return (Get-Item -LiteralPath $Path).FullName }
+function Get-Reclaim11WinPeReceipt {
+    param(
+        [string]$Path = "",
+        [string]$WindowsRoot = ""
+    )
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($Path)) { [void]$candidates.Add($Path) }
+    $root = $WindowsRoot
+    if ([string]::IsNullOrWhiteSpace($root)) { $root = $env:SystemRoot }
+    if (-not [string]::IsNullOrWhiteSpace($root)) {
+        [void]$candidates.Add((Join-Path $root "reclaim11-winpe.log"))
+        $parent = Split-Path -Parent $root
+        if ($parent) { [void]$candidates.Add((Join-Path $parent "reclaim11-winpe.log")) }
+    }
+    foreach ($c in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if (-not (Test-Path -LiteralPath $c)) { continue }
+        try {
+            $j = Get-Content -LiteralPath $c -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.PSObject.Properties["id"] -and ([string]$j.id -like "reclaim11-winpe*")) {
+                return (Get-Item -LiteralPath $c).FullName
+            }
+        } catch {
+            continue
+        }
+    }
     $null
+}
+
+function Get-Reclaim11WinPeLog {
+    param(
+        [string]$Path = "",
+        [string]$WindowsRoot = ""
+    )
+    Get-Reclaim11WinPeReceipt -Path $Path -WindowsRoot $WindowsRoot
 }
 
 function Get-Reclaim11Gates {
@@ -201,7 +236,8 @@ function Get-Reclaim11Inventory {
         elam            = @($cat.elam)
         mutate          = $false
     }
-    $inv | Add-Member -NotePropertyName gates -NotePropertyValue (Get-Reclaim11Gates -Inventory $inv -WinPeLog $WinPeLog)
+    $resolvedLog = Get-Reclaim11WinPeReceipt -Path $WinPeLog
+    $inv | Add-Member -NotePropertyName gates -NotePropertyValue (Get-Reclaim11Gates -Inventory $inv -WinPeLog $resolvedLog)
     $inv
 }
 

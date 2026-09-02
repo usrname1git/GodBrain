@@ -32,6 +32,8 @@ if ($cat.elam -notcontains "WdBoot.sys") { throw "Test-Reclaim11: elam list" }
 if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
     throw "Test-Reclaim11: SB gate must refuse WdBoot"
 }
+if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
+if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
 
 . $invPath
 
@@ -60,10 +62,14 @@ if ($gNa.stub_wdboot) { throw "Test-Reclaim11: SB n/a must refuse WdBoot stub" }
 if ($gNa.reason_wdboot -notmatch 'n/a') { throw "Test-Reclaim11: SB n/a reason" }
 
 $tmpLog = Join-Path $env:TEMP "reclaim11-winpe-test.log"
-Set-Content -LiteralPath $tmpLog -Value "winpe ok" -Encoding ASCII
+Set-Content -LiteralPath $tmpLog -Value '{"id":"reclaim11-winpe-v1","catalog":"reclaim11-pack-a-v1"}' -Encoding UTF8
 $gLog = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog $tmpLog
 if (-not $gLog.killing_blows) { throw "Test-Reclaim11: WinPE log must unlock killing blows" }
-Remove-Item -LiteralPath $tmpLog -Force
+$junkLog = Join-Path $env:TEMP "reclaim11-winpe-junk.log"
+Set-Content -LiteralPath $junkLog -Value "winpe ok" -Encoding ASCII
+$gJunk = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog $junkLog
+if ($gJunk.killing_blows) { throw "Test-Reclaim11: non-JSON log must not unlock killing blows" }
+Remove-Item -LiteralPath $tmpLog, $junkLog -Force
 
 # XAML load in STA (no ShowDialog).
 $xamlTest = @"
@@ -74,6 +80,7 @@ Add-Type -AssemblyName PresentationFramework
 if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
+if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 `$w.Close()
 'xaml-ok'
 "@
@@ -128,6 +135,194 @@ foreach ($f in @($emptyBrowser, $noBrowser)) {
     }
 }
 
-Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy os_pin={0} sb={1} stub_wdboot={2}" -f `
+$winpe = Join-Path $root "winpe"
+foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
+}
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
+}
+$nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
+$nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
+if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
+if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
+    throw "Test-Reclaim11: Nuclear v6.3 self-test did not print ok"
+}
+$isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeIso.ps1" }
+$isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
+if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
+if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
+if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
+
+. (Join-Path $winpe "offline.ps1")
+$fx = Join-Path $env:TEMP "reclaim11-winpe-fx"
+if (Test-Path -LiteralPath $fx) { Remove-Item -LiteralPath $fx -Recurse -Force }
+$fxWin = Join-Path $fx "Windows"
+$fxWd = Join-Path $fxWin "System32\drivers\wd"
+$fxDef = Join-Path $fx "Program Files\Windows Defender"
+New-Item -ItemType Directory -Force -Path $fxWd | Out-Null
+New-Item -ItemType Directory -Force -Path $fxDef | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $fxWin "System32\drivers") | Out-Null
+$payload = New-Object byte[] 64
+$payload[0] = 0x4D; $payload[1] = 0x5A
+$stubFx = Join-Path $fx "stub.exe"
+[IO.File]::WriteAllBytes($stubFx, $payload)
+try {
+    Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $env:SystemRoot
+    throw "Test-Reclaim11: host WindowsRoot must be refused"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse") {
+        throw "Test-Reclaim11: expected host refuse, got $($_.Exception.Message)"
+    }
+}
+foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
+    [IO.File]::WriteAllBytes((Join-Path $fxWd $n), ([byte[]](1, 2, 3, 4)))
+}
+[IO.File]::WriteAllBytes((Join-Path $fxDef "MsMpEng.exe"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxDef "NisSrv.exe"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxWin "System32\drivers\fltmgr.sys"), ([byte[]](9, 9, 9, 9)))
+$fltBefore = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+
+$sbOnFx = [pscustomobject]@{ available = $true; enabled = $true; error = $null }
+$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx
+if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
+if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }
+if (@($rOn.skipped_elam).Count -lt 1) { throw "Test-Reclaim11: SB on must skip ELAM" }
+if (@($rOn.parked | Where-Object { $_ -match "WdFilter" }).Count -lt 1) {
+    throw "Test-Reclaim11: SB on still parks WdFilter"
+}
+if (Test-Path -LiteralPath (Join-Path $fxWd "WdFilter.sys")) {
+    throw "Test-Reclaim11: WdFilter must be parked (not a usermode stub)"
+}
+$bootOn = [IO.File]::ReadAllBytes((Join-Path $fxWd "WdBoot.sys"))
+if ($bootOn[0] -eq 0x4D) { throw "Test-Reclaim11: WdBoot must stay original when SB on" }
+$fltAfterOn = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+if ($fltAfterOn.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys must not change" }
+if (-not (Test-Path -LiteralPath (Join-Path $fxWin "reclaim11-winpe.log"))) {
+    throw "Test-Reclaim11: missing Windows\\reclaim11-winpe.log"
+}
+
+# Reset WdFilter to a non-MZ so the second pass is visible, keep receipt path.
+[IO.File]::WriteAllBytes((Join-Path $fxWd "WdFilter.sys"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxWd "WdBoot.sys"), ([byte[]](1, 2, 3, 4)))
+$sbOffFx = [pscustomobject]@{ available = $true; enabled = $false; error = $null }
+$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx
+if (-not $rOff.stub_wdboot) { throw "Test-Reclaim11: SB off must allow WdBoot park" }
+$bootOffPath = Join-Path $fxWd "WdBoot.sys"
+if (Test-Path -LiteralPath $bootOffPath) {
+    throw "Test-Reclaim11: SB off must park WdBoot (do not copy usermode EXE over .sys)"
+}
+if (Test-Path -LiteralPath ($bootOffPath + ".reclaim11.bak")) {
+    throw "Test-Reclaim11: operator PE must not leave sidecar .bak in drivers"
+}
+$fltAfterOff = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+if ($fltAfterOff.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys must not change after SB-off apply" }
+
+$gFx = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog (Join-Path $fxWin "reclaim11-winpe.log")
+if (-not $gFx.killing_blows) { throw "Test-Reclaim11: fixture receipt must unlock killing blows" }
+
+# 25H2: drivers\wd empty, WdFilter.sys lives in drivers\ (not a Wd* glob).
+$fx25 = Join-Path $env:TEMP "reclaim11-winpe-fx25"
+if (Test-Path -LiteralPath $fx25) { Remove-Item -LiteralPath $fx25 -Recurse -Force }
+$fx25Win = Join-Path $fx25 "Windows"
+$fx25Drv = Join-Path $fx25Win "System32\drivers"
+$fx25Wd = Join-Path $fx25Drv "wd"
+$fx25Def = Join-Path $fx25 "Program Files\Windows Defender"
+New-Item -ItemType Directory -Force -Path $fx25Wd | Out-Null
+New-Item -ItemType Directory -Force -Path $fx25Def | Out-Null
+foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
+    [IO.File]::WriteAllBytes((Join-Path $fx25Drv $n), ([byte[]](1, 2, 3, 4)))
+}
+[IO.File]::WriteAllBytes((Join-Path $fx25Drv "wdf01000.sys"), ([byte[]](9, 9, 9, 9)))
+[IO.File]::WriteAllBytes((Join-Path $fx25Def "MsMpEng.exe"), ([byte[]](1, 2, 3, 4)))
+New-Item -ItemType Directory -Force -Path (Join-Path $fx25Win "System32") | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"), ([byte[]](1, 2, 3, 4)))
+$wdfBefore = Get-FileHash -LiteralPath (Join-Path $fx25Drv "wdf01000.sys") -Algorithm SHA256
+$r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
+    if (@($r25.missing) -contains $n) { throw "Test-Reclaim11: 25H2 flat drivers\ missing $n" }
+}
+if (@($r25.parked | Where-Object { $_ -match "WdFilter\.sys$" }).Count -lt 1) {
+    throw "Test-Reclaim11: 25H2 must park drivers\WdFilter.sys"
+}
+if (Test-Path -LiteralPath (Join-Path $fx25Drv "WdFilter.sys")) {
+    throw "Test-Reclaim11: 25H2 WdFilter.sys must not remain as a loadable driver"
+}
+$wdfAfter = Get-FileHash -LiteralPath (Join-Path $fx25Drv "wdf01000.sys") -Algorithm SHA256
+if ($wdfAfter.Hash -ne $wdfBefore.Hash) { throw "Test-Reclaim11: wdf01000.sys must not be stubbed" }
+if (-not (Test-Path -LiteralPath (Join-Path $fx25Win "reclaim11-stub.exe"))) {
+    throw "Test-Reclaim11: PE must copy reclaim11-stub.exe onto the Windows volume"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\Apply-KillingBlows.ps1"))) {
+    throw "Test-Reclaim11: PE must drop C:\\reclaim11\\Apply-KillingBlows.ps1"
+}
+$ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
+if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
+    throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
+}
+[IO.File]::WriteAllBytes((Join-Path $fx25Drv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
+$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+if (@($r25b.missing) -contains "WdFilter.sys") {
+    throw "Test-Reclaim11: existing .bak must count as parked, not missing"
+}
+
+. (Join-Path $root "noob_cleanse.ps1")
+$fxNoob = Join-Path $env:TEMP "reclaim11-noob-fx"
+if (Test-Path -LiteralPath $fxNoob) { Remove-Item -LiteralPath $fxNoob -Recurse -Force }
+$fxNoobWin = Join-Path $fxNoob "Windows"
+$fxNoobDrv = Join-Path $fxNoobWin "System32\drivers"
+New-Item -ItemType Directory -Force -Path $fxNoobDrv | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxNoobDrv "wdf01000.sys"), ([byte[]](9, 9, 9, 9)))
+$noob = Invoke-Reclaim11NoobCleanse -Root $root -VolumeRoot $fxNoob
+if (@($noob.items).Count -lt 1) { throw "Test-Reclaim11: safe cleanse must move the bak" }
+if (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak")) {
+    throw "Test-Reclaim11: safe cleanse must move, not leave, the bak"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "wdf01000.sys"))) {
+    throw "Test-Reclaim11: safe cleanse must not touch wdf01000.sys"
+}
+if (-not (Test-Path -LiteralPath $noob.manifest_path)) {
+    throw "Test-Reclaim11: noob restore.json missing"
+}
+$man = Get-Content -LiteralPath $noob.manifest_path -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($man.id -ne "reclaim11-noob-v1") { throw "Test-Reclaim11: restore.json id" }
+$row = @($man.items) | Where-Object { $_.relative -like "*WdFilter.sys.reclaim11.bak" } | Select-Object -First 1
+if (-not $row) { throw "Test-Reclaim11: restore.json missing bak path" }
+foreach ($k in @("original", "backup", "relative", "sha256", "length")) {
+    if (-not $row.PSObject.Properties[$k]) { throw "Test-Reclaim11: restore.json missing $k" }
+}
+if ([string]$row.sha256.Length -ne 64) { throw "Test-Reclaim11: restore.json sha256" }
+$rst = Restore-Reclaim11NoobBackup -Manifest $noob.manifest_path
+if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"))) {
+    throw "Test-Reclaim11: noob restore must put the file back"
+}
+try {
+    Invoke-Reclaim11NoobCleanse -Root $root
+    throw "Test-Reclaim11: safe cleanse must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected safe-cleanse desk refuse, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force
+
+. (Join-Path $root "killing_blows.ps1")
+foreach ($s in @($cat.services_pack_a)) {
+    if (@($cat.never_touch_services) -contains $s) {
+        throw "Test-Reclaim11: pack A collides never-touch $s"
+    }
+}
+try {
+    Invoke-Reclaim11KillingBlows -Root $root
+    throw "Test-Reclaim11: killing blows must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
+    }
+}
+
+Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy winpe blows os_pin={0} sb={1} stub_wdboot={2}" -f `
     $inv.os.os_pin, $inv.secure_boot.enabled, $inv.gates.stub_wdboot)
 exit 0
