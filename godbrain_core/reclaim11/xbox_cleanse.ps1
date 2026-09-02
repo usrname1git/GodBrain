@@ -37,6 +37,11 @@ $script:XboxNeverDelete = @(
     "xboxgip"
 )
 
+function Test-Reclaim11XboxDeskHost {
+    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    [string]$n.EditionID -eq "IoTEnterpriseS"
+}
+
 # Old Appx list + remaining Xbox overlays. Not XboxGameCallableUI (desk kept it).
 $script:XboxAppx = @(
     "Microsoft.3DBuilder",
@@ -173,11 +178,21 @@ function Invoke-Reclaim11XboxCleanse {
         [switch]$KeepCaptures
     )
     if ([string]::IsNullOrWhiteSpace($Root)) {
-        $Root = Split-Path -Parent $PSCommandPath
+        if ($PSScriptRoot) { $Root = $PSScriptRoot }
+        else { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
     }
     $invPath = Join-Path $Root "inventory.ps1"
-    . $invPath
-    $cat = Get-Reclaim11Catalog -Root $Root
+    if (Test-Path -LiteralPath $invPath) {
+        . $invPath
+    }
+    $catPath = Join-Path $Root "catalog.json"
+    if (Get-Command Get-Reclaim11Catalog -ErrorAction SilentlyContinue) {
+        $cat = Get-Reclaim11Catalog -Root $Root
+    } elseif (Test-Path -LiteralPath $catPath) {
+        $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        throw "xbox_cleanse: missing $invPath and $catPath (copy the whole reclaim11 folder, not just this file)"
+    }
     foreach ($s in @(Get-Reclaim11XboxServiceCandidates)) {
         if (@($cat.never_touch_services) -contains $s) {
             throw "Refuse: Xbox list collides never-touch $s"
@@ -189,7 +204,7 @@ function Invoke-Reclaim11XboxCleanse {
     if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") {
         throw "Refuse: XboxGameCallableUI stays (desk kept it)"
     }
-    if (Test-Reclaim11DeskHost) {
+    if (Test-Reclaim11XboxDeskHost) {
         throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
     }
     if (-not $WhatIf) {
@@ -341,10 +356,8 @@ function Restore-Reclaim11XboxBackup {
     if ([string]$m.id -notlike "reclaim11-xbox*") {
         throw "Restore-Reclaim11XboxBackup: not an Xbox/debloat manifest"
     }
-    if (Get-Command Test-Reclaim11DeskHost -ErrorAction SilentlyContinue) {
-        if (Test-Reclaim11DeskHost) {
-            throw "Refuse: desk (IoTEnterpriseS). Xbox restore is VM-only. Not M1ABRAMS."
-        }
+    if (Test-Reclaim11XboxDeskHost) {
+        throw "Refuse: desk (IoTEnterpriseS). Xbox restore is VM-only. Not M1ABRAMS."
     }
     $restored = @()
 
