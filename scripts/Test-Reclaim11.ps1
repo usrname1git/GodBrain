@@ -411,6 +411,14 @@ if ($script:XboxAppx -notcontains "Microsoft.BingNews") { throw "Test-Reclaim11:
 if ($script:XboxAppx -notcontains "Microsoft.WindowsFeedbackHub") { throw "Test-Reclaim11: bloat list missing FeedbackHub" }
 if ($script:XboxAppx -notcontains "Microsoft.GamingServices") { throw "Test-Reclaim11: bloat list missing GamingServices" }
 if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") { throw "Test-Reclaim11: XboxGameCallableUI must stay" }
+$gbOff = @($script:XboxGameBarOff | ForEach-Object { $_.Name })
+if ($gbOff -notcontains "EnableGameBar") { throw "Test-Reclaim11: GameBar.reg EnableGameBar missing" }
+if ($gbOff -notcontains "ShowBroadcastPanel") { throw "Test-Reclaim11: GameBar.reg ShowBroadcastPanel missing" }
+if ($gbOff -contains "AllowAutoGameMode") { throw "Test-Reclaim11: Game Mode Auto must stay" }
+if ($gbOff -contains "AutoGameModeEnabled") { throw "Test-Reclaim11: Game Mode Enabled must stay" }
+if ($script:XboxGameBarNever -notcontains "AllowAutoGameMode") {
+    throw "Test-Reclaim11: must refuse AllowAutoGameMode"
+}
 if (@($script:XboxAppx | Where-Object { $_ -match '\*' }).Count -gt 0) {
     throw "Test-Reclaim11: xbox Appx list must be named, not a wildcard"
 }

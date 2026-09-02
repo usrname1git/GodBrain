@@ -37,6 +37,27 @@ $script:XboxNeverDelete = @(
     "xboxgip"
 )
 
+# GameBar.reg juice. Never AllowAutoGameMode / AutoGameModeEnabled (Game Mode stays).
+$script:XboxGameBarOff = @(
+    @{ Name = "UseNexusForGameBarEnabled"; Value = 0 },
+    @{ Name = "GamepadNexusChordEnabled"; Value = 0 },
+    @{ Name = "ShowStartupPanel"; Value = 0 },
+    @{ Name = "EnableGameBar"; Value = 0 },
+    @{ Name = "ShowBroadcastPanel"; Value = 0 },
+    @{ Name = "GamePanelStartupTipIndex"; Value = 3 }
+)
+
+$script:XboxGameBarNever = @(
+    "AllowAutoGameMode",
+    "AutoGameModeEnabled"
+)
+
+function Get-Reclaim11OptionalDword {
+    param($Object, [string]$Name)
+    if ($Object -and $Object.PSObject.Properties[$Name]) { return [int]$Object.$Name }
+    $null
+}
+
 function Test-Reclaim11XboxDeskHost {
     $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
     [string]$n.EditionID -eq "IoTEnterpriseS"
@@ -233,21 +254,27 @@ function Invoke-Reclaim11XboxCleanse {
         if ($gp -and $gp.PSObject.Properties["AllowGameDVR"]) { $gpoBefore = [int]$gp.AllowGameDVR }
     }
     $gb = "HKCU:\Software\Microsoft\GameBar"
-    $nexusBefore = $null
-    $chordBefore = $null
-    $startupBefore = $null
+    $gbBefore = @()
+    $gbi = $null
     if (Test-Path -LiteralPath $gb) {
         $gbi = Get-ItemProperty -LiteralPath $gb -ErrorAction SilentlyContinue
-        if ($gbi -and $gbi.PSObject.Properties["UseNexusForGameBarEnabled"]) { $nexusBefore = [int]$gbi.UseNexusForGameBarEnabled }
-        if ($gbi -and $gbi.PSObject.Properties["GamepadNexusChordEnabled"]) { $chordBefore = [int]$gbi.GamepadNexusChordEnabled }
-        if ($gbi -and $gbi.PSObject.Properties["ShowStartupPanel"]) { $startupBefore = [int]$gbi.ShowStartupPanel }
+    }
+    foreach ($row in $script:XboxGameBarOff) {
+        $gbBefore += [pscustomobject]@{
+            name    = [string]$row.Name
+            present = [bool]($gbi -and $gbi.PSObject.Properties[$row.Name])
+            value   = Get-Reclaim11OptionalDword -Object $gbi -Name $row.Name
+            wanted  = [int]$row.Value
+        }
     }
     $dvr = "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR"
     $dvrCaptureBefore = $null
     if (Test-Path -LiteralPath $dvr) {
         $dvri = Get-ItemProperty -LiteralPath $dvr -ErrorAction SilentlyContinue
-        if ($dvri -and $dvri.PSObject.Properties["AppCaptureEnabled"]) { $dvrCaptureBefore = [int]$dvri.AppCaptureEnabled }
+        $dvrCaptureBefore = Get-Reclaim11OptionalDword -Object $dvri -Name "AppCaptureEnabled"
     }
+    $overlayKey = "Registry::HKEY_CLASSES_ROOT\ms-gamingoverlay"
+    $overlayPresent = Test-Path -LiteralPath $overlayKey
 
     $svcSnap = @()
     foreach ($svc in @(Get-Reclaim11XboxServiceCandidates)) {
@@ -270,10 +297,9 @@ function Invoke-Reclaim11XboxCleanse {
         at                         = [datetime]::UtcNow.ToString("o")
         settings_page_visibility   = [pscustomobject]@{ before = $cur; after = $merged }
         gamedvr_allow              = $gpoBefore
-        gamebar_nexus              = $nexusBefore
-        gamebar_chord              = $chordBefore
-        gamebar_startup            = $startupBefore
+        gamebar                     = @($gbBefore)
         gamedvr_capture            = $dvrCaptureBefore
+        ms_gamingoverlay           = $overlayPresent
         services                   = $svcSnap
         appx                       = $appxSnap
         keep_pages                 = @($script:XboxKeepPages)
@@ -299,11 +325,32 @@ function Invoke-Reclaim11XboxCleanse {
     New-ItemProperty -Path $gpo -Name AllowGameDVR -Value 0 -PropertyType DWord -Force | Out-Null
 
     if (-not (Test-Path -LiteralPath $gb)) { New-Item -Path $gb -Force | Out-Null }
-    New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path $gb -Name ShowStartupPanel -Value 0 -PropertyType DWord -Force | Out-Null
+    foreach ($row in $script:XboxGameBarOff) {
+        if ($script:XboxGameBarNever -contains $row.Name) {
+            throw "Refuse: Game Mode key $($row.Name) stays"
+        }
+        New-ItemProperty -Path $gb -Name $row.Name -Value ([int]$row.Value) -PropertyType DWord -Force | Out-Null
+    }
     if (-not (Test-Path -LiteralPath $dvr)) { New-Item -Path $dvr -Force | Out-Null }
     New-ItemProperty -Path $dvr -Name AppCaptureEnabled -Value 0 -PropertyType DWord -Force | Out-Null
+    $apiRoot = "HKCU:\Software\Microsoft\GameBarApi"
+    if (Test-Path -LiteralPath $apiRoot) {
+        $apiItems = @(Get-ChildItem -LiteralPath $apiRoot -Recurse -ErrorAction SilentlyContinue)
+        foreach ($it in $apiItems) {
+            $ip = Get-ItemProperty -LiteralPath $it.PSPath -ErrorAction SilentlyContinue
+            if ($ip -and $ip.PSObject.Properties["Visible"]) {
+                New-ItemProperty -Path $it.PSPath -Name Visible -Value 0 -PropertyType DWord -Force | Out-Null
+            }
+        }
+        $apiIn = Join-Path $apiRoot "Input"
+        if (-not (Test-Path -LiteralPath $apiIn)) { New-Item -Path $apiIn -Force | Out-Null }
+        New-ItemProperty -Path $apiIn -Name InputRedirected -Value 0 -PropertyType DWord -Force | Out-Null
+    }
+    if ($overlayPresent) {
+        $ovBak = Join-Path $backupRoot "ms-gamingoverlay.reg"
+        & reg.exe export "HKCR\ms-gamingoverlay" $ovBak /y 2>&1 | Out-Null
+        Remove-Item -LiteralPath $overlayKey -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     $deleted = @()
     foreach ($svc in @(Get-Reclaim11XboxServiceCandidates)) {
@@ -381,14 +428,32 @@ function Restore-Reclaim11XboxBackup {
     }
     $gb = "HKCU:\Software\Microsoft\GameBar"
     if (-not (Test-Path -LiteralPath $gb)) { New-Item -Path $gb -Force | Out-Null }
-    if ($null -ne $m.gamebar_nexus -and $m.gamebar_nexus -ne "") {
-        New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value ([int]$m.gamebar_nexus) -PropertyType DWord -Force | Out-Null
+    if ($m.PSObject.Properties["gamebar"]) {
+        foreach ($row in @($m.gamebar)) {
+            $n = [string]$row.name
+            if ($script:XboxGameBarNever -contains $n) { continue }
+            if ([bool]$row.present) {
+                New-ItemProperty -Path $gb -Name $n -Value ([int]$row.value) -PropertyType DWord -Force | Out-Null
+            } else {
+                Remove-ItemProperty -LiteralPath $gb -Name $n -ErrorAction SilentlyContinue
+            }
+        }
+    } else {
+        if ($null -ne $m.gamebar_nexus -and $m.gamebar_nexus -ne "") {
+            New-ItemProperty -Path $gb -Name UseNexusForGameBarEnabled -Value ([int]$m.gamebar_nexus) -PropertyType DWord -Force | Out-Null
+        }
+        if ($null -ne $m.gamebar_chord -and $m.gamebar_chord -ne "") {
+            New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value ([int]$m.gamebar_chord) -PropertyType DWord -Force | Out-Null
+        }
+        if ($null -ne $m.gamebar_startup -and $m.gamebar_startup -ne "") {
+            New-ItemProperty -Path $gb -Name ShowStartupPanel -Value ([int]$m.gamebar_startup) -PropertyType DWord -Force | Out-Null
+        }
     }
-    if ($null -ne $m.gamebar_chord -and $m.gamebar_chord -ne "") {
-        New-ItemProperty -Path $gb -Name GamepadNexusChordEnabled -Value ([int]$m.gamebar_chord) -PropertyType DWord -Force | Out-Null
-    }
-    if ($null -ne $m.gamebar_startup -and $m.gamebar_startup -ne "") {
-        New-ItemProperty -Path $gb -Name ShowStartupPanel -Value ([int]$m.gamebar_startup) -PropertyType DWord -Force | Out-Null
+    if ([bool]$m.ms_gamingoverlay) {
+        $ovBak = Join-Path (Split-Path -Parent $Manifest) "ms-gamingoverlay.reg"
+        if (Test-Path -LiteralPath $ovBak) {
+            & reg.exe import $ovBak 2>&1 | Out-Null
+        }
     }
     $dvr = "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR"
     if ($null -ne $m.gamedvr_capture -and $m.gamedvr_capture -ne "") {
