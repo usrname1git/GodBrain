@@ -103,7 +103,7 @@ Heal v4: probe TCP then HTTP ready (`rag /health.ready`, mouth `/health`),
 start the allowlist, one `flushdns` after a DNS miss, `rag-rebuild` if the
 projection is unready, drain one `inbox\*.txt` when the mouth is idle,
 quarantine poison files, `POST /api/observe`, `sre_surgeon --diagnose` only
-when layer Γëá ok (15 min cooldown). Remember on act/fail as **candidate**.
+when layer ≠ ok (15 min cooldown). Remember on act/fail as **candidate**.
 
 Heal may not: kill processes, reboot, `tailscale up`, `--ask`, winsock reset,
 ip reset, DeviceCleanup, `/release` `/renew`, BIOS, DISM, or registry
@@ -164,7 +164,7 @@ returns promoted skills only.
 dashboard fixture (`frontend-spa-v1`). `scripts\Verify-SkillLab.ps1` runs
 `npm ci` off the GPU under `skill_lab/fixtures`, fails without a lockfile
 or README (Brief, Stack, Run, Check, Not Galaxy), and does not mark the
-skill promotable. Stack pick is `stack-policy.json` (SPA ΓåÆ Vite; GodBrain
+skill promotable. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain
 UI stays `galaxy.html`). Not a kernel factory.
 
 `Start-CS2.ps1` pauses the mouth and Tailscale, launches Steam app 730, waits
@@ -173,13 +173,13 @@ Start-GodBrain. Never logout, `--reset`, or uninstall Tailscale. Start/Heal
 skip the mouth while CS2 is running or has been gone under 10 minutes.
 
 `godbrain_core/reclaim11/` is a WPF kit (Reclaim11), not Heal and not
-Galaxy. Pack A = Defender / PPL / Sense / AppID. `WdBoot` stub is refused
-when Secure Boot is on. Prep media is a WinPE ISO (`scripts\New-Reclaim11WinPeIso.ps1`,
-ADK 10.1.26100.2454) that stubs catalog `ppl_offline` on the offline
-volume and writes `Windows\reclaim11-winpe.log`. Killing blows stay locked
-until that receipt exists and still do not mutate in this build. Never
-BFE / `mpssvc` / `FltMgr`. VMware ISO before a physical USB. Check:
-`scripts\Test-Reclaim11.ps1`.
+Galaxy. Pack A = Defender / PPL / Sense / AppID. Prep media is a WinPE ISO
+(`scripts\New-Reclaim11WinPeIso.ps1`, ADK 10.1.26100.2454) that **deletes**
+named catalog `.sys` (never a usermode EXE over a driver, never `Wd*.sys`).
+`WdBoot` is refused when Secure Boot is on or n/a. GUI Safe cleanse is
+move-only (`restore.json`). Killing blows (IFEO + `sc delete` pack A) require
+that receipt and **refuse IoTEnterpriseS**. Never BFE / `mpssvc` / `FltMgr`.
+VMware ISO before a physical USB. Check: `scripts\Test-Reclaim11.ps1`.
 
 ## Also in the tree, not the Jarvis path
 

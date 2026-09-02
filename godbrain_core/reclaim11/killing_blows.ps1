@@ -53,7 +53,7 @@ function Invoke-Reclaim11KillingBlows {
     }
     $receipt = Get-Reclaim11WinPeReceipt
     if (-not $receipt) {
-        throw "Refuse: no WinPE receipt. Boot v3 ISO first."
+        throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE v7 ISO first."
     }
     $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
     if (Test-Path -LiteralPath $wd) {
