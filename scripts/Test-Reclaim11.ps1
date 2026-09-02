@@ -17,6 +17,28 @@ foreach ($p in @($catPath, $xamlPath, $invPath, $launch)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Test-Reclaim11: missing $p" }
 }
 
+$launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
+if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
+    throw "Test-Reclaim11: Reclaim11.ps1 must refuse ConstrainedLanguage"
+}
+if ($launchSrc -notmatch '-Verb RunAs') {
+    throw "Test-Reclaim11: GUI path must UAC-relaunch"
+}
+if ($launchSrc -notmatch 'Start-Transcript') {
+    throw "Test-Reclaim11: GUI path must transcript"
+}
+if ($launchSrc -notmatch 'ProcessRunning') {
+    throw "Test-Reclaim11: GUI path must lock RUN SELECTED"
+}
+if ($launchSrc -match 'irm https|Invoke-RestMethod|Invoke-Expression|\bwt\.exe\b|\bwinget\b|\bchoco\b') {
+    throw "Test-Reclaim11: Reclaim11.ps1 must not take CTT irm/iex/wt/winget/choco"
+}
+$invOnlyAt = $launchSrc.IndexOf('if ($InventoryOnly)')
+$runAsAt = $launchSrc.IndexOf('-Verb RunAs')
+if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
+    throw "Test-Reclaim11: -InventoryOnly must skip UAC"
+}
+
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
 if ($cat.pack -ne "A") { throw "Test-Reclaim11: pack A" }

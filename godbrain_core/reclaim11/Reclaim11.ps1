@@ -10,6 +10,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
+    throw "Reclaim11: PowerShell is ConstrainedLanguage. FullLanguage required."
+}
+
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "inventory.ps1")
 . (Join-Path $here "killing_blows.ps1")
@@ -43,25 +47,47 @@ if ($KillingBlows) {
 }
 
 $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
-if ($sta -ne "STA") {
+$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($sta -ne "STA" -or -not $admin) {
     $pwsh = Join-Path $PSHOME "pwsh.exe"
     if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
     $arg = @(
         "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
     if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
-    Start-Process -FilePath $pwsh -ArgumentList $arg
+    if (-not $admin) {
+        Start-Process -FilePath $pwsh -ArgumentList $arg -Verb RunAs
+    } else {
+        Start-Process -FilePath $pwsh -ArgumentList $arg
+    }
     return
 }
+
+try { $Host.UI.RawUI.WindowTitle = "Reclaim11" } catch { }
+
+$logRoot = [Environment]::GetFolderPath("LocalApplicationData")
+if (-not $logRoot) { $logRoot = $env:TEMP }
+$logDir = Join-Path $logRoot "Reclaim11\logs"
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+$guiLog = Join-Path $logDir ("gui-" + [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ") + ".log")
+Start-Transcript -Path $guiLog -Append | Out-Null
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
 $xamlPath = Join-Path $here "ui\MainWindow.xaml"
-[xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
-$reader = New-Object System.Xml.XmlNodeReader $xaml
-$window = [Windows.Markup.XamlReader]::Load($reader)
+try {
+    [xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+} catch {
+    Stop-Transcript | Out-Null
+    throw "Reclaim11: XAML load failed: $($_.Exception.Message)"
+}
 
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
@@ -74,6 +100,7 @@ $btnRun  = Get-Ui BtnRun
 $togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
+$script:ProcessRunning = $false
 
 function Add-Log([string]$Line) {
     $logBox.AppendText($Line + [Environment]::NewLine)
@@ -130,58 +157,68 @@ $btnScan.Add_Click({
 })
 
 $btnRun.Add_Click({
-    $doSafe = [bool]$btnSafe.IsChecked
-    $doXbox = [bool]$btnXbox.IsChecked
-    $doKill = [bool]$btnKill.IsChecked
-    if (-not ($doSafe -or $doXbox -or $doKill)) {
-        [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, and/or Killing blows.", "Reclaim11") | Out-Null
-        return
-    }
-    $unlocked = $false
-    if ($script:LastInventory -and $script:LastInventory.gates) {
-        $unlocked = [bool]$script:LastInventory.gates.killing_blows
-    }
-    if (($doSafe -or $doKill) -and -not $unlocked) {
-        [System.Windows.MessageBox]::Show(
-            "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
-            "Reclaim11") | Out-Null
-        return
-    }
-    $q = [System.Windows.MessageBox]::Show(
-        "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
-        "Reclaim11 RUN SELECTED",
-        "YesNo",
-        "Warning")
-    if ($q -ne "Yes") { return }
-    if ($doSafe) {
-        try {
-            $plan = Invoke-Reclaim11NoobCleanse -Root $here
-            Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
-            Add-Log ("manifest {0}" -f $plan.manifest_path)
-        } catch {
-            Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
-            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    $btnRun.IsEnabled = $false
+    $btnScan.IsEnabled = $false
+    try {
+        $doSafe = [bool]$btnSafe.IsChecked
+        $doXbox = [bool]$btnXbox.IsChecked
+        $doKill = [bool]$btnKill.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, and/or Killing blows.", "Reclaim11") | Out-Null
+            return
         }
-    }
-    if ($doXbox) {
-        try {
-            $keepCap = -not [bool]$togHideCaptures.IsChecked
-            $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
-            Add-Log ("xbox hide {0}" -f $plan.settings_page_visibility.after)
-            Add-Log ("manifest {0}" -f $plan.manifest_path)
-        } catch {
-            Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
-            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+        $unlocked = $false
+        if ($script:LastInventory -and $script:LastInventory.gates) {
+            $unlocked = [bool]$script:LastInventory.gates.killing_blows
         }
-    }
-    if ($doKill) {
-        try {
-            $plan = Invoke-Reclaim11KillingBlows -Root $here
-            Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
-        } catch {
-            Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
-            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+        if (($doSafe -or $doKill) -and -not $unlocked) {
+            [System.Windows.MessageBox]::Show(
+                "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
+                "Reclaim11") | Out-Null
+            return
         }
+        $q = [System.Windows.MessageBox]::Show(
+            "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+            "Reclaim11 RUN SELECTED",
+            "YesNo",
+            "Warning")
+        if ($q -ne "Yes") { return }
+        if ($doSafe) {
+            try {
+                $plan = Invoke-Reclaim11NoobCleanse -Root $here
+                Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+            }
+        }
+        if ($doXbox) {
+            try {
+                $keepCap = -not [bool]$togHideCaptures.IsChecked
+                $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+                Add-Log ("xbox hide {0}" -f $plan.settings_page_visibility.after)
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+            }
+        }
+        if ($doKill) {
+            try {
+                $plan = Invoke-Reclaim11KillingBlows -Root $here
+                Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+            } catch {
+                Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+            }
+        }
+    } finally {
+        $script:ProcessRunning = $false
+        $btnRun.IsEnabled = $true
+        $btnScan.IsEnabled = $true
     }
 })
 
@@ -198,12 +235,44 @@ $btnPrep.Add_Click({
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })
 
+$window.Add_MouseLeftButtonDown({
+    $src = $_.OriginalSource
+    if ($src -is [System.Windows.Controls.Control]) { return }
+    try { $window.DragMove() } catch { }
+})
+
+$window.Add_PreviewKeyDown({
+    if ($script:ProcessRunning) { return }
+    if ($_.Key -eq "Escape") { $window.Close(); $_.Handled = $true }
+    if ($_.KeyboardDevice.Modifiers -eq "Ctrl" -and $_.Key -eq "Q") {
+        $window.Close()
+        $_.Handled = $true
+    }
+})
+
+$window.Add_ContentRendered({
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $s = [System.Windows.Forms.Screen]::PrimaryScreen
+        if ($s -and ($window.ActualWidth -gt $s.Bounds.Width -or $window.ActualHeight -gt $s.Bounds.Height)) {
+            $window.Left = 0
+            $window.Top = 0
+            $window.Width = $s.Bounds.Width
+            $window.Height = $s.Bounds.Height
+        }
+    } catch { }
+})
+
 $window.Add_Loaded({
     try {
         Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
     } catch {
         Add-Log ("boot scan FAIL  {0}" -f $_.Exception.Message)
     }
+})
+
+$window.Add_Closed({
+    try { Stop-Transcript | Out-Null } catch { }
 })
 
 [void]$window.ShowDialog()

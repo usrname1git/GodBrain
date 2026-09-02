@@ -37,6 +37,13 @@ Headless inventory (JSON):
 pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
 ```
 
+GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
+transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. From CTT start/main we
+took ConstrainedLanguage refuse, `-Verb RunAs`, transcript, XAML
+try/catch, run lock, DragMove, screen clamp, Esc/Ctrl+Q. Not taken:
+`irm | iex`, `wt.exe`, winget/choco, runspaces, theme Auto, MicroWin
+USB, sponsors. `-InventoryOnly` still skips UAC.
+
 Check:
 
 ```text
