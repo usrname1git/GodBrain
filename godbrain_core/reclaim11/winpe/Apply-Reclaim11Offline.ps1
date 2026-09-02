@@ -30,7 +30,7 @@ if ([string]::IsNullOrWhiteSpace($StubPath)) {
 $receipt = Invoke-Reclaim11OfflineApply -CatalogPath $CatalogPath -StubPath $StubPath -WindowsRoot $WindowsRoot -SecureBoot $SecureBoot
 $receipt | ConvertTo-Json -Depth 8
 Write-Host ("receipt {0}" -f $receipt.receipt_path)
-Write-Host ("stubbed {0} skipped_elam {1} missing {2}" -f @($receipt.stubbed).Count, @($receipt.skipped_elam).Count, @($receipt.missing).Count)
+Write-Host ("stubbed {0} parked {1} skipped_elam {2} missing {3}" -f @($receipt.stubbed).Count, @($receipt.parked).Count, @($receipt.skipped_elam).Count, @($receipt.missing).Count)
 Write-Host $receipt.reason_wdboot
 
 if (Test-Reclaim11WinPeSession) {

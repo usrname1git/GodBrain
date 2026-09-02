@@ -4,15 +4,17 @@ One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
 Not `irm | iex`. Not DISM. Never BFE / `mpssvc` /
 `FltMgr` / EventLog.
 
-Inventory plus a **WinPE ISO** that stubs pack-A PPL files on an offline
-Windows volume. Killing blows stay gated and **do not mutate** in this
-build. No live wipe.
+Inventory plus a **WinPE ISO** that parks pack-A `.sys` on an offline
+Windows volume (never a usermode EXE over a driver) and copies
+`C:\reclaim11\` for the online remainder. Killing blows (IFEO + `sc delete`
+pack A) run only after a WinPE receipt, and **refuse this desk**
+(`IoTEnterpriseS`). Never BFE / `mpssvc` / `FltMgr`.
 
 ## Rails
 
 - Pack A only. Ads/cloud/WU GPO is pack B, later.
-- `WdBoot.sys` is ELAM. **Refuse to stub it when Secure Boot is on.**
-- Killing blows unlock only after a WinPE log exists.
+- `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
+- Killing blows unlock only after a WinPE receipt. Desk SKU is refused.
 - Heal never launches this. Kernel YOLO never `--ti` for this.
 
 ## Run
@@ -45,13 +47,18 @@ Do **not** nuke the desk. Snapshot a VM, then:
    pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
    ```
 
-   Output: `C:\nvme\reclaim11\Reclaim11-WinPE.iso` (outside git).
-4. Snapshot, attach the ISO in VMware, boot it. Payload writes
-   `Windows\reclaim11-winpe.log` on the guest volume. `wpeutil reboot`.
-5. SB-on VM must refuse `WdBoot` stub and still boot. Other pack-A PPL
-   files may still be stubbed. SB-off may stub ELAM too.
-6. After reboot, inventory sees the receipt and unlocks the killing-blows
-   *button* (still non-mutating). `mpssvc` / BFE must still be RUNNING.
+   Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v3.iso` (outside git).
+   v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
+4. Snapshot, attach **v3**, boot CD. Payload parks `drivers\Wd*.sys`
+   (exact names), stubs usermode EXEs, writes `Windows\reclaim11-winpe.log`
+   and `C:\reclaim11\`. Disconnect ISO. `wpeutil reboot`.
+5. SB-on VM must refuse `WdBoot` park and still boot. SB-off may park ELAM.
+6. After reboot, BFE/`mpssvc` must be RUNNING. Then:
+
+   ```text
+   pwsh -NoProfile -ExecutionPolicy Bypass -File C:\reclaim11\Apply-KillingBlows.ps1
+   ```
+
 7. Physical USB only after the ISO path is green.
 
 BitLocker in the VM is optional for v1; if C: is encrypted, WinPE needs

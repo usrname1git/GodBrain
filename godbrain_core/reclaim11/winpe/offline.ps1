@@ -63,7 +63,14 @@ function Get-Reclaim11NeverTouchRelPaths {
 }
 
 function Get-Reclaim11PplOfflineRelPaths {
+    # 25H2 Pro keeps Wd*.sys in drivers\ (wd\ is often empty).
+    # Older layouts use drivers\wd\. Exact catalog names only —
+    # never Wd*.sys (that would hit wdf01000.sys / WdfLdr.sys / WdiWiFi.sys).
     @(
+        "Windows\System32\drivers\WdBoot.sys",
+        "Windows\System32\drivers\WdFilter.sys",
+        "Windows\System32\drivers\WdNisDrv.sys",
+        "Windows\System32\drivers\WdDevFlt.sys",
         "Windows\System32\drivers\wd\WdBoot.sys",
         "Windows\System32\drivers\wd\WdFilter.sys",
         "Windows\System32\drivers\wd\WdNisDrv.sys",
@@ -79,7 +86,7 @@ function Test-Reclaim11NeverTouchPath {
         [string]$Path
     )
     $leaf = [IO.Path]::GetFileName($Path)
-    if ($leaf -eq "mscoree.dll" -or $leaf -eq "fltmgr.sys" -or $leaf -eq "mpsdrv.sys" -or $leaf -eq "bfe.dll" -or $leaf -eq "mpssvc.dll") {
+    if ($leaf -eq "mscoree.dll" -or $leaf -eq "fltmgr.sys" -or $leaf -eq "mpsdrv.sys" -or $leaf -eq "bfe.dll" -or $leaf -eq "mpssvc.dll" -or $leaf -eq "wdf01000.sys" -or $leaf -eq "WdfLdr.sys" -or $leaf -eq "WdiWiFi.sys") {
         return $true
     }
     $norm = $Path.ToLowerInvariant()
@@ -202,6 +209,65 @@ function Set-Reclaim11OfflineStub {
     [pscustomobject]@{ path = $Path; action = "stubbed"; bak = $bak }
 }
 
+function Set-Reclaim11OfflineDriver {
+    # Kernel .sys cannot be replaced with the usermode IFEO stub (that bootloops).
+    # Park the file next to a .bak and leave the original path absent.
+    param([string]$Path)
+    $bak = $Path + ".reclaim11.bak"
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{ path = $Path; action = "already-parked"; bak = $bak }
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $bak)) {
+            Copy-Item -LiteralPath $Path -Destination $bak -Force
+        }
+        Remove-Item -LiteralPath $Path -Force
+    } catch {
+        Unlock-Reclaim11OfflineFile -Path $Path
+        if (-not (Test-Path -LiteralPath $bak)) {
+            Copy-Item -LiteralPath $Path -Destination $bak -Force
+        }
+        Remove-Item -LiteralPath $Path -Force
+    }
+    if (Test-Path -LiteralPath $Path) {
+        throw "Set-Reclaim11OfflineDriver: still present $Path"
+    }
+    [pscustomobject]@{ path = $Path; action = "parked"; bak = $bak }
+}
+
+function Disable-Reclaim11OfflineDriverServices {
+    param(
+        [string]$WindowsRoot,
+        [string[]]$ServiceNames
+    )
+    $hive = Join-Path $WindowsRoot "System32\config\SYSTEM"
+    if (-not (Test-Path -LiteralPath $hive)) { return @() }
+    $key = "HKLM\R11SYS"
+    $loaded = $false
+    $done = New-Object System.Collections.Generic.List[string]
+    try {
+        & reg.exe load $key $hive | Out-Null
+        if ($LASTEXITCODE -ne 0) { return @() }
+        $loaded = $true
+        $current = 1
+        $sel = "HKLM:\R11SYS\Select"
+        if (Test-Path -LiteralPath $sel) {
+            $current = [int](Get-ItemProperty -LiteralPath $sel).Current
+        }
+        $cs = ("ControlSet{0:D3}" -f $current)
+        foreach ($n in $ServiceNames) {
+            if ([string]::IsNullOrWhiteSpace($n)) { continue }
+            $p = "HKLM:\R11SYS\$cs\Services\$n"
+            if (-not (Test-Path -LiteralPath $p)) { continue }
+            Set-ItemProperty -LiteralPath $p -Name Start -Type DWord -Value 4
+            [void]$done.Add($n)
+        }
+    } finally {
+        if ($loaded) { & reg.exe unload $key | Out-Null }
+    }
+    @($done)
+}
+
 function Write-Reclaim11WinPeReceipt {
     param(
         $Receipt,
@@ -264,9 +330,11 @@ function Invoke-Reclaim11OfflineApply {
     $allowElam = $avail -and -not $enabled
 
     $stubbed = New-Object System.Collections.Generic.List[string]
+    $parked = New-Object System.Collections.Generic.List[string]
     $skippedElam = New-Object System.Collections.Generic.List[string]
     $skippedNever = New-Object System.Collections.Generic.List[string]
     $missing = New-Object System.Collections.Generic.List[string]
+    $svcNames = New-Object System.Collections.Generic.List[string]
     $named = @($cat.ppl_offline)
     $seen = @{}
 
@@ -281,19 +349,28 @@ function Invoke-Reclaim11OfflineApply {
             [void]$skippedElam.Add($h.path)
             continue
         }
-        $null = Set-Reclaim11OfflineStub -Path $h.path -StubPath $StubPath
-        [void]$stubbed.Add($h.path)
+        $ext = [IO.Path]::GetExtension($h.path)
+        if ($ext -eq ".sys") {
+            $null = Set-Reclaim11OfflineDriver -Path $h.path
+            [void]$parked.Add($h.path)
+            $svc = [IO.Path]::GetFileNameWithoutExtension($h.name)
+            if (@($svcNames) -notcontains $svc) { [void]$svcNames.Add($svc) }
+        } else {
+            $null = Set-Reclaim11OfflineStub -Path $h.path -StubPath $StubPath
+            [void]$stubbed.Add($h.path)
+        }
     }
     foreach ($n in $named) {
         if (-not $seen.ContainsKey($n)) { [void]$missing.Add($n) }
     }
+    $disabled = @(Disable-Reclaim11OfflineDriverServices -WindowsRoot $winResolved -ServiceNames @($svcNames))
 
     $reasonWd = if (-not $avail) {
         "Secure Boot n/a: refuse WdBoot stub (ELAM)."
     } elseif ($enabled) {
         "Secure Boot on: refuse WdBoot stub (ELAM)."
     } else {
-        "Secure Boot off: WdBoot stub allowed on the offline volume."
+        "Secure Boot off: WdBoot parked on the offline volume (not a usermode stub)."
     }
 
     $receipt = [pscustomobject]@{
@@ -306,6 +383,8 @@ function Invoke-Reclaim11OfflineApply {
         stub_wdboot    = [bool]$allowElam
         reason_wdboot  = $reasonWd
         stubbed        = @($stubbed)
+        parked         = @($parked)
+        services_start4 = @($disabled)
         skipped_elam   = @($skippedElam)
         skipped_never  = @($skippedNever)
         missing        = @($missing)
@@ -313,7 +392,24 @@ function Invoke-Reclaim11OfflineApply {
         mutate         = $true
         live_wipe      = $false
     }
+    $stubOnVol = Join-Path $winResolved "reclaim11-stub.exe"
+    Copy-Item -LiteralPath $StubPath -Destination $stubOnVol -Force
+    $kitFrom = Split-Path -Parent $CatalogPath
+    $kitDst = Join-Path $volumeRoot "reclaim11"
+    if (-not (Test-Path -LiteralPath $kitDst)) {
+        New-Item -ItemType Directory -Path $kitDst | Out-Null
+    }
+    foreach ($n in @("catalog.json", "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1")) {
+        $s = Join-Path $kitFrom $n
+        if (-not (Test-Path -LiteralPath $s)) {
+            $s = Join-Path (Split-Path -Parent $kitFrom) $n
+        }
+        if (Test-Path -LiteralPath $s) {
+            Copy-Item -LiteralPath $s -Destination (Join-Path $kitDst $n) -Force
+        }
+    }
     $receiptPath = Write-Reclaim11WinPeReceipt -Receipt $receipt -WindowsRoot $winResolved
     $receipt | Add-Member -NotePropertyName receipt_path -NotePropertyValue $receiptPath
+    $receipt | Add-Member -NotePropertyName stub_on_volume -NotePropertyValue $stubOnVol
     $receipt
 }

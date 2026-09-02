@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$InventoryOnly,
+    [switch]$KillingBlows,
     [string]$OutJson = "",
     [string]$WinPeLog = ""
 )
@@ -11,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "inventory.ps1")
+. (Join-Path $here "killing_blows.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -29,6 +31,12 @@ if ($InventoryOnly) {
     $inv = Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog
     $json = Write-Reclaim11InventoryFile -Inventory $inv -Path $OutJson
     Write-Output $json
+    return
+}
+
+if ($KillingBlows) {
+    $plan = Invoke-Reclaim11KillingBlows -Root $here
+    $plan | ConvertTo-Json -Depth 6
     return
 }
 
@@ -113,9 +121,10 @@ $btnScan.Add_Click({
 $btnPrep.Add_Click({
     $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
     $build = Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1"
-    $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso"
+    $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v3.iso"
+    if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
     $msg = if (Test-Path -LiteralPath $iso) {
-        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then wpeutil reboot back to Windows. Killing blows stay non-mutating in this build."
+        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. v3 parks .sys (does not copy EXE over drivers)."
     } else {
         "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`"`n`nOutput: $iso`nVMware first. Snapshot before boot. Not a physical USB."
     }
@@ -127,12 +136,27 @@ $btnKill.Add_Click({
     if ($script:LastInventory -and $script:LastInventory.gates) {
         $unlocked = [bool]$script:LastInventory.gates.killing_blows
     }
-    $msg = if ($unlocked) {
-        "Killing blows are unlocked by a WinPE log, but this build does not mutate."
-    } else {
-        "Killing blows stay locked until a WinPE log exists. This build does not mutate."
+    if (-not $unlocked) {
+        [System.Windows.MessageBox]::Show(
+            "Killing blows stay locked until a WinPE receipt exists.",
+            "Reclaim11") | Out-Null
+        return
     }
-    [System.Windows.MessageBox]::Show($msg, "Reclaim11") | Out-Null
+    $q = [System.Windows.MessageBox]::Show(
+        "Mutate pack A on THIS Windows (IFEO + sc delete WinDefend/Sense/AppID). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+        "Reclaim11 killing blows",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    try {
+        $plan = Invoke-Reclaim11KillingBlows -Root $here
+        Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+        foreach ($a in @($plan.applied)) { Add-Log ("  {0}" -f $a) }
+        [System.Windows.MessageBox]::Show("Pack A killing blows applied. BFE/mpssvc must still be Running.", "Reclaim11") | Out-Null
+    } catch {
+        Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+    }
 })
 
 $window.Add_Loaded({
