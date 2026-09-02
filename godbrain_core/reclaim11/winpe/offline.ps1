@@ -143,6 +143,48 @@ function Find-Reclaim11WindowsVolumes {
     $rows
 }
 
+function Get-Reclaim11UsermodeRelPaths {
+    @(
+        "Windows\System32\smartscreen.exe",
+        "Windows\SysWOW64\smartscreen.exe",
+        "Windows\System32\SecurityHealthHost.exe",
+        "Windows\System32\SecurityHealthService.exe",
+        "Windows\System32\SecurityHealthSystray.exe",
+        "Program Files\Windows Defender\MsMpEng.exe",
+        "Program Files\Windows Defender\NisSrv.exe",
+        "Program Files\Windows Defender\MpDefenderCoreService.exe",
+        "Program Files\Windows Defender Advanced Threat Protection\MsSense.exe"
+    )
+}
+
+function Find-Reclaim11UsermodeFiles {
+    param(
+        [string]$VolumeRoot,
+        $Catalog
+    )
+    $names = @($Catalog.usermode_ifeo)
+    $hits = @()
+    foreach ($rel in Get-Reclaim11UsermodeRelPaths) {
+        $leaf = Split-Path -Leaf $rel
+        if ($names -notcontains $leaf) { continue }
+        $full = Join-Path $VolumeRoot $rel
+        if (Test-Path -LiteralPath $full) {
+            $hits += [pscustomobject]@{ name = $leaf; path = $full }
+        }
+    }
+    $plat = Join-Path $VolumeRoot "ProgramData\Microsoft\Windows Defender\Platform"
+    if (Test-Path -LiteralPath $plat) {
+        foreach ($n in $names) {
+            if ($n -notlike "*.exe") { continue }
+            $found = @(Get-ChildItem -LiteralPath $plat -Recurse -File -Filter $n -ErrorAction SilentlyContinue)
+            foreach ($f in $found) {
+                $hits += [pscustomobject]@{ name = $n; path = $f.FullName }
+            }
+        }
+    }
+    $hits
+}
+
 function Find-Reclaim11PplFiles {
     param(
         [string]$VolumeRoot,
@@ -257,15 +299,50 @@ function Disable-Reclaim11OfflineDriverServices {
         $cs = ("ControlSet{0:D3}" -f $current)
         foreach ($n in $ServiceNames) {
             if ([string]::IsNullOrWhiteSpace($n)) { continue }
-            $p = "HKLM:\R11SYS\$cs\Services\$n"
-            if (-not (Test-Path -LiteralPath $p)) { continue }
-            Set-ItemProperty -LiteralPath $p -Name Start -Type DWord -Value 4
-            [void]$done.Add($n)
+            $regPath = "$key\$cs\Services\$n"
+            & reg.exe add $regPath /v Start /t REG_DWORD /d 4 /f | Out-Null
+            if ($LASTEXITCODE -eq 0) { [void]$done.Add($n) }
         }
     } finally {
         if ($loaded) { & reg.exe unload $key | Out-Null }
     }
     @($done)
+}
+
+function Set-Reclaim11OfflineSoftwareHive {
+    param(
+        [string]$WindowsRoot,
+        [string]$StubWinPath,
+        [string[]]$IfeoNames
+    )
+    $hive = Join-Path $WindowsRoot "System32\config\SOFTWARE"
+    if (-not (Test-Path -LiteralPath $hive)) {
+        return [pscustomobject]@{ ifeo = @(); policy = $false }
+    }
+    $key = "HKLM\R11SOFT"
+    $loaded = $false
+    $ifeo = New-Object System.Collections.Generic.List[string]
+    $policy = $false
+    try {
+        & reg.exe load $key $hive | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            return [pscustomobject]@{ ifeo = @(); policy = $false }
+        }
+        $loaded = $true
+        foreach ($img in $IfeoNames) {
+            if ([string]::IsNullOrWhiteSpace($img)) { continue }
+            if ($img -eq "mscoree.dll") { continue }
+            $sub = "$key\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$img"
+            & reg.exe add $sub /v Debugger /t REG_SZ /d $StubWinPath /f | Out-Null
+            if ($LASTEXITCODE -eq 0) { [void]$ifeo.Add($img) }
+        }
+        $pol = "$key\Policies\Microsoft\Windows Defender"
+        & reg.exe add $pol /v DisableAntiSpyware /t REG_DWORD /d 1 /f | Out-Null
+        $policy = ($LASTEXITCODE -eq 0)
+    } finally {
+        if ($loaded) { & reg.exe unload $key | Out-Null }
+    }
+    [pscustomobject]@{ ifeo = @($ifeo); policy = $policy }
 }
 
 function Write-Reclaim11WinPeReceipt {
@@ -329,12 +406,15 @@ function Invoke-Reclaim11OfflineApply {
     $enabled = [bool]$sb.enabled
     $allowElam = $avail -and -not $enabled
 
+    $stubOnVol = Join-Path $winResolved "reclaim11-stub.exe"
+    Copy-Item -LiteralPath $StubPath -Destination $stubOnVol -Force
+    $stubWinPath = Join-Path $volumeRoot "Windows\reclaim11-stub.exe"
+
     $stubbed = New-Object System.Collections.Generic.List[string]
     $parked = New-Object System.Collections.Generic.List[string]
     $skippedElam = New-Object System.Collections.Generic.List[string]
     $skippedNever = New-Object System.Collections.Generic.List[string]
     $missing = New-Object System.Collections.Generic.List[string]
-    $svcNames = New-Object System.Collections.Generic.List[string]
     $named = @($cat.ppl_offline)
     $seen = @{}
 
@@ -353,17 +433,26 @@ function Invoke-Reclaim11OfflineApply {
         if ($ext -eq ".sys") {
             $null = Set-Reclaim11OfflineDriver -Path $h.path
             [void]$parked.Add($h.path)
-            $svc = [IO.Path]::GetFileNameWithoutExtension($h.name)
-            if (@($svcNames) -notcontains $svc) { [void]$svcNames.Add($svc) }
         } else {
             $null = Set-Reclaim11OfflineStub -Path $h.path -StubPath $StubPath
             [void]$stubbed.Add($h.path)
         }
     }
+    foreach ($u in @(Find-Reclaim11UsermodeFiles -VolumeRoot $volumeRoot -Catalog $cat)) {
+        if (Test-Reclaim11NeverTouchPath -VolumeRoot $volumeRoot -Path $u.path) { continue }
+        $null = Set-Reclaim11OfflineStub -Path $u.path -StubPath $StubPath
+        if (@($stubbed) -notcontains $u.path) { [void]$stubbed.Add($u.path) }
+    }
     foreach ($n in $named) {
         if (-not $seen.ContainsKey($n)) { [void]$missing.Add($n) }
     }
-    $disabled = @(Disable-Reclaim11OfflineDriverServices -WindowsRoot $winResolved -ServiceNames @($svcNames))
+    $svcAll = @()
+    foreach ($s in @($cat.services_pack_a)) {
+        if (@($cat.never_touch_services) -contains $s) { continue }
+        $svcAll += $s
+    }
+    $disabled = @(Disable-Reclaim11OfflineDriverServices -WindowsRoot $winResolved -ServiceNames $svcAll)
+    $soft = Set-Reclaim11OfflineSoftwareHive -WindowsRoot $winResolved -StubWinPath $stubWinPath -IfeoNames @($cat.usermode_ifeo)
 
     $reasonWd = if (-not $avail) {
         "Secure Boot n/a: refuse WdBoot stub (ELAM)."
@@ -385,6 +474,8 @@ function Invoke-Reclaim11OfflineApply {
         stubbed        = @($stubbed)
         parked         = @($parked)
         services_start4 = @($disabled)
+        ifeo_offline   = @($soft.ifeo)
+        policy_offline = [bool]$soft.policy
         skipped_elam   = @($skippedElam)
         skipped_never  = @($skippedNever)
         missing        = @($missing)
@@ -392,8 +483,6 @@ function Invoke-Reclaim11OfflineApply {
         mutate         = $true
         live_wipe      = $false
     }
-    $stubOnVol = Join-Path $winResolved "reclaim11-stub.exe"
-    Copy-Item -LiteralPath $StubPath -Destination $stubOnVol -Force
     $kitFrom = Split-Path -Parent $CatalogPath
     $kitDst = Join-Path $volumeRoot "reclaim11"
     if (-not (Test-Path -LiteralPath $kitDst)) {

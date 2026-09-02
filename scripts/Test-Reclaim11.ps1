@@ -229,6 +229,8 @@ foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) 
 }
 [IO.File]::WriteAllBytes((Join-Path $fx25Drv "wdf01000.sys"), ([byte[]](9, 9, 9, 9)))
 [IO.File]::WriteAllBytes((Join-Path $fx25Def "MsMpEng.exe"), ([byte[]](1, 2, 3, 4)))
+New-Item -ItemType Directory -Force -Path (Join-Path $fx25Win "System32") | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"), ([byte[]](1, 2, 3, 4)))
 $wdfBefore = Get-FileHash -LiteralPath (Join-Path $fx25Drv "wdf01000.sys") -Algorithm SHA256
 $r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
 foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
@@ -247,6 +249,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $fx25Win "reclaim11-stub.exe"))) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\Apply-KillingBlows.ps1"))) {
     throw "Test-Reclaim11: PE must drop C:\\reclaim11\\Apply-KillingBlows.ps1"
+}
+$ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
+if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
+    throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
 }
 Remove-Item -LiteralPath $fx, $fx25 -Recurse -Force
 

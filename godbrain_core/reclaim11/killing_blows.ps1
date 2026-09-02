@@ -76,20 +76,12 @@ function Invoke-Reclaim11KillingBlows {
         never_touch = @($cat.never_touch_services)
         what_if     = [bool]$WhatIf
         applied     = @()
+        failed      = @()
     }
     if ($WhatIf) { return $plan }
 
     $applied = New-Object System.Collections.Generic.List[string]
-    $ifeoRoot = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
-    foreach ($img in @($cat.usermode_ifeo)) {
-        if ($img -eq "mscoree.dll") { throw "Refuse: never IFEO mscoree.dll" }
-        $p = Join-Path $ifeoRoot $img
-        if (-not (Test-Path -LiteralPath $p)) {
-            New-Item -Path $p -Force | Out-Null
-        }
-        Set-ItemProperty -LiteralPath $p -Name Debugger -Value $stub -Type String
-        [void]$applied.Add("ifeo:$img")
-    }
+    $failed = New-Object System.Collections.Generic.List[string]
 
     $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
     if (-not (Test-Path -LiteralPath $pol)) {
@@ -107,6 +99,18 @@ function Invoke-Reclaim11KillingBlows {
         & sc.exe delete $svc | Out-Null
         [void]$applied.Add("sc:$svc")
     }
+
+    foreach ($img in @($cat.usermode_ifeo)) {
+        if ($img -eq "mscoree.dll") { throw "Refuse: never IFEO mscoree.dll" }
+        $key = "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$img"
+        & reg.exe add $key /v Debugger /t REG_SZ /d $stub /f | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            [void]$applied.Add("ifeo:$img")
+        } else {
+            [void]$failed.Add("ifeo:$img")
+        }
+    }
+    $plan | Add-Member -NotePropertyName failed -NotePropertyValue @($failed) -Force
 
     $plan.applied = @($applied)
     $plan

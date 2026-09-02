@@ -49,15 +49,14 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
    Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v3.iso` (outside git).
    v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
-4. Snapshot, attach **v3**, boot CD. Payload parks `drivers\Wd*.sys`
-   (exact names), stubs usermode EXEs, writes `Windows\reclaim11-winpe.log`
-   and `C:\reclaim11\`. Disconnect ISO. `wpeutil reboot`.
+4. Snapshot, attach **v5** (`Reclaim11-WinPE-v5.iso`). PE is the kill:
+   parks `drivers\Wd*.sys`, stubs catalog usermode EXEs, writes IFEO +
+   `DisableAntiSpyware` + service `Start=4` into the **offline hives**.
+   Live Windows IFEO is the wrong door (Tamper/PPL ACL). Disconnect ISO.
+   `wpeutil reboot`.
 5. SB-on VM must refuse `WdBoot` park and still boot. SB-off may park ELAM.
-6. After reboot, BFE/`mpssvc` must be RUNNING. Then:
-
-   ```text
-   pwsh -NoProfile -ExecutionPolicy Bypass -File C:\reclaim11\Apply-KillingBlows.ps1
-   ```
+6. After reboot, BFE/`mpssvc` must be RUNNING. In-Windows
+   `Apply-KillingBlows.ps1` is leftover `sc delete` only.
 
 7. Physical USB only after the ISO path is green.
 
