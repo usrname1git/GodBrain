@@ -96,7 +96,8 @@ function Show-Inventory($inv) {
     foreach ($s in $inv.services) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
-    Add-Log "mutate=false  (this build does not wipe)"
+    Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
+    Add-Log "mutate=false  (online killing blows still do not wipe)"
 }
 
 $btnScan.Add_Click({
@@ -110,9 +111,15 @@ $btnScan.Add_Click({
 })
 
 $btnPrep.Add_Click({
-    [System.Windows.MessageBox]::Show(
-        "Prep media is not in this build. Next: WinPE ISO for VMware (not a physical USB first). Snapshot the VM before that.",
-        "Reclaim11") | Out-Null
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
+    $build = Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+    $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso"
+    $msg = if (Test-Path -LiteralPath $iso) {
+        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then wpeutil reboot back to Windows. Killing blows stay non-mutating in this build."
+    } else {
+        "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`"`n`nOutput: $iso`nVMware first. Snapshot before boot. Not a physical USB."
+    }
+    [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })
 
 $btnKill.Add_Click({

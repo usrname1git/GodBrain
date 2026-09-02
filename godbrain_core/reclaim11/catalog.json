@@ -64,9 +64,10 @@
     "FltMgr"
   ],
   "stub_exe": "C:\\Tools\\DefenderStub.exe",
+  "winpe_receipt": "Windows\\reclaim11-winpe.log",
   "gates": {
     "stub_wdboot_if_secure_boot": "refuse",
-    "prep_media": "after-inventory",
+    "prep_media": "winpe-iso",
     "killing_blows": "after-winpe-log"
   }
 }

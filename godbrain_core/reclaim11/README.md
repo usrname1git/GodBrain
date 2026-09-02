@@ -4,8 +4,9 @@ One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
 Not `irm | iex`. Not DISM. Never BFE / `mpssvc` /
 `FltMgr` / EventLog.
 
-This build is **inventory only**. Prep media and killing blows are visible
-and **gated**. No live wipe.
+Inventory plus a **WinPE ISO** that stubs pack-A PPL files on an offline
+Windows volume. Killing blows stay gated and **do not mutate** in this
+build. No live wipe.
 
 ## Rails
 
@@ -38,12 +39,20 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 1. New Win11 VM, EFI. One snapshot **Secure Boot on**, one **off**.
 2. Inventory in the VM (this GUI). Confirm SKU / SB / BitLocker / PPL.
-3. Next build attaches a **WinPE ISO** (same code path as a stick; ISO is
-   easier in Workstation than USB passthrough).
-4. SB-on VM must refuse `WdBoot` stub and still boot.
-5. SB-off VM may stub ELAM on the offline volume, then reboot to killing
-   blows. `mpssvc` / BFE must still be RUNNING.
-6. Physical USB only after the ISO path is green.
+3. Build the ISO (ADK + WinPE addon **10.1.26100.2454**, not ADK 28000):
+
+   ```text
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
+   ```
+
+   Output: `C:\nvme\reclaim11\Reclaim11-WinPE.iso` (outside git).
+4. Snapshot, attach the ISO in VMware, boot it. Payload writes
+   `Windows\reclaim11-winpe.log` on the guest volume. `wpeutil reboot`.
+5. SB-on VM must refuse `WdBoot` stub and still boot. Other pack-A PPL
+   files may still be stubbed. SB-off may stub ELAM too.
+6. After reboot, inventory sees the receipt and unlocks the killing-blows
+   *button* (still non-mutating). `mpssvc` / BFE must still be RUNNING.
+7. Physical USB only after the ISO path is green.
 
 BitLocker in the VM is optional for v1; if C: is encrypted, WinPE needs
 the protector and inventory must show it.

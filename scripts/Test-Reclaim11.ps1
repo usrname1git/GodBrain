@@ -32,6 +32,8 @@ if ($cat.elam -notcontains "WdBoot.sys") { throw "Test-Reclaim11: elam list" }
 if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
     throw "Test-Reclaim11: SB gate must refuse WdBoot"
 }
+if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
+if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
 
 . $invPath
 
@@ -60,10 +62,14 @@ if ($gNa.stub_wdboot) { throw "Test-Reclaim11: SB n/a must refuse WdBoot stub" }
 if ($gNa.reason_wdboot -notmatch 'n/a') { throw "Test-Reclaim11: SB n/a reason" }
 
 $tmpLog = Join-Path $env:TEMP "reclaim11-winpe-test.log"
-Set-Content -LiteralPath $tmpLog -Value "winpe ok" -Encoding ASCII
+Set-Content -LiteralPath $tmpLog -Value '{"id":"reclaim11-winpe-v1","catalog":"reclaim11-pack-a-v1"}' -Encoding UTF8
 $gLog = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog $tmpLog
 if (-not $gLog.killing_blows) { throw "Test-Reclaim11: WinPE log must unlock killing blows" }
-Remove-Item -LiteralPath $tmpLog -Force
+$junkLog = Join-Path $env:TEMP "reclaim11-winpe-junk.log"
+Set-Content -LiteralPath $junkLog -Value "winpe ok" -Encoding ASCII
+$gJunk = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog $junkLog
+if ($gJunk.killing_blows) { throw "Test-Reclaim11: non-JSON log must not unlock killing blows" }
+Remove-Item -LiteralPath $tmpLog, $junkLog -Force
 
 # XAML load in STA (no ShowDialog).
 $xamlTest = @"
@@ -128,6 +134,77 @@ foreach ($f in @($emptyBrowser, $noBrowser)) {
     }
 }
 
-Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy os_pin={0} sb={1} stub_wdboot={2}" -f `
+$winpe = Join-Path $root "winpe"
+foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
+}
+$isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeIso.ps1" }
+$isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
+if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
+if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
+if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
+
+. (Join-Path $winpe "offline.ps1")
+$fx = Join-Path $env:TEMP "reclaim11-winpe-fx"
+if (Test-Path -LiteralPath $fx) { Remove-Item -LiteralPath $fx -Recurse -Force }
+$fxWin = Join-Path $fx "Windows"
+$fxWd = Join-Path $fxWin "System32\drivers\wd"
+$fxDef = Join-Path $fx "Program Files\Windows Defender"
+New-Item -ItemType Directory -Force -Path $fxWd | Out-Null
+New-Item -ItemType Directory -Force -Path $fxDef | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $fxWin "System32\drivers") | Out-Null
+$payload = New-Object byte[] 64
+$payload[0] = 0x4D; $payload[1] = 0x5A
+$stubFx = Join-Path $fx "stub.exe"
+[IO.File]::WriteAllBytes($stubFx, $payload)
+try {
+    Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $env:SystemRoot
+    throw "Test-Reclaim11: host WindowsRoot must be refused"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse") {
+        throw "Test-Reclaim11: expected host refuse, got $($_.Exception.Message)"
+    }
+}
+foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
+    [IO.File]::WriteAllBytes((Join-Path $fxWd $n), ([byte[]](1, 2, 3, 4)))
+}
+[IO.File]::WriteAllBytes((Join-Path $fxDef "MsMpEng.exe"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxDef "NisSrv.exe"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxWin "System32\drivers\fltmgr.sys"), ([byte[]](9, 9, 9, 9)))
+$fltBefore = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+
+$sbOnFx = [pscustomobject]@{ available = $true; enabled = $true; error = $null }
+$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx
+if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
+if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }
+if (@($rOn.skipped_elam).Count -lt 1) { throw "Test-Reclaim11: SB on must skip ELAM" }
+if (@($rOn.stubbed | Where-Object { $_ -match "WdFilter" }).Count -lt 1) {
+    throw "Test-Reclaim11: SB on still stubs WdFilter"
+}
+$bootOn = [IO.File]::ReadAllBytes((Join-Path $fxWd "WdBoot.sys"))
+if ($bootOn[0] -eq 0x4D) { throw "Test-Reclaim11: WdBoot must stay original when SB on" }
+$fltAfterOn = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+if ($fltAfterOn.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys must not change" }
+if (-not (Test-Path -LiteralPath (Join-Path $fxWin "reclaim11-winpe.log"))) {
+    throw "Test-Reclaim11: missing Windows\\reclaim11-winpe.log"
+}
+
+# Reset WdFilter to a non-MZ so the second pass is visible, keep receipt path.
+[IO.File]::WriteAllBytes((Join-Path $fxWd "WdFilter.sys"), ([byte[]](1, 2, 3, 4)))
+[IO.File]::WriteAllBytes((Join-Path $fxWd "WdBoot.sys"), ([byte[]](1, 2, 3, 4)))
+$sbOffFx = [pscustomobject]@{ available = $true; enabled = $false; error = $null }
+$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx
+if (-not $rOff.stub_wdboot) { throw "Test-Reclaim11: SB off must allow WdBoot stub" }
+$bootOff = [IO.File]::ReadAllBytes((Join-Path $fxWd "WdBoot.sys"))
+if ($bootOff[0] -ne 0x4D -or $bootOff[1] -ne 0x5A) { throw "Test-Reclaim11: SB off must stub WdBoot to MZ" }
+$fltAfterOff = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
+if ($fltAfterOff.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys must not change after SB-off apply" }
+
+$gFx = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog (Join-Path $fxWin "reclaim11-winpe.log")
+if (-not $gFx.killing_blows) { throw "Test-Reclaim11: fixture receipt must unlock killing blows" }
+Remove-Item -LiteralPath $fx -Recurse -Force
+
+Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy winpe os_pin={0} sb={1} stub_wdboot={2}" -f `
     $inv.os.os_pin, $inv.secure_boot.enabled, $inv.gates.stub_wdboot)
 exit 0
