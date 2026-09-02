@@ -48,6 +48,18 @@ function Invoke-Reclaim11KillingBlows {
     if (Test-Reclaim11DeskHost) {
         throw "Refuse: desk (IoTEnterpriseS). Killing blows are VM-only. Not M1ABRAMS."
     }
+    $el = Join-Path $Root "elevate.ps1"
+    if ((-not $WhatIf) -and (Test-Path -LiteralPath $el)) {
+        . $el
+        $door = Join-Path $Root "Apply-KillingBlows.ps1"
+        $hop = Invoke-Reclaim11AsTrustedInstaller -File $door -TimeoutSec 120
+        if (-not $hop.continue) {
+            if ([int]$hop.exit_code -ne 0) {
+                throw ("TI killing blows exit {0}`n{1}" -f $hop.exit_code, $hop.output)
+            }
+            try { return ($hop.output | ConvertFrom-Json) } catch { return $hop.output }
+        }
+    }
     if (-not (Test-Reclaim11Admin)) {
         throw "Invoke-Reclaim11KillingBlows: needs elevation"
     }

@@ -83,7 +83,9 @@ usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
 (Game Bar, Bing News, Get Help, Solitaire, Zune, Feedback Hub, Your Phone,
 …). Restore: `pwsh -File xbox_cleanse.ps1 -Restore restore.json`. Does
 **not** delete `xboxgip` (controller). Does **not** remove
-`Microsoft.XboxGameCallableUI`. Desk SKU refused.
+`Microsoft.XboxGameCallableUI`. Desk SKU refused. Live mutate (Hide Xbox, killing blows, Nuclear) self-elevates
+to TrustedInstaller via Task Scheduler (Admin → SYSTEM → TI). No wsudo /
+MinSudo. WinPE is already SYSTEM and skips that hop.
 
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 

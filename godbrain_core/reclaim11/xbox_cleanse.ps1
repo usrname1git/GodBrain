@@ -191,6 +191,20 @@ function Invoke-Reclaim11XboxCleanse {
     if (Test-Reclaim11DeskHost) {
         throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
     }
+    if (-not $WhatIf) {
+        $el = Join-Path $Root "elevate.ps1"
+        if (Test-Path -LiteralPath $el) {
+            . $el
+            $self = Join-Path $Root "xbox_cleanse.ps1"
+            $hop = Invoke-Reclaim11AsTrustedInstaller -File $self -TimeoutSec 180
+            if (-not $hop.continue) {
+                if ([int]$hop.exit_code -ne 0) {
+                    throw ("TI xbox_cleanse exit {0}`n{1}" -f $hop.exit_code, $hop.output)
+                }
+                try { return ($hop.output | ConvertFrom-Json) } catch { return $hop.output }
+            }
+        }
+    }
 
     $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
     $cur = ""

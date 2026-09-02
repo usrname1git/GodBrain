@@ -420,6 +420,26 @@ if ($SelfTest) {
     return
 }
 
+$invPath = Join-Path $here "inventory.ps1"
+if (Test-Path -LiteralPath $invPath) {
+    . $invPath
+    if (Test-Reclaim11DeskHost) {
+        throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
+    }
+}
+$el = Join-Path $here "elevate.ps1"
+if (Test-Path -LiteralPath $el) {
+    . $el
+    $hop = Invoke-Reclaim11AsTrustedInstaller -File $PSCommandPath -TimeoutSec 300
+    if (-not $hop.continue) {
+        if ($hop.output) { Write-Host $hop.output }
+        if ([int]$hop.exit_code -ne 0) {
+            throw ("TI nuclear exit {0}" -f $hop.exit_code)
+        }
+        return
+    }
+}
+
 Write-Host "Deletes named drivers. Stubs usermode Defender trees. Never CIPolicies. Never stub .sys." -ForegroundColor Yellow
 
 if (-not (Test-PeMz $StubPath)) {

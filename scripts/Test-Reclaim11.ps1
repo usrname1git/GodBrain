@@ -140,7 +140,7 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
@@ -376,6 +376,19 @@ try {
     }
 }
 Remove-Item -LiteralPath $badMan, $okMan -Force
+
+. (Join-Path $root "elevate.ps1")
+$elSrc = Get-Content -LiteralPath (Join-Path $root "elevate.ps1") -Raw -Encoding UTF8
+if ($elSrc -match "TeamM2|wsudo\.exe|MinSudo\.exe") { throw "Test-Reclaim11: elevate.ps1 must not call wsudo/MinSudo" }
+if ($elSrc -notmatch "NT SERVICE\\TrustedInstaller") { throw "Test-Reclaim11: elevate.ps1 missing TI principal" }
+if (Test-Reclaim11TrustedInstaller) { throw "Test-Reclaim11: test host should not already be TI" }
+$run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $root "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
+try {
+    $rt = Get-Content -LiteralPath $run -Raw -Encoding UTF8
+    if ($rt -notmatch "RECLAIM11_AS_TI") { throw "Test-Reclaim11: TI runner missing env flag" }
+} finally {
+    Remove-Item -LiteralPath $run -Force -ErrorAction SilentlyContinue
+}
 
 Write-Output ("Test-Reclaim11: ok catalog pack-A gates xaml brave-policy winpe blows os_pin={0} sb={1} stub_wdboot={2}" -f `
     $inv.os.os_pin, $inv.secure_boot.enabled, $inv.gates.stub_wdboot)
