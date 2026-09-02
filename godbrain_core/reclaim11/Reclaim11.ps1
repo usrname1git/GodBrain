@@ -19,6 +19,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "killing_blows.ps1")
 . (Join-Path $here "noob_cleanse.ps1")
 . (Join-Path $here "xbox_cleanse.ps1")
+. (Join-Path $here "telemetry_cleanse.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -95,6 +96,7 @@ $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
 $btnXbox = Get-Ui BtnXbox
+$btnTelemetry = Get-Ui BtnTelemetry
 $btnKill = Get-Ui BtnKill
 $btnRun  = Get-Ui BtnRun
 $togHideCaptures = Get-Ui TogHideCaptures
@@ -123,6 +125,7 @@ function Show-Inventory($inv) {
     $btnSafe.IsEnabled = $pe
     if (-not $pe) { $btnSafe.IsChecked = $false }
     $btnXbox.IsEnabled = $true
+    $btnTelemetry.IsEnabled = $true
     $btnKill.IsEnabled = $pe
     if (-not $pe) { $btnKill.IsChecked = $false }
     $logBox.Clear()
@@ -164,9 +167,10 @@ $btnRun.Add_Click({
     try {
         $doSafe = [bool]$btnSafe.IsChecked
         $doXbox = [bool]$btnXbox.IsChecked
+        $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, and/or Killing blows.", "Reclaim11") | Out-Null
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, and/or Killing blows.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
@@ -204,6 +208,16 @@ $btnRun.Add_Click({
             } catch {
                 Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+            }
+        }
+        if ($doTelemetry) {
+            try {
+                $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+                Add-Log ("telemetry {0} skip={1}" -f $plan.ctt_id, ($plan.skip -join ","))
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
             }
         }
         if ($doKill) {

@@ -81,6 +81,18 @@ Do **not** nuke the desk. Snapshot a VM, then:
 
 7. Physical USB only after the ISO path is green.
 
+**Disable telemetry** (in-Windows, not PE; CTT `WPFTweaksTelemetry`):
+pinned JSON in `ctt/WPFTweaksTelemetry.json`. Writes `restore.json` first,
+then AllowTelemetry=0, advertising/tailored-experiences/SIUF HKCU, DiagTrack
++ WerSvc start=disabled, `POWERSHELL_TELEMETRY_OPTOUT=1`. **Skips**
+`Set-MpPreference` (pack A kills Defender). CTT's `wermgr` is `WerSvc`.
+Desk SKU refused. No TI hop (HKCU must stay the user). Restore:
+`pwsh -File telemetry_cleanse.ps1 -Restore restore.json`.
+
+A later tested CTT export (Settings → Export JSON, `{ "WPFTweaks": ["WPFTweaksTelemetry"] }`)
+is gated by `ctt/allow.json`. Unknown IDs fail closed. Not `irm | iex`.
+Not winget. Not `WPFTweaksServices`.
+
 **Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
 first, then machine `SettingsPageVisibility`
 `hide:gaming-gamebar;hide:gaming-gamedvr;hide:gaming-trueplay;hide:gaming-broadcasting`

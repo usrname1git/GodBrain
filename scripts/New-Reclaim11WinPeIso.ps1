@@ -173,11 +173,14 @@ try {
     Copy-Item -LiteralPath (Join-Path $winpeSrc "Apply-Reclaim11Offline.ps1") -Destination (Join-Path $dest "Apply-Reclaim11Offline.ps1") -Force
     Copy-Item -LiteralPath $cat -Destination (Join-Path $dest "catalog.json") -Force
     Copy-Item -LiteralPath $stub -Destination (Join-Path $dest "DefenderStub.exe") -Force
-    foreach ($n in @("inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "elevate.ps1")) {
+    foreach ($n in @("inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "elevate.ps1")) {
         $s = Join-Path $reclaim $n
         if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11WinPeIso: missing $s" }
         Copy-Item -LiteralPath $s -Destination (Join-Path $dest $n) -Force
     }
+    $ctt = Join-Path $reclaim "ctt"
+    if (-not (Test-Path -LiteralPath $ctt)) { throw "New-Reclaim11WinPeIso: missing $ctt" }
+    Copy-Item -LiteralPath $ctt -Destination (Join-Path $dest "ctt") -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $winpeSrc "startnet.cmd") -Destination (Join-Path $mount "Windows\System32\startnet.cmd") -Force
 
     $ps = Join-Path $mount "Windows\System32\WindowsPowerShell\v1.0\powershell.exe"

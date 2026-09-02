@@ -106,6 +106,7 @@ if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
 if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
 if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
+if (-not `$w.FindName('BtnTelemetry')) { throw 'no BtnTelemetry' }
 `$w.Close()
 'xaml-ok'
 "@
@@ -164,7 +165,7 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
@@ -281,6 +282,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $fx25Win "reclaim11-stub.exe"))) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\Apply-KillingBlows.ps1"))) {
     throw "Test-Reclaim11: PE must drop C:\\reclaim11\\Apply-KillingBlows.ps1"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\telemetry_cleanse.ps1"))) {
+    throw "Test-Reclaim11: PE must drop C:\\reclaim11\\telemetry_cleanse.ps1"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\ctt\WPFTweaksTelemetry.json"))) {
+    throw "Test-Reclaim11: PE must drop C:\\reclaim11\\ctt\\WPFTweaksTelemetry.json"
 }
 $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
@@ -400,6 +407,90 @@ try {
     }
 }
 Remove-Item -LiteralPath $badMan, $okMan -Force
+
+. (Join-Path $root "telemetry_cleanse.ps1")
+$cttDir = Join-Path $root "ctt"
+foreach ($need in @("allow.json", "WPFTweaksTelemetry.json", "SOURCE.txt")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $cttDir $need))) {
+        throw "Test-Reclaim11: missing ctt\$need"
+    }
+}
+$tw = Get-Reclaim11CttTweak -Root $root -Id "WPFTweaksTelemetry"
+if ($tw.reclaim11_id -ne "reclaim11-telemetry-v1") { throw "Test-Reclaim11: telemetry reclaim11_id" }
+$regNames = @($tw.registry | ForEach-Object { $_.Name })
+if ($regNames -notcontains "AllowTelemetry") { throw "Test-Reclaim11: telemetry missing AllowTelemetry" }
+if ($regNames -notcontains "Enabled") { throw "Test-Reclaim11: telemetry missing AdvertisingInfo Enabled" }
+$svcNames = @($tw.service | ForEach-Object { $_.Name })
+if ($svcNames -notcontains "DiagTrack") { throw "Test-Reclaim11: telemetry missing DiagTrack" }
+if ($svcNames -notcontains "WerSvc") { throw "Test-Reclaim11: telemetry missing WerSvc (CTT said wermgr)" }
+if ($svcNames -contains "BFE") { throw "Test-Reclaim11: telemetry hit BFE" }
+if ($svcNames -contains "EventLog") { throw "Test-Reclaim11: telemetry hit EventLog" }
+if (@($tw.skip) -notcontains "Set-MpPreference") { throw "Test-Reclaim11: telemetry must skip Set-MpPreference" }
+$twRaw = Get-Content -LiteralPath (Join-Path $cttDir "WPFTweaksTelemetry.json") -Raw -Encoding UTF8
+if ($twRaw -match '"InvokeScript"') { throw "Test-Reclaim11: pinned telemetry JSON must not ship CTT InvokeScript" }
+
+$okCfg = Join-Path $env:TEMP "reclaim11-ctt-ok.json"
+Set-Content -LiteralPath $okCfg -Value '{"WPFTweaks":["WPFTweaksTelemetry"]}' -Encoding UTF8
+$imp = Test-Reclaim11CttImport -Root $root -Config $okCfg
+if (@($imp.ids) -notcontains "WPFTweaksTelemetry") { throw "Test-Reclaim11: CTT import missed telemetry" }
+$aliasCfg = Join-Path $env:TEMP "reclaim11-ctt-alias.json"
+Set-Content -LiteralPath $aliasCfg -Value '{"WPFTweaks":["WPFTweaksTele"]}' -Encoding UTF8
+$impA = Test-Reclaim11CttImport -Root $root -Config $aliasCfg
+if (@($impA.ids) -notcontains "WPFTweaksTelemetry") { throw "Test-Reclaim11: CTT alias WPFTweaksTele" }
+$badCfg = Join-Path $env:TEMP "reclaim11-ctt-bad.json"
+Set-Content -LiteralPath $badCfg -Value '{"WPFTweaks":["WPFTweaksTelemetry","WPFTweaksServices"]}' -Encoding UTF8
+try {
+    Test-Reclaim11CttImport -Root $root -Config $badCfg | Out-Null
+    throw "Test-Reclaim11: CTT Services import must refuse"
+} catch {
+    if ($_.Exception.Message -notmatch "not allowlisted") {
+        throw "Test-Reclaim11: expected CTT allowlist refuse, got $($_.Exception.Message)"
+    }
+}
+
+$bag = @{ "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo|Enabled" = "1" }
+$rt = Invoke-Reclaim11TelemetryRegRoundtrip -Entries @($tw.registry) -Remove @($tw.remove_value) -Bag $bag
+$kAllow = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection|AllowTelemetry"
+if ($rt.bag[$kAllow] -ne "0") { throw "Test-Reclaim11: telemetry roundtrip AllowTelemetry" }
+$kAdv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo|Enabled"
+if ($rt.bag[$kAdv] -ne "0") { throw "Test-Reclaim11: telemetry roundtrip AdvertisingInfo" }
+[void](Restore-Reclaim11TelemetryRegRoundtrip -Before $rt.before -Bag $rt.bag)
+if ($rt.bag[$kAdv] -ne "1") { throw "Test-Reclaim11: telemetry restore AdvertisingInfo" }
+if ($rt.bag.ContainsKey($kAllow)) { throw "Test-Reclaim11: telemetry restore must drop new AllowTelemetry" }
+
+try {
+    Invoke-Reclaim11TelemetryCleanse -Root $root
+    throw "Test-Reclaim11: telemetry must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected telemetry desk refuse, got $($_.Exception.Message)"
+    }
+}
+$telMan = Join-Path $env:TEMP "reclaim11-tel-ok.json"
+Set-Content -LiteralPath $telMan -Value '{"id":"reclaim11-telemetry-v1","registry":[],"remove_value":[],"services":[],"env_machine":[]}' -Encoding UTF8
+try {
+    Restore-Reclaim11TelemetryBackup -Manifest $telMan -Root $root
+    throw "Test-Reclaim11: telemetry restore must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected telemetry restore desk refuse, got $($_.Exception.Message)"
+    }
+}
+$telBad = Join-Path $env:TEMP "reclaim11-tel-bad.json"
+Set-Content -LiteralPath $telBad -Value '{"id":"nope"}' -Encoding UTF8
+try {
+    Restore-Reclaim11TelemetryBackup -Manifest $telBad -Root $root
+    throw "Test-Reclaim11: bad telemetry manifest must throw"
+} catch {
+    if ($_.Exception.Message -notmatch "not a telemetry") {
+        throw "Test-Reclaim11: expected telemetry manifest refuse, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath $okCfg, $aliasCfg, $badCfg, $telMan, $telBad -Force
+
+if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
+    throw "Test-Reclaim11: ISO builder must copy telemetry_cleanse.ps1"
+}
 
 . (Join-Path $root "elevate.ps1")
 $elSrc = Get-Content -LiteralPath (Join-Path $root "elevate.ps1") -Raw -Encoding UTF8

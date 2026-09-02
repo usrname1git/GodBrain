@@ -112,7 +112,7 @@
     <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
       <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
-                 Text="Safe cleanse / killing blows lock until a WinPE receipt. Hide Xbox does not."/>
+                 Text="Safe cleanse / killing blows lock until a WinPE receipt. Hide Xbox / telemetry do not."/>
     </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>
@@ -127,6 +127,7 @@
           <TextBlock Text="ACTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <CheckBox x:Name="BtnSafe" Content="Safe cleanse  (move + restore.json)" IsEnabled="False"/>
           <CheckBox x:Name="BtnXbox" Content="Hide Xbox + Appx bloat  (restore.json)"/>
+          <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (CTT, restore.json)"/>
           <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
           <TextBlock Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
                      Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>
