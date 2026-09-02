@@ -139,8 +139,14 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
+}
+$nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
+$nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
+if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
+if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
+    throw "Test-Reclaim11: Nuclear v6.3 self-test did not print ok"
 }
 $isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
 if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeIso.ps1" }

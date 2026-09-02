@@ -66,8 +66,17 @@ Do **not** nuke the desk. Snapshot a VM, then:
 5. SB-on VM must refuse `WdBoot` delete and still boot. SB-off may drop ELAM.
 6. After reboot, BFE/`mpssvc` must be RUNNING. In-Windows
    `Apply-KillingBlows.ps1` is leftover `sc delete` only.
+   Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
+   v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
+   **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
+   SYSTEM under `System32`. Check: `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`.
+   Not this desk.
 
 7. Physical USB only after the ISO path is green.
+
+GUI (this desk scan, Noob/Kill locked until a WinPE receipt):
+
+![Reclaim11 GUI](ui/MainWindow.png)
 
 BitLocker in the VM is optional for v1; if C: is encrypted, WinPE needs
 the protector and inventory must show it.
