@@ -4,6 +4,10 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$script:Reclaim11Here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$invBoot = Join-Path $script:Reclaim11Here "inventory.ps1"
+if (Test-Path -LiteralPath $invBoot) { . $invBoot }
+
 function Test-Reclaim11Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p = New-Object Security.Principal.WindowsPrincipal $id
@@ -60,6 +64,7 @@ function Get-Reclaim11KillingStub {
 function Invoke-Reclaim11KillingBlows {
     param(
         [string]$Root,
+        [Alias("T", "Test")]
         [switch]$WhatIf
     )
     if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSCommandPath }
@@ -79,10 +84,17 @@ function Invoke-Reclaim11KillingBlows {
             throw "Invoke-Reclaim11KillingBlows: pack A lists never-touch $s"
         }
     }
-    if (Test-Reclaim11DeskHost) {
+    $desk = Test-Reclaim11DeskHost
+    $admin = Test-Reclaim11Admin
+    $receipt = Get-Reclaim11WinPeReceipt
+    $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
+    $wdPresent = Test-Path -LiteralPath $wd
+    $inv = Get-Reclaim11Inventory -Root $Root
+    $stub = Get-Reclaim11KillingStub -Catalog $cat
+    $el = Join-Path $Root "elevate.ps1"
+    if ((-not $WhatIf) -and $desk) {
         throw "Refuse: desk (IoTEnterpriseS). Killing blows are VM-only. Not M1ABRAMS."
     }
-    $el = Join-Path $Root "elevate.ps1"
     if ((-not $WhatIf) -and (Test-Path -LiteralPath $el)) {
         . $el
         $door = Join-Path $Root "Apply-KillingBlows.ps1"
@@ -94,23 +106,19 @@ function Invoke-Reclaim11KillingBlows {
             try { return ($hop.output | ConvertFrom-Json) } catch { return $hop.output }
         }
     }
-    if (-not (Test-Reclaim11Admin)) {
+    if ((-not $WhatIf) -and -not $admin) {
         throw "Invoke-Reclaim11KillingBlows: needs elevation"
     }
-    $receipt = Get-Reclaim11WinPeReceipt
-    if (-not $receipt) {
+    if ((-not $WhatIf) -and -not $receipt) {
         throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE v7 ISO first."
     }
-    $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
-    if (Test-Path -LiteralPath $wd) {
+    if ((-not $WhatIf) -and $wdPresent) {
         throw "Refuse: WdFilter.sys still present. PE park did not land."
     }
-    $inv = Get-Reclaim11Inventory -Root $Root
-    if (-not $inv.never_touch_ok) {
+    if ((-not $WhatIf) -and -not $inv.never_touch_ok) {
         throw "Refuse: BFE/mpssvc not RUNNING. Never-touch failed."
     }
-    $stub = Get-Reclaim11KillingStub -Catalog $cat
-    if (-not $stub) {
+    if ((-not $WhatIf) -and -not $stub) {
         throw "Refuse: no reclaim11-stub.exe on this volume (PE should have copied it)."
     }
 
@@ -133,10 +141,31 @@ function Invoke-Reclaim11KillingBlows {
         registry     = @($regLock)
         backup_root  = $backupRoot
         what_if      = [bool]$WhatIf
+        mutate       = $false
         applied      = @()
         failed       = @()
     }
-    if ($WhatIf) { return $plan }
+    if ($WhatIf) {
+        $checks = @(
+            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "killing blows need TI via admin"),
+            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
+            (New-Reclaim11Check -Name "winpe" -Ok ([bool]$receipt) -Detail $(if ($receipt) { [string]$receipt } else { "no reclaim11-winpe.log" })),
+            (New-Reclaim11Check -Name "WdFilter" -Ok (-not $wdPresent) -Detail $(if ($wdPresent) { $wd } else { "parked" })),
+            (New-Reclaim11Check -Name "never_touch" -Ok ([bool]$inv.never_touch_ok) -Detail "BFE/mpssvc RUNNING"),
+            (New-Reclaim11Check -Name "stub" -Ok ([bool]$stub) -Detail $(if ($stub) { [string]$stub } else { "no reclaim11-stub.exe" }))
+        )
+        $would = @("DisableAntiSpyware=1 (keep GPO key)")
+        foreach ($svc in @($cat.services_pack_a)) { $would += ("sc delete {0}" -f $svc) }
+        foreach ($row in $taskSnap) { $would += ("schtasks /Delete {0}" -f $row.full) }
+        foreach ($rk in $regLock) { $would += ("reg delete {0}" -f $rk) }
+        foreach ($img in @($cat.usermode_ifeo)) { $would += ("IFEO {0}" -f $img) }
+        $fail = @($checks | Where-Object { -not $_.ok } | ForEach-Object { $_.name })
+        $refuse = if ($fail.Count -gt 0) { ($fail -join ",") } else { "" }
+        $plan | Add-Member -NotePropertyName checks -NotePropertyValue $checks
+        $plan | Add-Member -NotePropertyName would -NotePropertyValue $would
+        $plan | Add-Member -NotePropertyName would_refuse -NotePropertyValue $refuse
+        return $plan
+    }
 
     $applied = New-Object System.Collections.Generic.List[string]
     $failed = New-Object System.Collections.Generic.List[string]

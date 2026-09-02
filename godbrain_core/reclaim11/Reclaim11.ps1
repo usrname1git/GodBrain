@@ -3,6 +3,8 @@
 param(
     [switch]$InventoryOnly,
     [switch]$KillingBlows,
+    [Alias("T")]
+    [switch]$Test,
     [string]$OutJson = "",
     [string]$WinPeLog = ""
 )
@@ -44,6 +46,31 @@ if ($InventoryOnly) {
 if ($KillingBlows) {
     $plan = Invoke-Reclaim11KillingBlows -Root $here
     $plan | ConvertTo-Json -Depth 6
+    return
+}
+
+if ($Test) {
+    Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
+    $keepCap = $false
+    $xbox = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+    Write-Host (Format-Reclaim11TestReport -Plan $xbox -Title "xbox_cleanse")
+    $tel = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $tel -Title "telemetry_cleanse")
+    $kill = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $kill -Title "killing_blows")
+    $safe = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $safe -Title "safe_cleanse")
+    if ($OutJson) {
+        $bundle = [pscustomobject]@{
+            what_if = $true
+            mutate  = $false
+            xbox    = $xbox
+            telemetry = $tel
+            killing = $kill
+            safe    = $safe
+        }
+        Write-Reclaim11InventoryFile -Inventory $bundle -Path $OutJson | Out-Null
+    }
     return
 }
 
@@ -99,6 +126,7 @@ $btnXbox = Get-Ui BtnXbox
 $btnTelemetry = Get-Ui BtnTelemetry
 $btnKill = Get-Ui BtnKill
 $btnRun  = Get-Ui BtnRun
+$btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
 $script:LastInventory = $null
@@ -163,6 +191,7 @@ $btnRun.Add_Click({
     if ($script:ProcessRunning) { return }
     $script:ProcessRunning = $true
     $btnRun.IsEnabled = $false
+    $btnTest.IsEnabled = $false
     $btnScan.IsEnabled = $false
     try {
         $doSafe = [bool]$btnSafe.IsChecked
@@ -232,6 +261,50 @@ $btnRun.Add_Click({
     } finally {
         $script:ProcessRunning = $false
         $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
+        $btnScan.IsEnabled = $true
+    }
+})
+
+$btnTest.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    $btnRun.IsEnabled = $false
+    $btnTest.IsEnabled = $false
+    $btnScan.IsEnabled = $false
+    try {
+        $doSafe = [bool]$btnSafe.IsChecked
+        $doXbox = [bool]$btnXbox.IsChecked
+        $doTelemetry = [bool]$btnTelemetry.IsChecked
+        $doKill = [bool]$btnKill.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, and/or Killing blows.", "Reclaim11") | Out-Null
+            return
+        }
+        Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
+        if ($doSafe) {
+            $plan = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "safe_cleanse")
+        }
+        if ($doXbox) {
+            $keepCap = -not [bool]$togHideCaptures.IsChecked
+            $plan = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "xbox_cleanse")
+        }
+        if ($doTelemetry) {
+            $plan = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "telemetry_cleanse")
+        }
+        if ($doKill) {
+            $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
+        }
+    } catch {
+        Add-Log ("TEST FAIL  {0}" -f $_.Exception.Message)
+    } finally {
+        $script:ProcessRunning = $false
+        $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
         $btnScan.IsEnabled = $true
     }
 })

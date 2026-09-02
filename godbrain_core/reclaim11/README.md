@@ -31,6 +31,15 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 pwsh -STA -NoProfile -ExecutionPolicy Bypass -File godbrain_core\reclaim11\Reclaim11.ps1
 ```
 
+Test-only (DeviceCleanupCmd `-t`: privs, paths, what would happen, no mutate):
+
+```text
+pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\xbox_cleanse.ps1 -T
+```
+
+GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.
+
 Headless inventory (JSON):
 
 ```text

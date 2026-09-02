@@ -23,7 +23,9 @@
 
 [CmdletBinding()]
 param(
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [Alias("T", "Test")]
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Continue"
@@ -443,12 +445,36 @@ if ($SelfTest) {
 }
 
 $invPath = Join-Path $here "inventory.ps1"
+$desk = $false
 if (Test-Path -LiteralPath $invPath) {
     . $invPath
-    if (Test-Reclaim11DeskHost) {
+    $desk = Test-Reclaim11DeskHost
+    if ($desk -and -not $WhatIf) {
         throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
     }
 }
+
+if ($WhatIf) {
+    Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false." -ForegroundColor Yellow
+    Write-Host ("  desk={0}  (IoTEnterpriseS would refuse)" -f $desk)
+    Write-Host ("  stub={0} exists={1}" -f $StubPath, (Test-PeMz $StubPath))
+    foreach ($f in $DriverFiles) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would DELETE {0}" -f $f) }
+    }
+    foreach ($f in $ExtraFiles) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would STUB {0}" -f $f) }
+    }
+    foreach ($f in $FoldersToNuke) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would LOCK {0}" -f $f) }
+    }
+    foreach ($k in $RegKeysToDelete) {
+        if (Test-Path -LiteralPath $k) { Write-Host ("  would delkey {0}" -f $k) }
+    }
+    if ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
+    else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
+    return
+}
+
 $el = Join-Path $here "elevate.ps1"
 if (Test-Path -LiteralPath $el) {
     . $el

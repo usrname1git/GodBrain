@@ -111,8 +111,9 @@
     </Border>
     <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
       <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
+      <Button x:Name="BtnTest" DockPanel.Dock="Left" Content="TEST SELECTED" MinWidth="140" Margin="8,0,8,0"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
-                 Text="Safe cleanse / killing blows lock until a WinPE receipt. Hide Xbox / telemetry do not."/>
+                 Text="TEST SELECTED is DeviceCleanupCmd -t (no mutate). RUN is live. Safe/Kill lock until WinPE."/>
     </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>

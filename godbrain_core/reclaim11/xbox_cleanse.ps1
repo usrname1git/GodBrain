@@ -7,11 +7,16 @@
 [CmdletBinding()]
 param(
     [string]$Restore = "",
+    [Alias("T", "Test")]
     [switch]$WhatIf
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$script:Reclaim11Here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$invBoot = Join-Path $script:Reclaim11Here "inventory.ps1"
+if (Test-Path -LiteralPath $invBoot) { . $invBoot }
 
 $script:XboxHidePages = @(
     "gaming-gamebar",
@@ -226,12 +231,18 @@ function Invoke-Reclaim11XboxCleanse {
     if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") {
         throw "Refuse: XboxGameCallableUI stays (desk kept it)"
     }
-    if (Test-Reclaim11XboxDeskHost) {
+    $desk = Test-Reclaim11XboxDeskHost
+    if ($desk -and -not $WhatIf) {
         throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
     }
-    # Admin is enough (KillXbox.ps1). TI hop broke Appx + StrictMode on a
-    # missing SettingsPageVisibility and swallowed stderr. Pack-A killing
-    # blows / Nuclear still use elevate.ps1.
+    $admin = $false
+    if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
+        $admin = Test-Reclaim11Admin
+    } else {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $admin = (New-Object Security.Principal.WindowsPrincipal $id).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
 
     $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
     $cur = ""
@@ -309,7 +320,30 @@ function Invoke-Reclaim11XboxCleanse {
     }
 
     if ($WhatIf) {
+        $checks = @(
+            (New-Reclaim11Check -Name "catalog" -Ok $true -Detail $catPath),
+            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "Hide Xbox is admin, not TI"),
+            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" }))
+        )
+        $would = @()
+        $would += ("SettingsPageVisibility -> {0}" -f $merged)
+        $would += "AllowGameDVR=0"
+        foreach ($row in $gbBefore) {
+            $would += ("GameBar {0}={1}" -f $row.name, $row.wanted)
+        }
+        $would += "AppCaptureEnabled=0"
+        if ($overlayPresent) { $would += "delete HKCR\\ms-gamingoverlay (export first)" }
+        foreach ($s in $svcSnap) { $would += ("sc delete {0}" -f $s.name) }
+        $would += "skip xboxgip"
+        foreach ($a in $appxSnap) { $would += ("Appx remove {0}" -f $a.name) }
+        $refuse = ""
+        if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
+        elseif (-not $admin) { $refuse = "needs elevation" }
         $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
+        $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $false
+        $manifest | Add-Member -NotePropertyName checks -NotePropertyValue $checks
+        $manifest | Add-Member -NotePropertyName would -NotePropertyValue $would
+        $manifest | Add-Member -NotePropertyName would_refuse -NotePropertyValue $refuse
         $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
         return $manifest
     }
@@ -496,8 +530,11 @@ if ($MyInvocation.InvocationName -ne ".") {
         Restore-Reclaim11XboxBackup -Manifest $Restore | ConvertTo-Json -Depth 6
     } else {
         $plan = Invoke-Reclaim11XboxCleanse -WhatIf:$WhatIf
+        if ($WhatIf) {
+            Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "xbox_cleanse")
+        }
         $plan | ConvertTo-Json -Depth 8
-        if ($plan.manifest_path) {
+        if ((-not $WhatIf) -and $plan.manifest_path) {
             Write-Host ("restore.json {0}" -f $plan.manifest_path)
         }
     }

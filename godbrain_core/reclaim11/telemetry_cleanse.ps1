@@ -6,11 +6,16 @@
 [CmdletBinding()]
 param(
     [string]$Restore = "",
+    [Alias("T", "Test")]
     [switch]$WhatIf
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$script:Reclaim11Here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$invBoot = Join-Path $script:Reclaim11Here "inventory.ps1"
+if (Test-Path -LiteralPath $invBoot) { . $invBoot }
 
 $script:TelemetryServices = @(
     "DiagTrack",
@@ -73,7 +78,8 @@ function Invoke-Reclaim11TelemetryCleanse {
         }
     }
 
-    if (Test-Reclaim11TelemetryDeskHost) {
+    $desk = Test-Reclaim11TelemetryDeskHost
+    if ($desk -and -not $WhatIf) {
         throw "Refuse: desk (IoTEnterpriseS). Telemetry cleanse is VM-only. Not M1ABRAMS."
     }
 
@@ -107,7 +113,27 @@ function Invoke-Reclaim11TelemetryCleanse {
     }
 
     if ($WhatIf) {
+        $admin = $false
+        if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
+            $admin = Test-Reclaim11Admin
+        }
+        $checks = @(
+            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "telemetry is admin, not TI"),
+            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" }))
+        )
+        $would = @("AllowTelemetry=0")
+        foreach ($s in $svcSnap) {
+            if ([bool]$s.present) { $would += ("sc config {0} start= disabled" -f $s.name) }
+            else { $would += ("skip {0} (absent)" -f $s.name) }
+        }
+        $refuse = ""
+        if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
+        elseif (-not $admin) { $refuse = "needs elevation" }
         $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
+        $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $false
+        $manifest | Add-Member -NotePropertyName checks -NotePropertyValue $checks
+        $manifest | Add-Member -NotePropertyName would -NotePropertyValue $would
+        $manifest | Add-Member -NotePropertyName would_refuse -NotePropertyValue $refuse
         $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
         return $manifest
     }
@@ -181,8 +207,11 @@ if ($MyInvocation.InvocationName -ne ".") {
         Restore-Reclaim11TelemetryBackup -Manifest $Restore | ConvertTo-Json -Depth 6
     } else {
         $plan = Invoke-Reclaim11TelemetryCleanse -WhatIf:$WhatIf
+        if ($WhatIf) {
+            Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "telemetry_cleanse")
+        }
         $plan | ConvertTo-Json -Depth 8
-        if ($plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
+        if ((-not $WhatIf) -and $plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
             Write-Host ("restore.json {0}" -f $plan.manifest_path)
         }
     }

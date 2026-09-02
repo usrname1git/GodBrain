@@ -24,6 +24,11 @@ if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
 if ($launchSrc -notmatch '-Verb RunAs') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
 }
+$testAt = $launchSrc.IndexOf('if ($Test)')
+$runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
+if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
+    throw "Test-Reclaim11: -T must skip UAC"
+}
 if ($launchSrc -notmatch 'Start-Transcript') {
     throw "Test-Reclaim11: GUI path must transcript"
 }
@@ -105,6 +110,7 @@ if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
 if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
 if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
+if (-not `$w.FindName('BtnTest')) { throw 'no BtnTest' }
 if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
 if (-not `$w.FindName('BtnTelemetry')) { throw 'no BtnTelemetry' }
 `$w.Close()
@@ -378,6 +384,10 @@ try {
         throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
     }
 }
+$dryKill = Invoke-Reclaim11KillingBlows -Root $root -WhatIf
+if (-not [bool]$dryKill.what_if) { throw "Test-Reclaim11: killing -T must set what_if" }
+if ([string]$dryKill.would_refuse -notmatch "desk") { throw "Test-Reclaim11: killing -T must report desk refuse" }
+if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list would-do" }
 
 . (Join-Path $root "xbox_cleanse.ps1")
 $hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
@@ -407,6 +417,11 @@ try {
         throw "Test-Reclaim11: expected xbox desk refuse, got $($_.Exception.Message)"
     }
 }
+$dryXbox = Invoke-Reclaim11XboxCleanse -Root $root -WhatIf
+if (-not [bool]$dryXbox.what_if) { throw "Test-Reclaim11: xbox -T must set what_if" }
+if ([bool]$dryXbox.mutate) { throw "Test-Reclaim11: xbox -T must not mutate" }
+if ([string]$dryXbox.would_refuse -notmatch "desk") { throw "Test-Reclaim11: xbox -T must report desk refuse" }
+if (-not (Test-Path -LiteralPath (Join-Path $root "catalog.json"))) { throw "Test-Reclaim11: catalog vanished after xbox -T" }
 if ($script:XboxAppx -notcontains "Microsoft.BingNews") { throw "Test-Reclaim11: bloat list missing BingNews" }
 if ($script:XboxAppx -notcontains "Microsoft.WindowsFeedbackHub") { throw "Test-Reclaim11: bloat list missing FeedbackHub" }
 if ($script:XboxAppx -notcontains "Microsoft.GamingServices") { throw "Test-Reclaim11: bloat list missing GamingServices" }
@@ -468,6 +483,9 @@ try {
         throw "Test-Reclaim11: expected telemetry desk refuse, got $($_.Exception.Message)"
     }
 }
+$dryTel = Invoke-Reclaim11TelemetryCleanse -Root $root -WhatIf
+if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set what_if" }
+if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
 $telMan = Join-Path $env:TEMP "reclaim11-tel-ok.json"
 Set-Content -LiteralPath $telMan -Value '{"id":"reclaim11-telemetry-v1","allow":{"present":false},"services":[]}' -Encoding UTF8
 try {
