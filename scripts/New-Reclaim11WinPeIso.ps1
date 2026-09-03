@@ -5,7 +5,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$OutIso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso",
+    [string]$OutIso = "C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso",
     [string]$WorkDir = "C:\nvme\reclaim11\winpe-work",
     [string]$StubPath = "C:\Tools\DefenderStub.exe",
     [switch]$Probe,

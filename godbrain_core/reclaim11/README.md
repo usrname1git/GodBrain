@@ -88,12 +88,12 @@ Do **not** nuke the desk. Snapshot a VM, then:
 3. Build the ISO (ADK + WinPE addon **10.1.26100.2454**, not ADK 28000):
 
    ```text
-   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1 -OutIso C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso
    ```
 
    Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso` (outside git).
    v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
-4. Snapshot, attach **v7**. PE is the kill: **deletes** catalog
+4. Snapshot, attach **v9**. PE is the kill: **deletes** catalog
    `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
    (exact names, never a `Wd*.sys` glob), stubs catalog usermode EXEs,
    `reg delete` pack-A keys then Start=4 fallback, IFEO +

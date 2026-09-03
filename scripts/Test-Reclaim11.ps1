@@ -82,6 +82,9 @@ if ($cliSrc -notmatch 'Get-Reclaim11WinPeReceipt') {
 if ($launchSrc -notmatch 'Reclaim11-WinPE-v9\.iso') {
     throw "Test-Reclaim11: PREP MEDIA must name the v9 ISO"
 }
+if ($launchSrc -match 'Sort-Object LastWriteTime') {
+    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8 over v9"
+}
 $testAt = $launchSrc.IndexOf('if ($Test)')
 $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
 if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
@@ -169,6 +172,15 @@ if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPane
 }
 if ($readme -notmatch 'Reclaim11-WinPE-v9\.iso') {
     throw "Test-Reclaim11: README must name the v9 ISO"
+}
+if ($readme -match 'attach \*\*v7\*\*') {
+    throw "Test-Reclaim11: README must attach v9, not leftover v7"
+}
+if ($readme -notmatch 'attach \*\*v9\*\*') {
+    throw "Test-Reclaim11: README step 4 must attach v9"
+}
+if ($readme -notmatch '-OutIso C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: README ISO build must pass -OutIso v9"
 }
 foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
@@ -306,6 +318,9 @@ if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing Ne
 $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
+if ($isoSrc -notmatch 'OutIso = "C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso"') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be v9"
+}
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
 if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
     throw "Test-Reclaim11: ISO builder must resolve a standalone kit zip"

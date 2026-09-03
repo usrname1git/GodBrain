@@ -568,14 +568,10 @@ $btnPrep.Add_Click({
     }
     $isoDir = "C:\nvme\reclaim11"
     $want = Join-Path $isoDir "Reclaim11-WinPE-v9.iso"
-    $found = @()
+    $iso = $want
     foreach ($n in @("Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
         $p = Join-Path $isoDir $n
-        if (Test-Path -LiteralPath $p) { $found += Get-Item -LiteralPath $p }
-    }
-    $iso = $want
-    if ($found.Count -gt 0) {
-        $iso = @($found | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+        if (Test-Path -LiteralPath $p) { $iso = $p; break }
     }
     $msg = if (Test-Path -LiteralPath $iso) {
         "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
