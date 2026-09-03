@@ -48,34 +48,6 @@ function Test-Reclaim11Admin {
     $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-Reclaim11IsoStub {
-    param([string]$Preferred)
-    if (Test-Path -LiteralPath $Preferred) {
-        $fs = [IO.File]::OpenRead($Preferred)
-        try {
-            $b = New-Object byte[] 2
-            $n = $fs.Read($b, 0, 2)
-            if ($n -eq 2 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A) { return $Preferred }
-        } finally { $fs.Close() }
-        throw "New-Reclaim11WinPeIso: $Preferred exists but is not MZ (refusing a renamed .cmd)"
-    }
-    $src = Join-Path $winpeSrc "stub.c"
-    if (-not (Test-Path -LiteralPath $src)) { throw "New-Reclaim11WinPeIso: missing $src and $Preferred" }
-    $outDir = Split-Path -Parent $Preferred
-    if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
-        New-Item -ItemType Directory -Path $outDir | Out-Null
-    }
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-    $cmd = "cl /nologo /O2 /GS- /c `"$src`" /Fo`"$outDir\stub.obj`" && link /nologo /OUT:`"$Preferred`" /ENTRY:mainCRTStartup /SUBSYSTEM:WINDOWS /NODEFAULTLIB kernel32.lib `"$outDir\stub.obj`""
-    cmd.exe /c "call `"$vcvars`" >nul && $cmd"
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Preferred)) {
-        throw "New-Reclaim11WinPeIso: stub compile failed"
-    }
-    $Preferred
-}
-
 $adk = Get-Reclaim11Adk
 if ($Probe) {
     [pscustomobject]@{

@@ -225,7 +225,7 @@ function Show-Inventory($inv) {
     (Get-Ui BitLocker).Text = if ($bl.present) { "$($bl.protection) / $($bl.volume_status)" } else { "not present / $($bl.error)" }
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
-    $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
+    $btnPrep.IsEnabled = $true
     $pe = [bool]$inv.gates.killing_blows
     $btnSafe.IsEnabled = $pe
     if (-not $pe) { $btnSafe.IsChecked = $false }
@@ -552,6 +552,7 @@ $btnNoobSafe.Add_Click({
 })
 
 $btnPrep.Add_Click({
+    if ($script:ProcessRunning) { return }
     $build = $null
     $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
     foreach ($c in @(
@@ -573,12 +574,67 @@ $btnPrep.Add_Click({
         $p = Join-Path $isoDir $n
         if (Test-Path -LiteralPath $p) { $iso = $p; break }
     }
-    $msg = if (Test-Path -LiteralPath $iso) {
-        "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
+    $have = Test-Path -LiteralPath $iso
+    $ask = if ($have) {
+        "ISO already at:`n$iso`n`nRebuild v9 to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
     } else {
-        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. ADK + WinPE addon 10.1.26100.2454 (not 28000). Output: C:\Reclaim11\Reclaim11-WinPE-v9.iso`n`nVMware first. Snapshot before boot."
+        "Build WinPE ISO to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
     }
-    [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
+    $q = [System.Windows.MessageBox]::Show($ask, "Reclaim11 PREP MEDIA", "YesNo", "Warning")
+    if ($q -ne "Yes") {
+        if ($have) {
+            [System.Windows.MessageBox]::Show(
+                "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json.",
+                "Reclaim11 prep media") | Out-Null
+        }
+        return
+    }
+    $script:ProcessRunning = $true
+    $btnPrep.IsEnabled = $false
+    $btnScan.IsEnabled = $false
+    $btnRun.IsEnabled = $false
+    $btnTest.IsEnabled = $false
+    try {
+        Add-Log ("PREP MEDIA building {0}" -f $want)
+        $pwsh = Get-Reclaim11Pwsh
+        $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
+        $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
+        $outFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".out")
+        $errFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".err")
+        try {
+            $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $chunks = @()
+            if (Test-Path -LiteralPath $outFile) {
+                $chunks += Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $errFile) {
+                $chunks += Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
+            }
+            $out = ($chunks -join "`n")
+            if ($out) { Add-Log $out.TrimEnd() }
+            if ([int]$p.ExitCode -ne 0) {
+                throw ("ISO builder exit {0}`n{1}" -f $p.ExitCode, $out)
+            }
+        } finally {
+            Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path -LiteralPath $want)) {
+            throw "ISO missing after build: $want"
+        }
+        Add-Log ("PREP MEDIA ok {0}" -f $want)
+        [System.Windows.MessageBox]::Show(
+            "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$want`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json.",
+            "Reclaim11 prep media") | Out-Null
+    } catch {
+        Add-Log ("PREP FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 PREP MEDIA") | Out-Null
+    } finally {
+        $script:ProcessRunning = $false
+        $btnPrep.IsEnabled = $true
+        $btnScan.IsEnabled = $true
+        $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
+    }
 })
 
 $window.Add_MouseLeftButtonDown({

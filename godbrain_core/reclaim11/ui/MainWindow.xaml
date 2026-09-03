@@ -137,7 +137,7 @@
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
         <Button x:Name="BtnExpertBack" Content="SWITCH DOOR" MinWidth="110"/>
         <Button x:Name="BtnScan" Content="SCAN" MinWidth="88"/>
-        <Button x:Name="BtnPrep" Content="PREP MEDIA" MinWidth="110" IsEnabled="False"/>
+        <Button x:Name="BtnPrep" Content="PREP MEDIA" MinWidth="110"/>
       </StackPanel>
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>

@@ -40,3 +40,38 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $script:Reclaim11Layout = Get-Reclaim11KitLayout -Start $RepoRoot
 $RepoRoot = $script:Reclaim11Layout.RepoRoot
 $Reclaim11Root = $script:Reclaim11Layout.Kit
+
+function Get-Reclaim11IsoStub {
+    param(
+        [string]$Preferred = "C:\Reclaim11\reclaim11-stub.exe"
+    )
+    if (Test-Path -LiteralPath $Preferred) {
+        $fs = [IO.File]::OpenRead($Preferred)
+        try {
+            $b = New-Object byte[] 2
+            $n = $fs.Read($b, 0, 2)
+            if ($n -eq 2 -and $b[0] -eq 0x4D -and $b[1] -eq 0x5A) { return $Preferred }
+        } finally { $fs.Close() }
+        throw "Get-Reclaim11IsoStub: $Preferred exists but is not MZ (refusing a renamed .cmd)"
+    }
+    $src = Join-Path $Reclaim11Root "winpe\stub.c"
+    if (-not (Test-Path -LiteralPath $src)) {
+        throw "Get-Reclaim11IsoStub: missing $src and $Preferred. Build the WinPE ISO first."
+    }
+    $outDir = Split-Path -Parent $Preferred
+    if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
+        New-Item -ItemType Directory -Path $outDir | Out-Null
+    }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        throw "Get-Reclaim11IsoStub: missing $Preferred and vswhere. Build the WinPE ISO first, or install VS C++ tools."
+    }
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    $cmd = "cl /nologo /O2 /GS- /c `"$src`" /Fo`"$outDir\stub.obj`" && link /nologo /OUT:`"$Preferred`" /ENTRY:mainCRTStartup /SUBSYSTEM:WINDOWS /NODEFAULTLIB kernel32.lib `"$outDir\stub.obj`""
+    cmd.exe /c "call `"$vcvars`" >nul && $cmd"
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Preferred)) {
+        throw "Get-Reclaim11IsoStub: stub compile failed. Build the WinPE ISO first, or install VS C++ tools."
+    }
+    $Preferred
+}

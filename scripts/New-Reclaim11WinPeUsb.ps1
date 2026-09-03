@@ -159,10 +159,7 @@ if ($letters.Count -lt 1) { throw "New-Reclaim11WinPeUsb: disk $DiskNumber has n
 if ($letters -contains "C") { throw "Refuse: target has C:" }
 $destLetter = [string]$letters[0]
 
-$stub = $StubPath
-if (-not (Test-Path -LiteralPath $stub)) {
-    throw "New-Reclaim11WinPeUsb: missing stub $stub"
-}
+$stub = Get-Reclaim11IsoStub -Preferred $StubPath
 
 $doRefresh = $true
 if ($PSBoundParameters.ContainsKey("RefreshPayload")) { $doRefresh = [bool]$RefreshPayload }

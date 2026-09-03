@@ -72,7 +72,7 @@
     "MongoDB",
     "FltMgr"
   ],
-  "stub_exe": "C:\\Tools\\DefenderStub.exe",
+  "stub_exe": "C:\\Reclaim11\\reclaim11-stub.exe",
   "winpe_receipt": "Windows\\reclaim11-winpe.log",
   "gates": {
     "stub_wdboot_if_secure_boot": "refuse",
