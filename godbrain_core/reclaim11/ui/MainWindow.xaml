@@ -82,10 +82,11 @@
   <Grid>
   <DockPanel x:Name="PanelDoor" Margin="16">
     <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
-               Text="Chris-style 100 toggles is the expert door. Noob door is three jobs and TEST first. Never BFE / mpssvc / FltMgr."/>
+               Text="Noob is three jobs and TEST first. Expert is every tick. Never BFE / mpssvc / FltMgr."/>
     <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
       <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
-      <TextBlock Foreground="#7A93A8" Margin="0,4,0,20" Text="How much do you want to see?"/>
+      <TextBlock Foreground="#7A93A8" Margin="0,4,0,8" Text="This isn't a debloater. It's a Grim Reaper."/>
+      <TextBlock Foreground="#7A93A8" Margin="0,0,0,20" Text="How much do you want to see?"/>
       <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="I'M TOO DUMB FOR SETTINGS" FontWeight="SemiBold" Foreground="#3DDCFF"/>
@@ -95,7 +96,7 @@
       </Button>
       <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
         <StackPanel>
-          <TextBlock Text="I KNOW WHAT I'M DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
+          <TextBlock Text="YOU BETTER KNOW WTF YOU'RE DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
           <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, TEST SELECTED / RUN SELECTED."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>

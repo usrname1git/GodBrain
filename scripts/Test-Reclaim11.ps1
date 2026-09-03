@@ -16,6 +16,16 @@ $launch = Join-Path $root "Reclaim11.ps1"
 foreach ($p in @($catPath, $xamlPath, $invPath, $launch)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Test-Reclaim11: missing $p" }
 }
+$xamlSrc = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
+if ($xamlSrc -match 'Chris-style|christitus') {
+    throw "Test-Reclaim11: door copy must not mention CTT"
+}
+if ($xamlSrc -notmatch "Grim Reaper") {
+    throw "Test-Reclaim11: door must say Grim Reaper"
+}
+if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
+    throw "Test-Reclaim11: expert door must warn WTF"
+}
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
