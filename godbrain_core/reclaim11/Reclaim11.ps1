@@ -3,6 +3,8 @@
 param(
     [switch]$InventoryOnly,
     [switch]$KillingBlows,
+    [Alias("T")]
+    [switch]$Test,
     [string]$OutJson = "",
     [string]$WinPeLog = ""
 )
@@ -10,10 +12,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
+    throw "Reclaim11: PowerShell is ConstrainedLanguage. FullLanguage required."
+}
+
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "inventory.ps1")
 . (Join-Path $here "killing_blows.ps1")
 . (Join-Path $here "noob_cleanse.ps1")
+. (Join-Path $here "xbox_cleanse.ps1")
+. (Join-Path $here "telemetry_cleanse.ps1")
+. (Join-Path $here "nic_tune.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -41,39 +50,127 @@ if ($KillingBlows) {
     return
 }
 
+if ($Test) {
+    Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
+    $keepCap = $false
+    $xbox = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+    Write-Host (Format-Reclaim11TestReport -Plan $xbox -Title "xbox_cleanse")
+    $tel = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $tel -Title "telemetry_cleanse")
+    $kill = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $kill -Title "killing_blows")
+    $safe = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $safe -Title "safe_cleanse")
+    $nic = Invoke-Reclaim11NicTune -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $nic -Title "nic_tune")
+    if ($OutJson) {
+        $bundle = [pscustomobject]@{
+            what_if = $true
+            mutate  = $false
+            xbox    = $xbox
+            telemetry = $tel
+            killing = $kill
+            safe    = $safe
+            nic     = $nic
+        }
+        Write-Reclaim11InventoryFile -Inventory $bundle -Path $OutJson | Out-Null
+    }
+    return
+}
+
 $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
-if ($sta -ne "STA") {
+$admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($sta -ne "STA" -or -not $admin) {
     $pwsh = Join-Path $PSHOME "pwsh.exe"
     if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
     $arg = @(
         "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
     if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
-    Start-Process -FilePath $pwsh -ArgumentList $arg
+    if (-not $admin) {
+        Start-Process -FilePath $pwsh -ArgumentList $arg -Verb RunAs
+    } else {
+        Start-Process -FilePath $pwsh -ArgumentList $arg
+    }
     return
 }
+
+try { $Host.UI.RawUI.WindowTitle = "Reclaim11" } catch { }
+
+$logRoot = [Environment]::GetFolderPath("LocalApplicationData")
+if (-not $logRoot) { $logRoot = $env:TEMP }
+$logDir = Join-Path $logRoot "Reclaim11\logs"
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+$guiLog = Join-Path $logDir ("gui-" + [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ") + ".log")
+Start-Transcript -Path $guiLog -Append | Out-Null
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
 $xamlPath = Join-Path $here "ui\MainWindow.xaml"
-[xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
-$reader = New-Object System.Xml.XmlNodeReader $xaml
-$window = [Windows.Markup.XamlReader]::Load($reader)
+try {
+    [xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+} catch {
+    Stop-Transcript | Out-Null
+    throw "Reclaim11: XAML load failed: $($_.Exception.Message)"
+}
 
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
+$btnXbox = Get-Ui BtnXbox
+$btnTelemetry = Get-Ui BtnTelemetry
+$btnNic = Get-Ui BtnNic
 $btnKill = Get-Ui BtnKill
+$btnRun  = Get-Ui BtnRun
+$btnTest = Get-Ui BtnTest
+$togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
+$panelDoor = Get-Ui PanelDoor
+$panelNoob = Get-Ui PanelNoob
+$panelExpert = Get-Ui PanelExpert
+$noobLog = Get-Ui NoobLog
+$btnDoorNoob = Get-Ui BtnDoorNoob
+$btnDoorExpert = Get-Ui BtnDoorExpert
+$btnNoobBack = Get-Ui BtnNoobBack
+$btnExpertBack = Get-Ui BtnExpertBack
+$btnNoobTest = Get-Ui BtnNoobTest
+$btnNoobFix = Get-Ui BtnNoobFix
+$btnNoobXbox = Get-Ui BtnNoobXbox
+$btnNoobTel = Get-Ui BtnNoobTel
+$btnNoobSafe = Get-Ui BtnNoobSafe
 $script:LastInventory = $null
+$script:ProcessRunning = $false
+$script:UiDoor = "door"
 
 function Add-Log([string]$Line) {
     $logBox.AppendText($Line + [Environment]::NewLine)
     $logBox.ScrollToEnd()
+}
+
+function Add-NoobLog([string]$Line) {
+    $noobLog.AppendText($Line + [Environment]::NewLine)
+    $noobLog.ScrollToEnd()
+}
+
+function Show-Reclaim11Door([string]$Name) {
+    $script:UiDoor = $Name
+    $panelDoor.Visibility = [Windows.Visibility]::Collapsed
+    $panelNoob.Visibility = [Windows.Visibility]::Collapsed
+    $panelExpert.Visibility = [Windows.Visibility]::Collapsed
+    switch ($Name) {
+        "noob" { $panelNoob.Visibility = [Windows.Visibility]::Visible }
+        "expert" { $panelExpert.Visibility = [Windows.Visibility]::Visible }
+        default { $panelDoor.Visibility = [Windows.Visibility]::Visible }
+    }
 }
 
 function Show-Inventory($inv) {
@@ -88,8 +185,14 @@ function Show-Inventory($inv) {
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = [bool]$inv.gates.prep_media
-    $btnSafe.IsEnabled = [bool]$inv.gates.killing_blows
-    $btnKill.IsEnabled = [bool]$inv.gates.killing_blows
+    $pe = [bool]$inv.gates.killing_blows
+    $btnSafe.IsEnabled = $pe
+    if (-not $pe) { $btnSafe.IsChecked = $false }
+    $btnXbox.IsEnabled = $true
+    $btnTelemetry.IsEnabled = $true
+    $btnKill.IsEnabled = $pe
+    if (-not $pe) { $btnKill.IsChecked = $false }
+    $btnNoobSafe.IsEnabled = $pe
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
     Add-Log ("catalog   {0}" -f $inv.catalog)
@@ -121,34 +224,263 @@ $btnScan.Add_Click({
     }
 })
 
-$btnSafe.Add_Click({
+$btnRun.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    $btnRun.IsEnabled = $false
+    $btnTest.IsEnabled = $false
+    $btnScan.IsEnabled = $false
+    try {
+        $doSafe = [bool]$btnSafe.IsChecked
+        $doXbox = [bool]$btnXbox.IsChecked
+        $doTelemetry = [bool]$btnTelemetry.IsChecked
+        $doNic = [bool]$btnNic.IsChecked
+        $doKill = [bool]$btnKill.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+            return
+        }
+        $unlocked = $false
+        if ($script:LastInventory -and $script:LastInventory.gates) {
+            $unlocked = [bool]$script:LastInventory.gates.killing_blows
+        }
+        if (($doSafe -or $doKill) -and -not $unlocked) {
+            [System.Windows.MessageBox]::Show(
+                "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
+                "Reclaim11") | Out-Null
+            return
+        }
+        $q = [System.Windows.MessageBox]::Show(
+            "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+            "Reclaim11 RUN SELECTED",
+            "YesNo",
+            "Warning")
+        if ($q -ne "Yes") { return }
+        if ($doSafe) {
+            try {
+                $plan = Invoke-Reclaim11NoobCleanse -Root $here
+                Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+            }
+        }
+        if ($doXbox) {
+            try {
+                $keepCap = -not [bool]$togHideCaptures.IsChecked
+                $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+                Add-Log ("xbox hide {0}" -f $plan.settings_page_visibility.after)
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("XBOX FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+            }
+        }
+        if ($doTelemetry) {
+            try {
+                $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+                Add-Log ("telemetry disabled {0}" -f (@($plan.sc_disabled) -join ","))
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
+            }
+        }
+        if ($doNic) {
+            try {
+                $plan = Invoke-Reclaim11NicTune -Root $here
+                Add-Log ("nic applied {0}" -f (@($plan.applied).Count))
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("NIC FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 NIC tune") | Out-Null
+            }
+        }
+        if ($doKill) {
+            try {
+                $plan = Invoke-Reclaim11KillingBlows -Root $here
+                Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+            } catch {
+                Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+            }
+        }
+    } finally {
+        $script:ProcessRunning = $false
+        $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
+        $btnScan.IsEnabled = $true
+    }
+})
+
+$btnTest.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    $btnRun.IsEnabled = $false
+    $btnTest.IsEnabled = $false
+    $btnScan.IsEnabled = $false
+    try {
+        $doSafe = [bool]$btnSafe.IsChecked
+        $doXbox = [bool]$btnXbox.IsChecked
+        $doTelemetry = [bool]$btnTelemetry.IsChecked
+        $doNic = [bool]$btnNic.IsChecked
+        $doKill = [bool]$btnKill.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+            return
+        }
+        Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
+        if ($doSafe) {
+            $plan = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "safe_cleanse")
+        }
+        if ($doXbox) {
+            $keepCap = -not [bool]$togHideCaptures.IsChecked
+            $plan = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "xbox_cleanse")
+        }
+        if ($doTelemetry) {
+            $plan = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "telemetry_cleanse")
+        }
+        if ($doNic) {
+            $plan = Invoke-Reclaim11NicTune -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "nic_tune")
+        }
+        if ($doKill) {
+            $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
+        }
+    } catch {
+        Add-Log ("TEST FAIL  {0}" -f $_.Exception.Message)
+    } finally {
+        $script:ProcessRunning = $false
+        $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
+        $btnScan.IsEnabled = $true
+    }
+})
+
+$btnDoorNoob.Add_Click({
+    Show-Reclaim11Door "noob"
+    try {
+        Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
+        Add-NoobLog "Noob door. TEST FIRST lists what would happen. JUST FIX MY SH*T = Xbox + telemetry after TEST. Killing blows live on the expert door."
+    } catch {
+        Add-NoobLog ("scan FAIL  {0}" -f $_.Exception.Message)
+    }
+})
+$btnDoorExpert.Add_Click({ Show-Reclaim11Door "expert" })
+$btnNoobBack.Add_Click({ Show-Reclaim11Door "door" })
+$btnExpertBack.Add_Click({ Show-Reclaim11Door "door" })
+
+$btnNoobTest.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    try {
+        Add-NoobLog "TEST ONLY. mutate=false."
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        $xbox = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $xbox -Title "xbox")
+        $tel = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $tel -Title "telemetry")
+        $pe = $false
+        if ($script:LastInventory -and $script:LastInventory.gates) {
+            $pe = [bool]$script:LastInventory.gates.killing_blows
+        }
+        if ($pe) {
+            $safe = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+            Add-NoobLog (Format-Reclaim11TestReport -Plan $safe -Title "safe")
+        }
+    } catch {
+        Add-NoobLog ("TEST FAIL  {0}" -f $_.Exception.Message)
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobFix.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Nuclear. Desk/IoT refused. Continue?",
+        "Reclaim11 JUST FIX MY SH*T",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        try {
+            $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+            Add-NoobLog ("xbox  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("XBOX FAIL  {0}" -f $_.Exception.Message) }
+        try {
+            $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+            Add-NoobLog ("telemetry  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message) }
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobXbox.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Hide Xbox + Appx bloat on THIS Windows. restore.json first. Game Mode stays. Continue?",
+        "Reclaim11 HIDE XBOX",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+        Add-NoobLog ("xbox  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("XBOX FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobTel.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Disable DiagTrack + dmwappushservice, AllowTelemetry=0. restore.json first. Continue?",
+        "Reclaim11 TELEMETRY",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+        Add-NoobLog ("telemetry  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobSafe.Add_Click({
+    if ($script:ProcessRunning) { return }
     $unlocked = $false
     if ($script:LastInventory -and $script:LastInventory.gates) {
         $unlocked = [bool]$script:LastInventory.gates.killing_blows
     }
     if (-not $unlocked) {
-        [System.Windows.MessageBox]::Show(
-            "Safe cleanse stays locked until a WinPE receipt exists.",
-            "Reclaim11") | Out-Null
+        [System.Windows.MessageBox]::Show("Safe cleanse stays locked until a WinPE receipt exists.", "Reclaim11") | Out-Null
         return
     }
     $q = [System.Windows.MessageBox]::Show(
-        "Move pack-A files to C:\reclaim11\backup\<stamp>\ and write restore.json. Does not delete. Never BFE/mpssvc/FltMgr. Continue?",
-        "Reclaim11 Safe cleanse",
+        "Move pack-A leftovers to backup + restore.json. Does not delete. Continue?",
+        "Reclaim11 SAFE CLEANSE",
         "YesNo",
         "Warning")
     if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
     try {
         $plan = Invoke-Reclaim11NoobCleanse -Root $here
-        Add-Log ("safe cleanse moved {0} -> {1}" -f @($plan.items).Count, $plan.backup_root)
-        Add-Log ("manifest {0}" -f $plan.manifest_path)
-        [System.Windows.MessageBox]::Show(
-            ("Moved {0} files.`n{1}`nRestore: Restore-Reclaim11Noob.ps1 -Manifest restore.json" -f @($plan.items).Count, $plan.manifest_path),
-            "Reclaim11 Safe cleanse") | Out-Null
+        Add-NoobLog ("safe  {0}" -f $plan.manifest_path)
     } catch {
-        Add-Log ("SAFE FAIL  {0}" -f $_.Exception.Message)
+        Add-NoobLog ("SAFE FAIL  {0}" -f $_.Exception.Message)
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
-    }
+    } finally { $script:ProcessRunning = $false }
 })
 
 $btnPrep.Add_Click({
@@ -164,32 +496,32 @@ $btnPrep.Add_Click({
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })
 
-$btnKill.Add_Click({
-    $unlocked = $false
-    if ($script:LastInventory -and $script:LastInventory.gates) {
-        $unlocked = [bool]$script:LastInventory.gates.killing_blows
+$window.Add_MouseLeftButtonDown({
+    $src = $_.OriginalSource
+    if ($src -is [System.Windows.Controls.Control]) { return }
+    try { $window.DragMove() } catch { }
+})
+
+$window.Add_PreviewKeyDown({
+    if ($script:ProcessRunning) { return }
+    if ($_.Key -eq "Escape") { $window.Close(); $_.Handled = $true }
+    if ($_.KeyboardDevice.Modifiers -eq "Ctrl" -and $_.Key -eq "Q") {
+        $window.Close()
+        $_.Handled = $true
     }
-    if (-not $unlocked) {
-        [System.Windows.MessageBox]::Show(
-            "Killing blows stay locked until a WinPE receipt exists.",
-            "Reclaim11") | Out-Null
-        return
-    }
-    $q = [System.Windows.MessageBox]::Show(
-        "Mutate pack A on THIS Windows (IFEO + sc delete WinDefend/Sense/AppID). Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
-        "Reclaim11 killing blows",
-        "YesNo",
-        "Warning")
-    if ($q -ne "Yes") { return }
+})
+
+$window.Add_ContentRendered({
     try {
-        $plan = Invoke-Reclaim11KillingBlows -Root $here
-        Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
-        foreach ($a in @($plan.applied)) { Add-Log ("  {0}" -f $a) }
-        [System.Windows.MessageBox]::Show("Pack A killing blows applied. BFE/mpssvc must still be Running.", "Reclaim11") | Out-Null
-    } catch {
-        Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
-    }
+        Add-Type -AssemblyName System.Windows.Forms
+        $s = [System.Windows.Forms.Screen]::PrimaryScreen
+        if ($s -and ($window.ActualWidth -gt $s.Bounds.Width -or $window.ActualHeight -gt $s.Bounds.Height)) {
+            $window.Left = 0
+            $window.Top = 0
+            $window.Width = $s.Bounds.Width
+            $window.Height = $s.Bounds.Height
+        }
+    } catch { }
 })
 
 $window.Add_Loaded({
@@ -198,6 +530,10 @@ $window.Add_Loaded({
     } catch {
         Add-Log ("boot scan FAIL  {0}" -f $_.Exception.Message)
     }
+})
+
+$window.Add_Closed({
+    try { Stop-Transcript | Out-Null } catch { }
 })
 
 [void]$window.ShowDialog()

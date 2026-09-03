@@ -245,3 +245,50 @@ function ConvertTo-Reclaim11Json {
     param($Inventory)
     $Inventory | ConvertTo-Json -Depth 8 -Compress:$false
 }
+
+function Test-Reclaim11Admin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $p = New-Object Security.Principal.WindowsPrincipal $id
+    $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function New-Reclaim11Check {
+    param(
+        [string]$Name,
+        [bool]$Ok,
+        [string]$Detail = ""
+    )
+    [pscustomobject]@{
+        name   = $Name
+        ok     = [bool]$Ok
+        detail = $Detail
+    }
+}
+
+function Format-Reclaim11TestReport {
+    param(
+        $Plan,
+        [string]$Title = "Reclaim11 test"
+    )
+    $lines = @()
+    $lines += "TEST ONLY (DeviceCleanupCmd -t). mutate=false. No restore.json."
+    $lines += $Title
+    $who = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $lines += ("  identity  {0}" -f $who)
+    $lines += ("  admin     {0}" -f (Test-Reclaim11Admin))
+    $lines += ("  lang      {0}" -f $ExecutionContext.SessionState.LanguageMode)
+    foreach ($c in @($Plan.checks)) {
+        $mark = if ([bool]$c.ok) { "ok  " } else { "FAIL" }
+        $lines += ("  [{0}] {1}  {2}" -f $mark, $c.name, $c.detail)
+    }
+    $refuse = [string]$Plan.would_refuse
+    if (-not [string]::IsNullOrWhiteSpace($refuse)) {
+        $lines += ("WOULD REFUSE  {0}" -f $refuse)
+    } else {
+        $lines += "WOULD RUN"
+    }
+    foreach ($w in @($Plan.would)) {
+        $lines += ("  would  {0}" -f $w)
+    }
+    $lines -join [Environment]::NewLine
+}

@@ -17,13 +17,19 @@
 #   - DENY SYSTEM only on Defender Program Files / ProgramData trees,
 #     never under System32.
 # Keep GPO DisableAntiSpyware=1. Never BFE / mpssvc / FltMgr / EventLog.
+# WU remainder (after 26H1): sc delete wuauserv / UsoSvc / WaaSMedicSvc,
+# IFEO UsoCoreWorker + MoUsoCoreWorker + WaaSMedicAgent (already listed).
+# Never stub usosvc.dll / wuaueng.dll / WaaSMedicSvc.dll (svchost).
+# Never bits / DoSvc / TrustedInstaller. Not killing-blows pack A.
 #
 # pwsh -NoProfile -ExecutionPolicy Bypass -File NuclearDefenderWipe-V6_3.ps1
 # pwsh -NoProfile -File NuclearDefenderWipe-V6_3.ps1 -SelfTest
 
 [CmdletBinding()]
 param(
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [Alias("T", "Test")]
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Continue"
@@ -49,7 +55,8 @@ $Targets = @(
     "SenseTracer.exe", "SenseTVM.exe",
     "SgrmBroker.exe", "SgrmLpac.exe",
     "WebThreatDefenseService.exe", "webthreatdefsvc.exe", "webthreatdefusersvc.exe",
-    "WaaSMedicAgent.exe", "usoclient.exe", "musnotification.exe", "musnotificationux.exe",
+    "WaaSMedicAgent.exe", "usoclient.exe", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe",
+    "wuauclt.exe", "musnotification.exe", "musnotificationux.exe",
     "UpdateNotificationMgr.exe",
     "appidcertstorecheck.exe", "AppIdPolicyConverter.exe", "AppIdTel.exe"
 )
@@ -82,7 +89,12 @@ $ExtraFiles = @(
     "C:\Windows\SysWOW64\smartscreen.exe",
     "C:\Windows\System32\appidcertstorecheck.exe",
     "C:\Windows\System32\AppIdPolicyConverter.exe",
-    "C:\Windows\System32\AppIdTel.exe"
+    "C:\Windows\System32\AppIdTel.exe",
+    "C:\Windows\System32\UsoCoreWorker.exe",
+    "C:\Windows\System32\MoUsoCoreWorker.exe",
+    "C:\Windows\System32\usoclient.exe",
+    "C:\Windows\System32\WaaSMedicAgent.exe",
+    "C:\Windows\System32\wuauclt.exe"
 )
 
 # Never CodeIntegrity\CIPolicies. Never drivers\ (named .sys are deleted separately).
@@ -115,7 +127,8 @@ $ServicesToRemove = @(
     "SgrmBroker", "SgrmAgent",
     "wscsvc",
     "MsSecCore", "MsSecFlt", "MsSecWfp",
-    "AppIDSvc", "AppID"
+    "AppIDSvc", "AppID",
+    "wuauserv", "UsoSvc", "WaaSMedicSvc"
 )
 
 $NeverTouchService = @(
@@ -125,7 +138,8 @@ $NeverTouchService = @(
 
 $NeverStubLeaf = @(
     "mscoree.dll", "fltmgr.sys", "mpsdrv.sys", "bfe.dll", "mpssvc.dll",
-    "wdf01000.sys", "WdfLdr.sys", "WdiWiFi.sys", "appidsvc.dll"
+    "wdf01000.sys", "WdfLdr.sys", "WdiWiFi.sys", "appidsvc.dll",
+    "usosvc.dll", "wuaueng.dll", "WaaSMedicSvc.dll"
 )
 
 $RegKeysToDelete = @(
@@ -142,7 +156,13 @@ $RegKeysToDelete = @(
     "HKLM:\SOFTWARE\Classes\*\shellex\ContextMenuHandlers\EPP",
     "HKLM:\SOFTWARE\Classes\Directory\shellex\ContextMenuHandlers\EPP",
     "HKLM:\SOFTWARE\Classes\Drive\shellex\ContextMenuHandlers\EPP",
-    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\WebThreatDefense"
+    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\WebThreatDefense",
+    "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv",
+    "HKLM:\SYSTEM\CurrentControlSet\Services\UsoSvc",
+    "HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc",
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate",
+    "HKLM:\SOFTWARE\Microsoft\WindowsUpdate",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\WindowsUpdate"
 )
 
 $RegValuesToDelete = @(
@@ -285,7 +305,9 @@ function Stop-WipeDefenderUserMode {
     foreach ($n in @(
             "MsMpEng", "NisSrv", "MpDefenderCoreService", "MpDlpService", "MsSense",
             "SecurityHealthSystray", "SecurityHealthHost", "SecurityHealthService",
-            "smartscreen", "SenseIR", "SenseCE"
+            "smartscreen", "SenseIR", "SenseCE",
+            "UsoCoreWorker", "MoUsoCoreWorker", "usoclient", "WaaSMedicAgent",
+            "MusNotification", "MusNotificationUx", "wuauclt"
         )) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
@@ -333,6 +355,32 @@ function Remove-WipeDriver([string]$Path) {
     }
 }
 
+function Remove-WipePackAScheduledTasks {
+    # Named folders only. Never a host-wide task glob. WU/Medic/USO are
+    # Nuclear remainder (resurrection lock), not killing-blows pack A.
+    $allow = @(
+        "\Microsoft\Windows\Windows Defender",
+        "\Microsoft\Windows\ExploitGuard",
+        "\Microsoft\Windows\WindowsUpdate",
+        "\Microsoft\Windows\WaaSMedic",
+        "\Microsoft\Windows\UpdateOrchestrator"
+    )
+    $n = 0
+    $tasks = @()
+    try { $tasks = @(Get-ScheduledTask -ErrorAction Stop) } catch { return 0 }
+    foreach ($t in $tasks) {
+        $p = ([string]$t.TaskPath).Replace("/", "\").TrimEnd("\")
+        $ok = $false
+        foreach ($a in $allow) { if ($p -ieq $a) { $ok = $true } }
+        if (-not $ok) { continue }
+        $full = $p + "\" + [string]$t.TaskName
+        schtasks.exe /Delete /TN $full /F 2>&1 | Out-Null
+        Write-Host "  deltask $full" -ForegroundColor Yellow
+        $n++
+    }
+    $n
+}
+
 function Remove-RegKey([string]$Path) {
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
@@ -366,6 +414,10 @@ function Test-WipeSelf {
         @{ p = "C:\Windows\System32\drivers\wdf01000.sys"; skip = $true; why = "KMDF" },
         @{ p = "C:\Windows\System32\drivers\WdfLdr.sys"; skip = $true; why = "KMDF" },
         @{ p = "C:\Windows\System32\appidsvc.dll"; skip = $true; why = "svchost" },
+        @{ p = "C:\Windows\System32\usosvc.dll"; skip = $true; why = "WU svchost dll" },
+        @{ p = "C:\Windows\System32\wuaueng.dll"; skip = $true; why = "WU engine dll" },
+        @{ p = "C:\Windows\System32\WaaSMedicSvc.dll"; skip = $true; why = "Medic svchost dll" },
+        @{ p = "C:\Windows\System32\UsoCoreWorker.exe"; skip = $false; why = "WU worker exe" },
         @{ p = "C:\Windows\System32\CodeIntegrity\CIPolicies\Active\{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}.cip"; skip = $true; why = "CI" },
         @{ p = "C:\Program Files\Windows Defender\MsMpEng.exe.reclaim11.bak"; skip = $true; why = "bak" },
         @{ p = "C:\Program Files\Windows Defender\MpClient.dll"; skip = $false; why = "usermode dll" },
@@ -409,6 +461,37 @@ function Test-WipeSelf {
         }
     }
     Write-Host "SELFTEST ok   never-touch BFE/mpssvc/FltMgr" -ForegroundColor Green
+    foreach ($s in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
+        if ($ServicesToRemove -notcontains $s) {
+            Write-Host "SELFTEST FAIL missing WU service $s" -ForegroundColor Red
+            $fail++
+        }
+        if ($NeverTouchService -contains $s) {
+            Write-Host "SELFTEST FAIL never-touch collides WU $s" -ForegroundColor Red
+            $fail++
+        }
+    }
+    foreach ($s in @("bits", "DoSvc", "TrustedInstaller")) {
+        if ($ServicesToRemove -contains $s) {
+            Write-Host "SELFTEST FAIL must not sc delete $s" -ForegroundColor Red
+            $fail++
+        }
+    }
+    Write-Host "SELFTEST ok   WU sc delete wuauserv/UsoSvc/WaaSMedicSvc; not bits/DoSvc/TI" -ForegroundColor Green
+    foreach ($exe in @("UsoCoreWorker.exe", "MoUsoCoreWorker.exe", "WaaSMedicAgent.exe")) {
+        if ($Targets -notcontains $exe) {
+            Write-Host "SELFTEST FAIL missing IFEO $exe" -ForegroundColor Red
+            $fail++
+        }
+    }
+    Write-Host "SELFTEST ok   IFEO UsoCoreWorker/MoUsoCoreWorker/WaaSMedicAgent" -ForegroundColor Green
+    $dllExtra = @($ExtraFiles | Where-Object { $_ -match "usosvc\.dll|wuaueng\.dll|WaaSMedicSvc\.dll" })
+    if ($dllExtra.Count -gt 0) {
+        Write-Host "SELFTEST FAIL ExtraFiles lists WU svchost dll" -ForegroundColor Red
+        $fail++
+    } else {
+        Write-Host "SELFTEST ok   WU svchost dll not stubbed" -ForegroundColor Green
+    }
     if ($fail -gt 0) {
         throw ("Nuclear v6.3 -SelfTest failed ({0})" -f $fail)
     }
@@ -418,6 +501,70 @@ function Test-WipeSelf {
 if ($SelfTest) {
     Test-WipeSelf
     return
+}
+
+function Test-Reclaim11NuclearDeskHost {
+    # Inline EditionID. Do not dotsource inventory.ps1 (StrictMode/Stop).
+    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
+    if (-not $n) { return $null }
+    $prop = $n.PSObject.Properties["EditionID"]
+    if (-not $prop) { return $null }
+    [string]$prop.Value -eq "IoTEnterpriseS"
+}
+
+$desk = Test-Reclaim11NuclearDeskHost
+if (-not $WhatIf) {
+    if ($null -eq $desk) {
+        throw "Refuse: cannot read EditionID (needed to refuse desk)"
+    }
+    if ($desk) {
+        throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
+    }
+}
+
+if ($WhatIf) {
+    Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false." -ForegroundColor Yellow
+    Write-Host ("  desk={0}  (IoTEnterpriseS would refuse)" -f $desk)
+    Write-Host ("  stub={0} exists={1}" -f $StubPath, (Test-PeMz $StubPath))
+    foreach ($f in $DriverFiles) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would DELETE {0}" -f $f) }
+    }
+    foreach ($f in $ExtraFiles) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would STUB {0}" -f $f) }
+    }
+    foreach ($f in $FoldersToNuke) {
+        if (Test-Path -LiteralPath $f) { Write-Host ("  would LOCK {0}" -f $f) }
+    }
+    foreach ($k in $RegKeysToDelete) {
+        if (Test-Path -LiteralPath $k) { Write-Host ("  would delkey {0}" -f $k) }
+    }
+    foreach ($s in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
+        Write-Host ("  would sc delete {0}" -f $s)
+    }
+    Write-Host "  would IFEO UsoCoreWorker.exe / MoUsoCoreWorker.exe / WaaSMedicAgent.exe"
+    Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
+    if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
+    elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
+    else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
+    return
+}
+
+$el = Join-Path $here "elevate.ps1"
+if (Test-Path -LiteralPath $el) {
+    $pay = $PSCommandPath
+    if ([string]::IsNullOrWhiteSpace($pay)) { $pay = $MyInvocation.MyCommand.Path }
+    # Child scope so elevate.ps1 StrictMode/Stop does not infect this wipe.
+    $hop = & {
+        . $el
+        Invoke-Reclaim11AsTrustedInstaller -File $pay -TimeoutSec 300
+    }
+    if (-not $hop.continue) {
+        if ($hop.output) { Write-Host $hop.output }
+        if ([int]$hop.exit_code -ne 0) {
+            throw ("TI nuclear exit {0}" -f $hop.exit_code)
+        }
+        return
+    }
 }
 
 Write-Host "Deletes named drivers. Stubs usermode Defender trees. Never CIPolicies. Never stub .sys." -ForegroundColor Yellow
@@ -439,7 +586,7 @@ try {
         New-ItemProperty -Path $key -Name "Debugger" -Value $StubPath -PropertyType String -Force | Out-Null
     }
 
-    Write-Host "Removing Defender-only services..." -ForegroundColor Cyan
+    Write-Host "Removing Defender + WU/Medic/USO services..." -ForegroundColor Cyan
     $svcNames = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
     foreach ($s in $ServicesToRemove) { [void]$svcNames.Add($s) }
     Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services" -ErrorAction SilentlyContinue | Where-Object {
@@ -493,6 +640,10 @@ try {
             }
         }
     }
+
+    Write-Host "Removing Defender scheduled tasks (named folders only)..." -ForegroundColor Cyan
+    $goneTasks = Remove-WipePackAScheduledTasks
+    Write-Host ("  tasks deleted={0}" -f $goneTasks) -ForegroundColor Yellow
 
     Write-Host "Cleaning Defender registry leftovers..." -ForegroundColor Cyan
     foreach ($k in $RegKeysToDelete) { Remove-RegKey $k }

@@ -31,11 +31,29 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 pwsh -STA -NoProfile -ExecutionPolicy Bypass -File godbrain_core\reclaim11\Reclaim11.ps1
 ```
 
+Test-only (DeviceCleanupCmd `-t`: privs, paths, what would happen, no mutate):
+
+```text
+pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\xbox_cleanse.ps1 -T
+```
+
+GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.
+
 Headless inventory (JSON):
 
 ```text
 pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
 ```
+
+GUI opens on a **door chooser**: noob (three jobs + TEST) vs expert
+(BIOS ticks). Chris-style 100 toggles is the expert door on purpose —
+a noob hitting that wall closes the app. SWITCH DOOR goes back.
+
+GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
+transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. ConstrainedLanguage
+refuse, `-Verb RunAs`, XAML try/catch, run lock, DragMove, screen clamp,
+Esc/Ctrl+Q. `-InventoryOnly` still skips UAC. Not `irm | iex`.
 
 Check:
 
@@ -65,14 +83,70 @@ Do **not** nuke the desk. Snapshot a VM, then:
    the wrong door (Tamper/PPL ACL). Disconnect ISO. `wpeutil reboot`.
 5. SB-on VM must refuse `WdBoot` delete and still boot. SB-off may drop ELAM.
 6. After reboot, BFE/`mpssvc` must be RUNNING. In-Windows
-   `Apply-KillingBlows.ps1` is leftover `sc delete` only.
+   `Apply-KillingBlows.ps1` is leftover `sc delete`, Defender/ExploitGuard
+   scheduled tasks (those two folders only), and delete of
+   `HKLM\SOFTWARE\Microsoft\Windows Defender` (resurrection lock). GPO
+   `DisableAntiSpyware=1` stays. Not a host-wide task glob.
    Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
    v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
    **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
-   SYSTEM under `System32`. Check: `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`.
-   Not this desk.
+   SYSTEM under `System32`. After 26H1 it also Grim-Reapers WU resurrection:
+   `sc delete` `wuauserv` / `UsoSvc` / `WaaSMedicSvc`, IFEO
+   `UsoCoreWorker.exe` / `MoUsoCoreWorker.exe` / `WaaSMedicAgent.exe`,
+   named task folders WindowsUpdate / WaaSMedic / UpdateOrchestrator.
+   Never stub `usosvc.dll` / `wuaueng.dll` / `WaaSMedicSvc.dll`. Never
+   bits / DoSvc / TrustedInstaller. Not killing-blows pack A (so 26H1
+   via Windows Update still works *before* Nuclear). Check:
+   `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`. Not this desk.
 
-7. Physical USB only after the ISO path is green.
+7. Physical USB is a **separate** script (ISO builder stays `/ISO` only):
+
+   ```text
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeUsb.ps1 -T
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeUsb.ps1 -DiskNumber N -Go
+   ```
+
+   Legal stick: USB, 2–32 GiB, not disk 0, not `C:`, not a USB HDD
+   (`D:\` W11_STORAGE is refused by size). Refreshes `boot.wim` payload
+   then `MakeWinPEMedia /UFD /F`. Kit also lands on `\reclaim11\` for
+   in-Windows Nuclear after PE reboot. **Do not boot the stick on
+   M1ABRAMS.** VM USB passthrough or another box. Destination of
+   Nuclear is IoT LTSC parity (stub + DACL unused); WU lock is already
+   in v6.3. Full Pro-inbox list after 26H1 inventory vs this host.
+
+Killing blows also writes `restore.json` (task XML under `tasks\`) before
+the deletes. COM CLSID wipe is not pack A (7-Zip / PowerRename stay).
+
+**Tune NIC** (in-Windows, Ethernet only): keyword map (`*EEE`, `*InterruptModeration`,
+`*FlowControl`, WoL, GreenEthernet) → 0; `*RSS` → 1; Rx/Tx buffers → **256–512**
+(CS2/latency; keep if already in band, else 512). Not 2048. Skips
+VMware host VMnet / Tailscale / Wi-Fi / Bluetooth. Does not
+touch BFE/`ms_tcpip` bindings or Speed & Duplex. `restore.json` first.
+Desk refused. `pwsh -File nic_tune.ps1 -T`.
+
+**Disable telemetry** (in-Windows, not PE): `restore.json` first, then
+`AllowTelemetry=0`, `DiagTrack` + `dmwappushservice` start=disabled (same
+pair the old autom8ed nuke lists used). Not `sc delete`. Not a scheduled-task
+glob. Desk SKU refused. Restore:
+`pwsh -File telemetry_cleanse.ps1 -Restore restore.json`.
+
+**Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
+first, then HKLM+HKCU `SettingsPageVisibility`
+`hide:gaming-gamebar;gaming-gamedvr;gaming-trueplay;gaming-broadcasting;gaming-captures`
+(GPO is one `hide:` then semicolon ids — not `hide:` per page, or only the
+first page hides). Settings → Gaming is Game Mode only (Captures =
+`gaming-gamedvr`; OBS / ShadowPlay / AMD).
+HKCU GameBar: `EnableGameBar=0`, startup/broadcast panels off. Does **not** write
+`AllowAutoGameMode` / `AutoGameModeEnabled` (Game Mode stays). `sc delete` Xbox
+usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
+`GamingServices`, `BcastDVRUserService*`). Removes the Appx bloat list
+(Game Bar, Bing News, Get Help, Solitaire, Zune, Feedback Hub, Your Phone,
+…). Restore: `pwsh -File xbox_cleanse.ps1 -Restore restore.json`. Does
+**not** delete `xboxgip` (controller). Does **not** remove
+`Microsoft.XboxGameCallableUI`. Desk SKU refused. Hide Xbox is admin
+(UAC); killing blows / Nuclear self-elevate to TrustedInstaller via Task
+Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
+SYSTEM and skips that hop.
 
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 

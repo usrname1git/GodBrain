@@ -45,7 +45,10 @@ $bl = $inv.bitlocker_c
 (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
 (Get-Ui BtnPrep).IsEnabled = [bool]$inv.gates.prep_media
 (Get-Ui BtnSafe).IsEnabled = [bool]$inv.gates.killing_blows
+if (Get-Ui BtnXbox) { (Get-Ui BtnXbox).IsEnabled = $true }
 (Get-Ui BtnKill).IsEnabled = [bool]$inv.gates.killing_blows
+if (Get-Ui BtnXbox) { (Get-Ui BtnXbox).IsChecked = $true }
+if (Get-Ui TogHideCaptures) { (Get-Ui TogHideCaptures).IsChecked = $true }
 $log = Get-Ui LogBox
 $lines = @(
     ("at        {0}" -f $inv.at),

@@ -1,66 +1,218 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Reclaim11 pack A (not Heal, not Galaxy)"
-        Width="920" Height="640"
-        MinWidth="760" MinHeight="520"
-        Background="#12141A" Foreground="#E6E8EE"
+        Title="Reclaim11"
+        Width="1000" Height="680"
+        MinWidth="860" MinHeight="560"
+        Background="#0B0F16" Foreground="#E8F4FF"
         FontFamily="Segoe UI" FontSize="13"
         WindowStartupLocation="CenterScreen">
-  <DockPanel Margin="16">
-    <TextBlock DockPanel.Dock="Top" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,4"
-               Text="Reclaim11"/>
-    <TextBlock x:Name="Subtitle" DockPanel.Dock="Top" Foreground="#9AA3B2" Margin="0,0,0,12"
-               Text="PE operator delete. GUI Safe cleanse moves to backup + restore.json. Never BFE / mpssvc / FltMgr."/>
-    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
-      <Button x:Name="BtnScan" Content="Scan" Width="90" Height="32" Margin="0,0,8,0"/>
-      <Button x:Name="BtnPrep" Content="Prep media" Width="100" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-      <Button x:Name="BtnSafe" Content="Safe cleanse" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-      <Button x:Name="BtnKill" Content="Killing blows" Width="120" Height="32" Margin="0,0,8,0" IsEnabled="False"/>
-      <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A8494"
-                 Text="Read-only until a WinPE log exists."/>
+  <Window.Resources>
+    <SolidColorBrush x:Key="Panel" Color="#121820"/>
+    <SolidColorBrush x:Key="Accent" Color="#3DDCFF"/>
+    <SolidColorBrush x:Key="Muted" Color="#7A93A8"/>
+    <Style TargetType="Button">
+      <Setter Property="Foreground" Value="#E8F4FF"/>
+      <Setter Property="Background" Value="#1A2430"/>
+      <Setter Property="BorderBrush" Value="#3DDCFF"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="14,6"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}"
+                    CornerRadius="2">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.4"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#243140"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#E8F4FF"/>
+      <Setter Property="Margin" Value="0,8,0,0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style x:Key="BiosToggle" TargetType="ToggleButton">
+      <Setter Property="Width" Value="56"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="bd" Background="#1A2430" BorderBrush="#3DDCFF" BorderThickness="1" CornerRadius="2">
+              <Grid>
+                <TextBlock x:Name="on" Text="ON" Foreground="#0B0F16" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock x:Name="off" Text="OFF" Foreground="#7A93A8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#3DDCFF"/>
+                <Setter TargetName="on" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="off" Property="Visibility" Value="Collapsed"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.55"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="DoorBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Padding" Value="18,14"/>
+      <Setter Property="Margin" Value="0,0,0,12"/>
+      <Setter Property="MinHeight" Value="72"/>
+    </Style>
+  </Window.Resources>
+  <Grid>
+  <DockPanel x:Name="PanelDoor" Margin="16">
+    <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
+               Text="Chris-style 100 toggles is the expert door. Noob door is three jobs and TEST first. Never BFE / mpssvc / FltMgr."/>
+    <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
+      <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
+      <TextBlock Foreground="#7A93A8" Margin="0,4,0,20" Text="How much do you want to see?"/>
+      <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="I'M TOO DUMB FOR SETTINGS" FontWeight="SemiBold" Foreground="#3DDCFF"/>
+          <TextBlock Text="Hide Xbox, telemetry, Safe cleanse if WinPE already ran. TEST first. No killing blows."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
+      <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="I KNOW WHAT I'M DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
+          <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, TEST SELECTED / RUN SELECTED."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
     </StackPanel>
+  </DockPanel>
+  <DockPanel x:Name="PanelNoob" Margin="16" Visibility="Collapsed">
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+      <Button x:Name="BtnNoobBack" DockPanel.Dock="Right" Content="SWITCH DOOR" MinWidth="110"/>
+      <StackPanel>
+        <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
+        <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" Text="Noob door. Three jobs. TEST first. Desk/IoT still refused."/>
+      </StackPanel>
+    </DockPanel>
+    <TextBox x:Name="NoobLog" DockPanel.Dock="Bottom" Height="180" Margin="0,12,0,0"
+             IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+             Background="#080B10" Foreground="#C9D1D9" BorderBrush="#1E2A38"
+             FontFamily="Consolas" FontSize="12" Padding="8"/>
+    <StackPanel>
+      <Button x:Name="BtnNoobTest" Style="{StaticResource DoorBtn}" Content="TEST FIRST  (no mutate)"/>
+      <Button x:Name="BtnNoobFix" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="JUST FIX MY SH*T" FontWeight="SemiBold"/>
+          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Nuclear. Not killing blows."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
+      <Button x:Name="BtnNoobXbox" Content="HIDE XBOX + BLOAT" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobTel" Content="DISABLE TELEMETRY" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobSafe" Content="SAFE CLEANSE  (needs WinPE receipt)" MinHeight="44" IsEnabled="False"/>
+    </StackPanel>
+  </DockPanel>
+  <DockPanel x:Name="PanelExpert" Margin="16" Visibility="Collapsed">
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button x:Name="BtnExpertBack" Content="SWITCH DOOR" MinWidth="110"/>
+        <Button x:Name="BtnScan" Content="SCAN" MinWidth="88"/>
+        <Button x:Name="BtnPrep" Content="PREP MEDIA" MinWidth="110" IsEnabled="False"/>
+      </StackPanel>
+      <StackPanel>
+        <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
+        <TextBlock x:Name="Subtitle" Foreground="#7A93A8" Margin="0,2,0,0"
+                   Text="One dark BIOS-style panel. Never BFE / mpssvc / FltMgr."/>
+      </StackPanel>
+    </DockPanel>
+    <Border DockPanel.Dock="Top" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="10,8" Margin="0,0,0,12">
+      <UniformGrid Columns="5">
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="os_pin" Foreground="#7A93A8" FontSize="11"/>
+          <TextBlock x:Name="OsPin" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="Secure Boot" Foreground="#7A93A8" FontSize="11"/>
+          <TextBlock x:Name="SecureBoot" Text="(scan)" FontWeight="SemiBold"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="BitLocker C:" Foreground="#7A93A8" FontSize="11"/>
+          <TextBlock x:Name="BitLocker" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+        </StackPanel>
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="Firewall" Foreground="#7A93A8" FontSize="11"/>
+          <TextBlock x:Name="NeverTouch" Text="(scan)" FontWeight="SemiBold"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="WdBoot / ELAM" Foreground="#7A93A8" FontSize="11"/>
+          <TextBlock x:Name="WdBootGate" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
+        </StackPanel>
+      </UniformGrid>
+    </Border>
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+      <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
+      <Button x:Name="BtnTest" DockPanel.Dock="Left" Content="TEST SELECTED" MinWidth="140" Margin="8,0,8,0"/>
+      <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
+                 Text="TEST SELECTED is DeviceCleanupCmd -t (no mutate). RUN is live. Safe/Kill lock until WinPE."/>
+    </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="280"/>
+        <ColumnDefinition Width="1.1*"/>
         <ColumnDefinition Width="12"/>
-        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="0.9*"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="1.2*"/>
       </Grid.ColumnDefinitions>
-      <StackPanel Grid.Column="0">
-        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
-          <StackPanel>
-            <TextBlock Text="os_pin" Foreground="#7A8494"/>
-            <TextBlock x:Name="OsPin" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
-        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
-          <StackPanel>
-            <TextBlock Text="Secure Boot" Foreground="#7A8494"/>
-            <TextBlock x:Name="SecureBoot" Text="(scan)" FontWeight="SemiBold"/>
-          </StackPanel>
-        </Border>
-        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
-          <StackPanel>
-            <TextBlock Text="BitLocker C:" Foreground="#7A8494"/>
-            <TextBlock x:Name="BitLocker" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
-        <Border Background="#1C2028" Padding="12" Margin="0,0,0,8" CornerRadius="6">
-          <StackPanel>
-            <TextBlock Text="Firewall (never touch)" Foreground="#7A8494"/>
-            <TextBlock x:Name="NeverTouch" Text="(scan)" FontWeight="SemiBold"/>
-          </StackPanel>
-        </Border>
-        <Border Background="#1C2028" Padding="12" CornerRadius="6">
-          <StackPanel>
-            <TextBlock Text="WdBoot / ELAM" Foreground="#7A8494"/>
-            <TextBlock x:Name="WdBootGate" Text="(scan)" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
-      </StackPanel>
-      <TextBox Grid.Column="2" x:Name="LogBox"
+      <Border Grid.Column="0" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="14">
+        <StackPanel>
+          <TextBlock Text="ACTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <CheckBox x:Name="BtnSafe" Content="Safe cleanse  (move + restore.json)" IsEnabled="False"/>
+          <CheckBox x:Name="BtnXbox" Content="Hide Xbox + Appx bloat  (restore.json)"/>
+          <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (restore.json)"/>
+          <CheckBox x:Name="BtnNic" Content="Tune NIC  (RSS + buffers, no EEE)"/>
+          <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
+          <TextBlock Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
+                     Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>
+        </StackPanel>
+      </Border>
+      <Border Grid.Column="2" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="14">
+        <StackPanel>
+          <TextBlock Text="OPTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,12"/>
+          <DockPanel Margin="0,0,0,12">
+            <ToggleButton x:Name="TogHideCaptures" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True"/>
+            <TextBlock Text="Hide Captures" VerticalAlignment="Center"/>
+          </DockPanel>
+          <DockPanel Margin="0,0,0,12">
+            <ToggleButton x:Name="TogKeepGameMode" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
+            <TextBlock Text="Keep Game Mode" VerticalAlignment="Center"/>
+          </DockPanel>
+          <DockPanel>
+            <ToggleButton x:Name="TogNeverTouch" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
+            <TextBlock Text="Never BFE / mpssvc" VerticalAlignment="Center"/>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+      <TextBox Grid.Column="4" x:Name="LogBox"
                IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-               Background="#0E1014" Foreground="#C9D1D9" BorderBrush="#2A3140"
+               Background="#080B10" Foreground="#C9D1D9" BorderBrush="#1E2A38"
                FontFamily="Consolas" FontSize="12" Padding="8"/>
     </Grid>
   </DockPanel>
+  </Grid>
 </Window>

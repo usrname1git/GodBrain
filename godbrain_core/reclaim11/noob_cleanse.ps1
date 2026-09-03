@@ -13,7 +13,9 @@ function Invoke-Reclaim11NoobCleanse {
     param(
         [string]$Root,
         [string]$VolumeRoot = "",
-        [string]$BackupRoot = ""
+        [string]$BackupRoot = "",
+        [Alias("T", "Test")]
+        [switch]$WhatIf
     )
     if ([string]::IsNullOrWhiteSpace($Root)) {
         $Root = Split-Path -Parent $PSCommandPath
@@ -28,7 +30,8 @@ function Invoke-Reclaim11NoobCleanse {
     if ($live) { $VolumeRoot = $env:SystemDrive }
     $VolumeRoot = $VolumeRoot.TrimEnd("\")
     $sysDrive = $env:SystemDrive.TrimEnd("\")
-    if ((Test-Reclaim11DeskHost) -and ($VolumeRoot -eq $sysDrive)) {
+    $deskLive = (Test-Reclaim11DeskHost) -and ($VolumeRoot -eq $sysDrive)
+    if ($deskLive -and -not $WhatIf) {
         throw "Refuse: desk (IoTEnterpriseS). Safe cleanse is VM-only. Not M1ABRAMS."
     }
     foreach ($s in @($cat.never_touch_services)) {
@@ -36,18 +39,17 @@ function Invoke-Reclaim11NoobCleanse {
             throw "Refuse: pack A lists never-touch $s"
         }
     }
-    if ($live) {
-        $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
-        if (Test-Path -LiteralPath $wd) {
-            throw "Refuse: WdFilter.sys still present. Boot WinPE first (PPL)."
-        }
+    $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
+    $wdPresent = $live -and (Test-Path -LiteralPath $wd)
+    if ($wdPresent -and -not $WhatIf) {
+        throw "Refuse: WdFilter.sys still present. Boot WinPE first (PPL)."
     }
 
     $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
     if ([string]::IsNullOrWhiteSpace($BackupRoot)) {
         $BackupRoot = Join-Path $VolumeRoot ("reclaim11\backup\" + $stamp)
     }
-    if (-not (Test-Path -LiteralPath $BackupRoot)) {
+    if ((-not $WhatIf) -and -not (Test-Path -LiteralPath $BackupRoot)) {
         New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
     }
 
@@ -73,11 +75,21 @@ function Invoke-Reclaim11NoobCleanse {
         if ($leaf -eq "wdf01000.sys" -or $leaf -eq "WdfLdr.sys" -or $leaf -eq "WdiWiFi.sys") { continue }
         $rel = $src.Substring($VolumeRoot.Length).TrimStart("\")
         $dest = Join-Path $BackupRoot $rel
+        $len = (Get-Item -LiteralPath $src).Length
+        if ($WhatIf) {
+            $items += [pscustomobject]@{
+                original = $src
+                backup   = $dest
+                relative = $rel
+                sha256   = $null
+                length   = $len
+            }
+            continue
+        }
         $destDir = Split-Path -Parent $dest
         if (-not (Test-Path -LiteralPath $destDir)) {
             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         }
-        $len = (Get-Item -LiteralPath $src).Length
         $hash = Get-Reclaim11FileSha256 -Path $src
         Move-Item -LiteralPath $src -Destination $dest -Force
         $items += [pscustomobject]@{
@@ -99,6 +111,21 @@ function Invoke-Reclaim11NoobCleanse {
         note        = "Move-only. Restore with Restore-Reclaim11Noob.ps1 -Manifest restore.json"
     }
     $manPath = Join-Path $BackupRoot "restore.json"
+    if ($WhatIf) {
+        $checks = @(
+            (New-Reclaim11Check -Name "desk" -Ok (-not $deskLive) -Detail $(if ($deskLive) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
+            (New-Reclaim11Check -Name "WdFilter" -Ok (-not $wdPresent) -Detail $(if ($wdPresent) { $wd } else { "parked or offline volume" }))
+        )
+        $would = @($items | ForEach-Object { "move {0} -> {1}" -f $_.original, $_.backup })
+        $fail = @($checks | Where-Object { -not $_.ok } | ForEach-Object { $_.name })
+        $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
+        $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $false
+        $manifest | Add-Member -NotePropertyName checks -NotePropertyValue $checks
+        $manifest | Add-Member -NotePropertyName would -NotePropertyValue $would
+        $manifest | Add-Member -NotePropertyName would_refuse -NotePropertyValue $(if ($fail.Count -gt 0) { ($fail -join ",") } else { "" })
+        $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
+        return $manifest
+    }
     ($manifest | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $manPath -Encoding UTF8
     $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
     $manifest
