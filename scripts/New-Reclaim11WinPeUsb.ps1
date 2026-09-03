@@ -10,8 +10,8 @@ param(
     [switch]$Go,
     [switch]$RefreshPayload,
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$WorkDir = $(Join-Path $env:LOCALAPPDATA "Reclaim11\winpe-work"),
-    [string]$StubPath = $(Join-Path $env:LOCALAPPDATA "Reclaim11\reclaim11-stub.exe")
+    [string]$WorkDir = "C:\Reclaim11\winpe-work",
+    [string]$StubPath = "C:\Reclaim11\reclaim11-stub.exe"
 )
 
 Set-StrictMode -Version Latest

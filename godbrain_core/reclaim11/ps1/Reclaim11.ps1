@@ -566,7 +566,7 @@ $btnPrep.Add_Click({
             "Reclaim11 prep media") | Out-Null
         return
     }
-    $isoDir = Join-Path $env:LOCALAPPDATA "Reclaim11"
+    $isoDir = "C:\Reclaim11"
     $want = Join-Path $isoDir "Reclaim11-WinPE-v9.iso"
     $iso = $want
     foreach ($n in @("Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
@@ -576,7 +576,7 @@ $btnPrep.Add_Click({
     $msg = if (Test-Path -LiteralPath $iso) {
         "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
     } else {
-        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"$want`"`n`nVMware first. Snapshot before boot. Not a physical USB."
+        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. ADK + WinPE addon 10.1.26100.2454 (not 28000). Output: C:\Reclaim11\Reclaim11-WinPE-v9.iso`n`nVMware first. Snapshot before boot."
     }
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })

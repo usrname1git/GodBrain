@@ -5,9 +5,9 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$OutIso = $(Join-Path $env:LOCALAPPDATA "Reclaim11\Reclaim11-WinPE-v9.iso"),
-    [string]$WorkDir = $(Join-Path $env:LOCALAPPDATA "Reclaim11\winpe-work"),
-    [string]$StubPath = $(Join-Path $env:LOCALAPPDATA "Reclaim11\reclaim11-stub.exe"),
+    [string]$OutIso = "C:\Reclaim11\Reclaim11-WinPE-v9.iso",
+    [string]$WorkDir = "C:\Reclaim11\winpe-work",
+    [string]$StubPath = "C:\Reclaim11\reclaim11-stub.exe",
     [switch]$Probe,
     [switch]$Reset
 )

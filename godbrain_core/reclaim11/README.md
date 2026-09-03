@@ -57,7 +57,7 @@ ADK + WinPE addon **10.1.26100.2454**, not ADK 28000.
 pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 ```
 
-Output: `%LOCALAPPDATA%\Reclaim11\Reclaim11-WinPE-v9.iso`.
+Output: `C:\Reclaim11\Reclaim11-WinPE-v9.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 
 Snapshot, attach **v9**. PE **deletes** catalog

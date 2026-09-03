@@ -179,8 +179,8 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
 }
-if ($readme -notmatch 'Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: README must name the v9 ISO"
+if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
 }
 if ($readme -match 'attach \*\*v7\*\*') {
     throw "Test-Reclaim11: README must attach v9, not leftover v7"
@@ -336,8 +336,8 @@ if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn ag
 if ($isoSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
 }
-if ($isoSrc -notmatch 'LOCALAPPDATA') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be under LocalAppData"
+if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
 }
 if ($launchSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"
