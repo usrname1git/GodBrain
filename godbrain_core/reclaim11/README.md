@@ -91,7 +91,7 @@ Do **not** nuke the desk. Snapshot a VM, then:
    pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
    ```
 
-   Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso` (outside git).
+   Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso` (outside git).
    v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 4. Snapshot, attach **v7**. PE is the kill: **deletes** catalog
    `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`

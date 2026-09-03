@@ -112,7 +112,7 @@ function Invoke-Reclaim11KillingBlows {
         throw "Invoke-Reclaim11KillingBlows: needs elevation"
     }
     if ((-not $WhatIf) -and -not $receipt) {
-        throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE v7 ISO first."
+        throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
     }
     if ((-not $WhatIf) -and $wdPresent) {
         throw "Refuse: WdFilter.sys still present. PE park did not land."
