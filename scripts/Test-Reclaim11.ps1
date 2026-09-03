@@ -47,6 +47,9 @@ if ($xamlSrc -notmatch "MUST") {
 if ($xamlSrc -notmatch "bloat only") {
     throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
+if ($xamlSrc -match "Never BFE") {
+    throw "Test-Reclaim11: door copy must not say Never BFE"
+}
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
@@ -181,6 +184,12 @@ if ($readme -notmatch 'attach \*\*v9\*\*') {
 }
 if ($readme -notmatch '-OutIso C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso') {
     throw "Test-Reclaim11: README ISO build must pass -OutIso v9"
+}
+if ($readme -notmatch 'Recommended') {
+    throw "Test-Reclaim11: README must recommend VM or TEST first"
+}
+if ($readme -match 'W11_STORAGE|One WPF window|auto-crown|Never BFE') {
+    throw "Test-Reclaim11: README must not carry host-specific or Never-BFE slogan copy"
 }
 foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {

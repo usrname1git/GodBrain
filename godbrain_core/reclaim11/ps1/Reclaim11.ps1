@@ -294,9 +294,9 @@ $btnRun.Add_Click({
                 "Reclaim11") | Out-Null
             return
         }
-        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?"
+        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Desk/IoT is refused. Continue?"
         if ($doReaper) {
-            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Never BFE. Desk refused. Continue?"
+            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Desk refused. Continue?"
         }
         $q = [System.Windows.MessageBox]::Show(
             $warn,
