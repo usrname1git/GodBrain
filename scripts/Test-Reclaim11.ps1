@@ -401,6 +401,14 @@ if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list
 $hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
 if ($hid -notmatch "hide:gaming-gamebar") { throw "Test-Reclaim11: xbox hide gamebar" }
 if ($hid -notmatch "hide:gaming-captures") { throw "Test-Reclaim11: xbox hide captures" }
+if ($hid -notmatch "hide:gaming-gamedvr") { throw "Test-Reclaim11: xbox hide gamedvr (Captures URI)" }
+$xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
+if ($xbSrc -notmatch 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer') {
+    throw "Test-Reclaim11: Settings hide must write HKCU as well as HKLM"
+}
+if ($xbSrc -notmatch "SystemSettings") {
+    throw "Test-Reclaim11: must kill SystemSettings.exe after hide"
+}
 if ($hid -match "gamemode") {
     throw "Test-Reclaim11: xbox hide must not hide Game Mode"
 }

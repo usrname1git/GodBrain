@@ -69,6 +69,27 @@ function Get-Reclaim11OptionalText {
     $null
 }
 
+function Get-Reclaim11SettingsPageVisibility {
+    param([string]$HivePath)
+    if (-not (Test-Path -LiteralPath $HivePath)) { return "" }
+    $ip = Get-ItemProperty -LiteralPath $HivePath -ErrorAction SilentlyContinue
+    Get-Reclaim11OptionalText -Object $ip -Name "SettingsPageVisibility"
+}
+
+function Set-Reclaim11SettingsPageVisibility {
+    param([string]$HivePath, [string]$Value)
+    if (-not (Test-Path -LiteralPath $HivePath)) {
+        New-Item -Path $HivePath -Force | Out-Null
+    }
+    New-ItemProperty -Path $HivePath -Name SettingsPageVisibility -Value $Value -PropertyType String -Force | Out-Null
+}
+
+function Restart-Reclaim11SettingsApp {
+    foreach ($n in @("SystemSettings", "ApplicationFrameHost")) {
+        Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-Reclaim11XboxDeskHost {
     $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
     [string]$n.EditionID -eq "IoTEnterpriseS"
@@ -248,14 +269,12 @@ function Invoke-Reclaim11XboxCleanse {
             [Security.Principal.WindowsBuiltInRole]::Administrator)
     }
 
-    $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-    $cur = ""
-    if (Test-Path -LiteralPath $pol) {
-        $ip = Get-ItemProperty -LiteralPath $pol -ErrorAction SilentlyContinue
-        if ($ip -and $ip.PSObject.Properties["SettingsPageVisibility"]) {
-            $cur = [string]$ip.SettingsPageVisibility
-        }
-    }
+    $polLm = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $polCu = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $curLm = Get-Reclaim11SettingsPageVisibility -HivePath $polLm
+    $curCu = Get-Reclaim11SettingsPageVisibility -HivePath $polCu
+    $cur = $curLm
+    if ([string]::IsNullOrWhiteSpace($cur)) { $cur = $curCu }
     $hide = @($script:XboxHidePages)
     if ($KeepCaptures) {
         $hide = @($hide | Where-Object { $_ -ne "gaming-captures" })
@@ -310,7 +329,11 @@ function Invoke-Reclaim11XboxCleanse {
     $manifest = [pscustomobject]@{
         id                         = "reclaim11-xbox-v1"
         at                         = [datetime]::UtcNow.ToString("o")
-        settings_page_visibility   = [pscustomobject]@{ before = $cur; after = $merged }
+        settings_page_visibility   = [pscustomobject]@{
+            before    = $cur
+            after     = $merged
+            before_hkcu = $curCu
+        }
         gamedvr_allow              = $gpoBefore
         gamebar                     = @($gbBefore)
         gamedvr_capture            = $dvrCaptureBefore
@@ -330,7 +353,8 @@ function Invoke-Reclaim11XboxCleanse {
             (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" }))
         )
         $would = @()
-        $would += ("SettingsPageVisibility -> {0}" -f $merged)
+        $would += ("HKLM+HKCU SettingsPageVisibility -> {0}" -f $merged)
+        $would += "kill SystemSettings.exe (explorer restart is not enough)"
         $would += "AllowGameDVR=0"
         foreach ($row in $gbBefore) {
             $would += ("GameBar {0}={1}" -f $row.name, $row.wanted)
@@ -354,10 +378,9 @@ function Invoke-Reclaim11XboxCleanse {
 
     Write-Reclaim11XboxManifest -Manifest $manifest -Path $manPath
 
-    if (-not (Test-Path -LiteralPath $pol)) {
-        New-Item -Path $pol -Force | Out-Null
-    }
-    New-ItemProperty -Path $pol -Name SettingsPageVisibility -Value $merged -PropertyType String -Force | Out-Null
+    Set-Reclaim11SettingsPageVisibility -HivePath $polLm -Value $merged
+    Set-Reclaim11SettingsPageVisibility -HivePath $polCu -Value $merged
+    Restart-Reclaim11SettingsApp
 
     if (-not (Test-Path -LiteralPath $gpo)) { New-Item -Path $gpo -Force | Out-Null }
     New-ItemProperty -Path $gpo -Name AllowGameDVR -Value 0 -PropertyType DWord -Force | Out-Null
@@ -452,10 +475,16 @@ function Restore-Reclaim11XboxBackup {
     }
     $restored = @()
 
-    $pol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-    if (-not (Test-Path -LiteralPath $pol)) { New-Item -Path $pol -Force | Out-Null }
-    $before = [string]$m.settings_page_visibility.before
-    New-ItemProperty -Path $pol -Name SettingsPageVisibility -Value $before -PropertyType String -Force | Out-Null
+    $polLm = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $polCu = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    $beforeLm = [string]$m.settings_page_visibility.before
+    Set-Reclaim11SettingsPageVisibility -HivePath $polLm -Value $beforeLm
+    $beforeCu = $beforeLm
+    if ($m.settings_page_visibility.PSObject.Properties["before_hkcu"]) {
+        $beforeCu = [string]$m.settings_page_visibility.before_hkcu
+    }
+    Set-Reclaim11SettingsPageVisibility -HivePath $polCu -Value $beforeCu
+    Restart-Reclaim11SettingsApp
     $restored += "SettingsPageVisibility"
 
     $gpo = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR"
