@@ -194,6 +194,14 @@ $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
+$usbBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeUsb.ps1"
+if (-not (Test-Path -LiteralPath $usbBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeUsb.ps1" }
+$usbSrc = Get-Content -LiteralPath $usbBuild -Raw -Encoding UTF8
+if ($usbSrc -notmatch "/UFD") { throw "Test-Reclaim11: USB writer is the /UFD door" }
+if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must cap stick size" }
+if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
+if ($usbSrc -notmatch "M1ABRAMS") { throw "Test-Reclaim11: USB writer must warn not to boot the desk" }
+if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
 
 . (Join-Path $winpe "offline.ps1")
 $fx = Join-Path $env:TEMP "reclaim11-winpe-fx"

@@ -99,7 +99,20 @@ Do **not** nuke the desk. Snapshot a VM, then:
    via Windows Update still works *before* Nuclear). Check:
    `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`. Not this desk.
 
-7. Physical USB only after the ISO path is green.
+7. Physical USB is a **separate** script (ISO builder stays `/ISO` only):
+
+   ```text
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeUsb.ps1 -T
+   pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeUsb.ps1 -DiskNumber N -Go
+   ```
+
+   Legal stick: USB, 2–32 GiB, not disk 0, not `C:`, not a USB HDD
+   (`D:\` W11_STORAGE is refused by size). Refreshes `boot.wim` payload
+   then `MakeWinPEMedia /UFD /F`. Kit also lands on `\reclaim11\` for
+   in-Windows Nuclear after PE reboot. **Do not boot the stick on
+   M1ABRAMS.** VM USB passthrough or another box. Destination of
+   Nuclear is IoT LTSC parity (stub + DACL unused); WU lock is already
+   in v6.3. Full Pro-inbox list after 26H1 inventory vs this host.
 
 Killing blows also writes `restore.json` (task XML under `tasks\`) before
 the deletes. COM CLSID wipe is not pack A (7-Zip / PowerRename stay).
