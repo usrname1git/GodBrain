@@ -640,6 +640,12 @@ if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a
 $elSrc = Get-Content -LiteralPath (Join-Path $root "elevate.ps1") -Raw -Encoding UTF8
 if ($elSrc -match "TeamM2|wsudo\.exe|MinSudo\.exe") { throw "Test-Reclaim11: elevate.ps1 must not call wsudo/MinSudo" }
 if ($elSrc -notmatch "NT SERVICE\\TrustedInstaller") { throw "Test-Reclaim11: elevate.ps1 missing TI principal" }
+if ($elSrc -match "/SD 01/01/2099") {
+    throw "Test-Reclaim11: SYSTEM hop must not use locale schtasks /SD (E_FAIL on sv-SE)"
+}
+if ($elSrc -notmatch "NT AUTHORITY\\SYSTEM") {
+    throw "Test-Reclaim11: SYSTEM hop must register via Task Scheduler COM"
+}
 if (Test-Reclaim11TrustedInstaller) { throw "Test-Reclaim11: test host should not already be TI" }
 $run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $root "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
 try {

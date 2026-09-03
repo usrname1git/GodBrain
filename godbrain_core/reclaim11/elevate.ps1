@@ -67,17 +67,29 @@ function Unregister-Reclaim11Task {
 function Register-Reclaim11SystemTask {
     param(
         [string]$Name,
-        [string]$Tr
+        [string]$Exe,
+        [string]$Arguments
     )
-    $sch = Join-Path $env:SystemRoot "System32\schtasks.exe"
-    & $sch /Create /F /TN $Name /TR $Tr /SC ONCE /SD 01/01/2099 /ST 00:00 /RU SYSTEM /RL HIGHEST | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Register-Reclaim11SystemTask: schtasks create exit $LASTEXITCODE"
-    }
-    & $sch /Run /TN $Name | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Register-Reclaim11SystemTask: schtasks run exit $LASTEXITCODE"
-    }
+    # COM, not schtasks /SD — locale date (sv-SE) returns E_FAIL 0x80004005.
+    $svc = New-Object -ComObject "Schedule.Service"
+    $svc.Connect()
+    $folder = $svc.GetFolder("\")
+    $task = $svc.NewTask(0)
+    $task.Settings.Enabled = $true
+    $task.Settings.Hidden = $true
+    $task.Settings.AllowDemandStart = $true
+    $task.Settings.StopIfGoingOnBatteries = $false
+    $task.Settings.DisallowStartIfOnBatteries = $false
+    $task.Settings.StartWhenAvailable = $true
+    $task.Principal.UserId = "NT AUTHORITY\SYSTEM"
+    $task.Principal.LogonType = 5
+    $task.Principal.RunLevel = 1
+    $act = $task.Actions.Create(0)
+    $act.Path = $Exe
+    $act.Arguments = $Arguments
+    [void]$folder.RegisterTaskDefinition($Name, $task, 6, $null, $null, 5)
+    $registered = $folder.GetTask($Name)
+    [void]$registered.Run($null)
 }
 
 function Register-Reclaim11TiTask {
@@ -193,9 +205,9 @@ function Invoke-Reclaim11AsTrustedInstaller {
             "Invoke-Reclaim11SpawnTi -PayloadFile '$pay' -LogFile '$lg' -DoneFile '$dn' -TimeoutSec $TimeoutSec"
         ) -join "`r`n" | Set-Content -LiteralPath $sysRunner -Encoding UTF8
         $tn = "Reclaim11-Sys-" + $id
-        $tr = ('"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}"' -f $pwsh, $sysRunner)
+        $sysArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$sysRunner`""
         try {
-            Register-Reclaim11SystemTask -Name $tn -Tr $tr
+            Register-Reclaim11SystemTask -Name $tn -Exe $pwsh -Arguments $sysArgs
             Wait-Reclaim11DoneFile -Path $done -TimeoutSec $TimeoutSec
         } finally {
             Unregister-Reclaim11Task -Name $tn
