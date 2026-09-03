@@ -46,7 +46,10 @@ $script:NicEnable = @(
     @{ Keyword = "*RSS"; Display = @("Receive Side Scaling"); On = "1" }
 )
 
-$script:NicBufferWant = 2048
+# CS2/latency: 256-512. 2048+ is throughput and adds queue delay.
+$script:NicBufferMin = 256
+$script:NicBufferMax = 512
+$script:NicBufferWant = 512
 
 function Test-Reclaim11NicDeskHost {
     $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
@@ -80,7 +83,12 @@ function Get-Reclaim11NicTargets {
 }
 
 function Pick-Reclaim11NicBufferValue {
-    param($Prop, [int]$Want = 2048)
+    param($Prop, [int]$Want = 512, [string]$Current = "")
+    $lo = $script:NicBufferMin
+    $hi = $script:NicBufferMax
+    $cur = $null
+    if ($Current -match '^\d+$') { $cur = [int]$Current }
+    if ($null -ne $cur -and $cur -ge $lo -and $cur -le $hi) { return $cur }
     $raw = @()
     if ($Prop.PSObject.Properties["ValidRegistryValues"] -and $Prop.ValidRegistryValues) {
         $raw = @($Prop.ValidRegistryValues)
@@ -90,11 +98,14 @@ function Pick-Reclaim11NicBufferValue {
         $s = [string]$v
         if ($s -match '^\d+$') { $vals += [int]$s }
     }
+    $band = @($vals | Where-Object { $_ -ge $lo -and $_ -le $hi } | Sort-Object)
+    if ($band.Count -gt 0) {
+        if ($band -contains $Want) { return $Want }
+        return [int]$band[-1]
+    }
     if ($vals.Count -gt 0) {
-        if ($vals -contains $Want) { return $Want }
-        $above = @($vals | Where-Object { $_ -ge $Want } | Sort-Object)
-        if ($above.Count -gt 0) { return [int]$above[0] }
-        return [int](($vals | Measure-Object -Maximum).Maximum)
+        $near = @($vals | Sort-Object { [math]::Abs($_ - $Want) })
+        return [int]$near[0]
     }
     $Want
 }
@@ -158,7 +169,7 @@ function Resolve-Reclaim11NicPlan {
         $p = Find-Reclaim11NicProp -Props $Props -Spec $spec
         if (-not $p) { continue }
         $cur = Get-Reclaim11NicRegValue -Prop $p
-        $want = [string](Pick-Reclaim11NicBufferValue -Prop $p -Want $script:NicBufferWant)
+        $want = [string](Pick-Reclaim11NicBufferValue -Prop $p -Want $script:NicBufferWant -Current $cur)
         $actions += [pscustomobject]@{
             adapter  = $AdapterName
             keyword  = [string]$p.RegistryKeyword
@@ -171,13 +182,23 @@ function Resolve-Reclaim11NicPlan {
     $rssq = Find-Reclaim11NicProp -Props $Props -Spec @{ Keyword = "*NumRssQueues"; Display = @("Maximum Number of RSS Queues", "RSS Queues") }
     if ($rssq) {
         $cur = Get-Reclaim11NicRegValue -Prop $rssq
-        $want = [string](Pick-Reclaim11NicBufferValue -Prop $rssq -Want 8)
+        $qvals = @()
+        if ($rssq.PSObject.Properties["ValidRegistryValues"] -and $rssq.ValidRegistryValues) {
+            foreach ($v in @($rssq.ValidRegistryValues)) {
+                if ([string]$v -match '^\d+$') { $qvals += [int]$v }
+            }
+        }
+        $qwant = 8
+        if ($qvals.Count -gt 0) {
+            if ($qvals -contains 8) { $qwant = 8 }
+            else { $qwant = [int](($qvals | Measure-Object -Maximum).Maximum) }
+        }
         $actions += [pscustomobject]@{
             adapter  = $AdapterName
             keyword  = [string]$rssq.RegistryKeyword
             display  = [string]$rssq.DisplayName
             before   = $cur
-            wanted   = $want
+            wanted   = [string]$qwant
             kind     = "rssq"
         }
     }

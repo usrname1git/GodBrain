@@ -512,7 +512,13 @@ if (-not $eee -or $eee.wanted -ne "0") { throw "Test-Reclaim11: NIC map must dis
 $rss = @($nicPlan | Where-Object { $_.keyword -eq "*RSS" } | Select-Object -First 1)
 if (-not $rss -or $rss.wanted -ne "1") { throw "Test-Reclaim11: NIC map must enable *RSS" }
 $rx = @($nicPlan | Where-Object { $_.keyword -eq "*ReceiveBuffers" } | Select-Object -First 1)
-if (-not $rx -or $rx.wanted -ne "2048") { throw "Test-Reclaim11: NIC Rx buffers want 2048" }
+if (-not $rx -or $rx.wanted -ne "256") { throw "Test-Reclaim11: NIC Rx already 256 stays in CS2 band" }
+$fatProps = @(
+    [pscustomobject]@{ DisplayName = "Receive Buffers"; RegistryKeyword = "*ReceiveBuffers"; RegistryValue = @("4096"); ValidRegistryValues = @("256", "512", "1024", "2048", "4096") }
+)
+$fatPlan = Resolve-Reclaim11NicPlan -AdapterName "Ethernet" -Props $fatProps
+$fatRx = @($fatPlan | Where-Object { $_.keyword -eq "*ReceiveBuffers" } | Select-Object -First 1)
+if (-not $fatRx -or $fatRx.wanted -ne "512") { throw "Test-Reclaim11: NIC Rx 4096 must drop to 512 for CS2" }
 $rtlProps = @(
     [pscustomobject]@{ DisplayName = "Green Ethernet"; RegistryKeyword = "GreenEthernet"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") }
 )

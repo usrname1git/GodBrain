@@ -99,8 +99,9 @@ Killing blows also writes `restore.json` (task XML under `tasks\`) before
 the deletes. COM CLSID wipe is not pack A (7-Zip / PowerRename stay).
 
 **Tune NIC** (in-Windows, Ethernet only): keyword map (`*EEE`, `*InterruptModeration`,
-`*FlowControl`, WoL, GreenEthernet) → 0; `*RSS` → 1; Rx/Tx buffers → 2048
-or the next valid size. Skips VMware/Tailscale/Wi-Fi/Bluetooth. Does not
+`*FlowControl`, WoL, GreenEthernet) → 0; `*RSS` → 1; Rx/Tx buffers → **256–512**
+(CS2/latency; keep if already in band, else 512). Not 2048. Skips
+VMware host VMnet / Tailscale / Wi-Fi / Bluetooth. Does not
 touch BFE/`ms_tcpip` bindings or Speed & Duplex. `restore.json` first.
 Desk refused. `pwsh -File nic_tune.ps1 -T`.
 
