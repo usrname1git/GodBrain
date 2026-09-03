@@ -42,6 +42,9 @@ if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
 if ($launchSrc -notmatch 'Start-Transcript') {
     throw "Test-Reclaim11: GUI path must transcript"
 }
+if ($launchSrc -notmatch '(?s)killing blows applied.*manifest') {
+    throw "Test-Reclaim11: GUI must log killing-blows restore.json path"
+}
 if ($launchSrc -notmatch 'ProcessRunning') {
     throw "Test-Reclaim11: GUI path must lock RUN SELECTED"
 }

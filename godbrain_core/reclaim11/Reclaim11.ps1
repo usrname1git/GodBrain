@@ -301,6 +301,12 @@ $btnRun.Add_Click({
             try {
                 $plan = Invoke-Reclaim11KillingBlows -Root $here
                 Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+                if ($plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
+                    Add-Log ("manifest {0}" -f $plan.manifest_path)
+                }
+                if ($plan.PSObject.Properties["backup_root"] -and $plan.backup_root) {
+                    Add-Log ("backup {0}" -f $plan.backup_root)
+                }
             } catch {
                 Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
