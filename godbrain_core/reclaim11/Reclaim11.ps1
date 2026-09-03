@@ -129,12 +129,43 @@ $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
+$panelDoor = Get-Ui PanelDoor
+$panelNoob = Get-Ui PanelNoob
+$panelExpert = Get-Ui PanelExpert
+$noobLog = Get-Ui NoobLog
+$btnDoorNoob = Get-Ui BtnDoorNoob
+$btnDoorExpert = Get-Ui BtnDoorExpert
+$btnNoobBack = Get-Ui BtnNoobBack
+$btnExpertBack = Get-Ui BtnExpertBack
+$btnNoobTest = Get-Ui BtnNoobTest
+$btnNoobFix = Get-Ui BtnNoobFix
+$btnNoobXbox = Get-Ui BtnNoobXbox
+$btnNoobTel = Get-Ui BtnNoobTel
+$btnNoobSafe = Get-Ui BtnNoobSafe
 $script:LastInventory = $null
 $script:ProcessRunning = $false
+$script:UiDoor = "door"
 
 function Add-Log([string]$Line) {
     $logBox.AppendText($Line + [Environment]::NewLine)
     $logBox.ScrollToEnd()
+}
+
+function Add-NoobLog([string]$Line) {
+    $noobLog.AppendText($Line + [Environment]::NewLine)
+    $noobLog.ScrollToEnd()
+}
+
+function Show-Reclaim11Door([string]$Name) {
+    $script:UiDoor = $Name
+    $panelDoor.Visibility = [Windows.Visibility]::Collapsed
+    $panelNoob.Visibility = [Windows.Visibility]::Collapsed
+    $panelExpert.Visibility = [Windows.Visibility]::Collapsed
+    switch ($Name) {
+        "noob" { $panelNoob.Visibility = [Windows.Visibility]::Visible }
+        "expert" { $panelExpert.Visibility = [Windows.Visibility]::Visible }
+        default { $panelDoor.Visibility = [Windows.Visibility]::Visible }
+    }
 }
 
 function Show-Inventory($inv) {
@@ -156,6 +187,7 @@ function Show-Inventory($inv) {
     $btnTelemetry.IsEnabled = $true
     $btnKill.IsEnabled = $pe
     if (-not $pe) { $btnKill.IsChecked = $false }
+    $btnNoobSafe.IsEnabled = $pe
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
     Add-Log ("catalog   {0}" -f $inv.catalog)
@@ -307,6 +339,127 @@ $btnTest.Add_Click({
         $btnTest.IsEnabled = $true
         $btnScan.IsEnabled = $true
     }
+})
+
+$btnDoorNoob.Add_Click({
+    Show-Reclaim11Door "noob"
+    try {
+        Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
+        Add-NoobLog "Noob door. TEST FIRST lists what would happen. JUST FIX MY SH*T = Xbox + telemetry after TEST. Killing blows live on the expert door."
+    } catch {
+        Add-NoobLog ("scan FAIL  {0}" -f $_.Exception.Message)
+    }
+})
+$btnDoorExpert.Add_Click({ Show-Reclaim11Door "expert" })
+$btnNoobBack.Add_Click({ Show-Reclaim11Door "door" })
+$btnExpertBack.Add_Click({ Show-Reclaim11Door "door" })
+
+$btnNoobTest.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $script:ProcessRunning = $true
+    try {
+        Add-NoobLog "TEST ONLY. mutate=false."
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        $xbox = Invoke-Reclaim11XboxCleanse -Root $here -WhatIf -KeepCaptures:$keepCap
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $xbox -Title "xbox")
+        $tel = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $tel -Title "telemetry")
+        $pe = $false
+        if ($script:LastInventory -and $script:LastInventory.gates) {
+            $pe = [bool]$script:LastInventory.gates.killing_blows
+        }
+        if ($pe) {
+            $safe = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
+            Add-NoobLog (Format-Reclaim11TestReport -Plan $safe -Title "safe")
+        }
+    } catch {
+        Add-NoobLog ("TEST FAIL  {0}" -f $_.Exception.Message)
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobFix.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Nuclear. Desk/IoT refused. Continue?",
+        "Reclaim11 JUST FIX MY SH*T",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        try {
+            $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+            Add-NoobLog ("xbox  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("XBOX FAIL  {0}" -f $_.Exception.Message) }
+        try {
+            $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+            Add-NoobLog ("telemetry  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message) }
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobXbox.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Hide Xbox + Appx bloat on THIS Windows. restore.json first. Game Mode stays. Continue?",
+        "Reclaim11 HIDE XBOX",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $keepCap = -not [bool]$togHideCaptures.IsChecked
+        $plan = Invoke-Reclaim11XboxCleanse -Root $here -KeepCaptures:$keepCap
+        Add-NoobLog ("xbox  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("XBOX FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobTel.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Disable DiagTrack + dmwappushservice, AllowTelemetry=0. restore.json first. Continue?",
+        "Reclaim11 TELEMETRY",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
+        Add-NoobLog ("telemetry  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobSafe.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $unlocked = $false
+    if ($script:LastInventory -and $script:LastInventory.gates) {
+        $unlocked = [bool]$script:LastInventory.gates.killing_blows
+    }
+    if (-not $unlocked) {
+        [System.Windows.MessageBox]::Show("Safe cleanse stays locked until a WinPE receipt exists.", "Reclaim11") | Out-Null
+        return
+    }
+    $q = [System.Windows.MessageBox]::Show(
+        "Move pack-A leftovers to backup + restore.json. Does not delete. Continue?",
+        "Reclaim11 SAFE CLEANSE",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $plan = Invoke-Reclaim11NoobCleanse -Root $here
+        Add-NoobLog ("safe  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("SAFE FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Safe cleanse") | Out-Null
+    } finally { $script:ProcessRunning = $false }
 })
 
 $btnPrep.Add_Click({

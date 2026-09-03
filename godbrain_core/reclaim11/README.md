@@ -46,6 +46,10 @@ Headless inventory (JSON):
 pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
 ```
 
+GUI opens on a **door chooser**: noob (three jobs + TEST) vs expert
+(BIOS ticks). Chris-style 100 toggles is the expert door on purpose —
+a noob hitting that wall closes the app. SWITCH DOOR goes back.
+
 GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
 transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. ConstrainedLanguage
 refuse, `-Verb RunAs`, XAML try/catch, run lock, DragMove, screen clamp,

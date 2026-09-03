@@ -113,6 +113,13 @@ if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
 if (-not `$w.FindName('BtnTest')) { throw 'no BtnTest' }
 if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
 if (-not `$w.FindName('BtnTelemetry')) { throw 'no BtnTelemetry' }
+if (-not `$w.FindName('BtnDoorNoob')) { throw 'no BtnDoorNoob' }
+if (-not `$w.FindName('BtnDoorExpert')) { throw 'no BtnDoorExpert' }
+if (-not `$w.FindName('PanelDoor')) { throw 'no PanelDoor' }
+if (-not `$w.FindName('PanelNoob')) { throw 'no PanelNoob' }
+if (-not `$w.FindName('PanelExpert')) { throw 'no PanelExpert' }
+if (`$w.FindName('PanelDoor').Visibility.ToString() -ne 'Visible') { throw 'door must be the open screen' }
+if (`$w.FindName('PanelExpert').Visibility.ToString() -eq 'Visible') { throw 'expert panel must start collapsed' }
 `$w.Close()
 'xaml-ok'
 "@

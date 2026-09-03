@@ -72,10 +72,66 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="DoorBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Padding" Value="18,14"/>
+      <Setter Property="Margin" Value="0,0,0,12"/>
+      <Setter Property="MinHeight" Value="72"/>
+    </Style>
   </Window.Resources>
-  <DockPanel Margin="16">
+  <Grid>
+  <DockPanel x:Name="PanelDoor" Margin="16">
+    <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
+               Text="Chris-style 100 toggles is the expert door. Noob door is three jobs and TEST first. Never BFE / mpssvc / FltMgr."/>
+    <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
+      <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
+      <TextBlock Foreground="#7A93A8" Margin="0,4,0,20" Text="How much do you want to see?"/>
+      <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="I'M TOO DUMB FOR SETTINGS" FontWeight="SemiBold" Foreground="#3DDCFF"/>
+          <TextBlock Text="Hide Xbox, telemetry, Safe cleanse if WinPE already ran. TEST first. No killing blows."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
+      <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="I KNOW WHAT I'M DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
+          <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, TEST SELECTED / RUN SELECTED."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
+    </StackPanel>
+  </DockPanel>
+  <DockPanel x:Name="PanelNoob" Margin="16" Visibility="Collapsed">
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+      <Button x:Name="BtnNoobBack" DockPanel.Dock="Right" Content="SWITCH DOOR" MinWidth="110"/>
+      <StackPanel>
+        <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
+        <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" Text="Noob door. Three jobs. TEST first. Desk/IoT still refused."/>
+      </StackPanel>
+    </DockPanel>
+    <TextBox x:Name="NoobLog" DockPanel.Dock="Bottom" Height="180" Margin="0,12,0,0"
+             IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+             Background="#080B10" Foreground="#C9D1D9" BorderBrush="#1E2A38"
+             FontFamily="Consolas" FontSize="12" Padding="8"/>
+    <StackPanel>
+      <Button x:Name="BtnNoobTest" Style="{StaticResource DoorBtn}" Content="TEST FIRST  (no mutate)"/>
+      <Button x:Name="BtnNoobFix" Style="{StaticResource DoorBtn}">
+        <StackPanel>
+          <TextBlock Text="JUST FIX MY SH*T" FontWeight="SemiBold"/>
+          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Nuclear. Not killing blows."
+                     Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Button>
+      <Button x:Name="BtnNoobXbox" Content="HIDE XBOX + BLOAT" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobTel" Content="DISABLE TELEMETRY" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobSafe" Content="SAFE CLEANSE  (needs WinPE receipt)" MinHeight="44" IsEnabled="False"/>
+    </StackPanel>
+  </DockPanel>
+  <DockPanel x:Name="PanelExpert" Margin="16" Visibility="Collapsed">
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+        <Button x:Name="BtnExpertBack" Content="SWITCH DOOR" MinWidth="110"/>
         <Button x:Name="BtnScan" Content="SCAN" MinWidth="88"/>
         <Button x:Name="BtnPrep" Content="PREP MEDIA" MinWidth="110" IsEnabled="False"/>
       </StackPanel>
@@ -157,4 +213,5 @@
                FontFamily="Consolas" FontSize="12" Padding="8"/>
     </Grid>
   </DockPanel>
+  </Grid>
 </Window>
