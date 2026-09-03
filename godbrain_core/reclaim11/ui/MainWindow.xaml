@@ -82,22 +82,24 @@
   <Grid>
   <DockPanel x:Name="PanelDoor" Margin="16">
     <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
-               Text="Noob is three jobs and TEST first. Expert is every tick. Never BFE / mpssvc / FltMgr."/>
+               Text="MUST: build a WinPE ISO and boot it to take Defender. No PE boot = bloat only (Xbox, telemetry). Never BFE / mpssvc / FltMgr."/>
     <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
       <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
       <TextBlock Foreground="#7A93A8" Margin="0,4,0,8" Text="This isn't a debloater. It's a Grim Reaper."/>
+      <TextBlock Foreground="#7A93A8" Margin="0,0,0,8" TextWrapping="Wrap"
+                 Text="MUST: PREP MEDIA, then boot that WinPE ISO, or Defender stays. Without that boot you only get bloat."/>
       <TextBlock Foreground="#7A93A8" Margin="0,0,0,20" Text="How much do you want to see?"/>
       <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="I'M TOO DUMB FOR SETTINGS" FontWeight="SemiBold" Foreground="#3DDCFF"/>
-          <TextBlock Text="Hide Xbox, telemetry, Safe cleanse if WinPE already ran. TEST first. No killing blows."
+          <TextBlock Text="Bloat only: Hide Xbox, telemetry. TEST first. No Defender. No killing blows."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
       <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="YOU BETTER KNOW WTF YOU'RE DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
-          <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, Grim Reaper, TEST / RUN SELECTED."
+          <TextBlock Text="PREP MEDIA builds the ISO. Boot it or Defender stays. Then killing blows / Grim Reaper."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -108,7 +110,8 @@
       <Button x:Name="BtnNoobBack" DockPanel.Dock="Right" Content="SWITCH DOOR" MinWidth="110"/>
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
-        <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" Text="Noob door. Three jobs. TEST first. Desk/IoT still refused."/>
+        <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
+                   Text="Noob door. Bloat only (Xbox, telemetry). Defender needs a WinPE ISO you build and boot. Desk/IoT refused."/>
       </StackPanel>
     </DockPanel>
     <TextBox x:Name="NoobLog" DockPanel.Dock="Bottom" Height="180" Margin="0,12,0,0"
@@ -120,7 +123,7 @@
       <Button x:Name="BtnNoobFix" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="JUST FIX MY SH*T" FontWeight="SemiBold"/>
-          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Grim Reaper. Not killing blows."
+          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Defender. Not Grim Reaper. Not killing blows."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -138,8 +141,8 @@
       </StackPanel>
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
-        <TextBlock x:Name="Subtitle" Foreground="#7A93A8" Margin="0,2,0,0"
-                   Text="One dark BIOS-style panel. Never BFE / mpssvc / FltMgr."/>
+        <TextBlock x:Name="Subtitle" Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
+                   Text="PREP MEDIA, then boot the WinPE ISO, or Defender stays. Never BFE / mpssvc / FltMgr."/>
       </StackPanel>
     </DockPanel>
     <Border DockPanel.Dock="Top" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="10,8" Margin="0,0,0,12">
@@ -170,7 +173,7 @@
       <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
       <Button x:Name="BtnTest" DockPanel.Dock="Left" Content="TEST SELECTED" MinWidth="140" Margin="8,0,8,0"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
-                 Text="TEST SELECTED is DeviceCleanupCmd -t (no mutate). RUN is live. Safe/Kill/Reaper lock until WinPE."/>
+                 Text="TEST is no mutate. RUN is live. No WinPE boot = bloat only. Safe/Kill/Reaper lock until a PE receipt."/>
     </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>

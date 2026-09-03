@@ -1,5 +1,10 @@
 # Reclaim11
 
+**MUST:** build a WinPE ISO and boot it if you want Defender / PPL / Sense
+gone. That offline pass is the kill. Without that boot, this GUI is
+**bloat only** (Xbox, telemetry, NIC). Killing blows and Grim Reaper
+stay locked until a WinPE receipt.
+
 One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
 
 Inventory plus a **WinPE ISO**. Two cleanse profiles:
@@ -19,6 +24,7 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 ## Rails
 
 - Pack A only. Ads/cloud/WU GPO is pack B, later.
+- Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows unlock only after a WinPE receipt. Desk SKU is refused.
 
@@ -149,7 +155,8 @@ usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
 Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
 SYSTEM and skips that hop.
 
-GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
+GUI (Safe / Kill / Reaper locked until a WinPE receipt). **MUST** boot the
+ISO for Defender; screenshots are a 26H2 VM *after* that boot:
 
 ![Door chooser](ui/DoorChooser.jpg)
 

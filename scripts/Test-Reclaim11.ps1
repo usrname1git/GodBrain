@@ -41,6 +41,12 @@ if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
 if ($xamlSrc -notmatch "Send Grim Reaper") {
     throw "Test-Reclaim11: expert ACTIONS must tick Send Grim Reaper"
 }
+if ($xamlSrc -notmatch "MUST") {
+    throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
+}
+if ($xamlSrc -notmatch "bloat only") {
+    throw "Test-Reclaim11: door must say no PE boot = bloat only"
+}
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
@@ -118,6 +124,9 @@ if ($readme -match '(?m)^# Reclaim11 \(not Heal') {
 }
 if ($readme -match 'Heal never launches this') {
     throw "Test-Reclaim11: README Rails must not mention Heal never launches"
+}
+if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
+    throw "Test-Reclaim11: README must say MUST boot WinPE or bloat only"
 }
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
