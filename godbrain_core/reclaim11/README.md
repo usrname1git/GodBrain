@@ -90,8 +90,14 @@ Do **not** nuke the desk. Snapshot a VM, then:
    Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
    v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
    **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
-   SYSTEM under `System32`. Check: `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`.
-   Not this desk.
+   SYSTEM under `System32`. After 26H1 it also Grim-Reapers WU resurrection:
+   `sc delete` `wuauserv` / `UsoSvc` / `WaaSMedicSvc`, IFEO
+   `UsoCoreWorker.exe` / `MoUsoCoreWorker.exe` / `WaaSMedicAgent.exe`,
+   named task folders WindowsUpdate / WaaSMedic / UpdateOrchestrator.
+   Never stub `usosvc.dll` / `wuaueng.dll` / `WaaSMedicSvc.dll`. Never
+   bits / DoSvc / TrustedInstaller. Not killing-blows pack A (so 26H1
+   via Windows Update still works *before* Nuclear). Check:
+   `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`. Not this desk.
 
 7. Physical USB only after the ISO path is green.
 

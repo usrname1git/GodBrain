@@ -384,6 +384,23 @@ $kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -En
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
 $nukeSrc = Get-Content -LiteralPath (Join-Path $root "NuclearDefenderWipe-V6_3.ps1") -Raw -Encoding UTF8
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
+foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe")) {
+    if ($nukeSrc -notmatch [regex]::Escape($wu)) {
+        throw "Test-Reclaim11: Nuclear remainder must name WU $wu"
+    }
+}
+if ($nukeSrc -notmatch "usosvc\.dll") {
+    throw "Test-Reclaim11: Nuclear must never-stub usosvc.dll"
+}
+$catJson = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8
+foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
+    if ($catJson -match $wu) {
+        throw "Test-Reclaim11: pack A catalog must not list WU $wu (26H1 Update stays until Nuclear)"
+    }
+}
+if ($kbSrc -match "wuauserv") {
+    throw "Test-Reclaim11: killing blows must not sc delete wuauserv"
+}
 try {
     Invoke-Reclaim11KillingBlows -Root $root
     throw "Test-Reclaim11: killing blows must refuse this desk"
