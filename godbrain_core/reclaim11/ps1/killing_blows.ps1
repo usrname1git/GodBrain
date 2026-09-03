@@ -68,10 +68,12 @@ function Invoke-Reclaim11KillingBlows {
         [switch]$WhatIf
     )
     if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSCommandPath }
-    $invPath = Join-Path $Root "inventory.ps1"
+    $invPath = Join-Path $Root "ps1\inventory.ps1"
+    if (-not (Test-Path -LiteralPath $invPath)) { $invPath = Join-Path $Root "inventory.ps1" }
+    if (-not (Test-Path -LiteralPath $invPath)) { $invPath = Join-Path $PSScriptRoot "inventory.ps1" }
     if (-not (Test-Path -LiteralPath $invPath)) { throw "Invoke-Reclaim11KillingBlows: missing inventory.ps1" }
     . $invPath
-    $cat = Get-Reclaim11Catalog -Root $Root
+    $cat = Get-Reclaim11Catalog -Root (Get-Reclaim11Root)
     if (-not $cat.PSObject.Properties["scheduled_task_paths_pack_a"]) {
         throw "Invoke-Reclaim11KillingBlows: catalog missing scheduled_task_paths_pack_a"
     }

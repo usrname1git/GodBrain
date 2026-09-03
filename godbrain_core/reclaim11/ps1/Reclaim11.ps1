@@ -16,13 +16,14 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
     throw "Reclaim11: PowerShell is ConstrainedLanguage. FullLanguage required."
 }
 
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $here "inventory.ps1")
-. (Join-Path $here "killing_blows.ps1")
-. (Join-Path $here "noob_cleanse.ps1")
-. (Join-Path $here "xbox_cleanse.ps1")
-. (Join-Path $here "telemetry_cleanse.ps1")
-. (Join-Path $here "nic_tune.ps1")
+$ps1Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ps1Dir "inventory.ps1")
+$here = Get-Reclaim11Root
+. (Join-Path $ps1Dir "killing_blows.ps1")
+. (Join-Path $ps1Dir "noob_cleanse.ps1")
+. (Join-Path $ps1Dir "xbox_cleanse.ps1")
+. (Join-Path $ps1Dir "telemetry_cleanse.ps1")
+. (Join-Path $ps1Dir "nic_tune.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -125,7 +126,7 @@ function Get-Ui([string]$Name) { $window.FindName($Name) }
 
 function Invoke-Reclaim11GrimReaperCli {
     param([switch]$WhatIf)
-    $script = Join-Path $here "grim_reaper.ps1"
+    $script = Join-Path $ps1Dir "grim_reaper.ps1"
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Reclaim11: missing grim_reaper.ps1"
     }

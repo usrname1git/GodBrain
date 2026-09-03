@@ -25,6 +25,7 @@ $script:UsbMinBytes = 2GB
 $AdkVersionPin = "10.1.26100.2454"
 $reclaim = Join-Path $RepoRoot "godbrain_core\reclaim11"
 $winpeSrc = Join-Path $reclaim "winpe"
+$script:Ps1Dir = Join-Path $reclaim "ps1"
 $script:KitFiles = @(
     "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1",
     "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1",
@@ -99,7 +100,7 @@ function Copy-Reclaim11PePayload {
     Copy-Item -LiteralPath (Join-Path $reclaim "catalog.json") -Destination (Join-Path $dest "catalog.json") -Force
     Copy-Item -LiteralPath $Stub -Destination (Join-Path $dest "DefenderStub.exe") -Force
     foreach ($n in $script:KitFiles) {
-        $s = Join-Path $reclaim $n
+        $s = Join-Path $script:Ps1Dir $n
         if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11WinPeUsb: missing $s" }
         Copy-Item -LiteralPath $s -Destination (Join-Path $dest $n) -Force
     }
@@ -199,11 +200,14 @@ if ($p.ExitCode -ne 0) { throw "New-Reclaim11WinPeUsb: MakeWinPEMedia /UFD exit 
 $usbRoot = ($destLetter + ":\")
 $kitDest = Join-Path $usbRoot "reclaim11"
 if (-not (Test-Path -LiteralPath $kitDest)) { New-Item -ItemType Directory -Path $kitDest | Out-Null }
-foreach ($n in $script:KitFiles) {
-    Copy-Item -LiteralPath (Join-Path $reclaim $n) -Destination (Join-Path $kitDest $n) -Force
-}
 Copy-Item -LiteralPath (Join-Path $reclaim "catalog.json") -Destination (Join-Path $kitDest "catalog.json") -Force
-Copy-Item -LiteralPath (Join-Path $reclaim "Reclaim11.ps1") -Destination (Join-Path $kitDest "Reclaim11.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $reclaim "Reclaim11.cmd") -Destination (Join-Path $kitDest "Reclaim11.cmd") -Force
+$ps1Dest = Join-Path $kitDest "ps1"
+if (-not (Test-Path -LiteralPath $ps1Dest)) { New-Item -ItemType Directory -Path $ps1Dest | Out-Null }
+foreach ($n in $script:KitFiles) {
+    Copy-Item -LiteralPath (Join-Path $script:Ps1Dir $n) -Destination (Join-Path $ps1Dest $n) -Force
+}
+Copy-Item -LiteralPath (Join-Path $script:Ps1Dir "Reclaim11.ps1") -Destination (Join-Path $ps1Dest "Reclaim11.ps1") -Force
 $uiSrc = Join-Path $reclaim "ui"
 if (Test-Path -LiteralPath $uiSrc) {
     $uiDest = Join-Path $kitDest "ui"
@@ -219,6 +223,6 @@ Copy-Item -LiteralPath $stub -Destination (Join-Path $kitDest "DefenderStub.exe"
     name        = $target.name
     letter      = $destLetter
     kit         = $kitDest
-    note        = "First boot: PE pack-A delete. Reboot. Same stick E:\reclaim11 Nuclear v6.3 in the VM, not this desk."
+    note        = "First boot: PE pack-A delete. Reboot. Double-click E:\reclaim11\Reclaim11.cmd (Grim Reaper) in the VM, not this desk."
 } | ConvertTo-Json -Depth 5
 Write-Host "USB ready. Do not boot it on M1ABRAMS."

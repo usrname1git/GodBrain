@@ -27,15 +27,18 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 
 ## Run
 
+Double-click `Reclaim11.cmd` (UAC + GUI). Workers live in `ps1\`. You do not
+need to type `pwsh`.
+
 ```text
-pwsh -STA -NoProfile -ExecutionPolicy Bypass -File godbrain_core\reclaim11\Reclaim11.ps1
+godbrain_core\reclaim11\Reclaim11.cmd
 ```
 
 Test-only (DeviceCleanupCmd `-t`: privs, paths, what would happen, no mutate):
 
 ```text
-pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -T
-pwsh -NoProfile -File godbrain_core\reclaim11\xbox_cleanse.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\Reclaim11.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\xbox_cleanse.ps1 -T
 ```
 
 GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.

@@ -254,13 +254,20 @@ function Invoke-Reclaim11XboxCleanse {
         if ($PSScriptRoot) { $Root = $PSScriptRoot }
         else { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
     }
-    $invPath = Join-Path $Root "inventory.ps1"
+    $invPath = Join-Path $Root "ps1\inventory.ps1"
+    if (-not (Test-Path -LiteralPath $invPath)) { $invPath = Join-Path $Root "inventory.ps1" }
+    if (-not (Test-Path -LiteralPath $invPath) -and $PSScriptRoot) {
+        $invPath = Join-Path $PSScriptRoot "inventory.ps1"
+    }
     if (Test-Path -LiteralPath $invPath) {
         . $invPath
     }
     $catPath = Join-Path $Root "catalog.json"
+    if (-not (Test-Path -LiteralPath $catPath) -and (Get-Command Get-Reclaim11Root -ErrorAction SilentlyContinue)) {
+        $catPath = Join-Path (Get-Reclaim11Root) "catalog.json"
+    }
     if (Get-Command Get-Reclaim11Catalog -ErrorAction SilentlyContinue) {
-        $cat = Get-Reclaim11Catalog -Root $Root
+        $cat = Get-Reclaim11Catalog
     } elseif (Test-Path -LiteralPath $catPath) {
         $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
     } else {

@@ -8,13 +8,22 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
 $root = Join-Path $RepoRoot "godbrain_core\reclaim11"
+$ps1 = Join-Path $root "ps1"
 $catPath = Join-Path $root "catalog.json"
 $xamlPath = Join-Path $root "ui\MainWindow.xaml"
-$invPath = Join-Path $root "inventory.ps1"
-$launch = Join-Path $root "Reclaim11.ps1"
+$invPath = Join-Path $ps1 "inventory.ps1"
+$launch = Join-Path $ps1 "Reclaim11.ps1"
+$cmdPath = Join-Path $root "Reclaim11.cmd"
 
-foreach ($p in @($catPath, $xamlPath, $invPath, $launch)) {
+foreach ($p in @($catPath, $xamlPath, $invPath, $launch, $cmdPath)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Test-Reclaim11: missing $p" }
+}
+$cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
+if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
+    throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
+}
+if ($cmdSrc -match 'irm |Invoke-Expression') {
+    throw "Test-Reclaim11: Reclaim11.cmd must not irm/iex"
 }
 $xamlSrc = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
 if ($xamlSrc -match 'Chris-style|christitus') {
@@ -197,9 +206,9 @@ foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd",
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
 foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
-    if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
+    if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
-$nukeSelf = Join-Path $root "grim_reaper.ps1"
+$nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
 if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
 if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
@@ -335,7 +344,7 @@ if (@($r25b.missing) -contains "WdFilter.sys") {
     throw "Test-Reclaim11: existing .bak must count as parked, not missing"
 }
 
-. (Join-Path $root "noob_cleanse.ps1")
+. (Join-Path $ps1 "noob_cleanse.ps1")
 $fxNoob = Join-Path $env:TEMP "reclaim11-noob-fx"
 if (Test-Path -LiteralPath $fxNoob) { Remove-Item -LiteralPath $fxNoob -Recurse -Force }
 $fxNoobWin = Join-Path $fxNoob "Windows"
@@ -376,7 +385,7 @@ try {
 }
 Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force
 
-. (Join-Path $root "killing_blows.ps1")
+. (Join-Path $ps1 "killing_blows.ps1")
 foreach ($s in @($cat.services_pack_a)) {
     if (@($cat.never_touch_services) -contains $s) {
         throw "Test-Reclaim11: pack A collides never-touch $s"
@@ -405,9 +414,9 @@ if (-not (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\Wi
 if (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\") {
     throw "Test-Reclaim11: must not match all Microsoft\Windows tasks"
 }
-$kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -Encoding UTF8
+$kbSrc = Get-Content -LiteralPath (Join-Path $ps1 "killing_blows.ps1") -Raw -Encoding UTF8
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
-$nukeSrc = Get-Content -LiteralPath (Join-Path $root "grim_reaper.ps1") -Raw -Encoding UTF8
+$nukeSrc = Get-Content -LiteralPath (Join-Path $ps1 "grim_reaper.ps1") -Raw -Encoding UTF8
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
 if ($nukeSrc -match '\.\s+\$invPath') {
     throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
@@ -445,13 +454,13 @@ if (-not [bool]$dryKill.what_if) { throw "Test-Reclaim11: killing -T must set wh
 if ([string]$dryKill.would_refuse -notmatch "desk") { throw "Test-Reclaim11: killing -T must report desk refuse" }
 if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list would-do" }
 
-. (Join-Path $root "xbox_cleanse.ps1")
+. (Join-Path $ps1 "xbox_cleanse.ps1")
 $hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
 if ($hid -notmatch "^hide:gaming-gamebar;") { throw "Test-Reclaim11: xbox hide gamebar" }
 if ($hid -notmatch ";gaming-gamedvr;") { throw "Test-Reclaim11: xbox hide gamedvr (Captures page)" }
 if ($hid -notmatch ";gaming-captures") { throw "Test-Reclaim11: xbox hide captures token" }
 if ($hid -match ";hide:") { throw "Test-Reclaim11: GPO hide: must not repeat per page" }
-$xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
+$xbSrc = Get-Content -LiteralPath (Join-Path $ps1 "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -notmatch 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer') {
     throw "Test-Reclaim11: Settings hide must write HKCU as well as HKLM"
 }
@@ -477,7 +486,7 @@ if ($xbSrc -match '& sc\.exe create \$name binPath= \$bin') {
 if ($xbSrc -notmatch 'LASTEXITCODE -eq 0') {
     throw "Test-Reclaim11: xbox restore must only count sc create exit 0"
 }
-$applyKill = Get-Content -LiteralPath (Join-Path $root "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
+$applyKill = Get-Content -LiteralPath (Join-Path $ps1 "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
 if ($applyKill -notmatch 'RECLAIM11_AS_TI') {
     throw "Test-Reclaim11: Apply-KillingBlows must omit Write-Host on TI stdout"
 }
@@ -527,7 +536,7 @@ if ($null -ne (Get-Reclaim11OptionalText -Object $bare -Name "ObjectName")) {
 if ((Get-Reclaim11OptionalDword -Object $bare -Name "Start") -ne 3) {
     throw "Test-Reclaim11: optional Start dword"
 }
-$xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
+$xbSrc = Get-Content -LiteralPath (Join-Path $ps1 "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -match "Invoke-Reclaim11AsTrustedInstaller") {
     throw "Test-Reclaim11: xbox_cleanse must not TI-hop (admin is enough)"
 }
@@ -553,7 +562,7 @@ try {
 }
 Remove-Item -LiteralPath $badMan, $okMan -Force
 
-. (Join-Path $root "telemetry_cleanse.ps1")
+. (Join-Path $ps1 "telemetry_cleanse.ps1")
 if (Test-Path -LiteralPath (Join-Path $root "ctt")) {
     throw "Test-Reclaim11: ctt folder must not ship"
 }
@@ -561,7 +570,7 @@ if ($script:TelemetryServices -notcontains "DiagTrack") { throw "Test-Reclaim11:
 if ($script:TelemetryServices -notcontains "dmwappushservice") { throw "Test-Reclaim11: telemetry missing dmwappushservice" }
 if ($script:TelemetryServices -contains "BFE") { throw "Test-Reclaim11: telemetry hit BFE" }
 if ($script:TelemetryServices -contains "EventLog") { throw "Test-Reclaim11: telemetry hit EventLog" }
-$telSrc = Get-Content -LiteralPath (Join-Path $root "telemetry_cleanse.ps1") -Raw -Encoding UTF8
+$telSrc = Get-Content -LiteralPath (Join-Path $ps1 "telemetry_cleanse.ps1") -Raw -Encoding UTF8
 if ($telSrc -match "WPFTweaks|christitus|Chris Titus|Set-MpPreference") {
     throw "Test-Reclaim11: telemetry_cleanse must not carry third-party tweak ids"
 }
@@ -577,7 +586,7 @@ $dryTel = Invoke-Reclaim11TelemetryCleanse -Root $root -WhatIf
 if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set what_if" }
 if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
 
-. (Join-Path $root "nic_tune.ps1")
+. (Join-Path $ps1 "nic_tune.ps1")
 $vmx = [pscustomobject]@{ Name = "Ethernet0"; InterfaceDescription = "vmxnet3 Ethernet Adapter"; PhysicalMediaType = "802.3"; Status = "Up" }
 if (Test-Reclaim11NicSkipAdapter -Adapter $vmx) { throw "Test-Reclaim11: must tune guest vmxnet3" }
 $vmnet = [pscustomobject]@{ Name = "VMware Network Adapter VMnet8"; InterfaceDescription = "VMware Virtual Ethernet Adapter for VMnet8"; PhysicalMediaType = "802.3"; Status = "Up" }
@@ -612,7 +621,7 @@ $dryNic = Invoke-Reclaim11NicTune -Root $root -WhatIf
 if (-not [bool]$dryNic.what_if) { throw "Test-Reclaim11: nic -T must set what_if" }
 if ([bool]$dryNic.mutate) { throw "Test-Reclaim11: nic -T must not mutate" }
 if ([string]$dryNic.would_refuse -notmatch "desk") { throw "Test-Reclaim11: nic -T must report desk refuse" }
-$nicSrc = Get-Content -LiteralPath (Join-Path $root "nic_tune.ps1") -Raw -Encoding UTF8
+$nicSrc = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encoding UTF8
 if ($nicSrc -match "BFE|mpssvc") {
     if ($nicSrc -notmatch "Never BFE") { throw "Test-Reclaim11: nic_tune hit BFE without never" }
 }
@@ -649,8 +658,8 @@ if ($launchSrc -notmatch "BtnReaper") {
 }
 if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a ctt folder" }
 
-. (Join-Path $root "elevate.ps1")
-$elSrc = Get-Content -LiteralPath (Join-Path $root "elevate.ps1") -Raw -Encoding UTF8
+. (Join-Path $ps1 "elevate.ps1")
+$elSrc = Get-Content -LiteralPath (Join-Path $ps1 "elevate.ps1") -Raw -Encoding UTF8
 if ($elSrc -match "TeamM2|wsudo\.exe|MinSudo\.exe") { throw "Test-Reclaim11: elevate.ps1 must not call wsudo/MinSudo" }
 if ($elSrc -notmatch "NT SERVICE\\TrustedInstaller") { throw "Test-Reclaim11: elevate.ps1 missing TI principal" }
 if ($elSrc -match "/SD 01/01/2099") {
@@ -660,7 +669,7 @@ if ($elSrc -notmatch "NT AUTHORITY\\SYSTEM") {
     throw "Test-Reclaim11: SYSTEM hop must register via Task Scheduler COM"
 }
 if (Test-Reclaim11TrustedInstaller) { throw "Test-Reclaim11: test host should not already be TI" }
-$run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $root "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
+$run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $ps1 "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
 try {
     $rt = Get-Content -LiteralPath $run -Raw -Encoding UTF8
     if ($rt -notmatch "RECLAIM11_AS_TI") { throw "Test-Reclaim11: TI runner missing env flag" }
