@@ -98,6 +98,12 @@ Do **not** nuke the desk. Snapshot a VM, then:
 Killing blows also writes `restore.json` (task XML under `tasks\`) before
 the deletes. COM CLSID wipe is not pack A (7-Zip / PowerRename stay).
 
+**Tune NIC** (in-Windows, Ethernet only): keyword map (`*EEE`, `*InterruptModeration`,
+`*FlowControl`, WoL, GreenEthernet) → 0; `*RSS` → 1; Rx/Tx buffers → 2048
+or the next valid size. Skips VMware/Tailscale/Wi-Fi/Bluetooth. Does not
+touch BFE/`ms_tcpip` bindings or Speed & Duplex. `restore.json` first.
+Desk refused. `pwsh -File nic_tune.ps1 -T`.
+
 **Disable telemetry** (in-Windows, not PE): `restore.json` first, then
 `AllowTelemetry=0`, `DiagTrack` + `dmwappushservice` start=disabled (same
 pair the old autom8ed nuke lists used). Not `sc delete`. Not a scheduled-task

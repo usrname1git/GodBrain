@@ -113,6 +113,7 @@ if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
 if (-not `$w.FindName('BtnTest')) { throw 'no BtnTest' }
 if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
 if (-not `$w.FindName('BtnTelemetry')) { throw 'no BtnTelemetry' }
+if (-not `$w.FindName('BtnNic')) { throw 'no BtnNic' }
 if (-not `$w.FindName('BtnDoorNoob')) { throw 'no BtnDoorNoob' }
 if (-not `$w.FindName('BtnDoorExpert')) { throw 'no BtnDoorExpert' }
 if (-not `$w.FindName('PanelDoor')) { throw 'no PanelDoor' }
@@ -178,7 +179,7 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
@@ -493,6 +494,36 @@ try {
 $dryTel = Invoke-Reclaim11TelemetryCleanse -Root $root -WhatIf
 if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set what_if" }
 if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
+
+. (Join-Path $root "nic_tune.ps1")
+$intelProps = @(
+    [pscustomobject]@{ DisplayName = "Energy Efficient Ethernet"; RegistryKeyword = "*EEE"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") },
+    [pscustomobject]@{ DisplayName = "Receive Side Scaling"; RegistryKeyword = "*RSS"; RegistryValue = @("0"); ValidRegistryValues = @("0", "1") },
+    [pscustomobject]@{ DisplayName = "Receive Buffers"; RegistryKeyword = "*ReceiveBuffers"; RegistryValue = @("256"); ValidRegistryValues = @("128", "256", "512", "1024", "2048", "4096") },
+    [pscustomobject]@{ DisplayName = "Transmit Buffers"; RegistryKeyword = "*TransmitBuffers"; RegistryValue = @("256"); ValidRegistryValues = @("128", "256", "512", "1024", "2048") }
+)
+$nicPlan = Resolve-Reclaim11NicPlan -AdapterName "Ethernet" -Props $intelProps
+$eee = @($nicPlan | Where-Object { $_.keyword -eq "*EEE" } | Select-Object -First 1)
+if (-not $eee -or $eee.wanted -ne "0") { throw "Test-Reclaim11: NIC map must disable *EEE" }
+$rss = @($nicPlan | Where-Object { $_.keyword -eq "*RSS" } | Select-Object -First 1)
+if (-not $rss -or $rss.wanted -ne "1") { throw "Test-Reclaim11: NIC map must enable *RSS" }
+$rx = @($nicPlan | Where-Object { $_.keyword -eq "*ReceiveBuffers" } | Select-Object -First 1)
+if (-not $rx -or $rx.wanted -ne "2048") { throw "Test-Reclaim11: NIC Rx buffers want 2048" }
+$rtlProps = @(
+    [pscustomobject]@{ DisplayName = "Green Ethernet"; RegistryKeyword = "GreenEthernet"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") }
+)
+$rtlPlan = Resolve-Reclaim11NicPlan -AdapterName "Ethernet" -Props $rtlProps
+if (-not (@($rtlPlan | Where-Object { $_.keyword -eq "GreenEthernet" -and $_.wanted -eq "0" }))) {
+    throw "Test-Reclaim11: NIC map must disable Realtek GreenEthernet"
+}
+$dryNic = Invoke-Reclaim11NicTune -Root $root -WhatIf
+if (-not [bool]$dryNic.what_if) { throw "Test-Reclaim11: nic -T must set what_if" }
+if ([bool]$dryNic.mutate) { throw "Test-Reclaim11: nic -T must not mutate" }
+if ([string]$dryNic.would_refuse -notmatch "desk") { throw "Test-Reclaim11: nic -T must report desk refuse" }
+$nicSrc = Get-Content -LiteralPath (Join-Path $root "nic_tune.ps1") -Raw -Encoding UTF8
+if ($nicSrc -match "BFE|mpssvc") {
+    if ($nicSrc -notmatch "Never BFE") { throw "Test-Reclaim11: nic_tune hit BFE without never" }
+}
 $telMan = Join-Path $env:TEMP "reclaim11-tel-ok.json"
 Set-Content -LiteralPath $telMan -Value '{"id":"reclaim11-telemetry-v1","allow":{"present":false},"services":[]}' -Encoding UTF8
 try {

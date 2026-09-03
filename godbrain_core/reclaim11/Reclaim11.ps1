@@ -22,6 +22,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "noob_cleanse.ps1")
 . (Join-Path $here "xbox_cleanse.ps1")
 . (Join-Path $here "telemetry_cleanse.ps1")
+. (Join-Path $here "nic_tune.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -60,6 +61,8 @@ if ($Test) {
     Write-Host (Format-Reclaim11TestReport -Plan $kill -Title "killing_blows")
     $safe = Invoke-Reclaim11NoobCleanse -Root $here -WhatIf
     Write-Host (Format-Reclaim11TestReport -Plan $safe -Title "safe_cleanse")
+    $nic = Invoke-Reclaim11NicTune -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $nic -Title "nic_tune")
     if ($OutJson) {
         $bundle = [pscustomobject]@{
             what_if = $true
@@ -68,6 +71,7 @@ if ($Test) {
             telemetry = $tel
             killing = $kill
             safe    = $safe
+            nic     = $nic
         }
         Write-Reclaim11InventoryFile -Inventory $bundle -Path $OutJson | Out-Null
     }
@@ -124,6 +128,7 @@ $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
 $btnXbox = Get-Ui BtnXbox
 $btnTelemetry = Get-Ui BtnTelemetry
+$btnNic = Get-Ui BtnNic
 $btnKill = Get-Ui BtnKill
 $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
@@ -229,9 +234,10 @@ $btnRun.Add_Click({
         $doSafe = [bool]$btnSafe.IsChecked
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
+        $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, and/or Killing blows.", "Reclaim11") | Out-Null
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
@@ -281,6 +287,16 @@ $btnRun.Add_Click({
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
             }
         }
+        if ($doNic) {
+            try {
+                $plan = Invoke-Reclaim11NicTune -Root $here
+                Add-Log ("nic applied {0}" -f (@($plan.applied).Count))
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("NIC FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 NIC tune") | Out-Null
+            }
+        }
         if ($doKill) {
             try {
                 $plan = Invoke-Reclaim11KillingBlows -Root $here
@@ -308,9 +324,10 @@ $btnTest.Add_Click({
         $doSafe = [bool]$btnSafe.IsChecked
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
+        $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, and/or Killing blows.", "Reclaim11") | Out-Null
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
             return
         }
         Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
@@ -326,6 +343,10 @@ $btnTest.Add_Click({
         if ($doTelemetry) {
             $plan = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
             Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "telemetry_cleanse")
+        }
+        if ($doNic) {
+            $plan = Invoke-Reclaim11NicTune -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "nic_tune")
         }
         if ($doKill) {
             $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
