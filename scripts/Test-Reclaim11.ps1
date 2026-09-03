@@ -445,6 +445,13 @@ if ($script:XboxGameBarNever -notcontains "AllowAutoGameMode") {
 if (@($script:XboxAppx | Where-Object { $_ -match '\*' }).Count -gt 0) {
     throw "Test-Reclaim11: xbox Appx list must be named, not a wildcard"
 }
+$bare = [pscustomobject]@{ Start = 3 }
+if ($null -ne (Get-Reclaim11OptionalText -Object $bare -Name "ObjectName")) {
+    throw "Test-Reclaim11: missing ObjectName must be null, not throw"
+}
+if ((Get-Reclaim11OptionalDword -Object $bare -Name "Start") -ne 3) {
+    throw "Test-Reclaim11: optional Start dword"
+}
 $xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -match "Invoke-Reclaim11AsTrustedInstaller") {
     throw "Test-Reclaim11: xbox_cleanse must not TI-hop (admin is enough)"

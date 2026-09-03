@@ -63,6 +63,12 @@ function Get-Reclaim11OptionalDword {
     $null
 }
 
+function Get-Reclaim11OptionalText {
+    param($Object, [string]$Name)
+    if ($Object -and $Object.PSObject.Properties[$Name]) { return [string]$Object.$Name }
+    $null
+}
+
 function Test-Reclaim11XboxDeskHost {
     $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
     [string]$n.EditionID -eq "IoTEnterpriseS"
@@ -149,15 +155,13 @@ function Get-Reclaim11ServiceSnapshot {
     $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
     if (-not (Test-Path -LiteralPath $key)) { return $null }
     $p = Get-ItemProperty -LiteralPath $key
-    $start = $null
-    if ($p.PSObject.Properties["Start"]) { $start = [int]$p.Start }
     [pscustomobject]@{
         name         = $Name
-        start        = $start
-        image_path   = [string]$p.ImagePath
-        display_name = [string]$p.DisplayName
-        object_name  = [string]$p.ObjectName
-        type         = $p.Type
+        start        = Get-Reclaim11OptionalDword -Object $p -Name "Start"
+        image_path   = Get-Reclaim11OptionalText -Object $p -Name "ImagePath"
+        display_name = Get-Reclaim11OptionalText -Object $p -Name "DisplayName"
+        object_name  = Get-Reclaim11OptionalText -Object $p -Name "ObjectName"
+        type         = Get-Reclaim11OptionalDword -Object $p -Name "Type"
     }
 }
 
@@ -167,9 +171,9 @@ function Get-Reclaim11AppxSnapshot {
     $pkgs = @(Get-AppxPackage -AllUsers -Name $Name -ErrorAction SilentlyContinue)
     foreach ($p in $pkgs) {
         $rows += [pscustomobject]@{
-            name               = [string]$p.Name
-            package_full_name  = [string]$p.PackageFullName
-            install_location   = [string]$p.InstallLocation
+            name               = Get-Reclaim11OptionalText -Object $p -Name "Name"
+            package_full_name  = Get-Reclaim11OptionalText -Object $p -Name "PackageFullName"
+            install_location   = Get-Reclaim11OptionalText -Object $p -Name "InstallLocation"
             provisioned        = $false
         }
     }
@@ -177,9 +181,9 @@ function Get-Reclaim11AppxSnapshot {
         $prov = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $Name })
         foreach ($p in $prov) {
             $rows += [pscustomobject]@{
-                name               = [string]$p.DisplayName
-                package_full_name  = [string]$p.PackageName
-                install_location   = [string]$p.InstallLocation
+                name               = Get-Reclaim11OptionalText -Object $p -Name "DisplayName"
+                package_full_name  = Get-Reclaim11OptionalText -Object $p -Name "PackageName"
+                install_location   = Get-Reclaim11OptionalText -Object $p -Name "InstallLocation"
                 provisioned        = $true
             }
         }
