@@ -399,9 +399,10 @@ if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list
 
 . (Join-Path $root "xbox_cleanse.ps1")
 $hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
-if ($hid -notmatch "hide:gaming-gamebar") { throw "Test-Reclaim11: xbox hide gamebar" }
-if ($hid -notmatch "hide:gaming-captures") { throw "Test-Reclaim11: xbox hide captures" }
-if ($hid -notmatch "hide:gaming-gamedvr") { throw "Test-Reclaim11: xbox hide gamedvr (Captures URI)" }
+if ($hid -notmatch "^hide:gaming-gamebar;") { throw "Test-Reclaim11: xbox hide gamebar" }
+if ($hid -notmatch ";gaming-gamedvr;") { throw "Test-Reclaim11: xbox hide gamedvr (Captures page)" }
+if ($hid -notmatch ";gaming-captures") { throw "Test-Reclaim11: xbox hide captures token" }
+if ($hid -match ";hide:") { throw "Test-Reclaim11: GPO hide: must not repeat per page" }
 $xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -notmatch 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer') {
     throw "Test-Reclaim11: Settings hide must write HKCU as well as HKLM"
@@ -413,7 +414,15 @@ if ($hid -match "gamemode") {
     throw "Test-Reclaim11: xbox hide must not hide Game Mode"
 }
 $hid2 = Merge-Reclaim11HidePages -Current "hide:foo" -Hide @("gaming-gamebar")
-if ($hid2 -notmatch "hide:foo") { throw "Test-Reclaim11: xbox hide must keep existing pages" }
+if ($hid2 -ne "hide:foo;gaming-gamebar") { throw "Test-Reclaim11: xbox hide must keep existing pages as GPO list" }
+$hid3 = Merge-Reclaim11HidePages -Current "hide:gaming-gamebar;hide:gaming-gamedvr" -Hide @("gaming-captures")
+if ($hid3 -match ";hide:") { throw "Test-Reclaim11: must rewrite old per-token hide: lists" }
+if ($hid3 -notmatch "^hide:gaming-gamebar;gaming-gamedvr;gaming-captures$") {
+    throw "Test-Reclaim11: rewrite old hide list, got $hid3"
+}
+if ($xbSrc -notmatch '(?s)if \(\$KeepCaptures\).*gaming-gamedvr') {
+    throw "Test-Reclaim11: KeepCaptures must skip gaming-gamedvr (Captures page), not only gaming-captures"
+}
 try {
     Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamemode") | Out-Null
     throw "Test-Reclaim11: hide gamemode must refuse"

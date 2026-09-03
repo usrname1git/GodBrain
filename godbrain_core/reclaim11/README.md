@@ -112,9 +112,11 @@ glob. Desk SKU refused. Restore:
 `pwsh -File telemetry_cleanse.ps1 -Restore restore.json`.
 
 **Hide Xbox** (in-Windows, not PE): writes `C:\reclaim11\backup\<stamp>\restore.json`
-first, then machine `SettingsPageVisibility`
-`hide:gaming-gamebar;hide:gaming-gamedvr;hide:gaming-trueplay;hide:gaming-broadcasting`
-so Settings → Gaming is Game Mode only (Captures hidden; OBS / ShadowPlay / AMD).
+first, then HKLM+HKCU `SettingsPageVisibility`
+`hide:gaming-gamebar;gaming-gamedvr;gaming-trueplay;gaming-broadcasting;gaming-captures`
+(GPO is one `hide:` then semicolon ids — not `hide:` per page, or only the
+first page hides). Settings → Gaming is Game Mode only (Captures =
+`gaming-gamedvr`; OBS / ShadowPlay / AMD).
 HKCU GameBar: `EnableGameBar=0`, startup/broadcast panels off. Does **not** write
 `AllowAutoGameMode` / `AutoGameModeEnabled` (Game Mode stays). `sc delete` Xbox
 usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,

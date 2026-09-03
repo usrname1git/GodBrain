@@ -125,38 +125,59 @@ $script:XboxAppx = @(
     "Microsoft.GamingServices"
 )
 
+function Get-Reclaim11HidePageIds {
+    param([string]$Current = "")
+    $ids = @()
+    if ([string]::IsNullOrWhiteSpace($Current)) { return $ids }
+    $s = $Current.Trim()
+    if ($s.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+        $s = $s.Substring(5)
+    } elseif ($s.StartsWith("showonly:", [StringComparison]::OrdinalIgnoreCase)) {
+        $s = $s.Substring(9)
+    }
+    foreach ($t in ($s -split ";")) {
+        $t = $t.Trim()
+        if ($t.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+            $t = $t.Substring(5).Trim()
+        }
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $ids += $t
+    }
+    $ids
+}
+
 function Merge-Reclaim11HidePages {
     param(
         [string]$Current = "",
         [string[]]$Hide
     )
+    # GPO format is hide:id1;id2;id3 — NOT hide:id1;hide:id2 (only the first page hid).
     $parts = @()
     $seen = @{}
-    if (-not [string]::IsNullOrWhiteSpace($Current)) {
-        foreach ($t in ($Current -split ";")) {
-            $t = $t.Trim()
-            if ([string]::IsNullOrWhiteSpace($t)) { continue }
-            $key = $t.ToLowerInvariant()
-            if ($seen.ContainsKey($key)) { continue }
-            $seen[$key] = $true
-            $parts += $t
-        }
+    foreach ($t in @(Get-Reclaim11HidePageIds -Current $Current)) {
+        $key = $t.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $parts += $t
     }
     foreach ($h in $Hide) {
         if ([string]::IsNullOrWhiteSpace($h)) { continue }
         $leaf = $h.Trim()
+        if ($leaf.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+            $leaf = $leaf.Substring(5).Trim()
+        }
         foreach ($keep in $script:XboxKeepPages) {
             if ($leaf -ieq $keep) {
                 throw "Merge-Reclaim11HidePages: refuse hide $leaf (Game Mode stays)"
             }
         }
-        $tok = if ($leaf -like "hide:*") { $leaf } else { "hide:$leaf" }
-        $key = $tok.ToLowerInvariant()
+        $key = $leaf.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
-        $parts += $tok
+        $parts += $leaf
     }
-    ($parts -join ";")
+    if ($parts.Count -lt 1) { return "" }
+    "hide:" + ($parts -join ";")
 }
 
 function Get-Reclaim11XboxServiceCandidates {
@@ -277,7 +298,11 @@ function Invoke-Reclaim11XboxCleanse {
     if ([string]::IsNullOrWhiteSpace($cur)) { $cur = $curCu }
     $hide = @($script:XboxHidePages)
     if ($KeepCaptures) {
-        $hide = @($hide | Where-Object { $_ -ne "gaming-captures" })
+        # Captures in Settings is PolicyId gaming-gamedvr (SettingsPageGameDVR).
+        # gaming-captures is an extra token; skip both or the page still hides.
+        $hide = @($hide | Where-Object {
+            $_ -ne "gaming-captures" -and $_ -ne "gaming-gamedvr"
+        })
     }
     $merged = Merge-Reclaim11HidePages -Current $cur -Hide $hide
 
