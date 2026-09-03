@@ -26,6 +26,9 @@ if ($xamlSrc -notmatch "Grim Reaper") {
 if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
     throw "Test-Reclaim11: expert door must warn WTF"
 }
+if ($xamlSrc -notmatch "Send Grim Reaper") {
+    throw "Test-Reclaim11: expert ACTIONS must tick Send Grim Reaper"
+}
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
@@ -120,6 +123,7 @@ Add-Type -AssemblyName PresentationFramework
 if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
+if (-not `$w.FindName('BtnReaper')) { throw 'no BtnReaper' }
 if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
 if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
@@ -192,10 +196,10 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
 }
-$nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
+$nukeSelf = Join-Path $root "grim_reaper.ps1"
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
 if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
 if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
@@ -403,7 +407,7 @@ if (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\") {
 }
 $kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -Encoding UTF8
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
-$nukeSrc = Get-Content -LiteralPath (Join-Path $root "NuclearDefenderWipe-V6_3.ps1") -Raw -Encoding UTF8
+$nukeSrc = Get-Content -LiteralPath (Join-Path $root "grim_reaper.ps1") -Raw -Encoding UTF8
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
 if ($nukeSrc -match '\.\s+\$invPath') {
     throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
@@ -636,6 +640,12 @@ Remove-Item -LiteralPath $telMan, $telBad -Force
 
 if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy telemetry_cleanse.ps1"
+}
+if ($isoSrc -notmatch "grim_reaper\.ps1") {
+    throw "Test-Reclaim11: ISO builder must copy grim_reaper.ps1"
+}
+if ($launchSrc -notmatch "BtnReaper") {
+    throw "Test-Reclaim11: GUI must wire BtnReaper"
 }
 if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a ctt folder" }
 

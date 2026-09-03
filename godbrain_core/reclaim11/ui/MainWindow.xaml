@@ -97,7 +97,7 @@
       <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="YOU BETTER KNOW WTF YOU'RE DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
-          <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, TEST SELECTED / RUN SELECTED."
+          <TextBlock Text="BIOS panel. Every tick, PE gate, killing blows, Grim Reaper, TEST / RUN SELECTED."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -120,7 +120,7 @@
       <Button x:Name="BtnNoobFix" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="JUST FIX MY SH*T" FontWeight="SemiBold"/>
-          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Nuclear. Not killing blows."
+          <TextBlock Text="TEST, then Hide Xbox + telemetry. Not Grim Reaper. Not killing blows."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -170,7 +170,7 @@
       <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
       <Button x:Name="BtnTest" DockPanel.Dock="Left" Content="TEST SELECTED" MinWidth="140" Margin="8,0,8,0"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
-                 Text="TEST SELECTED is DeviceCleanupCmd -t (no mutate). RUN is live. Safe/Kill lock until WinPE."/>
+                 Text="TEST SELECTED is DeviceCleanupCmd -t (no mutate). RUN is live. Safe/Kill/Reaper lock until WinPE."/>
     </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>
@@ -188,6 +188,7 @@
           <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (restore.json)"/>
           <CheckBox x:Name="BtnNic" Content="Tune NIC  (RSS + buffers, no EEE)"/>
           <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
+          <CheckBox x:Name="BtnReaper" Content="Send Grim Reaper  (remainder + WU lock, after PE)" IsEnabled="False"/>
           <TextBlock Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
                      Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>
         </StackPanel>

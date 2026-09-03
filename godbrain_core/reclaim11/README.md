@@ -87,7 +87,8 @@ Do **not** nuke the desk. Snapshot a VM, then:
    scheduled tasks (those two folders only), and delete of
    `HKLM\SOFTWARE\Microsoft\Windows Defender` (resurrection lock). GPO
    `DisableAntiSpyware=1` stays. Not a host-wide task glob.
-   Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
+   Optional remainder: `grim_reaper.ps1` (GUI: Send Grim Reaper; boot-safe).
+   Compat name: `NuclearDefenderWipe-V6_3.ps1`.
    v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
    **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
    SYSTEM under `System32`. After 26H1 it also Grim-Reapers WU resurrection:
@@ -97,7 +98,7 @@ Do **not** nuke the desk. Snapshot a VM, then:
    Never stub `usosvc.dll` / `wuaueng.dll` / `WaaSMedicSvc.dll`. Never
    bits / DoSvc / TrustedInstaller. Not killing-blows pack A (so 26H1
    via Windows Update still works *before* Nuclear). Check:
-   `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`. Not this desk.
+   `pwsh -File grim_reaper.ps1 -SelfTest`. Not this desk.
 
 7. Physical USB is a **separate** script (ISO builder stays `/ISO` only):
 

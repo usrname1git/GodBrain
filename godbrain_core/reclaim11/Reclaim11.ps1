@@ -123,6 +123,23 @@ try {
 
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
+function Invoke-Reclaim11GrimReaperCli {
+    param([switch]$WhatIf)
+    $script = Join-Path $here "grim_reaper.ps1"
+    if (-not (Test-Path -LiteralPath $script)) {
+        throw "Reclaim11: missing grim_reaper.ps1"
+    }
+    $pwsh = Join-Path $PSHOME "pwsh.exe"
+    if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
+    $arg = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script)
+    if ($WhatIf) { $arg += "-T" }
+    $out = & $pwsh @arg 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw ("grim_reaper exit {0}`n{1}" -f $LASTEXITCODE, $out)
+    }
+    $out
+}
+
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
@@ -130,6 +147,7 @@ $btnXbox = Get-Ui BtnXbox
 $btnTelemetry = Get-Ui BtnTelemetry
 $btnNic = Get-Ui BtnNic
 $btnKill = Get-Ui BtnKill
+$btnReaper = Get-Ui BtnReaper
 $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
@@ -192,6 +210,8 @@ function Show-Inventory($inv) {
     $btnTelemetry.IsEnabled = $true
     $btnKill.IsEnabled = $pe
     if (-not $pe) { $btnKill.IsChecked = $false }
+    $btnReaper.IsEnabled = $pe
+    if (-not $pe) { $btnReaper.IsChecked = $false }
     $btnNoobSafe.IsEnabled = $pe
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
@@ -211,7 +231,7 @@ function Show-Inventory($inv) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
     Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
-    Add-Log "scan is read-only. Safe cleanse / killing blows mutate only after a WinPE receipt, not on IoTEnterpriseS."
+    Add-Log "scan is read-only. Safe / killing blows / Grim Reaper mutate only after a WinPE receipt, not on IoTEnterpriseS."
 }
 
 $btnScan.Add_Click({
@@ -236,22 +256,27 @@ $btnRun.Add_Click({
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+        $doReaper = [bool]$btnReaper.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
         if ($script:LastInventory -and $script:LastInventory.gates) {
             $unlocked = [bool]$script:LastInventory.gates.killing_blows
         }
-        if (($doSafe -or $doKill) -and -not $unlocked) {
+        if (($doSafe -or $doKill -or $doReaper) -and -not $unlocked) {
             [System.Windows.MessageBox]::Show(
-                "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
+                "Safe cleanse / killing blows / Grim Reaper stay locked until a WinPE receipt exists.",
                 "Reclaim11") | Out-Null
             return
         }
+        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?"
+        if ($doReaper) {
+            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Never BFE. Desk refused. Continue?"
+        }
         $q = [System.Windows.MessageBox]::Show(
-            "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+            $warn,
             "Reclaim11 RUN SELECTED",
             "YesNo",
             "Warning")
@@ -312,6 +337,16 @@ $btnRun.Add_Click({
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
             }
         }
+        if ($doReaper) {
+            try {
+                $out = Invoke-Reclaim11GrimReaperCli
+                Add-Log $out.TrimEnd()
+                Add-Log "grim reaper done"
+            } catch {
+                Add-Log ("GRIM FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Grim Reaper") | Out-Null
+            }
+        }
     } finally {
         $script:ProcessRunning = $false
         $btnRun.IsEnabled = $true
@@ -332,8 +367,9 @@ $btnTest.Add_Click({
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+        $doReaper = [bool]$btnReaper.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
@@ -357,6 +393,9 @@ $btnTest.Add_Click({
         if ($doKill) {
             $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
             Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
+        }
+        if ($doReaper) {
+            Add-Log (Invoke-Reclaim11GrimReaperCli -WhatIf)
         }
     } catch {
         Add-Log ("TEST FAIL  {0}" -f $_.Exception.Message)
@@ -407,7 +446,7 @@ $btnNoobTest.Add_Click({
 $btnNoobFix.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Nuclear. Desk/IoT refused. Continue?",
+        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Grim Reaper. Desk/IoT refused. Continue?",
         "Reclaim11 JUST FIX MY SH*T",
         "YesNo",
         "Warning")

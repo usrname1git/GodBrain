@@ -28,7 +28,7 @@ $winpeSrc = Join-Path $reclaim "winpe"
 $script:KitFiles = @(
     "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1",
     "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1",
-    "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1",
+    "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1",
     "nic_tune.ps1", "elevate.ps1"
 )
 
