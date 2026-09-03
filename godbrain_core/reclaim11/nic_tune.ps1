@@ -18,7 +18,8 @@ $invBoot = Join-Path $script:Reclaim11Here "inventory.ps1"
 if (Test-Path -LiteralPath $invBoot) { . $invBoot }
 
 $script:NicSkipDesc = @(
-    "*VMware*", "*VirtualBox*", "*Hyper-V*", "*vEthernet*",
+    "*VMnet*", "*Virtual Ethernet Adapter for VMnet*",
+    "*VirtualBox Host-Only*", "*Hyper-V*", "*vEthernet*",
     "*Tailscale*", "*WireGuard*", "*Bluetooth*", "*WAN Miniport*",
     "*Kernel Debug*", "*Npcap*", "*TAP-*"
 )

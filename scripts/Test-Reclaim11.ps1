@@ -496,6 +496,10 @@ if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set w
 if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
 
 . (Join-Path $root "nic_tune.ps1")
+$vmx = [pscustomobject]@{ Name = "Ethernet0"; InterfaceDescription = "vmxnet3 Ethernet Adapter"; PhysicalMediaType = "802.3"; Status = "Up" }
+if (Test-Reclaim11NicSkipAdapter -Adapter $vmx) { throw "Test-Reclaim11: must tune guest vmxnet3" }
+$vmnet = [pscustomobject]@{ Name = "VMware Network Adapter VMnet8"; InterfaceDescription = "VMware Virtual Ethernet Adapter for VMnet8"; PhysicalMediaType = "802.3"; Status = "Up" }
+if (-not (Test-Reclaim11NicSkipAdapter -Adapter $vmnet)) { throw "Test-Reclaim11: must skip host VMnet" }
 $intelProps = @(
     [pscustomobject]@{ DisplayName = "Energy Efficient Ethernet"; RegistryKeyword = "*EEE"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") },
     [pscustomobject]@{ DisplayName = "Receive Side Scaling"; RegistryKeyword = "*RSS"; RegistryValue = @("0"); ValidRegistryValues = @("0", "1") },
