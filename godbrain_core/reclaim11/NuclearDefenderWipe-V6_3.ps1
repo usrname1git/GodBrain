@@ -503,12 +503,21 @@ if ($SelfTest) {
     return
 }
 
-$invPath = Join-Path $here "inventory.ps1"
-$desk = $false
-if (Test-Path -LiteralPath $invPath) {
-    . $invPath
-    $desk = Test-Reclaim11DeskHost
-    if ($desk -and -not $WhatIf) {
+function Test-Reclaim11NuclearDeskHost {
+    # Inline EditionID. Do not dotsource inventory.ps1 (StrictMode/Stop).
+    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
+    if (-not $n) { return $null }
+    $prop = $n.PSObject.Properties["EditionID"]
+    if (-not $prop) { return $null }
+    [string]$prop.Value -eq "IoTEnterpriseS"
+}
+
+$desk = Test-Reclaim11NuclearDeskHost
+if (-not $WhatIf) {
+    if ($null -eq $desk) {
+        throw "Refuse: cannot read EditionID (needed to refuse desk)"
+    }
+    if ($desk) {
         throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
     }
 }
@@ -534,15 +543,21 @@ if ($WhatIf) {
     }
     Write-Host "  would IFEO UsoCoreWorker.exe / MoUsoCoreWorker.exe / WaaSMedicAgent.exe"
     Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
-    if ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
+    if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
+    elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
     else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
     return
 }
 
 $el = Join-Path $here "elevate.ps1"
 if (Test-Path -LiteralPath $el) {
-    . $el
-    $hop = Invoke-Reclaim11AsTrustedInstaller -File $PSCommandPath -TimeoutSec 300
+    $pay = $PSCommandPath
+    if ([string]::IsNullOrWhiteSpace($pay)) { $pay = $MyInvocation.MyCommand.Path }
+    # Child scope so elevate.ps1 StrictMode/Stop does not infect this wipe.
+    $hop = & {
+        . $el
+        Invoke-Reclaim11AsTrustedInstaller -File $pay -TimeoutSec 300
+    }
     if (-not $hop.continue) {
         if ($hop.output) { Write-Host $hop.output }
         if ([int]$hop.exit_code -ne 0) {

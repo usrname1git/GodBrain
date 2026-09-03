@@ -13,6 +13,6 @@ if ($WhatIf) {
     Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
 }
 $plan | ConvertTo-Json -Depth 6
-if (-not $WhatIf) {
+if ((-not $WhatIf) -and $env:RECLAIM11_AS_TI -ne "1") {
     Write-Host ("applied {0}" -f @($plan.applied).Count)
 }

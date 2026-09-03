@@ -564,8 +564,13 @@ function Restore-Reclaim11XboxBackup {
         $start = "demand"
         if ([int]$s.start -eq 2) { $start = "auto" }
         if ([int]$s.start -eq 4) { $start = "disabled" }
-        & sc.exe create $name binPath= $bin start= $start | Out-Null
-        $restored += ("service:" + $name)
+        # sc.exe splits unquoted binPath= on -k (svchost ImagePath).
+        $escName = $name.Replace('"', '""')
+        $escBin = $bin.Replace('"', '""')
+        cmd.exe /c "sc.exe create `"$escName`" binPath= `"$escBin`" start= $start" | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $restored += ("service:" + $name)
+        }
     }
 
     foreach ($a in @($m.appx)) {

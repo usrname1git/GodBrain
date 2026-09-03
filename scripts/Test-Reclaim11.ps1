@@ -392,6 +392,12 @@ $kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -En
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
 $nukeSrc = Get-Content -LiteralPath (Join-Path $root "NuclearDefenderWipe-V6_3.ps1") -Raw -Encoding UTF8
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
+if ($nukeSrc -match '\.\s+\$invPath') {
+    throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
+}
+if ($nukeSrc -notmatch '(?s)& \{\s*\.\s+\$el') {
+    throw "Test-Reclaim11: Nuclear TI hop must dotsource elevate.ps1 in a child scope"
+}
 foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe")) {
     if ($nukeSrc -notmatch [regex]::Escape($wu)) {
         throw "Test-Reclaim11: Nuclear remainder must name WU $wu"
@@ -447,6 +453,16 @@ if ($hid3 -notmatch "^hide:gaming-gamebar;gaming-gamedvr;gaming-captures$") {
 }
 if ($xbSrc -notmatch '(?s)if \(\$KeepCaptures\).*gaming-gamedvr') {
     throw "Test-Reclaim11: KeepCaptures must skip gaming-gamedvr (Captures page), not only gaming-captures"
+}
+if ($xbSrc -match '& sc\.exe create \$name binPath= \$bin') {
+    throw "Test-Reclaim11: xbox restore must quote sc create binPath= (svchost -k)"
+}
+if ($xbSrc -notmatch 'LASTEXITCODE -eq 0') {
+    throw "Test-Reclaim11: xbox restore must only count sc create exit 0"
+}
+$applyKill = Get-Content -LiteralPath (Join-Path $root "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
+if ($applyKill -notmatch 'RECLAIM11_AS_TI') {
+    throw "Test-Reclaim11: Apply-KillingBlows must omit Write-Host on TI stdout"
 }
 try {
     Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamemode") | Out-Null
