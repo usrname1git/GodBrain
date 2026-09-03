@@ -37,7 +37,6 @@ $WipeVersion = "6.3"
 
 Write-Host ("=== FINAL NUCLEAR WIPE v{0} (boot-safe) ===" -f $WipeVersion) -ForegroundColor Red
 
-$StubPath = "C:\Tools\DefenderStub.exe"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($here)) { $here = $PWD.Path }
 
@@ -191,6 +190,18 @@ function Test-PeMz([string]$Path) {
         $fs.Close()
     }
 }
+
+function Get-WipeStubPath {
+    $cands = @(
+        (Join-Path $env:SystemRoot "reclaim11-stub.exe"),
+        "C:\Reclaim11\reclaim11-stub.exe"
+    )
+    foreach ($c in $cands) {
+        if (Test-PeMz $c) { return $c }
+    }
+    "C:\Reclaim11\reclaim11-stub.exe"
+}
+$StubPath = Get-WipeStubPath
 
 function Get-WipeSecureBootOn {
     try {
@@ -604,7 +615,7 @@ if (Test-Path -LiteralPath $el) {
 Write-Host "Deletes named drivers. Stubs usermode Defender trees. Never CIPolicies. Never stub .sys." -ForegroundColor Yellow
 
 if (-not (Test-PeMz $StubPath)) {
-    throw "DefenderStub.exe is missing or not a PE (MZ). Build C:\Tools\DefenderStub.c with cl /ENTRY:mainCRTStartup /SUBSYSTEM:WINDOWS /NODEFAULTLIB kernel32.lib. Do not copy DefenderStub.cmd to .exe."
+    throw "reclaim11-stub.exe is missing or not a PE (MZ). PREP MEDIA compiles it to C:\Reclaim11\reclaim11-stub.exe. PE also drops %SystemRoot%\reclaim11-stub.exe. Do not copy a .cmd to .exe."
 }
 
 $log = Join-Path $here ("FINAL NUCLEAR WIPE v{0}.txt" -f $WipeVersion)

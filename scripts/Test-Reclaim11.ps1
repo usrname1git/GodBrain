@@ -22,6 +22,9 @@ $cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
 if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
     throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
 }
+if ($cmdSrc -notmatch 'WindowStyle Hidden') {
+    throw "Test-Reclaim11: Reclaim11.cmd must hide the PowerShell console"
+}
 if ($cmdSrc -match 'where pwsh') {
     throw "Test-Reclaim11: Reclaim11.cmd must not where pwsh (WindowsApps stub)"
 }
@@ -47,6 +50,9 @@ if ($xamlSrc -notmatch "MUST") {
 if ($xamlSrc -notmatch "bloat only") {
     throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
+if ($xamlSrc -match "Never BFE") {
+    throw "Test-Reclaim11: door copy must not say Never BFE"
+}
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
@@ -54,6 +60,9 @@ if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
 }
 if ($launchSrc -notmatch '-Verb RunAs') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
+}
+if ($launchSrc -notmatch '-WindowStyle Hidden') {
+    throw "Test-Reclaim11: UAC relaunch must hide the PowerShell console"
 }
 if ($launchSrc -match 'Get-Command pwsh') {
     throw "Test-Reclaim11: UAC/Grim must not Get-Command pwsh (WindowsApps stub)"
@@ -85,6 +94,27 @@ if ($launchSrc -notmatch 'Reclaim11-WinPE-v9\.iso') {
 if ($launchSrc -match 'Sort-Object LastWriteTime') {
     throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8 over v9"
 }
+$prepAt = $launchSrc.IndexOf('$btnPrep.Add_Click')
+$prepEnd = $launchSrc.IndexOf('$window.Add_MouseLeftButtonDown')
+if ($prepAt -lt 0 -or $prepEnd -le $prepAt) {
+    throw "Test-Reclaim11: BtnPrep click missing"
+}
+$prepSrc = $launchSrc.Substring($prepAt, $prepEnd - $prepAt)
+if ($prepSrc -notmatch 'Start-Process') {
+    throw "Test-Reclaim11: PREP MEDIA must Start-Process the ISO builder"
+}
+if ($prepSrc -notmatch 'New-Reclaim11WinPeIso\.ps1') {
+    throw "Test-Reclaim11: PREP MEDIA must run New-Reclaim11WinPeIso.ps1"
+}
+if ($prepSrc -notmatch 'ExitCode') {
+    throw "Test-Reclaim11: PREP MEDIA must use process ExitCode"
+}
+if ($prepSrc -notmatch 'ProcessRunning') {
+    throw "Test-Reclaim11: PREP MEDIA must lock while building"
+}
+if ($xamlSrc -match 'x:Name="BtnPrep"[^>]*IsEnabled="False"') {
+    throw "Test-Reclaim11: PREP MEDIA must be enabled without SCAN"
+}
 $testAt = $launchSrc.IndexOf('if ($Test)')
 $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
 if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
@@ -111,6 +141,9 @@ if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
 if ([string]$cat.kit_version -ne "9") { throw "Test-Reclaim11: catalog kit_version 9" }
+if ([string]$cat.stub_exe -ne "C:\Reclaim11\reclaim11-stub.exe") {
+    throw "Test-Reclaim11: catalog stub_exe must be C:\Reclaim11\reclaim11-stub.exe"
+}
 if ($cat.pack -ne "A") { throw "Test-Reclaim11: pack A" }
 if ($cat.trust -ne "candidate" -or $cat.auto_verify -ne "never") {
     throw "Test-Reclaim11: catalog must stay candidate"
@@ -170,8 +203,8 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
 }
-if ($readme -notmatch 'Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: README must name the v9 ISO"
+if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
 }
 if ($readme -match 'attach \*\*v7\*\*') {
     throw "Test-Reclaim11: README must attach v9, not leftover v7"
@@ -179,8 +212,14 @@ if ($readme -match 'attach \*\*v7\*\*') {
 if ($readme -notmatch 'attach \*\*v9\*\*') {
     throw "Test-Reclaim11: README step 4 must attach v9"
 }
-if ($readme -notmatch '-OutIso C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: README ISO build must pass -OutIso v9"
+if ($readme -match 'C:\\nvme') {
+    throw "Test-Reclaim11: README must not name a host nvme path"
+}
+if ($readme -notmatch 'Recommended') {
+    throw "Test-Reclaim11: README must recommend VM or TEST first"
+}
+if ($readme -match 'W11_STORAGE|One WPF window|auto-crown|Never BFE') {
+    throw "Test-Reclaim11: README must not carry host-specific or Never-BFE slogan copy"
 }
 foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
@@ -308,6 +347,20 @@ foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
+$nukeSrc = Get-Content -LiteralPath $nukeSelf -Raw -Encoding UTF8
+if ($nukeSrc -match '\$StubPath\s*=\s*"C:\\Tools\\DefenderStub\.exe"') {
+    throw "Test-Reclaim11: grim_reaper must not hardcode C:\Tools\DefenderStub.exe"
+}
+if ($nukeSrc -notmatch 'C:\\Reclaim11\\reclaim11-stub\.exe') {
+    throw "Test-Reclaim11: grim_reaper must look for C:\Reclaim11\reclaim11-stub.exe"
+}
+if ($nukeSrc -notmatch 'SystemRoot.*reclaim11-stub\.exe') {
+    throw "Test-Reclaim11: grim_reaper must accept %SystemRoot%\reclaim11-stub.exe"
+}
+$killSrc = Get-Content -LiteralPath (Join-Path $ps1 "killing_blows.ps1") -Raw -Encoding UTF8
+if ($killSrc -notmatch 'C:\\Reclaim11\\reclaim11-stub\.exe') {
+    throw "Test-Reclaim11: killing blows must look for C:\Reclaim11\reclaim11-stub.exe"
+}
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
 if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
 if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
@@ -318,12 +371,26 @@ if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing Ne
 $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
-if ($isoSrc -notmatch 'OutIso = "C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso"') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be v9"
+if ($isoSrc -match 'C:\\nvme') {
+    throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
+}
+if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
+}
+if ($launchSrc -match 'C:\\nvme') {
+    throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"
 }
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
 if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
     throw "Test-Reclaim11: ISO builder must resolve a standalone kit zip"
+}
+if ($isoSrc -notmatch "Get-Reclaim11IsoStub") {
+    throw "Test-Reclaim11: ISO builder must use Get-Reclaim11IsoStub"
+}
+$kitResolvePath = Join-Path $RepoRoot "scripts\Resolve-Reclaim11Kit.ps1"
+$kitResolveSrc = Get-Content -LiteralPath $kitResolvePath -Raw -Encoding UTF8
+if ($kitResolveSrc -notmatch "function Get-Reclaim11IsoStub") {
+    throw "Test-Reclaim11: Resolve-Reclaim11Kit must compile stub.c"
 }
 $usbBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeUsb.ps1"
 if (-not (Test-Path -LiteralPath $usbBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeUsb.ps1" }
@@ -331,8 +398,11 @@ $usbSrc = Get-Content -LiteralPath $usbBuild -Raw -Encoding UTF8
 if ($usbSrc -notmatch "/UFD") { throw "Test-Reclaim11: USB writer is the /UFD door" }
 if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must cap stick size" }
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
-if ($usbSrc -notmatch "M1ABRAMS") { throw "Test-Reclaim11: USB writer must warn not to boot the desk" }
+if ($usbSrc -notmatch "VM") { throw "Test-Reclaim11: USB writer must warn to boot in a VM" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
+if ($usbSrc -notmatch "Get-Reclaim11IsoStub") {
+    throw "Test-Reclaim11: USB writer must compile stub via Get-Reclaim11IsoStub"
+}
 
 $zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"
 if (-not (Test-Path -LiteralPath $zipBuild)) { throw "Test-Reclaim11: missing New-Reclaim11KitZip.ps1" }

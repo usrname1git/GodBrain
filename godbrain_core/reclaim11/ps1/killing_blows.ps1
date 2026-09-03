@@ -51,6 +51,7 @@ function Get-Reclaim11KillingStub {
     param($Catalog)
     $cands = @(
         (Join-Path $env:SystemRoot "reclaim11-stub.exe"),
+        "C:\Reclaim11\reclaim11-stub.exe",
         [string]$Catalog.stub_exe,
         (Join-Path ${env:ProgramFiles} "Windows Defender\MsMpEng.exe")
     )

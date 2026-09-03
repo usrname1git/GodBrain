@@ -17,5 +17,5 @@ if not exist "%PWSH%" (
   echo Reclaim11.cmd: no PowerShell found
   exit /b 1
 )
-"%PWSH%" -STA -NoProfile -ExecutionPolicy Bypass -File "%GUI%"
-exit /b %ERRORLEVEL%
+start "" "%PWSH%" -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%GUI%"
+exit /b 0
