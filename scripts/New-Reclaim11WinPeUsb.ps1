@@ -1,7 +1,6 @@
 # Write Reclaim11 WinPE to a small USB stick. Separate from the ISO builder
 # (that script must never /UFD). Never the boot NVMe. Never a USB HDD.
-# Do not boot this stick on the IoT desk (M1ABRAMS). VM passthrough or
-# another box. ADK DISM only against copype boot.wim, never the host OS.
+# VM passthrough or another box. ADK DISM only against copype boot.wim, never the host OS.
 
 [CmdletBinding()]
 param(
@@ -11,8 +10,8 @@ param(
     [switch]$Go,
     [switch]$RefreshPayload,
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$WorkDir = "C:\nvme\reclaim11\winpe-work",
-    [string]$StubPath = "C:\Tools\DefenderStub.exe"
+    [string]$WorkDir = $(Join-Path $env:LOCALAPPDATA "Reclaim11\winpe-work"),
+    [string]$StubPath = $(Join-Path $env:LOCALAPPDATA "Reclaim11\reclaim11-stub.exe")
 )
 
 Set-StrictMode -Version Latest
@@ -120,7 +119,7 @@ $plan = [pscustomobject]@{
     wim        = $wim
     candidates = $cands
     legal      = @($ok | ForEach-Object { $_.number })
-    note       = "Never boot this stick on M1ABRAMS. Disk 0 / >32GiB USB HDD refused. ISO builder stays /ISO only."
+    note       = "Disk 0 / >32GiB USB HDD refused. ISO builder stays /ISO only. Boot in a VM or another PC."
 }
 
 if ($WhatIf -or -not $Go) {
@@ -192,7 +191,7 @@ if ($doRefresh) {
 }
 
 Write-Host ("MakeWinPEMedia /UFD /F disk {0} {1}:  ({2})" -f $DiskNumber, $destLetter, $target.name)
-Write-Host "This FORMATS the stick. Not disk 0. Not M1ABRAMS boot."
+Write-Host "This FORMATS the stick. Not disk 0. Boot in a VM or another PC."
 $makeLine = 'call "{0}" && call "{1}" /UFD /F "{2}" {3}:' -f $adk.envbat, $adk.make, $WorkDir, $destLetter
 $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $makeLine) -Wait -PassThru -NoNewWindow
 if ($p.ExitCode -ne 0) { throw "New-Reclaim11WinPeUsb: MakeWinPEMedia /UFD exit $($p.ExitCode)" }
@@ -225,4 +224,4 @@ Copy-Item -LiteralPath $stub -Destination (Join-Path $kitDest "DefenderStub.exe"
     kit         = $kitDest
     note        = "First boot: PE pack-A delete. Reboot. Double-click E:\reclaim11\Reclaim11.cmd (Grim Reaper) in the VM, not this desk."
 } | ConvertTo-Json -Depth 5
-Write-Host "USB ready. Do not boot it on M1ABRAMS."
+Write-Host "USB ready. Boot in a VM or another PC."

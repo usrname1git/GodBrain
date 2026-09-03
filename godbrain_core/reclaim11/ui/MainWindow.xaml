@@ -111,7 +111,7 @@
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
         <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
-                   Text="Noob door. Bloat only (Xbox, telemetry). Defender needs a WinPE ISO you build and boot. Desk/IoT refused."/>
+                   Text="Noob door. Bloat only (Xbox, telemetry). Defender needs a WinPE ISO you build and boot."/>
       </StackPanel>
     </DockPanel>
     <TextBox x:Name="NoobLog" DockPanel.Dock="Bottom" Height="180" Margin="0,12,0,0"

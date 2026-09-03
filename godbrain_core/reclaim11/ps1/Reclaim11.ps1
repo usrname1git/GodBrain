@@ -85,13 +85,13 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 if ($sta -ne "STA" -or -not $admin) {
     $pwsh = Get-Reclaim11Pwsh
     $arg = @(
-        "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
+        "-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
     if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
     if (-not $admin) {
-        Start-Process -FilePath $pwsh -ArgumentList $arg -Verb RunAs
+        Start-Process -FilePath $pwsh -ArgumentList $arg -Verb RunAs -WindowStyle Hidden
     } else {
-        Start-Process -FilePath $pwsh -ArgumentList $arg
+        Start-Process -FilePath $pwsh -ArgumentList $arg -WindowStyle Hidden
     }
     return
 }
@@ -254,7 +254,7 @@ function Show-Inventory($inv) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
     Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
-    Add-Log "scan is read-only. MUST boot a WinPE ISO for Defender. No receipt = bloat only. Safe / killing blows / Grim Reaper stay locked, not on IoTEnterpriseS."
+    Add-Log "scan is read-only. MUST boot a WinPE ISO for Defender. No receipt = bloat only. Safe / killing blows / Grim Reaper stay locked."
 }
 
 $btnScan.Add_Click({
@@ -566,7 +566,7 @@ $btnPrep.Add_Click({
             "Reclaim11 prep media") | Out-Null
         return
     }
-    $isoDir = "C:\nvme\reclaim11"
+    $isoDir = Join-Path $env:LOCALAPPDATA "Reclaim11"
     $want = Join-Path $isoDir "Reclaim11-WinPE-v9.iso"
     $iso = $want
     foreach ($n in @("Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {

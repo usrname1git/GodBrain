@@ -22,6 +22,9 @@ $cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
 if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
     throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
 }
+if ($cmdSrc -notmatch 'WindowStyle Hidden') {
+    throw "Test-Reclaim11: Reclaim11.cmd must hide the PowerShell console"
+}
 if ($cmdSrc -match 'where pwsh') {
     throw "Test-Reclaim11: Reclaim11.cmd must not where pwsh (WindowsApps stub)"
 }
@@ -57,6 +60,9 @@ if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
 }
 if ($launchSrc -notmatch '-Verb RunAs') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
+}
+if ($launchSrc -notmatch '-WindowStyle Hidden') {
+    throw "Test-Reclaim11: UAC relaunch must hide the PowerShell console"
 }
 if ($launchSrc -match 'Get-Command pwsh') {
     throw "Test-Reclaim11: UAC/Grim must not Get-Command pwsh (WindowsApps stub)"
@@ -182,8 +188,8 @@ if ($readme -match 'attach \*\*v7\*\*') {
 if ($readme -notmatch 'attach \*\*v9\*\*') {
     throw "Test-Reclaim11: README step 4 must attach v9"
 }
-if ($readme -notmatch '-OutIso C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: README ISO build must pass -OutIso v9"
+if ($readme -match 'C:\\nvme') {
+    throw "Test-Reclaim11: README must not name a host nvme path"
 }
 if ($readme -notmatch 'Recommended') {
     throw "Test-Reclaim11: README must recommend VM or TEST first"
@@ -327,8 +333,14 @@ if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing Ne
 $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
-if ($isoSrc -notmatch 'OutIso = "C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso"') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be v9"
+if ($isoSrc -match 'C:\\nvme') {
+    throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
+}
+if ($isoSrc -notmatch 'LOCALAPPDATA') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be under LocalAppData"
+}
+if ($launchSrc -match 'C:\\nvme') {
+    throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"
 }
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
 if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
@@ -340,7 +352,7 @@ $usbSrc = Get-Content -LiteralPath $usbBuild -Raw -Encoding UTF8
 if ($usbSrc -notmatch "/UFD") { throw "Test-Reclaim11: USB writer is the /UFD door" }
 if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must cap stick size" }
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
-if ($usbSrc -notmatch "M1ABRAMS") { throw "Test-Reclaim11: USB writer must warn not to boot the desk" }
+if ($usbSrc -notmatch "VM") { throw "Test-Reclaim11: USB writer must warn to boot in a VM" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
 
 $zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"

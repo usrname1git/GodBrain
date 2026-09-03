@@ -38,7 +38,7 @@ Recommended. Photos, Calculator, Store, Notepad stay.
 
 - Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
-- Killing blows unlock only after a WinPE receipt. Desk SKU (`IoTEnterpriseS`) is refused.
+- Killing blows unlock only after a WinPE receipt. Some Windows SKUs are refused.
 
 ### Two PE profiles
 
@@ -54,10 +54,10 @@ Recommended. Photos, Calculator, Store, Notepad stay.
 ADK + WinPE addon **10.1.26100.2454**, not ADK 28000.
 
 ```text
-pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1 -OutIso C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso
+pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 ```
 
-Output: `C:\nvme\reclaim11\Reclaim11-WinPE-v9.iso` (outside git).
+Output: `%LOCALAPPDATA%\Reclaim11\Reclaim11-WinPE-v9.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 
 Snapshot, attach **v9**. PE **deletes** catalog
