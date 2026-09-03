@@ -8,13 +8,44 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
 
 $root = Join-Path $RepoRoot "godbrain_core\reclaim11"
+$ps1 = Join-Path $root "ps1"
 $catPath = Join-Path $root "catalog.json"
 $xamlPath = Join-Path $root "ui\MainWindow.xaml"
-$invPath = Join-Path $root "inventory.ps1"
-$launch = Join-Path $root "Reclaim11.ps1"
+$invPath = Join-Path $ps1 "inventory.ps1"
+$launch = Join-Path $ps1 "Reclaim11.ps1"
+$cmdPath = Join-Path $root "Reclaim11.cmd"
 
-foreach ($p in @($catPath, $xamlPath, $invPath, $launch)) {
+foreach ($p in @($catPath, $xamlPath, $invPath, $launch, $cmdPath)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Test-Reclaim11: missing $p" }
+}
+$cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
+if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
+    throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
+}
+if ($cmdSrc -match 'where pwsh') {
+    throw "Test-Reclaim11: Reclaim11.cmd must not where pwsh (WindowsApps stub)"
+}
+if ($cmdSrc -match 'irm |Invoke-Expression') {
+    throw "Test-Reclaim11: Reclaim11.cmd must not irm/iex"
+}
+$xamlSrc = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
+if ($xamlSrc -match 'Chris-style|christitus') {
+    throw "Test-Reclaim11: door copy must not mention CTT"
+}
+if ($xamlSrc -notmatch "Grim Reaper") {
+    throw "Test-Reclaim11: door must say Grim Reaper"
+}
+if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
+    throw "Test-Reclaim11: expert door must warn WTF"
+}
+if ($xamlSrc -notmatch "Send Grim Reaper") {
+    throw "Test-Reclaim11: expert ACTIONS must tick Send Grim Reaper"
+}
+if ($xamlSrc -notmatch "MUST") {
+    throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
+}
+if ($xamlSrc -notmatch "bloat only") {
+    throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
 
 $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
@@ -24,6 +55,12 @@ if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
 if ($launchSrc -notmatch '-Verb RunAs') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
 }
+if ($launchSrc -match 'Get-Command pwsh') {
+    throw "Test-Reclaim11: UAC/Grim must not Get-Command pwsh (WindowsApps stub)"
+}
+if ($launchSrc -notmatch 'Get-Reclaim11Pwsh') {
+    throw "Test-Reclaim11: UAC/Grim must use Get-Reclaim11Pwsh"
+}
 $testAt = $launchSrc.IndexOf('if ($Test)')
 $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
 if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
@@ -31,6 +68,9 @@ if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
 }
 if ($launchSrc -notmatch 'Start-Transcript') {
     throw "Test-Reclaim11: GUI path must transcript"
+}
+if ($launchSrc -notmatch '(?s)killing blows applied.*manifest') {
+    throw "Test-Reclaim11: GUI must log killing-blows restore.json path"
 }
 if ($launchSrc -notmatch 'ProcessRunning') {
     throw "Test-Reclaim11: GUI path must lock RUN SELECTED"
@@ -46,6 +86,7 @@ if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
 
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
+if ([string]$cat.kit_version -ne "9") { throw "Test-Reclaim11: catalog kit_version 9" }
 if ($cat.pack -ne "A") { throw "Test-Reclaim11: pack A" }
 if ($cat.trust -ne "candidate" -or $cat.auto_verify -ne "never") {
     throw "Test-Reclaim11: catalog must stay candidate"
@@ -61,8 +102,55 @@ if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
 }
 if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
 if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
+$bloat = @($cat.appx_bloat)
+foreach ($need in @("Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp", "Microsoft.BingWeather", "Microsoft.Todos", "MicrosoftCorporationII.QuickAssist", "Microsoft.BingNews")) {
+    if ($bloat -notcontains $need) { throw "Test-Reclaim11: appx_bloat missing $need" }
+}
+$keepAppx = @($cat.never_touch_appx)
+foreach ($need in @("Microsoft.XboxGameCallableUI", "Microsoft.WindowsStore", "Microsoft.WindowsCalculator", "Microsoft.Windows.Photos", "Microsoft.WindowsNotepad")) {
+    if ($keepAppx -notcontains $need) { throw "Test-Reclaim11: never_touch_appx missing $need" }
+}
+if (@($bloat + $keepAppx | Where-Object { $_ -match '\*' }).Count -gt 0) {
+    throw "Test-Reclaim11: Appx catalog must be named, not a wildcard"
+}
+foreach ($n in $bloat) {
+    if ($keepAppx -contains $n) { throw "Test-Reclaim11: appx_bloat hits never-touch $n" }
+}
 
 . $invPath
+
+$elFound = Resolve-Reclaim11Worker -Name "elevate.ps1" -Root $root
+if ($elFound -notmatch '(?i)\\ps1\\elevate\.ps1$') {
+    throw "Test-Reclaim11: kit-root must resolve ps1\elevate.ps1, got $elFound"
+}
+$doorFound = Resolve-Reclaim11Worker -Name "Apply-KillingBlows.ps1" -Root $root
+if ($doorFound -notmatch '(?i)\\ps1\\Apply-KillingBlows\.ps1$') {
+    throw "Test-Reclaim11: kit-root must resolve ps1\Apply-KillingBlows.ps1, got $doorFound"
+}
+$hostPwsh = Get-Reclaim11Pwsh
+if ($hostPwsh -match 'WindowsApps') {
+    throw "Test-Reclaim11: Get-Reclaim11Pwsh must skip WindowsApps"
+}
+
+$readmePath = Join-Path $root "README.md"
+$readme = Get-Content -LiteralPath $readmePath -Raw -Encoding UTF8
+if ($readme -match '(?m)^# Reclaim11 \(not Heal') {
+    throw "Test-Reclaim11: README heading must not say (not Heal, not Galaxy)"
+}
+if ($readme -match 'Heal never launches this') {
+    throw "Test-Reclaim11: README Rails must not mention Heal never launches"
+}
+if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
+    throw "Test-Reclaim11: README must say MUST boot WinPE or bloat only"
+}
+if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
+    throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
+}
+foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
+        throw "Test-Reclaim11: missing ui\$shot"
+    }
+}
 
 $sbOn = [pscustomobject]@{
     secure_boot    = [pscustomobject]@{ enabled = $true; available = $true }
@@ -107,6 +195,7 @@ Add-Type -AssemblyName PresentationFramework
 if (-not `$w.FindName('BtnScan')) { throw 'no BtnScan' }
 if (-not `$w.FindName('BtnPrep')) { throw 'no BtnPrep' }
 if (-not `$w.FindName('BtnKill')) { throw 'no BtnKill' }
+if (-not `$w.FindName('BtnReaper')) { throw 'no BtnReaper' }
 if (-not `$w.FindName('BtnSafe')) { throw 'no BtnSafe' }
 if (-not `$w.FindName('BtnXbox')) { throw 'no BtnXbox' }
 if (-not `$w.FindName('BtnRun')) { throw 'no BtnRun' }
@@ -179,10 +268,10 @@ $winpe = Join-Path $root "winpe"
 foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
-    if (-not (Test-Path -LiteralPath (Join-Path $root $need))) { throw "Test-Reclaim11: missing $need" }
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
-$nukeSelf = Join-Path $root "NuclearDefenderWipe-V6_3.ps1"
+$nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
 if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
 if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
@@ -194,6 +283,9 @@ $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
+if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
+    throw "Test-Reclaim11: ISO builder must resolve a standalone kit zip"
+}
 $usbBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeUsb.ps1"
 if (-not (Test-Path -LiteralPath $usbBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeUsb.ps1" }
 $usbSrc = Get-Content -LiteralPath $usbBuild -Raw -Encoding UTF8
@@ -202,6 +294,43 @@ if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must ca
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
 if ($usbSrc -notmatch "M1ABRAMS") { throw "Test-Reclaim11: USB writer must warn not to boot the desk" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
+
+$zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"
+if (-not (Test-Path -LiteralPath $zipBuild)) { throw "Test-Reclaim11: missing New-Reclaim11KitZip.ps1" }
+$zipOut = Join-Path $env:TEMP "reclaim11-kit-test.zip"
+if (Test-Path -LiteralPath $zipOut) { Remove-Item -LiteralPath $zipOut -Force }
+& (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $zipBuild -OutZip $zipOut | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $zipOut)) {
+    throw "Test-Reclaim11: New-Reclaim11KitZip failed"
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
+try {
+    $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
+} finally { $zip.Dispose() }
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+    if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
+}
+if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
+    throw "Test-Reclaim11: kit zip must not include GodBrain doors"
+}
+if (-not (Test-Path -LiteralPath ($zipOut + ".sha256"))) {
+    throw "Test-Reclaim11: kit zip must write sha256"
+}
+Remove-Item -LiteralPath $zipOut, ($zipOut + ".sha256") -Force
+
+$fxKit = Join-Path $env:TEMP "reclaim11-kit-layout"
+if (Test-Path -LiteralPath $fxKit) { Remove-Item -LiteralPath $fxKit -Recurse -Force }
+New-Item -ItemType Directory -Path $fxKit | Out-Null
+Copy-Item -LiteralPath $catPath -Destination (Join-Path $fxKit "catalog.json") -Force
+$savedRoot = $RepoRoot
+$RepoRoot = $fxKit
+. (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
+if ($Reclaim11Root -ne ([IO.Path]::GetFullPath($fxKit))) {
+    throw "Test-Reclaim11: standalone kit layout must be catalog.json root, got $Reclaim11Root"
+}
+$RepoRoot = $savedRoot
+Remove-Item -LiteralPath $fxKit -Recurse -Force
 
 . (Join-Path $winpe "offline.ps1")
 $fx = Join-Path $env:TEMP "reclaim11-winpe-fx"
@@ -318,7 +447,7 @@ if (@($r25b.missing) -contains "WdFilter.sys") {
     throw "Test-Reclaim11: existing .bak must count as parked, not missing"
 }
 
-. (Join-Path $root "noob_cleanse.ps1")
+. (Join-Path $ps1 "noob_cleanse.ps1")
 $fxNoob = Join-Path $env:TEMP "reclaim11-noob-fx"
 if (Test-Path -LiteralPath $fxNoob) { Remove-Item -LiteralPath $fxNoob -Recurse -Force }
 $fxNoobWin = Join-Path $fxNoob "Windows"
@@ -359,7 +488,7 @@ try {
 }
 Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force
 
-. (Join-Path $root "killing_blows.ps1")
+. (Join-Path $ps1 "killing_blows.ps1")
 foreach ($s in @($cat.services_pack_a)) {
     if (@($cat.never_touch_services) -contains $s) {
         throw "Test-Reclaim11: pack A collides never-touch $s"
@@ -388,9 +517,9 @@ if (-not (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\Wi
 if (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\") {
     throw "Test-Reclaim11: must not match all Microsoft\Windows tasks"
 }
-$kbSrc = Get-Content -LiteralPath (Join-Path $root "killing_blows.ps1") -Raw -Encoding UTF8
+$kbSrc = Get-Content -LiteralPath (Join-Path $ps1 "killing_blows.ps1") -Raw -Encoding UTF8
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
-$nukeSrc = Get-Content -LiteralPath (Join-Path $root "NuclearDefenderWipe-V6_3.ps1") -Raw -Encoding UTF8
+$nukeSrc = Get-Content -LiteralPath (Join-Path $ps1 "grim_reaper.ps1") -Raw -Encoding UTF8
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
 if ($nukeSrc -match '\.\s+\$invPath') {
     throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
@@ -428,13 +557,13 @@ if (-not [bool]$dryKill.what_if) { throw "Test-Reclaim11: killing -T must set wh
 if ([string]$dryKill.would_refuse -notmatch "desk") { throw "Test-Reclaim11: killing -T must report desk refuse" }
 if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list would-do" }
 
-. (Join-Path $root "xbox_cleanse.ps1")
+. (Join-Path $ps1 "xbox_cleanse.ps1")
 $hid = Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamebar", "gaming-gamedvr", "gaming-trueplay", "gaming-broadcasting", "gaming-captures")
 if ($hid -notmatch "^hide:gaming-gamebar;") { throw "Test-Reclaim11: xbox hide gamebar" }
 if ($hid -notmatch ";gaming-gamedvr;") { throw "Test-Reclaim11: xbox hide gamedvr (Captures page)" }
 if ($hid -notmatch ";gaming-captures") { throw "Test-Reclaim11: xbox hide captures token" }
 if ($hid -match ";hide:") { throw "Test-Reclaim11: GPO hide: must not repeat per page" }
-$xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
+$xbSrc = Get-Content -LiteralPath (Join-Path $ps1 "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -notmatch 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer') {
     throw "Test-Reclaim11: Settings hide must write HKCU as well as HKLM"
 }
@@ -460,9 +589,19 @@ if ($xbSrc -match '& sc\.exe create \$name binPath= \$bin') {
 if ($xbSrc -notmatch 'LASTEXITCODE -eq 0') {
     throw "Test-Reclaim11: xbox restore must only count sc create exit 0"
 }
-$applyKill = Get-Content -LiteralPath (Join-Path $root "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
+$applyKill = Get-Content -LiteralPath (Join-Path $ps1 "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
 if ($applyKill -notmatch 'RECLAIM11_AS_TI') {
     throw "Test-Reclaim11: Apply-KillingBlows must omit Write-Host on TI stdout"
+}
+if ($applyKill -notmatch 'Get-Reclaim11Root') {
+    throw 'Test-Reclaim11: Apply-KillingBlows must pass kit root, not ps1\'
+}
+$applyNoob = Get-Content -LiteralPath (Join-Path $ps1 "Apply-NoobCleanse.ps1") -Raw -Encoding UTF8
+if ($applyNoob -notmatch 'Get-Reclaim11Root') {
+    throw 'Test-Reclaim11: Apply-NoobCleanse must pass kit root, not ps1\'
+}
+if ($kbSrc -notmatch 'Resolve-Reclaim11Worker') {
+    throw "Test-Reclaim11: killing blows TI hop must Resolve-Reclaim11Worker"
 }
 try {
     Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamemode") | Out-Null
@@ -488,6 +627,14 @@ if (-not [bool]$dryXbox.what_if) { throw "Test-Reclaim11: xbox -T must set what_
 if ([bool]$dryXbox.mutate) { throw "Test-Reclaim11: xbox -T must not mutate" }
 if ([string]$dryXbox.would_refuse -notmatch "desk") { throw "Test-Reclaim11: xbox -T must report desk refuse" }
 if (-not (Test-Path -LiteralPath (Join-Path $root "catalog.json"))) { throw "Test-Reclaim11: catalog vanished after xbox -T" }
+$names = @(Get-Reclaim11AppxBloatNames -Catalog $cat)
+if ($names -notcontains "Microsoft.Copilot") { throw "Test-Reclaim11: union bloat missing Copilot" }
+if ($names -notcontains "Microsoft.OutlookForWindows") { throw "Test-Reclaim11: union bloat missing new Outlook" }
+if ($names -contains "Microsoft.Windows.Photos") { throw "Test-Reclaim11: Photos must stay" }
+if ($names -contains "Microsoft.XboxGameCallableUI") { throw "Test-Reclaim11: XboxGameCallableUI must stay" }
+if ($dryXbox.PSObject.Properties["start_policy"] -and @($dryXbox.start_policy).Count -lt 1) {
+    throw "Test-Reclaim11: xbox -T must snapshot Start Recommended policy"
+}
 if ($script:XboxAppx -notcontains "Microsoft.BingNews") { throw "Test-Reclaim11: bloat list missing BingNews" }
 if ($script:XboxAppx -notcontains "Microsoft.WindowsFeedbackHub") { throw "Test-Reclaim11: bloat list missing FeedbackHub" }
 if ($script:XboxAppx -notcontains "Microsoft.GamingServices") { throw "Test-Reclaim11: bloat list missing GamingServices" }
@@ -510,7 +657,7 @@ if ($null -ne (Get-Reclaim11OptionalText -Object $bare -Name "ObjectName")) {
 if ((Get-Reclaim11OptionalDword -Object $bare -Name "Start") -ne 3) {
     throw "Test-Reclaim11: optional Start dword"
 }
-$xbSrc = Get-Content -LiteralPath (Join-Path $root "xbox_cleanse.ps1") -Raw -Encoding UTF8
+$xbSrc = Get-Content -LiteralPath (Join-Path $ps1 "xbox_cleanse.ps1") -Raw -Encoding UTF8
 if ($xbSrc -match "Invoke-Reclaim11AsTrustedInstaller") {
     throw "Test-Reclaim11: xbox_cleanse must not TI-hop (admin is enough)"
 }
@@ -536,7 +683,7 @@ try {
 }
 Remove-Item -LiteralPath $badMan, $okMan -Force
 
-. (Join-Path $root "telemetry_cleanse.ps1")
+. (Join-Path $ps1 "telemetry_cleanse.ps1")
 if (Test-Path -LiteralPath (Join-Path $root "ctt")) {
     throw "Test-Reclaim11: ctt folder must not ship"
 }
@@ -544,7 +691,7 @@ if ($script:TelemetryServices -notcontains "DiagTrack") { throw "Test-Reclaim11:
 if ($script:TelemetryServices -notcontains "dmwappushservice") { throw "Test-Reclaim11: telemetry missing dmwappushservice" }
 if ($script:TelemetryServices -contains "BFE") { throw "Test-Reclaim11: telemetry hit BFE" }
 if ($script:TelemetryServices -contains "EventLog") { throw "Test-Reclaim11: telemetry hit EventLog" }
-$telSrc = Get-Content -LiteralPath (Join-Path $root "telemetry_cleanse.ps1") -Raw -Encoding UTF8
+$telSrc = Get-Content -LiteralPath (Join-Path $ps1 "telemetry_cleanse.ps1") -Raw -Encoding UTF8
 if ($telSrc -match "WPFTweaks|christitus|Chris Titus|Set-MpPreference") {
     throw "Test-Reclaim11: telemetry_cleanse must not carry third-party tweak ids"
 }
@@ -560,7 +707,7 @@ $dryTel = Invoke-Reclaim11TelemetryCleanse -Root $root -WhatIf
 if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set what_if" }
 if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
 
-. (Join-Path $root "nic_tune.ps1")
+. (Join-Path $ps1 "nic_tune.ps1")
 $vmx = [pscustomobject]@{ Name = "Ethernet0"; InterfaceDescription = "vmxnet3 Ethernet Adapter"; PhysicalMediaType = "802.3"; Status = "Up" }
 if (Test-Reclaim11NicSkipAdapter -Adapter $vmx) { throw "Test-Reclaim11: must tune guest vmxnet3" }
 $vmnet = [pscustomobject]@{ Name = "VMware Network Adapter VMnet8"; InterfaceDescription = "VMware Virtual Ethernet Adapter for VMnet8"; PhysicalMediaType = "802.3"; Status = "Up" }
@@ -595,7 +742,7 @@ $dryNic = Invoke-Reclaim11NicTune -Root $root -WhatIf
 if (-not [bool]$dryNic.what_if) { throw "Test-Reclaim11: nic -T must set what_if" }
 if ([bool]$dryNic.mutate) { throw "Test-Reclaim11: nic -T must not mutate" }
 if ([string]$dryNic.would_refuse -notmatch "desk") { throw "Test-Reclaim11: nic -T must report desk refuse" }
-$nicSrc = Get-Content -LiteralPath (Join-Path $root "nic_tune.ps1") -Raw -Encoding UTF8
+$nicSrc = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encoding UTF8
 if ($nicSrc -match "BFE|mpssvc") {
     if ($nicSrc -notmatch "Never BFE") { throw "Test-Reclaim11: nic_tune hit BFE without never" }
 }
@@ -624,14 +771,26 @@ Remove-Item -LiteralPath $telMan, $telBad -Force
 if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy telemetry_cleanse.ps1"
 }
+if ($isoSrc -notmatch "grim_reaper\.ps1") {
+    throw "Test-Reclaim11: ISO builder must copy grim_reaper.ps1"
+}
+if ($launchSrc -notmatch "BtnReaper") {
+    throw "Test-Reclaim11: GUI must wire BtnReaper"
+}
 if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a ctt folder" }
 
-. (Join-Path $root "elevate.ps1")
-$elSrc = Get-Content -LiteralPath (Join-Path $root "elevate.ps1") -Raw -Encoding UTF8
+. (Join-Path $ps1 "elevate.ps1")
+$elSrc = Get-Content -LiteralPath (Join-Path $ps1 "elevate.ps1") -Raw -Encoding UTF8
 if ($elSrc -match "TeamM2|wsudo\.exe|MinSudo\.exe") { throw "Test-Reclaim11: elevate.ps1 must not call wsudo/MinSudo" }
 if ($elSrc -notmatch "NT SERVICE\\TrustedInstaller") { throw "Test-Reclaim11: elevate.ps1 missing TI principal" }
+if ($elSrc -match "/SD 01/01/2099") {
+    throw "Test-Reclaim11: SYSTEM hop must not use locale schtasks /SD (E_FAIL on sv-SE)"
+}
+if ($elSrc -notmatch "NT AUTHORITY\\SYSTEM") {
+    throw "Test-Reclaim11: SYSTEM hop must register via Task Scheduler COM"
+}
 if (Test-Reclaim11TrustedInstaller) { throw "Test-Reclaim11: test host should not already be TI" }
-$run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $root "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
+$run = New-Reclaim11TiRunnerScript -PayloadFile (Join-Path $ps1 "xbox_cleanse.ps1") -LogFile (Join-Path $env:TEMP "reclaim11-ti-test.log") -DoneFile (Join-Path $env:TEMP "reclaim11-ti-test.done")
 try {
     $rt = Get-Content -LiteralPath $run -Raw -Encoding UTF8
     if ($rt -notmatch "RECLAIM11_AS_TI") { throw "Test-Reclaim11: TI runner missing env flag" }

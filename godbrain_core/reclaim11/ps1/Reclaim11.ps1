@@ -16,13 +16,14 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
     throw "Reclaim11: PowerShell is ConstrainedLanguage. FullLanguage required."
 }
 
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $here "inventory.ps1")
-. (Join-Path $here "killing_blows.ps1")
-. (Join-Path $here "noob_cleanse.ps1")
-. (Join-Path $here "xbox_cleanse.ps1")
-. (Join-Path $here "telemetry_cleanse.ps1")
-. (Join-Path $here "nic_tune.ps1")
+$ps1Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ps1Dir "inventory.ps1")
+$here = Get-Reclaim11Root
+. (Join-Path $ps1Dir "killing_blows.ps1")
+. (Join-Path $ps1Dir "noob_cleanse.ps1")
+. (Join-Path $ps1Dir "xbox_cleanse.ps1")
+. (Join-Path $ps1Dir "telemetry_cleanse.ps1")
+. (Join-Path $ps1Dir "nic_tune.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -82,8 +83,7 @@ $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($sta -ne "STA" -or -not $admin) {
-    $pwsh = Join-Path $PSHOME "pwsh.exe"
-    if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
+    $pwsh = Get-Reclaim11Pwsh
     $arg = @(
         "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
@@ -123,6 +123,22 @@ try {
 
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
+function Invoke-Reclaim11GrimReaperCli {
+    param([switch]$WhatIf)
+    $script = Join-Path $ps1Dir "grim_reaper.ps1"
+    if (-not (Test-Path -LiteralPath $script)) {
+        throw "Reclaim11: missing grim_reaper.ps1"
+    }
+    $pwsh = Get-Reclaim11Pwsh
+    $arg = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script)
+    if ($WhatIf) { $arg += "-T" }
+    $out = & $pwsh @arg 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw ("grim_reaper exit {0}`n{1}" -f $LASTEXITCODE, $out)
+    }
+    $out
+}
+
 $btnScan = Get-Ui BtnScan
 $btnPrep = Get-Ui BtnPrep
 $btnSafe = Get-Ui BtnSafe
@@ -130,6 +146,7 @@ $btnXbox = Get-Ui BtnXbox
 $btnTelemetry = Get-Ui BtnTelemetry
 $btnNic = Get-Ui BtnNic
 $btnKill = Get-Ui BtnKill
+$btnReaper = Get-Ui BtnReaper
 $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
@@ -192,6 +209,8 @@ function Show-Inventory($inv) {
     $btnTelemetry.IsEnabled = $true
     $btnKill.IsEnabled = $pe
     if (-not $pe) { $btnKill.IsChecked = $false }
+    $btnReaper.IsEnabled = $pe
+    if (-not $pe) { $btnReaper.IsChecked = $false }
     $btnNoobSafe.IsEnabled = $pe
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
@@ -211,7 +230,7 @@ function Show-Inventory($inv) {
         Add-Log ("  {0,-24} present={1,-5} {2}" -f $s.name, $s.present, $s.status)
     }
     Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
-    Add-Log "scan is read-only. Safe cleanse / killing blows mutate only after a WinPE receipt, not on IoTEnterpriseS."
+    Add-Log "scan is read-only. MUST boot a WinPE ISO for Defender. No receipt = bloat only. Safe / killing blows / Grim Reaper stay locked, not on IoTEnterpriseS."
 }
 
 $btnScan.Add_Click({
@@ -236,22 +255,27 @@ $btnRun.Add_Click({
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+        $doReaper = [bool]$btnReaper.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
         if ($script:LastInventory -and $script:LastInventory.gates) {
             $unlocked = [bool]$script:LastInventory.gates.killing_blows
         }
-        if (($doSafe -or $doKill) -and -not $unlocked) {
+        if (($doSafe -or $doKill -or $doReaper) -and -not $unlocked) {
             [System.Windows.MessageBox]::Show(
-                "Safe cleanse / killing blows stay locked until a WinPE receipt exists.",
+                "Safe cleanse / killing blows / Grim Reaper stay locked until a WinPE receipt exists.",
                 "Reclaim11") | Out-Null
             return
         }
+        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?"
+        if ($doReaper) {
+            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Never BFE. Desk refused. Continue?"
+        }
         $q = [System.Windows.MessageBox]::Show(
-            "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Never BFE/mpssvc/FltMgr. Desk/IoT is refused. Continue?",
+            $warn,
             "Reclaim11 RUN SELECTED",
             "YesNo",
             "Warning")
@@ -301,9 +325,25 @@ $btnRun.Add_Click({
             try {
                 $plan = Invoke-Reclaim11KillingBlows -Root $here
                 Add-Log ("killing blows applied {0}" -f @($plan.applied).Count)
+                if ($plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
+                    Add-Log ("manifest {0}" -f $plan.manifest_path)
+                }
+                if ($plan.PSObject.Properties["backup_root"] -and $plan.backup_root) {
+                    Add-Log ("backup {0}" -f $plan.backup_root)
+                }
             } catch {
                 Add-Log ("KILL FAIL  {0}" -f $_.Exception.Message)
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 killing blows") | Out-Null
+            }
+        }
+        if ($doReaper) {
+            try {
+                $out = Invoke-Reclaim11GrimReaperCli
+                Add-Log $out.TrimEnd()
+                Add-Log "grim reaper done"
+            } catch {
+                Add-Log ("GRIM FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Grim Reaper") | Out-Null
             }
         }
     } finally {
@@ -326,8 +366,9 @@ $btnTest.Add_Click({
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
         $doKill = [bool]$btnKill.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC tune, and/or Killing blows.", "Reclaim11") | Out-Null
+        $doReaper = [bool]$btnReaper.IsChecked
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
@@ -351,6 +392,9 @@ $btnTest.Add_Click({
         if ($doKill) {
             $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
             Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
+        }
+        if ($doReaper) {
+            Add-Log (Invoke-Reclaim11GrimReaperCli -WhatIf)
         }
     } catch {
         Add-Log ("TEST FAIL  {0}" -f $_.Exception.Message)
@@ -401,7 +445,7 @@ $btnNoobTest.Add_Click({
 $btnNoobFix.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Nuclear. Desk/IoT refused. Continue?",
+        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Grim Reaper. Desk/IoT refused. Continue?",
         "Reclaim11 JUST FIX MY SH*T",
         "YesNo",
         "Warning")
@@ -484,14 +528,26 @@ $btnNoobSafe.Add_Click({
 })
 
 $btnPrep.Add_Click({
+    $build = $null
     $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
-    $build = Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+    foreach ($c in @(
+            (Join-Path $here "scripts\New-Reclaim11WinPeIso.ps1"),
+            (Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1")
+        )) {
+        if (Test-Path -LiteralPath $c) { $build = $c; break }
+    }
+    if (-not $build) {
+        [System.Windows.MessageBox]::Show(
+            "MUST: WinPE ISO builder missing. Use a Reclaim11 kit zip (scripts\New-Reclaim11WinPeIso.ps1) or the GodBrain repo.",
+            "Reclaim11 prep media") | Out-Null
+        return
+    }
     $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso"
     if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
     $msg = if (Test-Path -LiteralPath $iso) {
-        "ISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
+        "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
     } else {
-        "No ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
+        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
     }
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })

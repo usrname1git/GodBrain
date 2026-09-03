@@ -1,8 +1,11 @@
-# Reclaim11 (not Heal, not Galaxy)
+# Reclaim11
+
+**MUST:** build a WinPE ISO and boot it if you want Defender / PPL / Sense
+gone. That offline pass is the kill. Without that boot, this GUI is
+**bloat only** (Xbox, telemetry, NIC). Killing blows and Grim Reaper
+stay locked until a WinPE receipt.
 
 One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
-Not `irm | iex`. Not DISM. Never BFE / `mpssvc` /
-`FltMgr` / EventLog.
 
 Inventory plus a **WinPE ISO**. Two cleanse profiles:
 
@@ -20,22 +23,37 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 
 ## Rails
 
-- Pack A only. Ads/cloud/WU GPO is pack B, later.
+- Pack A only. WU GPO is pack B, later. Start junk (named Appx + Recommended off) is Hide Xbox.
+- Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows unlock only after a WinPE receipt. Desk SKU is refused.
-- Heal never launches this. Kernel YOLO never `--ti` for this.
 
 ## Run
 
+Double-click `Reclaim11.cmd` (UAC + GUI). Workers live in `ps1\`. You do not
+need to type `pwsh`.
+
+Download (Reclaim11 only, not the GodBrain tree): GitHub Release tag
+`reclaim11-v9`, asset `Reclaim11-kit-v9.zip` plus the `.sha256` next to it.
+Unzip and double-click `Reclaim11.cmd`. That zip is **bloat + ISO builder**.
+**MUST** still build and boot the WinPE ISO to take Defender. `irm | iex` is
+not this zip.
+
+Pack the zip from this repo:
+
 ```text
-pwsh -STA -NoProfile -ExecutionPolicy Bypass -File godbrain_core\reclaim11\Reclaim11.ps1
+pwsh -NoProfile -File .\scripts\New-Reclaim11KitZip.ps1
+```
+
+```text
+godbrain_core\reclaim11\Reclaim11.cmd
 ```
 
 Test-only (DeviceCleanupCmd `-t`: privs, paths, what would happen, no mutate):
 
 ```text
-pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -T
-pwsh -NoProfile -File godbrain_core\reclaim11\xbox_cleanse.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\Reclaim11.ps1 -T
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\xbox_cleanse.ps1 -T
 ```
 
 GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.
@@ -43,12 +61,12 @@ GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.
 Headless inventory (JSON):
 
 ```text
-pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\Reclaim11.ps1 -InventoryOnly
 ```
 
 GUI opens on a **door chooser**: noob (three jobs + TEST) vs expert
-(BIOS ticks). Chris-style 100 toggles is the expert door on purpose —
-a noob hitting that wall closes the app. SWITCH DOOR goes back.
+(BIOS ticks). The expert door is that tick wall on purpose — a noob
+hitting it closes the app. SWITCH DOOR goes back.
 
 GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
 transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. ConstrainedLanguage
@@ -87,7 +105,8 @@ Do **not** nuke the desk. Snapshot a VM, then:
    scheduled tasks (those two folders only), and delete of
    `HKLM\SOFTWARE\Microsoft\Windows Defender` (resurrection lock). GPO
    `DisableAntiSpyware=1` stays. Not a host-wide task glob.
-   Optional remainder: `NuclearDefenderWipe-V6_3.ps1` (boot-safe).
+   Optional remainder: `grim_reaper.ps1` (GUI: Send Grim Reaper; boot-safe).
+   Compat name: `NuclearDefenderWipe-V6_3.ps1`.
    v6.2 stubbed kernel `.sys` and `CIPolicies` and WinRE'd; v6.3
    **deletes** named drivers, never stubs `.sys` / `.cip`, never DENY
    SYSTEM under `System32`. After 26H1 it also Grim-Reapers WU resurrection:
@@ -97,7 +116,7 @@ Do **not** nuke the desk. Snapshot a VM, then:
    Never stub `usosvc.dll` / `wuaueng.dll` / `WaaSMedicSvc.dll`. Never
    bits / DoSvc / TrustedInstaller. Not killing-blows pack A (so 26H1
    via Windows Update still works *before* Nuclear). Check:
-   `pwsh -File NuclearDefenderWipe-V6_3.ps1 -SelfTest`. Not this desk.
+   `pwsh -File grim_reaper.ps1 -SelfTest`. Not this desk.
 
 7. Physical USB is a **separate** script (ISO builder stays `/ISO` only):
 
@@ -148,9 +167,12 @@ usermode (`XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc`,
 Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
 SYSTEM and skips that hop.
 
-GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
+GUI (Safe / Kill / Reaper locked until a WinPE receipt). **MUST** boot the
+ISO for Defender; screenshots are a 26H2 VM *after* that boot:
 
-![Reclaim11 GUI](ui/MainWindow.png)
+![Door chooser](ui/DoorChooser.jpg)
+
+![Expert panel](ui/ExpertPanel.jpg)
 
 BitLocker in the VM is optional for v1; if C: is encrypted, WinPE needs
 the protector and inventory must show it.

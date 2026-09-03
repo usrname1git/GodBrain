@@ -68,10 +68,12 @@ function Invoke-Reclaim11KillingBlows {
         [switch]$WhatIf
     )
     if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSCommandPath }
-    $invPath = Join-Path $Root "inventory.ps1"
+    $invPath = Join-Path $Root "ps1\inventory.ps1"
+    if (-not (Test-Path -LiteralPath $invPath)) { $invPath = Join-Path $Root "inventory.ps1" }
+    if (-not (Test-Path -LiteralPath $invPath)) { $invPath = Join-Path $PSScriptRoot "inventory.ps1" }
     if (-not (Test-Path -LiteralPath $invPath)) { throw "Invoke-Reclaim11KillingBlows: missing inventory.ps1" }
     . $invPath
-    $cat = Get-Reclaim11Catalog -Root $Root
+    $cat = Get-Reclaim11Catalog -Root (Get-Reclaim11Root)
     if (-not $cat.PSObject.Properties["scheduled_task_paths_pack_a"]) {
         throw "Invoke-Reclaim11KillingBlows: catalog missing scheduled_task_paths_pack_a"
     }
@@ -91,13 +93,13 @@ function Invoke-Reclaim11KillingBlows {
     $wdPresent = Test-Path -LiteralPath $wd
     $inv = Get-Reclaim11Inventory -Root $Root
     $stub = Get-Reclaim11KillingStub -Catalog $cat
-    $el = Join-Path $Root "elevate.ps1"
     if ((-not $WhatIf) -and $desk) {
         throw "Refuse: desk (IoTEnterpriseS). Killing blows are VM-only. Not M1ABRAMS."
     }
-    if ((-not $WhatIf) -and (Test-Path -LiteralPath $el)) {
+    if (-not $WhatIf) {
+        $el = Resolve-Reclaim11Worker -Name "elevate.ps1" -Root $Root
         . $el
-        $door = Join-Path $Root "Apply-KillingBlows.ps1"
+        $door = Resolve-Reclaim11Worker -Name "Apply-KillingBlows.ps1" -Root $Root
         $hop = Invoke-Reclaim11AsTrustedInstaller -File $door -TimeoutSec 120
         if (-not $hop.continue) {
             if ([int]$hop.exit_code -ne 0) {

@@ -22,8 +22,8 @@
 # Never stub usosvc.dll / wuaueng.dll / WaaSMedicSvc.dll (svchost).
 # Never bits / DoSvc / TrustedInstaller. Not killing-blows pack A.
 #
-# pwsh -NoProfile -ExecutionPolicy Bypass -File NuclearDefenderWipe-V6_3.ps1
-# pwsh -NoProfile -File NuclearDefenderWipe-V6_3.ps1 -SelfTest
+# pwsh -NoProfile -ExecutionPolicy Bypass -File grim_reaper.ps1
+# pwsh -NoProfile -File grim_reaper.ps1 -SelfTest
 
 [CmdletBinding()]
 param(

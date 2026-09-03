@@ -11,11 +11,68 @@ function Test-Reclaim11DeskHost {
 }
 
 function Get-Reclaim11Root {
-    if ($PSScriptRoot) { return $PSScriptRoot }
-    if ($MyInvocation.MyCommand.Path) {
-        return Split-Path -Parent $MyInvocation.MyCommand.Path
+    $start = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($start) -and $MyInvocation.MyCommand.Path) {
+        $start = Split-Path -Parent $MyInvocation.MyCommand.Path
     }
-    throw "Get-Reclaim11Root: no script path"
+    if ([string]::IsNullOrWhiteSpace($start)) {
+        throw "Get-Reclaim11Root: no script path"
+    }
+    $d = $start
+    for ($i = 0; $i -lt 4; $i++) {
+        if (Test-Path -LiteralPath (Join-Path $d "catalog.json")) { return $d }
+        $parent = Split-Path $d
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $d) { break }
+        $d = $parent
+    }
+    throw "Get-Reclaim11Root: catalog.json not found from $start"
+}
+
+function Resolve-Reclaim11Worker {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+        [string]$Root = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        try { $Root = Get-Reclaim11Root } catch { $Root = "" }
+    }
+    $cands = @()
+    if (-not [string]::IsNullOrWhiteSpace($Root)) {
+        $cands += (Join-Path $Root "ps1\$Name")
+        $cands += (Join-Path $Root $Name)
+    }
+    if ($PSScriptRoot) {
+        $cands += (Join-Path $PSScriptRoot $Name)
+        $parent = Split-Path $PSScriptRoot
+        if ($parent) {
+            $cands += (Join-Path $parent "ps1\$Name")
+            $cands += (Join-Path $parent $Name)
+        }
+    }
+    foreach ($c in $cands) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if (Test-Path -LiteralPath $c) { return (Get-Item -LiteralPath $c).FullName }
+    }
+    throw "Resolve-Reclaim11Worker: missing $Name"
+}
+
+function Get-Reclaim11Pwsh {
+    # Never Get-Command pwsh / where.exe: Win11 Store stub is WindowsApps.
+    $cands = @(
+        (Join-Path $PSHOME "pwsh.exe"),
+        "C:\pwsh\pwsh.exe",
+        (Join-Path ${env:ProgramFiles} "PowerShell\7\pwsh.exe"),
+        (Join-Path ${env:ProgramFiles} "PowerShell\pwsh.exe"),
+        (Join-Path $PSHOME "powershell.exe"),
+        (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe")
+    )
+    foreach ($c in $cands) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if ($c -match 'WindowsApps') { continue }
+        if (Test-Path -LiteralPath $c) { return (Get-Item -LiteralPath $c).FullName }
+    }
+    throw "Get-Reclaim11Pwsh: no PowerShell host"
 }
 
 function Get-Reclaim11Catalog {

@@ -17,12 +17,16 @@ function Invoke-Reclaim11NoobCleanse {
         [Alias("T", "Test")]
         [switch]$WhatIf
     )
-    if ([string]::IsNullOrWhiteSpace($Root)) {
-        $Root = Split-Path -Parent $PSCommandPath
-    }
-    $invPath = Join-Path $Root "inventory.ps1"
+    $ps1Dir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $invPath = Join-Path $ps1Dir "inventory.ps1"
     . $invPath
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        $Root = Get-Reclaim11Root
+    }
     $off = Join-Path $Root "winpe\offline.ps1"
+    if (-not (Test-Path -LiteralPath $off)) {
+        $off = Join-Path $ps1Dir "..\winpe\offline.ps1"
+    }
     if (-not (Test-Path -LiteralPath $off)) { $off = Join-Path $Root "offline.ps1" }
     if (Test-Path -LiteralPath $off) { . $off }
     $cat = Get-Reclaim11Catalog -Root $Root
