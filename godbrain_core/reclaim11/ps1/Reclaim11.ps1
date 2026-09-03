@@ -129,14 +129,38 @@ function Invoke-Reclaim11GrimReaperCli {
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Reclaim11: missing grim_reaper.ps1"
     }
-    $pwsh = Get-Reclaim11Pwsh
-    $arg = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script)
-    if ($WhatIf) { $arg += "-T" }
-    $out = & $pwsh @arg 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        throw ("grim_reaper exit {0}`n{1}" -f $LASTEXITCODE, $out)
+    if (-not $WhatIf) {
+        if (-not (Get-Reclaim11WinPeReceipt)) {
+            throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
+        }
+        $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
+        if (Test-Path -LiteralPath $wd) {
+            throw "Refuse: WdFilter.sys still present. PE park did not land."
+        }
     }
-    $out
+    $pwsh = Get-Reclaim11Pwsh
+    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$script`""
+    if ($WhatIf) { $arg += " -T" }
+    $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $outFile = Join-Path $env:TEMP ("reclaim11-reaper-" + $stamp + ".out")
+    $errFile = Join-Path $env:TEMP ("reclaim11-reaper-" + $stamp + ".err")
+    try {
+        $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $chunks = @()
+        if (Test-Path -LiteralPath $outFile) {
+            $chunks += Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $errFile) {
+            $chunks += Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
+        }
+        $out = ($chunks -join "`n")
+        if ([int]$p.ExitCode -ne 0) {
+            throw ("grim_reaper exit {0}`n{1}" -f $p.ExitCode, $out)
+        }
+        $out
+    } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $btnScan = Get-Ui BtnScan
@@ -542,12 +566,17 @@ $btnPrep.Add_Click({
             "Reclaim11 prep media") | Out-Null
         return
     }
-    $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso"
-    if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
+    $isoDir = "C:\nvme\reclaim11"
+    $want = Join-Path $isoDir "Reclaim11-WinPE-v9.iso"
+    $iso = $want
+    foreach ($n in @("Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
+        $p = Join-Path $isoDir $n
+        if (Test-Path -LiteralPath $p) { $iso = $p; break }
+    }
     $msg = if (Test-Path -LiteralPath $iso) {
         "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json."
     } else {
-        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso`"`n`nVMware first. Snapshot before boot. Not a physical USB."
+        "MUST: build and boot a WinPE ISO to remove Defender. Without that boot this GUI is bloat only.`n`nNo ISO yet. Elevated (ADK + WinPE addon 10.1.26100.2454, not 28000):`n`npwsh -NoProfile -File `"$build`" -OutIso `"$want`"`n`nVMware first. Snapshot before boot. Not a physical USB."
     }
     [System.Windows.MessageBox]::Show($msg, "Reclaim11 prep media") | Out-Null
 })

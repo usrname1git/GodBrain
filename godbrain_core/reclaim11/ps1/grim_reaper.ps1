@@ -512,7 +512,31 @@ function Test-Reclaim11NuclearDeskHost {
     [string]$prop.Value -eq "IoTEnterpriseS"
 }
 
+function Test-Reclaim11NuclearWinPeReceipt {
+    # Inline JSON id. Do not dotsource inventory.ps1 (StrictMode/Stop).
+    $root = $env:SystemRoot
+    if ([string]::IsNullOrWhiteSpace($root)) { return $false }
+    $cands = @(
+        (Join-Path $root "reclaim11-winpe.log")
+    )
+    $parent = Split-Path -Parent $root
+    if ($parent) { $cands += (Join-Path $parent "reclaim11-winpe.log") }
+    foreach ($c in $cands) {
+        if (-not (Test-Path -LiteralPath $c)) { continue }
+        try {
+            $j = Get-Content -LiteralPath $c -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j -and $j.PSObject.Properties["id"] -and ([string]$j.id -like "reclaim11-winpe*")) {
+                return $true
+            }
+        } catch { }
+    }
+    $false
+}
+
 $desk = Test-Reclaim11NuclearDeskHost
+$hasReceipt = Test-Reclaim11NuclearWinPeReceipt
+$wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
+$wdPresent = Test-Path -LiteralPath $wd
 if (-not $WhatIf) {
     if ($null -eq $desk) {
         throw "Refuse: cannot read EditionID (needed to refuse desk)"
@@ -520,11 +544,19 @@ if (-not $WhatIf) {
     if ($desk) {
         throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
     }
+    if (-not $hasReceipt) {
+        throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
+    }
+    if ($wdPresent) {
+        throw "Refuse: WdFilter.sys still present. PE park did not land."
+    }
 }
 
 if ($WhatIf) {
     Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false." -ForegroundColor Yellow
     Write-Host ("  desk={0}  (IoTEnterpriseS would refuse)" -f $desk)
+    Write-Host ("  winpe_receipt={0}" -f $hasReceipt)
+    Write-Host ("  WdFilter.sys present={0}" -f $wdPresent)
     Write-Host ("  stub={0} exists={1}" -f $StubPath, (Test-PeMz $StubPath))
     foreach ($f in $DriverFiles) {
         if (Test-Path -LiteralPath $f) { Write-Host ("  would DELETE {0}" -f $f) }
@@ -545,6 +577,8 @@ if ($WhatIf) {
     Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
     if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
     elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
+    elseif (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }
+    elseif ($wdPresent) { Write-Host "WOULD REFUSE  WdFilter.sys still present" -ForegroundColor Red }
     else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
     return
 }

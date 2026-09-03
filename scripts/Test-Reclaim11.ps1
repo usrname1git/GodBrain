@@ -61,6 +61,30 @@ if ($launchSrc -match 'Get-Command pwsh') {
 if ($launchSrc -notmatch 'Get-Reclaim11Pwsh') {
     throw "Test-Reclaim11: UAC/Grim must use Get-Reclaim11Pwsh"
 }
+$cliAt = $launchSrc.IndexOf('function Invoke-Reclaim11GrimReaperCli')
+$cliEnd = $launchSrc.IndexOf('$btnScan = Get-Ui BtnScan')
+if ($cliAt -lt 0 -or $cliEnd -le $cliAt) {
+    throw "Test-Reclaim11: GrimReaperCli function missing"
+}
+$cliSrc = $launchSrc.Substring($cliAt, $cliEnd - $cliAt)
+if ($cliSrc -notmatch 'Start-Process') {
+    throw "Test-Reclaim11: GrimReaperCli must Start-Process (not LASTEXITCODE after a pipeline)"
+}
+if ($cliSrc -notmatch 'ExitCode') {
+    throw "Test-Reclaim11: GrimReaperCli must use process ExitCode"
+}
+if ($cliSrc -match 'LASTEXITCODE') {
+    throw "Test-Reclaim11: GrimReaperCli must not read LASTEXITCODE after a pipeline"
+}
+if ($cliSrc -notmatch 'Get-Reclaim11WinPeReceipt') {
+    throw "Test-Reclaim11: GrimReaperCli must re-read the WinPE receipt"
+}
+if ($launchSrc -notmatch 'Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: PREP MEDIA must name the v9 ISO"
+}
+if ($launchSrc -match 'Sort-Object LastWriteTime') {
+    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8 over v9"
+}
 $testAt = $launchSrc.IndexOf('if ($Test)')
 $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
 if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
@@ -145,6 +169,18 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
 }
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
+}
+if ($readme -notmatch 'Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: README must name the v9 ISO"
+}
+if ($readme -match 'attach \*\*v7\*\*') {
+    throw "Test-Reclaim11: README must attach v9, not leftover v7"
+}
+if ($readme -notmatch 'attach \*\*v9\*\*') {
+    throw "Test-Reclaim11: README step 4 must attach v9"
+}
+if ($readme -notmatch '-OutIso C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso') {
+    throw "Test-Reclaim11: README ISO build must pass -OutIso v9"
 }
 foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
@@ -282,6 +318,9 @@ if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing Ne
 $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
+if ($isoSrc -notmatch 'OutIso = "C:\\nvme\\reclaim11\\Reclaim11-WinPE-v9\.iso"') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be v9"
+}
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
 if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
     throw "Test-Reclaim11: ISO builder must resolve a standalone kit zip"
@@ -523,6 +562,15 @@ $nukeSrc = Get-Content -LiteralPath (Join-Path $ps1 "grim_reaper.ps1") -Raw -Enc
 if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
 if ($nukeSrc -match '\.\s+\$invPath') {
     throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
+}
+if ($nukeSrc -notmatch "Test-Reclaim11NuclearWinPeReceipt") {
+    throw "Test-Reclaim11: grim_reaper must re-check WinPE receipt (not only GUI SCAN)"
+}
+if ($nukeSrc -notmatch "WOULD REFUSE  no WinPE receipt") {
+    throw "Test-Reclaim11: grim_reaper -T must WOULD REFUSE without a receipt"
+}
+if ($nukeSrc -notmatch "WdFilter\.sys still present") {
+    throw "Test-Reclaim11: grim_reaper must refuse if WdFilter.sys is still loadable"
 }
 if ($nukeSrc -notmatch '(?s)& \{\s*\.\s+\$el') {
     throw "Test-Reclaim11: Nuclear TI hop must dotsource elevate.ps1 in a child scope"
