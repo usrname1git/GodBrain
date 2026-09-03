@@ -11,11 +11,7 @@ set "PWSH="
 if exist "C:\pwsh\pwsh.exe" set "PWSH=C:\pwsh\pwsh.exe"
 if not defined PWSH if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" set "PWSH=%ProgramFiles%\PowerShell\7\pwsh.exe"
 if not defined PWSH if exist "%ProgramFiles%\PowerShell\pwsh.exe" set "PWSH=%ProgramFiles%\PowerShell\pwsh.exe"
-if not defined PWSH (
-  for /f "delims=" %%P in ('where pwsh 2^>nul') do (
-    if not defined PWSH set "PWSH=%%P"
-  )
-)
+REM Do not search PATH for pwsh (Win11 Store stub is WindowsApps). 5.1 is a real host.
 if not defined PWSH set "PWSH=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%PWSH%" (
   echo Reclaim11.cmd: no PowerShell found

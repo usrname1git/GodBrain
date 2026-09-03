@@ -93,13 +93,13 @@ function Invoke-Reclaim11KillingBlows {
     $wdPresent = Test-Path -LiteralPath $wd
     $inv = Get-Reclaim11Inventory -Root $Root
     $stub = Get-Reclaim11KillingStub -Catalog $cat
-    $el = Join-Path $Root "elevate.ps1"
     if ((-not $WhatIf) -and $desk) {
         throw "Refuse: desk (IoTEnterpriseS). Killing blows are VM-only. Not M1ABRAMS."
     }
-    if ((-not $WhatIf) -and (Test-Path -LiteralPath $el)) {
+    if (-not $WhatIf) {
+        $el = Resolve-Reclaim11Worker -Name "elevate.ps1" -Root $Root
         . $el
-        $door = Join-Path $Root "Apply-KillingBlows.ps1"
+        $door = Resolve-Reclaim11Worker -Name "Apply-KillingBlows.ps1" -Root $Root
         $hop = Invoke-Reclaim11AsTrustedInstaller -File $door -TimeoutSec 120
         if (-not $hop.continue) {
             if ([int]$hop.exit_code -ne 0) {

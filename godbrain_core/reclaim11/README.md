@@ -1,8 +1,6 @@
-# Reclaim11 (not Heal, not Galaxy)
+# Reclaim11
 
 One WPF window around the pack-A playbook: Defender / PPL / Sense / AppID.
-Not `irm | iex`. Not DISM. Never BFE / `mpssvc` /
-`FltMgr` / EventLog.
 
 Inventory plus a **WinPE ISO**. Two cleanse profiles:
 
@@ -23,7 +21,6 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 - Pack A only. Ads/cloud/WU GPO is pack B, later.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows unlock only after a WinPE receipt. Desk SKU is refused.
-- Heal never launches this. Kernel YOLO never `--ti` for this.
 
 ## Run
 
@@ -46,12 +43,12 @@ GUI **TEST SELECTED** is the same. Desk SKU is a report line, not a crash.
 Headless inventory (JSON):
 
 ```text
-pwsh -NoProfile -File godbrain_core\reclaim11\Reclaim11.ps1 -InventoryOnly
+pwsh -NoProfile -File godbrain_core\reclaim11\ps1\Reclaim11.ps1 -InventoryOnly
 ```
 
 GUI opens on a **door chooser**: noob (three jobs + TEST) vs expert
-(BIOS ticks). Chris-style 100 toggles is the expert door on purpose —
-a noob hitting that wall closes the app. SWITCH DOOR goes back.
+(BIOS ticks). The expert door is that tick wall on purpose — a noob
+hitting it closes the app. SWITCH DOOR goes back.
 
 GUI (not `-InventoryOnly`) self-elevates UAC, requires FullLanguage, and
 transcripts to `%LOCALAPPDATA%\Reclaim11\logs`. ConstrainedLanguage
@@ -154,7 +151,9 @@ SYSTEM and skips that hop.
 
 GUI (this desk scan, Safe cleanse / Kill locked until a WinPE receipt):
 
-![Reclaim11 GUI](ui/MainWindow.png)
+![Door chooser](ui/DoorChooser.jpg)
+
+![Expert panel](ui/ExpertPanel.jpg)
 
 BitLocker in the VM is optional for v1; if C: is encrypted, WinPE needs
 the protector and inventory must show it.

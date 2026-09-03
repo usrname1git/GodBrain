@@ -37,11 +37,21 @@ function Test-Reclaim11Admin {
 }
 
 function Get-Reclaim11Pwsh {
-    $pwsh = Join-Path $PSHOME "pwsh.exe"
-    if (Test-Path -LiteralPath $pwsh) { return $pwsh }
-    $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-    if (Test-Path -LiteralPath $ps) { return $ps }
-    throw "Get-Reclaim11Pwsh: no powershell"
+    # Never Get-Command pwsh / where.exe: Win11 Store stub is WindowsApps.
+    $cands = @(
+        (Join-Path $PSHOME "pwsh.exe"),
+        "C:\pwsh\pwsh.exe",
+        (Join-Path ${env:ProgramFiles} "PowerShell\7\pwsh.exe"),
+        (Join-Path ${env:ProgramFiles} "PowerShell\pwsh.exe"),
+        (Join-Path $PSHOME "powershell.exe"),
+        (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe")
+    )
+    foreach ($c in $cands) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if ($c -match 'WindowsApps') { continue }
+        if (Test-Path -LiteralPath $c) { return (Get-Item -LiteralPath $c).FullName }
+    }
+    throw "Get-Reclaim11Pwsh: no PowerShell host"
 }
 
 function New-Reclaim11TiId {

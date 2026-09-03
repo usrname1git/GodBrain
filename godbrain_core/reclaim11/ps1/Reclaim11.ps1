@@ -83,8 +83,7 @@ $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($sta -ne "STA" -or -not $admin) {
-    $pwsh = Join-Path $PSHOME "pwsh.exe"
-    if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
+    $pwsh = Get-Reclaim11Pwsh
     $arg = @(
         "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
@@ -130,8 +129,7 @@ function Invoke-Reclaim11GrimReaperCli {
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Reclaim11: missing grim_reaper.ps1"
     }
-    $pwsh = Join-Path $PSHOME "pwsh.exe"
-    if (-not (Test-Path -LiteralPath $pwsh)) { $pwsh = (Get-Command pwsh).Source }
+    $pwsh = Get-Reclaim11Pwsh
     $arg = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script)
     if ($WhatIf) { $arg += "-T" }
     $out = & $pwsh @arg 2>&1 | Out-String

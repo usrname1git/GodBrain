@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $here "killing_blows.ps1")
-$plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf:$WhatIf
+$plan = Invoke-Reclaim11KillingBlows -Root (Get-Reclaim11Root) -WhatIf:$WhatIf
 if ($WhatIf) {
     Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
 }

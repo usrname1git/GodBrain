@@ -22,6 +22,9 @@ $cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
 if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
     throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
 }
+if ($cmdSrc -match 'where pwsh') {
+    throw "Test-Reclaim11: Reclaim11.cmd must not where pwsh (WindowsApps stub)"
+}
 if ($cmdSrc -match 'irm |Invoke-Expression') {
     throw "Test-Reclaim11: Reclaim11.cmd must not irm/iex"
 }
@@ -45,6 +48,12 @@ if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
 }
 if ($launchSrc -notmatch '-Verb RunAs') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
+}
+if ($launchSrc -match 'Get-Command pwsh') {
+    throw "Test-Reclaim11: UAC/Grim must not Get-Command pwsh (WindowsApps stub)"
+}
+if ($launchSrc -notmatch 'Get-Reclaim11Pwsh') {
+    throw "Test-Reclaim11: UAC/Grim must use Get-Reclaim11Pwsh"
 }
 $testAt = $launchSrc.IndexOf('if ($Test)')
 $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
@@ -88,6 +97,36 @@ if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media i
 if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
 
 . $invPath
+
+$elFound = Resolve-Reclaim11Worker -Name "elevate.ps1" -Root $root
+if ($elFound -notmatch '(?i)\\ps1\\elevate\.ps1$') {
+    throw "Test-Reclaim11: kit-root must resolve ps1\elevate.ps1, got $elFound"
+}
+$doorFound = Resolve-Reclaim11Worker -Name "Apply-KillingBlows.ps1" -Root $root
+if ($doorFound -notmatch '(?i)\\ps1\\Apply-KillingBlows\.ps1$') {
+    throw "Test-Reclaim11: kit-root must resolve ps1\Apply-KillingBlows.ps1, got $doorFound"
+}
+$hostPwsh = Get-Reclaim11Pwsh
+if ($hostPwsh -match 'WindowsApps') {
+    throw "Test-Reclaim11: Get-Reclaim11Pwsh must skip WindowsApps"
+}
+
+$readmePath = Join-Path $root "README.md"
+$readme = Get-Content -LiteralPath $readmePath -Raw -Encoding UTF8
+if ($readme -match '(?m)^# Reclaim11 \(not Heal') {
+    throw "Test-Reclaim11: README heading must not say (not Heal, not Galaxy)"
+}
+if ($readme -match 'Heal never launches this') {
+    throw "Test-Reclaim11: README Rails must not mention Heal never launches"
+}
+if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
+    throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
+}
+foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
+        throw "Test-Reclaim11: missing ui\$shot"
+    }
+}
 
 $sbOn = [pscustomobject]@{
     secure_boot    = [pscustomobject]@{ enabled = $true; available = $true }
@@ -489,6 +528,16 @@ if ($xbSrc -notmatch 'LASTEXITCODE -eq 0') {
 $applyKill = Get-Content -LiteralPath (Join-Path $ps1 "Apply-KillingBlows.ps1") -Raw -Encoding UTF8
 if ($applyKill -notmatch 'RECLAIM11_AS_TI') {
     throw "Test-Reclaim11: Apply-KillingBlows must omit Write-Host on TI stdout"
+}
+if ($applyKill -notmatch 'Get-Reclaim11Root') {
+    throw 'Test-Reclaim11: Apply-KillingBlows must pass kit root, not ps1\'
+}
+$applyNoob = Get-Content -LiteralPath (Join-Path $ps1 "Apply-NoobCleanse.ps1") -Raw -Encoding UTF8
+if ($applyNoob -notmatch 'Get-Reclaim11Root') {
+    throw 'Test-Reclaim11: Apply-NoobCleanse must pass kit root, not ps1\'
+}
+if ($kbSrc -notmatch 'Resolve-Reclaim11Worker') {
+    throw "Test-Reclaim11: killing blows TI hop must Resolve-Reclaim11Worker"
 }
 try {
     Merge-Reclaim11HidePages -Current "" -Hide @("gaming-gamemode") | Out-Null
