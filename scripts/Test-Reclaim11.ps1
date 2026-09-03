@@ -86,6 +86,7 @@ if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
 
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
+if ([string]$cat.kit_version -ne "9") { throw "Test-Reclaim11: catalog kit_version 9" }
 if ($cat.pack -ne "A") { throw "Test-Reclaim11: pack A" }
 if ($cat.trust -ne "candidate" -or $cat.auto_verify -ne "never") {
     throw "Test-Reclaim11: catalog must stay candidate"
@@ -101,6 +102,20 @@ if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
 }
 if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
 if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
+$bloat = @($cat.appx_bloat)
+foreach ($need in @("Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp", "Microsoft.BingWeather", "Microsoft.Todos", "MicrosoftCorporationII.QuickAssist", "Microsoft.BingNews")) {
+    if ($bloat -notcontains $need) { throw "Test-Reclaim11: appx_bloat missing $need" }
+}
+$keepAppx = @($cat.never_touch_appx)
+foreach ($need in @("Microsoft.XboxGameCallableUI", "Microsoft.WindowsStore", "Microsoft.WindowsCalculator", "Microsoft.Windows.Photos", "Microsoft.WindowsNotepad")) {
+    if ($keepAppx -notcontains $need) { throw "Test-Reclaim11: never_touch_appx missing $need" }
+}
+if (@($bloat + $keepAppx | Where-Object { $_ -match '\*' }).Count -gt 0) {
+    throw "Test-Reclaim11: Appx catalog must be named, not a wildcard"
+}
+foreach ($n in $bloat) {
+    if ($keepAppx -contains $n) { throw "Test-Reclaim11: appx_bloat hits never-touch $n" }
+}
 
 . $invPath
 
@@ -268,6 +283,9 @@ $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
 if ($isoSrc -match "/UFD") { throw "Test-Reclaim11: ISO builder must not write a USB" }
+if ($isoSrc -notmatch "Resolve-Reclaim11Kit") {
+    throw "Test-Reclaim11: ISO builder must resolve a standalone kit zip"
+}
 $usbBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeUsb.ps1"
 if (-not (Test-Path -LiteralPath $usbBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeUsb.ps1" }
 $usbSrc = Get-Content -LiteralPath $usbBuild -Raw -Encoding UTF8
@@ -276,6 +294,43 @@ if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must ca
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
 if ($usbSrc -notmatch "M1ABRAMS") { throw "Test-Reclaim11: USB writer must warn not to boot the desk" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
+
+$zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"
+if (-not (Test-Path -LiteralPath $zipBuild)) { throw "Test-Reclaim11: missing New-Reclaim11KitZip.ps1" }
+$zipOut = Join-Path $env:TEMP "reclaim11-kit-test.zip"
+if (Test-Path -LiteralPath $zipOut) { Remove-Item -LiteralPath $zipOut -Force }
+& (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $zipBuild -OutZip $zipOut | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $zipOut)) {
+    throw "Test-Reclaim11: New-Reclaim11KitZip failed"
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
+try {
+    $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
+} finally { $zip.Dispose() }
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+    if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
+}
+if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
+    throw "Test-Reclaim11: kit zip must not include GodBrain doors"
+}
+if (-not (Test-Path -LiteralPath ($zipOut + ".sha256"))) {
+    throw "Test-Reclaim11: kit zip must write sha256"
+}
+Remove-Item -LiteralPath $zipOut, ($zipOut + ".sha256") -Force
+
+$fxKit = Join-Path $env:TEMP "reclaim11-kit-layout"
+if (Test-Path -LiteralPath $fxKit) { Remove-Item -LiteralPath $fxKit -Recurse -Force }
+New-Item -ItemType Directory -Path $fxKit | Out-Null
+Copy-Item -LiteralPath $catPath -Destination (Join-Path $fxKit "catalog.json") -Force
+$savedRoot = $RepoRoot
+$RepoRoot = $fxKit
+. (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
+if ($Reclaim11Root -ne ([IO.Path]::GetFullPath($fxKit))) {
+    throw "Test-Reclaim11: standalone kit layout must be catalog.json root, got $Reclaim11Root"
+}
+$RepoRoot = $savedRoot
+Remove-Item -LiteralPath $fxKit -Recurse -Force
 
 . (Join-Path $winpe "offline.ps1")
 $fx = Join-Path $env:TEMP "reclaim11-winpe-fx"
@@ -572,6 +627,14 @@ if (-not [bool]$dryXbox.what_if) { throw "Test-Reclaim11: xbox -T must set what_
 if ([bool]$dryXbox.mutate) { throw "Test-Reclaim11: xbox -T must not mutate" }
 if ([string]$dryXbox.would_refuse -notmatch "desk") { throw "Test-Reclaim11: xbox -T must report desk refuse" }
 if (-not (Test-Path -LiteralPath (Join-Path $root "catalog.json"))) { throw "Test-Reclaim11: catalog vanished after xbox -T" }
+$names = @(Get-Reclaim11AppxBloatNames -Catalog $cat)
+if ($names -notcontains "Microsoft.Copilot") { throw "Test-Reclaim11: union bloat missing Copilot" }
+if ($names -notcontains "Microsoft.OutlookForWindows") { throw "Test-Reclaim11: union bloat missing new Outlook" }
+if ($names -contains "Microsoft.Windows.Photos") { throw "Test-Reclaim11: Photos must stay" }
+if ($names -contains "Microsoft.XboxGameCallableUI") { throw "Test-Reclaim11: XboxGameCallableUI must stay" }
+if ($dryXbox.PSObject.Properties["start_policy"] -and @($dryXbox.start_policy).Count -lt 1) {
+    throw "Test-Reclaim11: xbox -T must snapshot Start Recommended policy"
+}
 if ($script:XboxAppx -notcontains "Microsoft.BingNews") { throw "Test-Reclaim11: bloat list missing BingNews" }
 if ($script:XboxAppx -notcontains "Microsoft.WindowsFeedbackHub") { throw "Test-Reclaim11: bloat list missing FeedbackHub" }
 if ($script:XboxAppx -notcontains "Microsoft.GamingServices") { throw "Test-Reclaim11: bloat list missing GamingServices" }

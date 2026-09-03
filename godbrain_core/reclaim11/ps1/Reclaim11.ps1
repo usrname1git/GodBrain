@@ -528,8 +528,20 @@ $btnNoobSafe.Add_Click({
 })
 
 $btnPrep.Add_Click({
+    $build = $null
     $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
-    $build = Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1"
+    foreach ($c in @(
+            (Join-Path $here "scripts\New-Reclaim11WinPeIso.ps1"),
+            (Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1")
+        )) {
+        if (Test-Path -LiteralPath $c) { $build = $c; break }
+    }
+    if (-not $build) {
+        [System.Windows.MessageBox]::Show(
+            "MUST: WinPE ISO builder missing. Use a Reclaim11 kit zip (scripts\New-Reclaim11WinPeIso.ps1) or the GodBrain repo.",
+            "Reclaim11 prep media") | Out-Null
+        return
+    }
     $iso = "C:\nvme\reclaim11\Reclaim11-WinPE-v7.iso"
     if (-not (Test-Path -LiteralPath $iso)) { $iso = "C:\nvme\reclaim11\Reclaim11-WinPE.iso" }
     $msg = if (Test-Path -LiteralPath $iso) {

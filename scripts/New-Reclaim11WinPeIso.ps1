@@ -15,10 +15,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
+. (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 
 $AdkVersionPin = "10.1.26100.2454"
-$reclaim = Join-Path $RepoRoot "godbrain_core\reclaim11"
+$reclaim = $Reclaim11Root
 $winpeSrc = Join-Path $reclaim "winpe"
 
 function Get-Reclaim11Adk {

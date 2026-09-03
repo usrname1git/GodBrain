@@ -23,7 +23,7 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 
 ## Rails
 
-- Pack A only. Ads/cloud/WU GPO is pack B, later.
+- Pack A only. WU GPO is pack B, later. Start junk (named Appx + Recommended off) is Hide Xbox.
 - Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows unlock only after a WinPE receipt. Desk SKU is refused.
@@ -32,6 +32,18 @@ a WinPE receipt, and **refuse this desk** (`IoTEnterpriseS`). Never BFE /
 
 Double-click `Reclaim11.cmd` (UAC + GUI). Workers live in `ps1\`. You do not
 need to type `pwsh`.
+
+Download (Reclaim11 only, not the GodBrain tree): GitHub Release tag
+`reclaim11-v9`, asset `Reclaim11-kit-v9.zip` plus the `.sha256` next to it.
+Unzip and double-click `Reclaim11.cmd`. That zip is **bloat + ISO builder**.
+**MUST** still build and boot the WinPE ISO to take Defender. `irm | iex` is
+not this zip.
+
+Pack the zip from this repo:
+
+```text
+pwsh -NoProfile -File .\scripts\New-Reclaim11KitZip.ps1
+```
 
 ```text
 godbrain_core\reclaim11\Reclaim11.cmd

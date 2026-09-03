@@ -18,12 +18,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-. (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
+. (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 
 $script:UsbMaxBytes = 32GB
 $script:UsbMinBytes = 2GB
 $AdkVersionPin = "10.1.26100.2454"
-$reclaim = Join-Path $RepoRoot "godbrain_core\reclaim11"
+$reclaim = $Reclaim11Root
 $winpeSrc = Join-Path $reclaim "winpe"
 $script:Ps1Dir = Join-Path $reclaim "ps1"
 $script:KitFiles = @(

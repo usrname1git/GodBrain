@@ -125,6 +125,77 @@ $script:XboxAppx = @(
     "Microsoft.GamingServices"
 )
 
+# Start Recommended / consumer features. Not Photos / Store / Calculator / Notepad.
+$script:StartBloatPolicy = @(
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent"; Name = "DisableWindowsConsumerFeatures"; Value = 1 },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent"; Name = "DisableCloudOptimizedContent"; Value = 1 },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"; Name = "HideRecommendedSection"; Value = 1 },
+    @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_IrisRecommendations"; Value = 0 }
+)
+
+function Get-Reclaim11AppxBloatNames {
+    param($Catalog)
+    $never = @()
+    if ($Catalog -and $Catalog.PSObject.Properties["never_touch_appx"]) {
+        foreach ($n in @($Catalog.never_touch_appx)) { $never += [string]$n }
+    }
+    if ($never -notcontains "Microsoft.XboxGameCallableUI") {
+        $never += "Microsoft.XboxGameCallableUI"
+    }
+    $raw = @()
+    foreach ($n in @($script:XboxAppx)) { $raw += [string]$n }
+    if ($Catalog -and $Catalog.PSObject.Properties["appx_bloat"]) {
+        foreach ($n in @($Catalog.appx_bloat)) { $raw += [string]$n }
+    }
+    $out = @()
+    $seen = @{}
+    foreach ($n in $raw) {
+        if ([string]::IsNullOrWhiteSpace($n)) { continue }
+        if ($n -match '\*') { throw "Get-Reclaim11AppxBloatNames: refuse wildcard $n" }
+        foreach ($k in $never) {
+            if ($n -ieq $k) { throw "Get-Reclaim11AppxBloatNames: $n is never-touch" }
+        }
+        $key = $n.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $out += $n
+    }
+    $out
+}
+
+function Get-Reclaim11StartBloatSnapshot {
+    $rows = @()
+    foreach ($p in $script:StartBloatPolicy) {
+        $present = $false
+        $value = $null
+        if (Test-Path -LiteralPath $p.Path) {
+            $ip = Get-ItemProperty -LiteralPath $p.Path -ErrorAction SilentlyContinue
+            if ($ip -and $ip.PSObject.Properties[$p.Name]) {
+                $present = $true
+                $value = [int]$ip.($p.Name)
+            }
+        }
+        $rows += [pscustomobject]@{
+            path    = [string]$p.Path
+            name    = [string]$p.Name
+            present = $present
+            value   = $value
+            wanted  = [int]$p.Value
+        }
+    }
+    $rows
+}
+
+function Set-Reclaim11StartBloatPolicy {
+    foreach ($p in $script:StartBloatPolicy) {
+        if (-not (Test-Path -LiteralPath $p.Path)) {
+            New-Item -Path $p.Path -Force | Out-Null
+        }
+        New-ItemProperty -Path $p.Path -Name $p.Name -Value ([int]$p.Value) -PropertyType DWord -Force | Out-Null
+    }
+    Get-Process -Name "StartMenuExperienceHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
 function Get-Reclaim11HidePageIds {
     param([string]$Current = "")
     $ids = @()
@@ -281,7 +352,8 @@ function Invoke-Reclaim11XboxCleanse {
             if ($s -ieq $n) { throw "Refuse: Xbox list includes controller driver $s" }
         }
     }
-    if ($script:XboxAppx -contains "Microsoft.XboxGameCallableUI") {
+    $appxNames = @(Get-Reclaim11AppxBloatNames -Catalog $cat)
+    if ($appxNames -contains "Microsoft.XboxGameCallableUI") {
         throw "Refuse: XboxGameCallableUI stays (desk kept it)"
     }
     $desk = Test-Reclaim11XboxDeskHost
@@ -349,11 +421,12 @@ function Invoke-Reclaim11XboxCleanse {
         if ($shot) { $svcSnap += $shot }
     }
     $appxSnap = @()
-    foreach ($n in $script:XboxAppx) {
+    foreach ($n in $appxNames) {
         foreach ($row in @(Get-Reclaim11AppxSnapshot -Name $n)) {
             $appxSnap += $row
         }
     }
+    $startSnap = @(Get-Reclaim11StartBloatSnapshot)
 
     $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
     $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + $stamp)
@@ -372,6 +445,7 @@ function Invoke-Reclaim11XboxCleanse {
         ms_gamingoverlay           = $overlayPresent
         services                   = $svcSnap
         appx                       = $appxSnap
+        start_policy               = $startSnap
         keep_pages                 = @($script:XboxKeepPages)
         skip_driver                = @($script:XboxNeverDelete)
         backup_root                = $backupRoot
@@ -396,6 +470,9 @@ function Invoke-Reclaim11XboxCleanse {
         foreach ($s in $svcSnap) { $would += ("sc delete {0}" -f $s.name) }
         $would += "skip xboxgip"
         foreach ($a in $appxSnap) { $would += ("Appx remove {0}" -f $a.name) }
+        foreach ($row in $startSnap) {
+            $would += ("Start policy {0}\\{1}={2}" -f $row.path, $row.name, $row.wanted)
+        }
         $refuse = ""
         if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
         elseif (-not $admin) { $refuse = "needs elevation" }
@@ -456,8 +533,10 @@ function Invoke-Reclaim11XboxCleanse {
         $deleted += $svc
     }
 
+    Set-Reclaim11StartBloatPolicy
+
     $removedAppx = @()
-    foreach ($n in $script:XboxAppx) {
+    foreach ($n in $appxNames) {
         $pkgs = @(Get-AppxPackage -AllUsers -Name $n -ErrorAction SilentlyContinue)
         foreach ($p in $pkgs) {
             try {
@@ -578,6 +657,24 @@ function Restore-Reclaim11XboxBackup {
         if ($LASTEXITCODE -eq 0) {
             $restored += ("service:" + $name)
         }
+    }
+
+    if ($m.PSObject.Properties["start_policy"]) {
+        foreach ($row in @($m.start_policy)) {
+            $rp = [string]$row.path
+            $rn = [string]$row.name
+            if ([string]::IsNullOrWhiteSpace($rp) -or [string]::IsNullOrWhiteSpace($rn)) { continue }
+            if ([bool]$row.present) {
+                if (-not (Test-Path -LiteralPath $rp)) { New-Item -Path $rp -Force | Out-Null }
+                New-ItemProperty -Path $rp -Name $rn -Value ([int]$row.value) -PropertyType DWord -Force | Out-Null
+            } else {
+                if (Test-Path -LiteralPath $rp) {
+                    Remove-ItemProperty -LiteralPath $rp -Name $rn -ErrorAction SilentlyContinue
+                }
+            }
+            $restored += ("start:" + $rn)
+        }
+        Get-Process -Name "StartMenuExperienceHost" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 
     foreach ($a in @($m.appx)) {
