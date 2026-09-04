@@ -17,27 +17,90 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($here)) { $here = $PWD.Path }
 . (Join-Path $here "offline.ps1")
 
+function Test-Reclaim11PeMediaRoot {
+    param([string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $true }
+    $r = $Root.TrimEnd("\")
+    if ($r -like "X:*") { return $true }
+    if (Test-Path -LiteralPath (Join-Path $r "sources\boot.wim")) { return $true }
+    $false
+}
+
+function Get-Reclaim11FreeDriveLetter {
+    $used = @{}
+    foreach ($d in @(Get-PSDrive -PSProvider FileSystem)) {
+        $n = [string]$d.Name
+        if ($n.Length -eq 1) { $used[$n.ToUpperInvariant()] = $true }
+    }
+    foreach ($c in @("S", "R", "Q", "P", "O", "N", "M", "L")) {
+        if (-not $used.ContainsKey($c)) { return $c }
+    }
+    throw "Skip-Reclaim11WinRe: no free drive letter for ESP"
+}
+
+function Find-Reclaim11EspBcd {
+    param(
+        [string]$VolumeRoot,
+        [switch]$AssignLetter
+    )
+    $found = New-Object System.Collections.Generic.List[string]
+    $letter = $null
+    if ($VolumeRoot -match "^([A-Za-z]):") { $letter = $Matches[1] }
+    if ([string]::IsNullOrWhiteSpace($letter)) { return @() }
+    $ntosOnLetter = Join-Path ($letter + ":\") "Windows\System32\ntoskrnl.exe"
+    $ntosOnVol = Join-Path $VolumeRoot "Windows\System32\ntoskrnl.exe"
+    if (-not ((Test-Path -LiteralPath $ntosOnLetter) -or (Test-Path -LiteralPath $ntosOnVol))) {
+        return @()
+    }
+    try {
+        $winPart = @(Get-Partition -DriveLetter $letter -ErrorAction Stop)
+        if ($winPart.Count -lt 1) { return @() }
+        $diskN = [int]$winPart[0].DiskNumber
+        $esps = @(Get-Partition -DiskNumber $diskN -ErrorAction Stop | Where-Object {
+            ([string]$_.GptType) -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}"
+        })
+        foreach ($esp in $esps) {
+            $el = [string]$esp.DriveLetter
+            if ([string]::IsNullOrWhiteSpace($el)) {
+                if (-not $AssignLetter) { continue }
+                $el = Get-Reclaim11FreeDriveLetter
+                Set-Partition -DiskNumber $diskN -PartitionNumber $esp.PartitionNumber -NewDriveLetter $el -ErrorAction Stop
+            }
+            $bcd = Join-Path ($el + ":\") "EFI\Microsoft\Boot\BCD"
+            if (Test-Path -LiteralPath $bcd) {
+                [void]$found.Add([IO.Path]::GetFullPath($bcd))
+            }
+        }
+    } catch {
+        return @()
+    }
+    @($found)
+}
+
 function Find-Reclaim11BcdStores {
-    param([string]$VolumeRoot = "")
+    param(
+        [string]$VolumeRoot = "",
+        [switch]$AssignEspLetter
+    )
     $out = New-Object System.Collections.Generic.List[string]
     $seen = @{}
     $cands = New-Object System.Collections.Generic.List[string]
     if (-not [string]::IsNullOrWhiteSpace($VolumeRoot)) {
-        [void]$cands.Add((Join-Path $VolumeRoot "Boot\BCD"))
-        [void]$cands.Add((Join-Path $VolumeRoot "EFI\Microsoft\Boot\BCD"))
-    }
-    foreach ($d in @(Get-PSDrive -PSProvider FileSystem)) {
-        $root = [string]$d.Root
-        if ([string]::IsNullOrWhiteSpace($root)) { continue }
-        if ($root -like "X:\*") { continue }
-        [void]$cands.Add((Join-Path $root "EFI\Microsoft\Boot\BCD"))
-        [void]$cands.Add((Join-Path $root "Boot\BCD"))
+        if (-not (Test-Reclaim11PeMediaRoot -Root $VolumeRoot)) {
+            [void]$cands.Add((Join-Path $VolumeRoot "Boot\BCD"))
+            [void]$cands.Add((Join-Path $VolumeRoot "EFI\Microsoft\Boot\BCD"))
+        }
+        foreach ($s in @(Find-Reclaim11EspBcd -VolumeRoot $VolumeRoot -AssignLetter:$AssignEspLetter)) {
+            [void]$cands.Add($s)
+        }
     }
     foreach ($p in @($cands)) {
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
         if (-not (Test-Path -LiteralPath $p)) { continue }
         $full = [IO.Path]::GetFullPath($p)
         if ($full -like "X:\*") { continue }
+        $vol = [IO.Path]::GetPathRoot($full)
+        if (Test-Reclaim11PeMediaRoot -Root $vol) { continue }
         $key = $full.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
@@ -100,9 +163,13 @@ function Invoke-Reclaim11WinReSkip {
     $volumeRoot = Split-Path -Parent $winResolved
     $stores = New-Object System.Collections.Generic.List[string]
     if (-not [string]::IsNullOrWhiteSpace($BcdStore)) {
+        $bcdRoot = [IO.Path]::GetPathRoot($BcdStore)
+        if ((-not $WhatIf) -and (Test-Reclaim11PeMediaRoot -Root $bcdRoot)) {
+            throw "Refuse: BCD is on WinPE media, not the Windows disk."
+        }
         [void]$stores.Add($BcdStore)
     } else {
-        foreach ($s in @(Find-Reclaim11BcdStores -VolumeRoot $volumeRoot)) {
+        foreach ($s in @(Find-Reclaim11BcdStores -VolumeRoot $volumeRoot -AssignEspLetter:(-not $WhatIf))) {
             [void]$stores.Add($s)
         }
     }
@@ -146,13 +213,21 @@ function Invoke-Reclaim11WinReSkip {
     if ($stores.Count -lt 1) {
         throw "Skip-Reclaim11WinRe: no BCD store (EFI unmounted? BitLocker?)"
     }
+    $edited = New-Object System.Collections.Generic.List[string]
     foreach ($store in @($stores)) {
+        $storeRoot = [IO.Path]::GetPathRoot($store)
+        if (Test-Reclaim11PeMediaRoot -Root $storeRoot) { continue }
         if (-not (Test-Path -LiteralPath $store)) {
             throw "Skip-Reclaim11WinRe: missing BCD $store"
         }
         $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/store", $store, "/set", "{default}", "recoveryenabled", "No")
         $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/store", $store, "/set", "{default}", "bootstatuspolicy", "IgnoreAllFailures")
+        [void]$edited.Add($store)
     }
+    if ($edited.Count -lt 1) {
+        throw "Skip-Reclaim11WinRe: no Windows BCD edited (refused WinPE media store)"
+    }
+    $plan.bcd_stores = @($edited)
     if ($srtPresent) {
         Copy-Item -LiteralPath $srt -Destination $srtDest -Force
         $plan.srt_copied = $true

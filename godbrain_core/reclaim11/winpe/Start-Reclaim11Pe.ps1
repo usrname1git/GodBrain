@@ -28,23 +28,13 @@ function Read-Reclaim11PeDoor {
         Write-Host ("  {0}" -f $SrtHint)
     }
     Write-Host "========================================"
-    try {
-        while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
-    } catch {
+    $choice = Join-Path $env:SystemRoot "System32\choice.exe"
+    if (-not (Test-Path -LiteralPath $choice)) {
+        Start-Sleep -Seconds $Seconds
         return "Wipe"
     }
-    $deadline = [datetime]::UtcNow.AddSeconds($Seconds)
-    while ([datetime]::UtcNow -lt $deadline) {
-        try {
-            if ([Console]::KeyAvailable) {
-                $k = [Console]::ReadKey($true)
-                if ($k.Key -eq [ConsoleKey]::H) { return "Help" }
-            }
-        } catch {
-            return "Wipe"
-        }
-        Start-Sleep -Milliseconds 200
-    }
+    cmd.exe /c "`"$choice`" /C HW /N /T $Seconds /D W"
+    if ($LASTEXITCODE -eq 1) { return "Help" }
     "Wipe"
 }
 

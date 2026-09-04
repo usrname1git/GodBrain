@@ -366,6 +366,15 @@ if ($peDoorSrc -notmatch 'Skip-Reclaim11WinRe\.ps1') {
 if ($peDoorSrc -notmatch 'Apply-Reclaim11Offline\.ps1') {
     throw "Test-Reclaim11: timeout must run Apply-Reclaim11Offline.ps1"
 }
+if ($peDoorSrc -notmatch 'choice\.exe') {
+    throw "Test-Reclaim11: PE door must use choice.exe for the 12s banner"
+}
+if ($peDoorSrc -notmatch '/C HW') {
+    throw "Test-Reclaim11: PE door choice must be H=help W=wipe"
+}
+if ($peDoorSrc -match 'KeyAvailable') {
+    throw "Test-Reclaim11: PE door must not wipe on Console KeyAvailable throw"
+}
 $skipSrc = Get-Content -LiteralPath (Join-Path $winpe "Skip-Reclaim11WinRe.ps1") -Raw -Encoding UTF8
 if ($skipSrc -match '\bchkdsk\b' -or $skipSrc -match '\bsfc\b' -or $skipSrc -match '/RevertPendingActions') {
     throw "Test-Reclaim11: WinRE skip must not chkdsk/sfc/DISM revert"
@@ -385,12 +394,30 @@ if ($skipSrc -notmatch 'reclaim11-winre-skip\.log') {
 if ($skipSrc -notmatch 'killing_blows\s*=\s*\$false') {
     throw "Test-Reclaim11: WinRE skip must not unlock killing blows"
 }
+if ($skipSrc -notmatch 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b') {
+    throw "Test-Reclaim11: WinRE skip must find the ESP GPT type"
+}
+if ($skipSrc -notmatch 'Set-Partition') {
+    throw "Test-Reclaim11: WinRE skip must assign a letter to an unlettered ESP"
+}
+if ($skipSrc -notmatch 'sources\\boot\.wim') {
+    throw "Test-Reclaim11: WinRE skip must refuse WinPE media BCD"
+}
+if ($skipSrc -notmatch 'no Windows BCD edited') {
+    throw "Test-Reclaim11: skip receipt only after a Windows BCD edit"
+}
 $offlineSrc = Get-Content -LiteralPath (Join-Path $winpe "offline.ps1") -Raw -Encoding UTF8
 if ($offlineSrc -notmatch 'Get-Reclaim11OfflineEditionId') {
     throw "Test-Reclaim11: offline apply must read offline EditionID"
 }
 if ($offlineSrc -notmatch 'IoTEnterpriseS') {
     throw "Test-Reclaim11: offline pack A must refuse IoTEnterpriseS"
+}
+if ($offlineSrc -notmatch 'cannot read EditionID') {
+    throw "Test-Reclaim11: unread offline EditionID must fail closed"
+}
+if ($offlineSrc -notmatch 'EditionId') {
+    throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
 foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
@@ -520,7 +547,25 @@ foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) 
 $fltBefore = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
 
 $sbOnFx = [pscustomobject]@{ available = $true; enabled = $true; error = $null }
-$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx
+try {
+    $null = Get-Reclaim11OfflineEditionId -WindowsRoot $fxWin
+    throw "Test-Reclaim11: missing SOFTWARE hive must fail closed"
+} catch {
+    if ($_.Exception.Message -notmatch 'cannot read EditionID') {
+        throw "Test-Reclaim11: expected EditionID refuse, got $($_.Exception.Message)"
+    }
+}
+$iotThrew = $false
+try {
+    Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "IoTEnterpriseS"
+} catch {
+    $iotThrew = $true
+    if ($_.Exception.Message -notmatch 'Refuse: desk \(IoTEnterpriseS\)') {
+        throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
+    }
+}
+if (-not $iotThrew) { throw "Test-Reclaim11: IoTEnterpriseS must be refused" }
+$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "Professional"
 if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
 if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }
 if (@($rOn.skipped_elam).Count -lt 1) { throw "Test-Reclaim11: SB on must skip ELAM" }
@@ -542,7 +587,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $fxWin "reclaim11-winpe.log"))) {
 [IO.File]::WriteAllBytes((Join-Path $fxWd "WdFilter.sys"), ([byte[]](1, 2, 3, 4)))
 [IO.File]::WriteAllBytes((Join-Path $fxWd "WdBoot.sys"), ([byte[]](1, 2, 3, 4)))
 $sbOffFx = [pscustomobject]@{ available = $true; enabled = $false; error = $null }
-$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx
+$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx -EditionId "Professional"
 if (-not $rOff.stub_wdboot) { throw "Test-Reclaim11: SB off must allow WdBoot park" }
 $bootOffPath = Join-Path $fxWd "WdBoot.sys"
 if (Test-Path -LiteralPath $bootOffPath) {
@@ -590,6 +635,30 @@ if (@($skipPlan.dumps) -notcontains "dummy.dmp") { throw "Test-Reclaim11: skip -
 if (Test-Path -LiteralPath (Join-Path $fxSkipWin "reclaim11-winre-skip.log")) {
     throw "Test-Reclaim11: skip -WhatIf must not write the skip receipt"
 }
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkip "Boot") | Out-Null
+Set-Content -LiteralPath (Join-Path $fxSkip "Boot\BCD") -Value "fake-bcd" -Encoding ASCII
+if (Test-Path -LiteralPath $skipOutFile) { Remove-Item -LiteralPath $skipOutFile -Force }
+$skipBios = Start-Process -FilePath (Join-Path $PSHOME "pwsh.exe") -ArgumentList @(
+    "-NoProfile", "-File", $skipFile, "-WindowsRoot", $fxSkipWin, "-WhatIf"
+) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $skipOutFile
+if ($skipBios.ExitCode -ne 0) { throw "Test-Reclaim11: skip BIOS BCD -WhatIf exit $($skipBios.ExitCode)" }
+$biosText = Get-Content -LiteralPath $skipOutFile -Raw -Encoding UTF8
+$biosPlan = $biosText.Substring($biosText.IndexOf("{"), $biosText.LastIndexOf("}") - $biosText.IndexOf("{") + 1) | ConvertFrom-Json
+if (@($biosPlan.bcd_stores | ForEach-Object { $_ }) -notmatch 'Boot\\BCD') {
+    throw "Test-Reclaim11: skip must see VolumeRoot\\Boot\\BCD"
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkip "sources") | Out-Null
+Set-Content -LiteralPath (Join-Path $fxSkip "sources\boot.wim") -Value "pe" -Encoding ASCII
+if (Test-Path -LiteralPath $skipOutFile) { Remove-Item -LiteralPath $skipOutFile -Force }
+$skipPe = Start-Process -FilePath (Join-Path $PSHOME "pwsh.exe") -ArgumentList @(
+    "-NoProfile", "-File", $skipFile, "-WindowsRoot", $fxSkipWin, "-WhatIf"
+) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $skipOutFile
+if ($skipPe.ExitCode -ne 0) { throw "Test-Reclaim11: skip PE-media -WhatIf exit $($skipPe.ExitCode)" }
+$peText = Get-Content -LiteralPath $skipOutFile -Raw -Encoding UTF8
+$pePlan = $peText.Substring($peText.IndexOf("{"), $peText.LastIndexOf("}") - $peText.IndexOf("{") + 1) | ConvertFrom-Json
+if (@($pePlan.bcd_stores | ForEach-Object { [string]$_ }) -match 'Boot\\BCD') {
+    throw "Test-Reclaim11: skip must ignore BCD on WinPE media (sources\\boot.wim)"
+}
 Set-Content -LiteralPath (Join-Path $fxSkipWin "reclaim11-winre-skip.log") -Value '{"id":"reclaim11-winre-skip-v1"}' -Encoding UTF8
 $gSkip = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog (Join-Path $fxSkipWin "reclaim11-winre-skip.log")
 if ($gSkip.killing_blows) {
@@ -613,7 +682,7 @@ foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) 
 New-Item -ItemType Directory -Force -Path (Join-Path $fx25Win "System32") | Out-Null
 [IO.File]::WriteAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"), ([byte[]](1, 2, 3, 4)))
 $wdfBefore = Get-FileHash -LiteralPath (Join-Path $fx25Drv "wdf01000.sys") -Algorithm SHA256
-$r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+$r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx -EditionId "Professional"
 foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
     if (@($r25.missing) -contains $n) { throw "Test-Reclaim11: 25H2 flat drivers\ missing $n" }
 }
@@ -639,7 +708,7 @@ if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
     throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
 }
 [IO.File]::WriteAllBytes((Join-Path $fx25Drv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
-$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx -EditionId "Professional"
 if (@($r25b.missing) -contains "WdFilter.sys") {
     throw "Test-Reclaim11: existing .bak must count as parked, not missing"
 }
