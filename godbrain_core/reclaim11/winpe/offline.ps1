@@ -125,6 +125,40 @@ function Get-Reclaim11OfflineSecureBoot {
     }
 }
 
+function Get-Reclaim11OfflineEditionId {
+    param([string]$WindowsRoot)
+    $hive = Join-Path $WindowsRoot "System32\config\SOFTWARE"
+    if (-not (Test-Path -LiteralPath $hive)) {
+        throw "Refuse: cannot read EditionID (needed to refuse desk). missing SOFTWARE hive."
+    }
+    $key = "HKLM\R11EDITION"
+    $null = & reg.exe unload $key 2>&1
+    $loaded = $false
+    try {
+        & reg.exe load $key $hive | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Refuse: cannot read EditionID (needed to refuse desk). reg load failed."
+        }
+        $loaded = $true
+        $p = "HKLM:\R11EDITION\Microsoft\Windows NT\CurrentVersion"
+        if (-not (Test-Path -LiteralPath $p)) {
+            throw "Refuse: cannot read EditionID (needed to refuse desk). missing CurrentVersion."
+        }
+        $id = [string](Get-ItemProperty -LiteralPath $p).EditionID
+        if ([string]::IsNullOrWhiteSpace($id)) {
+            throw "Refuse: cannot read EditionID (needed to refuse desk)."
+        }
+        $id
+    } finally {
+        if ($loaded) {
+            & reg.exe unload $key | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Refuse: cannot unload SOFTWARE hive after EditionID read."
+            }
+        }
+    }
+}
+
 function Find-Reclaim11WindowsVolumes {
     $rows = @()
     foreach ($d in @(Get-PSDrive -PSProvider FileSystem)) {
@@ -355,6 +389,7 @@ function Invoke-Reclaim11OfflineApply {
         [string]$CatalogPath,
         [string]$StubPath,
         [string]$WindowsRoot = "",
+        [string]$EditionId = "",
         $SecureBoot = $null
     )
     if (-not (Test-Path -LiteralPath $CatalogPath)) {
@@ -387,6 +422,13 @@ function Invoke-Reclaim11OfflineApply {
     $sysResolved = [IO.Path]::GetFullPath($env:SystemRoot).TrimEnd("\")
     if (-not $inPe -and $winResolved -eq $sysResolved) {
         throw "Refuse: -WindowsRoot is this session's Windows. Boot the ISO."
+    }
+    $sku = $EditionId
+    if ([string]::IsNullOrWhiteSpace($sku)) {
+        $sku = Get-Reclaim11OfflineEditionId -WindowsRoot $winResolved
+    }
+    if ($sku -eq "IoTEnterpriseS") {
+        throw "Refuse: desk (IoTEnterpriseS). Offline pack A is VM-only. Not M1ABRAMS."
     }
 
     $volumeRoot = Split-Path -Parent $winResolved

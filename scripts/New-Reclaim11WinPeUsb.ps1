@@ -93,7 +93,7 @@ function Copy-Reclaim11PePayload {
     $dest = Join-Path $Mount "Reclaim11"
     if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
     New-Item -ItemType Directory -Path $dest | Out-Null
-    foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1")) {
+    foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1")) {
         Copy-Item -LiteralPath (Join-Path $winpeSrc $n) -Destination (Join-Path $dest $n) -Force
     }
     Copy-Item -LiteralPath (Join-Path $reclaim "catalog.json") -Destination (Join-Path $dest "catalog.json") -Force

@@ -215,6 +215,9 @@ if ($readme -notmatch 'attach \*\*v9\*\*') {
 if ($readme -match 'C:\\nvme') {
     throw "Test-Reclaim11: README must not name a host nvme path"
 }
+if ($readme -notmatch "Windows won't boot") {
+    throw "Test-Reclaim11: README must mention the WinPE H help door"
+}
 if ($readme -notmatch 'Recommended') {
     throw "Test-Reclaim11: README must recommend VM or TEST first"
 }
@@ -340,8 +343,81 @@ foreach ($f in @($emptyBrowser, $noBrowser)) {
 }
 
 $winpe = Join-Path $root "winpe"
-foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
+foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c")) {
     if (-not (Test-Path -LiteralPath (Join-Path $winpe $need))) { throw "Test-Reclaim11: missing winpe\$need" }
+}
+$startnetSrc = Get-Content -LiteralPath (Join-Path $winpe "startnet.cmd") -Raw -Encoding ASCII
+if ($startnetSrc -notmatch 'Start-Reclaim11Pe\.ps1') {
+    throw "Test-Reclaim11: startnet must launch Start-Reclaim11Pe.ps1"
+}
+if ($startnetSrc -match 'Apply-Reclaim11Offline\.ps1') {
+    throw "Test-Reclaim11: startnet must not call Apply-Reclaim11Offline directly"
+}
+$peDoorSrc = Get-Content -LiteralPath (Join-Path $winpe "Start-Reclaim11Pe.ps1") -Raw -Encoding UTF8
+if ($peDoorSrc -notmatch 'BannerSec = 12') {
+    throw "Test-Reclaim11: PE door default banner must be 12 seconds"
+}
+if ($peDoorSrc -notmatch "Windows won't boot") {
+    throw "Test-Reclaim11: PE door must offer Windows won't boot"
+}
+if ($peDoorSrc -notmatch 'Skip-Reclaim11WinRe\.ps1') {
+    throw "Test-Reclaim11: H must run Skip-Reclaim11WinRe.ps1"
+}
+if ($peDoorSrc -notmatch 'Apply-Reclaim11Offline\.ps1') {
+    throw "Test-Reclaim11: timeout must run Apply-Reclaim11Offline.ps1"
+}
+if ($peDoorSrc -notmatch 'choice\.exe') {
+    throw "Test-Reclaim11: PE door must use choice.exe for the 12s banner"
+}
+if ($peDoorSrc -notmatch '/C HW') {
+    throw "Test-Reclaim11: PE door choice must be H=help W=wipe"
+}
+if ($peDoorSrc -match 'KeyAvailable') {
+    throw "Test-Reclaim11: PE door must not wipe on Console KeyAvailable throw"
+}
+$skipSrc = Get-Content -LiteralPath (Join-Path $winpe "Skip-Reclaim11WinRe.ps1") -Raw -Encoding UTF8
+if ($skipSrc -match '\bchkdsk\b' -or $skipSrc -match '\bsfc\b' -or $skipSrc -match '/RevertPendingActions') {
+    throw "Test-Reclaim11: WinRE skip must not chkdsk/sfc/DISM revert"
+}
+if ($skipSrc -notmatch 'recoveryenabled') {
+    throw "Test-Reclaim11: WinRE skip must set recoveryenabled No"
+}
+if ($skipSrc -notmatch 'IgnoreAllFailures') {
+    throw "Test-Reclaim11: WinRE skip must set bootstatuspolicy IgnoreAllFailures"
+}
+if ($skipSrc -notmatch 'SrtTrail') {
+    throw "Test-Reclaim11: WinRE skip must look for SrtTrail.txt"
+}
+if ($skipSrc -notmatch 'reclaim11-winre-skip\.log') {
+    throw "Test-Reclaim11: WinRE skip receipt must be reclaim11-winre-skip.log"
+}
+if ($skipSrc -notmatch 'killing_blows\s*=\s*\$false') {
+    throw "Test-Reclaim11: WinRE skip must not unlock killing blows"
+}
+if ($skipSrc -notmatch 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b') {
+    throw "Test-Reclaim11: WinRE skip must find the ESP GPT type"
+}
+if ($skipSrc -notmatch 'Set-Partition') {
+    throw "Test-Reclaim11: WinRE skip must assign a letter to an unlettered ESP"
+}
+if ($skipSrc -notmatch 'sources\\boot\.wim') {
+    throw "Test-Reclaim11: WinRE skip must refuse WinPE media BCD"
+}
+if ($skipSrc -notmatch 'no Windows BCD edited') {
+    throw "Test-Reclaim11: skip receipt only after a Windows BCD edit"
+}
+$offlineSrc = Get-Content -LiteralPath (Join-Path $winpe "offline.ps1") -Raw -Encoding UTF8
+if ($offlineSrc -notmatch 'Get-Reclaim11OfflineEditionId') {
+    throw "Test-Reclaim11: offline apply must read offline EditionID"
+}
+if ($offlineSrc -notmatch 'IoTEnterpriseS') {
+    throw "Test-Reclaim11: offline pack A must refuse IoTEnterpriseS"
+}
+if ($offlineSrc -notmatch 'cannot read EditionID') {
+    throw "Test-Reclaim11: unread offline EditionID must fail closed"
+}
+if ($offlineSrc -notmatch 'EditionId') {
+    throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
 foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
@@ -417,7 +493,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
@@ -471,7 +547,25 @@ foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) 
 $fltBefore = Get-FileHash -LiteralPath (Join-Path $fxWin "System32\drivers\fltmgr.sys") -Algorithm SHA256
 
 $sbOnFx = [pscustomobject]@{ available = $true; enabled = $true; error = $null }
-$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx
+try {
+    $null = Get-Reclaim11OfflineEditionId -WindowsRoot $fxWin
+    throw "Test-Reclaim11: missing SOFTWARE hive must fail closed"
+} catch {
+    if ($_.Exception.Message -notmatch 'cannot read EditionID') {
+        throw "Test-Reclaim11: expected EditionID refuse, got $($_.Exception.Message)"
+    }
+}
+$iotThrew = $false
+try {
+    Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "IoTEnterpriseS"
+} catch {
+    $iotThrew = $true
+    if ($_.Exception.Message -notmatch 'Refuse: desk \(IoTEnterpriseS\)') {
+        throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
+    }
+}
+if (-not $iotThrew) { throw "Test-Reclaim11: IoTEnterpriseS must be refused" }
+$rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "Professional"
 if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
 if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }
 if (@($rOn.skipped_elam).Count -lt 1) { throw "Test-Reclaim11: SB on must skip ELAM" }
@@ -493,7 +587,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $fxWin "reclaim11-winpe.log"))) {
 [IO.File]::WriteAllBytes((Join-Path $fxWd "WdFilter.sys"), ([byte[]](1, 2, 3, 4)))
 [IO.File]::WriteAllBytes((Join-Path $fxWd "WdBoot.sys"), ([byte[]](1, 2, 3, 4)))
 $sbOffFx = [pscustomobject]@{ available = $true; enabled = $false; error = $null }
-$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx
+$rOff = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOffFx -EditionId "Professional"
 if (-not $rOff.stub_wdboot) { throw "Test-Reclaim11: SB off must allow WdBoot park" }
 $bootOffPath = Join-Path $fxWd "WdBoot.sys"
 if (Test-Path -LiteralPath $bootOffPath) {
@@ -507,6 +601,69 @@ if ($fltAfterOff.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys m
 
 $gFx = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog (Join-Path $fxWin "reclaim11-winpe.log")
 if (-not $gFx.killing_blows) { throw "Test-Reclaim11: fixture receipt must unlock killing blows" }
+
+$fxSkip = Join-Path $env:TEMP "reclaim11-winre-skip-fx"
+if (Test-Path -LiteralPath $fxSkip) { Remove-Item -LiteralPath $fxSkip -Recurse -Force }
+$fxSkipWin = Join-Path $fxSkip "Windows"
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkipWin "System32\LogFiles\Srt") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkipWin "Minidump") | Out-Null
+Set-Content -LiteralPath (Join-Path $fxSkipWin "System32\LogFiles\Srt\SrtTrail.txt") -Value "startup repair failed" -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $fxSkipWin "Minidump\dummy.dmp") -Value "x" -Encoding ASCII
+$skipFile = Join-Path $winpe "Skip-Reclaim11WinRe.ps1"
+$skipOutFile = Join-Path $env:TEMP "reclaim11-skip-whatif.txt"
+if (Test-Path -LiteralPath $skipOutFile) { Remove-Item -LiteralPath $skipOutFile -Force }
+$skipProc = Start-Process -FilePath (Join-Path $PSHOME "pwsh.exe") -ArgumentList @(
+    "-NoProfile", "-File", $skipFile, "-WindowsRoot", $fxSkipWin, "-WhatIf"
+) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $skipOutFile
+if ($skipProc.ExitCode -ne 0) {
+    $tail = ""
+    if (Test-Path -LiteralPath $skipOutFile) { $tail = Get-Content -LiteralPath $skipOutFile -Raw -ErrorAction SilentlyContinue }
+    throw "Test-Reclaim11: WinRE skip -WhatIf exit $($skipProc.ExitCode) $tail"
+}
+$skipText = Get-Content -LiteralPath $skipOutFile -Raw -Encoding UTF8
+$jsonStart = $skipText.IndexOf("{")
+$jsonEnd = $skipText.LastIndexOf("}")
+if ($jsonStart -lt 0 -or $jsonEnd -le $jsonStart) {
+    throw "Test-Reclaim11: WinRE skip -WhatIf did not print JSON"
+}
+$skipPlan = $skipText.Substring($jsonStart, $jsonEnd - $jsonStart + 1) | ConvertFrom-Json
+if ($skipPlan.id -ne "reclaim11-winre-skip-v1") { throw "Test-Reclaim11: skip receipt id" }
+if ($skipPlan.mutate) { throw "Test-Reclaim11: skip -WhatIf must not mutate" }
+if ($skipPlan.killing_blows) { throw "Test-Reclaim11: skip plan must not unlock killing blows" }
+if (-not $skipPlan.srt_trail) { throw "Test-Reclaim11: skip -WhatIf must see SrtTrail.txt" }
+if (@($skipPlan.dumps) -notcontains "dummy.dmp") { throw "Test-Reclaim11: skip -WhatIf must list minidump names" }
+if (Test-Path -LiteralPath (Join-Path $fxSkipWin "reclaim11-winre-skip.log")) {
+    throw "Test-Reclaim11: skip -WhatIf must not write the skip receipt"
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkip "Boot") | Out-Null
+Set-Content -LiteralPath (Join-Path $fxSkip "Boot\BCD") -Value "fake-bcd" -Encoding ASCII
+if (Test-Path -LiteralPath $skipOutFile) { Remove-Item -LiteralPath $skipOutFile -Force }
+$skipBios = Start-Process -FilePath (Join-Path $PSHOME "pwsh.exe") -ArgumentList @(
+    "-NoProfile", "-File", $skipFile, "-WindowsRoot", $fxSkipWin, "-WhatIf"
+) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $skipOutFile
+if ($skipBios.ExitCode -ne 0) { throw "Test-Reclaim11: skip BIOS BCD -WhatIf exit $($skipBios.ExitCode)" }
+$biosText = Get-Content -LiteralPath $skipOutFile -Raw -Encoding UTF8
+$biosPlan = $biosText.Substring($biosText.IndexOf("{"), $biosText.LastIndexOf("}") - $biosText.IndexOf("{") + 1) | ConvertFrom-Json
+if (@($biosPlan.bcd_stores | ForEach-Object { $_ }) -notmatch 'Boot\\BCD') {
+    throw "Test-Reclaim11: skip must see VolumeRoot\\Boot\\BCD"
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $fxSkip "sources") | Out-Null
+Set-Content -LiteralPath (Join-Path $fxSkip "sources\boot.wim") -Value "pe" -Encoding ASCII
+if (Test-Path -LiteralPath $skipOutFile) { Remove-Item -LiteralPath $skipOutFile -Force }
+$skipPe = Start-Process -FilePath (Join-Path $PSHOME "pwsh.exe") -ArgumentList @(
+    "-NoProfile", "-File", $skipFile, "-WindowsRoot", $fxSkipWin, "-WhatIf"
+) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $skipOutFile
+if ($skipPe.ExitCode -ne 0) { throw "Test-Reclaim11: skip PE-media -WhatIf exit $($skipPe.ExitCode)" }
+$peText = Get-Content -LiteralPath $skipOutFile -Raw -Encoding UTF8
+$pePlan = $peText.Substring($peText.IndexOf("{"), $peText.LastIndexOf("}") - $peText.IndexOf("{") + 1) | ConvertFrom-Json
+if (@($pePlan.bcd_stores | ForEach-Object { [string]$_ }) -match 'Boot\\BCD') {
+    throw "Test-Reclaim11: skip must ignore BCD on WinPE media (sources\\boot.wim)"
+}
+Set-Content -LiteralPath (Join-Path $fxSkipWin "reclaim11-winre-skip.log") -Value '{"id":"reclaim11-winre-skip-v1"}' -Encoding UTF8
+$gSkip = Get-Reclaim11Gates -Inventory $sbOff -WinPeLog (Join-Path $fxSkipWin "reclaim11-winre-skip.log")
+if ($gSkip.killing_blows) {
+    throw "Test-Reclaim11: winre-skip receipt must not unlock killing blows"
+}
 
 # 25H2: drivers\wd empty, WdFilter.sys lives in drivers\ (not a Wd* glob).
 $fx25 = Join-Path $env:TEMP "reclaim11-winpe-fx25"
@@ -525,7 +682,7 @@ foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) 
 New-Item -ItemType Directory -Force -Path (Join-Path $fx25Win "System32") | Out-Null
 [IO.File]::WriteAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"), ([byte[]](1, 2, 3, 4)))
 $wdfBefore = Get-FileHash -LiteralPath (Join-Path $fx25Drv "wdf01000.sys") -Algorithm SHA256
-$r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+$r25 = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx -EditionId "Professional"
 foreach ($n in @("WdBoot.sys", "WdFilter.sys", "WdNisDrv.sys", "WdDevFlt.sys")) {
     if (@($r25.missing) -contains $n) { throw "Test-Reclaim11: 25H2 flat drivers\ missing $n" }
 }
@@ -551,7 +708,7 @@ if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
     throw "Test-Reclaim11: PE must stub smartscreen.exe (usermode) offline"
 }
 [IO.File]::WriteAllBytes((Join-Path $fx25Drv "WdFilter.sys.reclaim11.bak"), ([byte[]](1, 2, 3, 4)))
-$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx
+$r25b = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fx25Win -SecureBoot $sbOffFx -EditionId "Professional"
 if (@($r25b.missing) -contains "WdFilter.sys") {
     throw "Test-Reclaim11: existing .bak must count as parked, not missing"
 }

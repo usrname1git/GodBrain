@@ -31,6 +31,8 @@ $need = @(
     (Join-Path $kit "ui\MainWindow.xaml"),
     (Join-Path $kit "winpe\offline.ps1"),
     (Join-Path $kit "winpe\Apply-Reclaim11Offline.ps1"),
+    (Join-Path $kit "winpe\Start-Reclaim11Pe.ps1"),
+    (Join-Path $kit "winpe\Skip-Reclaim11WinRe.ps1"),
     (Join-Path $kit "winpe\startnet.cmd"),
     (Join-Path $kit "winpe\stub.c"),
     (Join-Path $PSScriptRoot "New-Reclaim11WinPeIso.ps1"),
@@ -60,7 +62,7 @@ foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "ExpertPanel.jpg")) {
         Copy-Item -LiteralPath $s -Destination (Join-Path $stage "ui\$n") -Force
     }
 }
-foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
+foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c")) {
     Copy-Item -LiteralPath (Join-Path $kit "winpe\$n") -Destination (Join-Path $stage "winpe\$n") -Force
 }
 foreach ($n in @("New-Reclaim11WinPeIso.ps1", "New-Reclaim11WinPeUsb.ps1", "Resolve-Reclaim11Kit.ps1")) {
