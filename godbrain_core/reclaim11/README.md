@@ -39,6 +39,7 @@ Recommended. Photos, Calculator, Store, Notepad stay.
 - Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows unlock only after a WinPE receipt. Some Windows SKUs are refused.
+- WinPE waits **12 seconds**: press **H** if Windows won't boot (skips Automatic Repair). Otherwise pack A runs as today. Help writes `reclaim11-winre-skip.log` and does **not** unlock killing blows.
 
 ### Two PE profiles
 

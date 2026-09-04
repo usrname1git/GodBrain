@@ -125,6 +125,26 @@ function Get-Reclaim11OfflineSecureBoot {
     }
 }
 
+function Get-Reclaim11OfflineEditionId {
+    param([string]$WindowsRoot)
+    $hive = Join-Path $WindowsRoot "System32\config\SOFTWARE"
+    if (-not (Test-Path -LiteralPath $hive)) { return $null }
+    $key = "HKLM\R11EDITION"
+    $loaded = $false
+    try {
+        & reg.exe load $key $hive | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $loaded = $true
+        $p = "HKLM:\R11EDITION\Microsoft\Windows NT\CurrentVersion"
+        if (-not (Test-Path -LiteralPath $p)) { return $null }
+        [string](Get-ItemProperty -LiteralPath $p).EditionID
+    } catch {
+        $null
+    } finally {
+        if ($loaded) { & reg.exe unload $key | Out-Null }
+    }
+}
+
 function Find-Reclaim11WindowsVolumes {
     $rows = @()
     foreach ($d in @(Get-PSDrive -PSProvider FileSystem)) {
@@ -387,6 +407,10 @@ function Invoke-Reclaim11OfflineApply {
     $sysResolved = [IO.Path]::GetFullPath($env:SystemRoot).TrimEnd("\")
     if (-not $inPe -and $winResolved -eq $sysResolved) {
         throw "Refuse: -WindowsRoot is this session's Windows. Boot the ISO."
+    }
+    $sku = Get-Reclaim11OfflineEditionId -WindowsRoot $winResolved
+    if ($sku -eq "IoTEnterpriseS") {
+        throw "Refuse: desk (IoTEnterpriseS). Offline pack A is VM-only. Not M1ABRAMS."
     }
 
     $volumeRoot = Split-Path -Parent $winResolved

@@ -70,7 +70,7 @@ Install the matching pair (not ADK 10.1.28000):
   winget install --id Microsoft.WindowsADK.WinPEAddon --version $AdkVersionPin --exact
 "@
 }
-foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "startnet.cmd", "stub.c")) {
+foreach ($need in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c")) {
     $p = Join-Path $winpeSrc $need
     if (-not (Test-Path -LiteralPath $p)) { throw "New-Reclaim11WinPeIso: missing $p" }
 }
@@ -141,8 +141,9 @@ try {
     $dest = Join-Path $mount "Reclaim11"
     if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
     New-Item -ItemType Directory -Path $dest | Out-Null
-    Copy-Item -LiteralPath (Join-Path $winpeSrc "offline.ps1") -Destination (Join-Path $dest "offline.ps1") -Force
-    Copy-Item -LiteralPath (Join-Path $winpeSrc "Apply-Reclaim11Offline.ps1") -Destination (Join-Path $dest "Apply-Reclaim11Offline.ps1") -Force
+    foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1")) {
+        Copy-Item -LiteralPath (Join-Path $winpeSrc $n) -Destination (Join-Path $dest $n) -Force
+    }
     Copy-Item -LiteralPath $cat -Destination (Join-Path $dest "catalog.json") -Force
     Copy-Item -LiteralPath $stub -Destination (Join-Path $dest "DefenderStub.exe") -Force
     $ps1Dir = Join-Path $reclaim "ps1"
