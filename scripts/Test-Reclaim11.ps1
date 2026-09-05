@@ -44,6 +44,9 @@ if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
 if ($xamlSrc -notmatch "Send Grim Reaper") {
     throw "Test-Reclaim11: expert ACTIONS must tick Send Grim Reaper"
 }
+if ($xamlSrc -notmatch "hide WU in Settings") {
+    throw "Test-Reclaim11: Grim Reaper tick must say hide WU in Settings"
+}
 if ($xamlSrc -notmatch "MUST") {
     throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
 }
@@ -217,6 +220,9 @@ if ($readme -match 'C:\\nvme') {
 }
 if ($readme -notmatch "Windows won't boot") {
     throw "Test-Reclaim11: README must mention the WinPE H help door"
+}
+if ($readme -notmatch 'hides Windows Update in Settings') {
+    throw "Test-Reclaim11: README must say Grim Reaper hides WU in Settings"
 }
 if ($readme -notmatch 'Recommended') {
     throw "Test-Reclaim11: README must recommend VM or TEST first"
@@ -436,6 +442,24 @@ if ($nukeSrc -notmatch 'SystemRoot.*reclaim11-stub\.exe') {
 $killSrc = Get-Content -LiteralPath (Join-Path $ps1 "killing_blows.ps1") -Raw -Encoding UTF8
 if ($killSrc -notmatch 'C:\\Reclaim11\\reclaim11-stub\.exe') {
     throw "Test-Reclaim11: killing blows must look for C:\Reclaim11\reclaim11-stub.exe"
+}
+if ($nukeSrc -notmatch 'windowsupdate') {
+    throw "Test-Reclaim11: Grim Reaper must hide windowsupdate in Settings"
+}
+if ($nukeSrc -notmatch 'windowsupdate-optionalupdates') {
+    throw "Test-Reclaim11: Grim Reaper must hide windowsupdate-optionalupdates"
+}
+if ($nukeSrc -match '(?m)^\s*"windowsupdate-optional"\s*$') {
+    throw "Test-Reclaim11: Grim Reaper must not use windowsupdate-optional (not a Settings URI)"
+}
+if ($nukeSrc -notmatch 'RECLAIM11_AS_TI') {
+    throw "Test-Reclaim11: Grim Reaper must skip HKCU on the TI hop"
+}
+if ($nukeSrc -notmatch 'hide:id1;id2') {
+    throw "Test-Reclaim11: Grim Reaper must document hide:id1;id2 GPO format"
+}
+if ($nukeSrc -notmatch 'refuse hide gaming-gamemode') {
+    throw "Test-Reclaim11: Grim Reaper must refuse hiding Game Mode"
 }
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
 if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
