@@ -25,6 +25,7 @@ $here = Get-Reclaim11Root
 . (Join-Path $ps1Dir "telemetry_cleanse.ps1")
 . (Join-Path $ps1Dir "nic_tune.ps1")
 . (Join-Path $ps1Dir "latency_bake.ps1")
+. (Join-Path $ps1Dir "install_pwsh.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -98,6 +99,18 @@ if ($sta -ne "STA" -or -not $admin) {
         Start-Process -FilePath $pwsh -ArgumentList $arg -WindowStyle Hidden
     }
     return
+}
+
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $pwsh7 = Show-Reclaim11PwshOffer
+    if ($pwsh7) {
+        $arg = @(
+            "-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
+        )
+        if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
+        Start-Process -FilePath $pwsh7 -ArgumentList $arg -WindowStyle Hidden
+        return
+    }
 }
 
 try { $Host.UI.RawUI.WindowTitle = "Reclaim11" } catch { }
@@ -590,15 +603,15 @@ $btnPrep.Add_Click({
         return
     }
     $isoDir = "C:\Reclaim11"
-    $want = Join-Path $isoDir "Reclaim11-WinPE-v9.iso"
+    $want = Join-Path $isoDir "Reclaim11-WinPE-v10.iso"
     $iso = $want
-    foreach ($n in @("Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
+    foreach ($n in @("Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
         $p = Join-Path $isoDir $n
         if (Test-Path -LiteralPath $p) { $iso = $p; break }
     }
     $have = Test-Path -LiteralPath $iso
     $ask = if ($have) {
-        "ISO already at:`n$iso`n`nRebuild v9 to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
+        "ISO already at:`n$iso`n`nRebuild v10 to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
     } else {
         "Build WinPE ISO to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
     }

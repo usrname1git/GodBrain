@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v9.zip"
+    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v10.zip"
 )
 
 Set-StrictMode -Version Latest
@@ -14,11 +14,11 @@ $ErrorActionPreference = "Stop"
 
 $kit = $Reclaim11Root
 $cat = Get-Content -LiteralPath (Join-Path $kit "catalog.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-$ver = "9"
+$ver = "10"
 if ($cat.PSObject.Properties["kit_version"] -and -not [string]::IsNullOrWhiteSpace([string]$cat.kit_version)) {
     $ver = [string]$cat.kit_version
 }
-if ($OutZip -match 'Reclaim11-kit-v9\.zip$' -and $ver -ne "9") {
+if ($OutZip -match 'Reclaim11-kit-v\d+\.zip$' -and $OutZip -notmatch ("Reclaim11-kit-v{0}\.zip$" -f [regex]::Escape($ver))) {
     $OutZip = Join-Path (Split-Path -Parent $OutZip) ("Reclaim11-kit-v{0}.zip" -f $ver)
 }
 
