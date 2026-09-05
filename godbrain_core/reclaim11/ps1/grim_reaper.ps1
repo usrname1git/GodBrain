@@ -232,6 +232,96 @@ function Unlock-WipeFile([string]$Path) {
     & icacls.exe $Path /grant:r "Administrators:F" 2>&1 | Out-Null
 }
 
+# Hide WU in Settings after Reaper kills wuauserv. Game Mode stays.
+# GPO format is hide:id1;id2 — NOT hide:id1;hide:id2 (only the first page hid).
+$script:WuHidePages = @(
+    "windowsupdate",
+    "windowsupdate-action",
+    "windowsupdate-history",
+    "windowsupdate-optional",
+    "windowsupdate-restartoptions",
+    "windowsupdate-activehours"
+)
+
+function Get-WipeHidePageIds([string]$Current = "") {
+    $ids = @()
+    if ([string]::IsNullOrWhiteSpace($Current)) { return $ids }
+    $s = $Current.Trim()
+    if ($s.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+        $s = $s.Substring(5)
+    } elseif ($s.StartsWith("showonly:", [StringComparison]::OrdinalIgnoreCase)) {
+        $s = $s.Substring(9)
+    }
+    foreach ($t in ($s -split ";")) {
+        $t = $t.Trim()
+        if ($t.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+            $t = $t.Substring(5).Trim()
+        }
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        $ids += $t
+    }
+    $ids
+}
+
+function Merge-WipeHidePages {
+    param(
+        [string]$Current = "",
+        [string[]]$Hide
+    )
+    $parts = @()
+    $seen = @{}
+    foreach ($t in @(Get-WipeHidePageIds -Current $Current)) {
+        $key = $t.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        if ($key -eq "gaming-gamemode") { continue }
+        $seen[$key] = $true
+        $parts += $t
+    }
+    foreach ($h in $Hide) {
+        if ([string]::IsNullOrWhiteSpace($h)) { continue }
+        $leaf = $h.Trim()
+        if ($leaf.StartsWith("hide:", [StringComparison]::OrdinalIgnoreCase)) {
+            $leaf = $leaf.Substring(5).Trim()
+        }
+        if ($leaf -ieq "gaming-gamemode") {
+            throw "Merge-WipeHidePages: refuse hide gaming-gamemode (Game Mode stays)"
+        }
+        $key = $leaf.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $parts += $leaf
+    }
+    if ($parts.Count -lt 1) { return "" }
+    "hide:" + ($parts -join ";")
+}
+
+function Set-WipeWuSettingsHide {
+    $hives = New-Object System.Collections.Generic.List[string]
+    [void]$hives.Add("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer")
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($sid -ne "S-1-5-18") {
+        [void]$hives.Add("HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer")
+    }
+    foreach ($hive in @($hives)) {
+        if (-not (Test-Path -LiteralPath $hive)) {
+            New-Item -Path $hive -Force | Out-Null
+        }
+        $cur = ""
+        try {
+            $ip = Get-ItemProperty -LiteralPath $hive -ErrorAction SilentlyContinue
+            if ($ip -and $ip.PSObject.Properties["SettingsPageVisibility"]) {
+                $cur = [string]$ip.SettingsPageVisibility
+            }
+        } catch { }
+        $merged = Merge-WipeHidePages -Current $cur -Hide $script:WuHidePages
+        New-ItemProperty -Path $hive -Name SettingsPageVisibility -Value $merged -PropertyType String -Force | Out-Null
+        Write-Host ("  SettingsPageVisibility {0} -> {1}" -f $hive, $merged) -ForegroundColor Yellow
+    }
+    foreach ($n in @("SystemSettings", "ApplicationFrameHost")) {
+        Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Register-WipePendingStub([string]$Path) {
     if (-not ("WipeMoveEx" -as [type])) {
         Add-Type -TypeDefinition @"
@@ -503,6 +593,41 @@ function Test-WipeSelf {
     } else {
         Write-Host "SELFTEST ok   WU svchost dll not stubbed" -ForegroundColor Green
     }
+    if ($script:WuHidePages -notcontains "windowsupdate") {
+        Write-Host "SELFTEST FAIL WuHidePages missing windowsupdate" -ForegroundColor Red
+        $fail++
+    }
+    if ($script:WuHidePages -contains "gaming-gamemode") {
+        Write-Host "SELFTEST FAIL WuHidePages hides Game Mode" -ForegroundColor Red
+        $fail++
+    }
+    $fmt = Merge-WipeHidePages -Current "hide:gaming-gamebar;hide:gaming-gamedvr" -Hide $script:WuHidePages
+    if ($fmt -notmatch '^hide:gaming-gamebar;gaming-gamedvr;windowsupdate') {
+        Write-Host ("SELFTEST FAIL hide GPO format {0}" -f $fmt) -ForegroundColor Red
+        $fail++
+    }
+    if ($fmt -match "hide:windowsupdate") {
+        Write-Host "SELFTEST FAIL hide:id;hide:id form would only hide the first page" -ForegroundColor Red
+        $fail++
+    }
+    if ($fmt -match "gamemode") {
+        Write-Host "SELFTEST FAIL merged hide list contains Game Mode" -ForegroundColor Red
+        $fail++
+    } else {
+        Write-Host "SELFTEST ok   WU Settings hide (hide:id1;id2, Game Mode stays)" -ForegroundColor Green
+    }
+    $gamemodeThrew = $false
+    try {
+        $null = Merge-WipeHidePages -Current "" -Hide @("gaming-gamemode")
+    } catch {
+        $gamemodeThrew = $true
+    }
+    if (-not $gamemodeThrew) {
+        Write-Host "SELFTEST FAIL gamemode hide must throw" -ForegroundColor Red
+        $fail++
+    } else {
+        Write-Host "SELFTEST ok   refuse hide gaming-gamemode" -ForegroundColor Green
+    }
     if ($fail -gt 0) {
         throw ("Nuclear v6.3 -SelfTest failed ({0})" -f $fail)
     }
@@ -586,6 +711,7 @@ if ($WhatIf) {
     }
     Write-Host "  would IFEO UsoCoreWorker.exe / MoUsoCoreWorker.exe / WaaSMedicAgent.exe"
     Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
+    Write-Host ("  would hide WU in Settings ({0}; Game Mode stays)" -f (Merge-WipeHidePages -Current "" -Hide $script:WuHidePages))
     if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
     elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
     elseif (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }
@@ -653,6 +779,9 @@ try {
         $script:SvcGone++
         Write-Host "  sc delete $svc" -ForegroundColor Yellow
     }
+
+    Write-Host "Hiding Windows Update in Settings (Game Mode stays)..." -ForegroundColor Cyan
+    Set-WipeWuSettingsHide
 
     Write-Host "Deleting named kernel drivers (not stubbing)..." -ForegroundColor Cyan
     foreach ($f in $DriverFiles) { Remove-WipeDriver $f }

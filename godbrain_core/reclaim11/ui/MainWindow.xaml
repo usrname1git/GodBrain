@@ -191,7 +191,7 @@
           <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (restore.json)"/>
           <CheckBox x:Name="BtnNic" Content="Tune NIC  (RSS + buffers, no EEE)"/>
           <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
-          <CheckBox x:Name="BtnReaper" Content="Send Grim Reaper  (remainder + WU lock, after PE)" IsEnabled="False"/>
+          <CheckBox x:Name="BtnReaper" Content="Send Grim Reaper  (remainder + WU lock + hide WU in Settings, after PE)" IsEnabled="False"/>
           <TextBlock Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
                      Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>
         </StackPanel>
