@@ -1111,8 +1111,54 @@ if ($script:PowerForbiddenGuid -notcontains "e9a42b02-d5df-448d-aa00-03f14749eb6
 if ($script:PowerHighPerfGuid -ne "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") {
     throw "Test-Reclaim11: latency bake HP guid must stay Microsoft High Performance"
 }
-if ($latSrc -notmatch "MiniNT") {
-    throw "Test-Reclaim11: latency bake must refuse WinPE MiniNT"
+if ($latSrc -notmatch "function Test-Reclaim11LatencyPeHost") {
+    throw "Test-Reclaim11: latency bake missing Test-Reclaim11LatencyPeHost"
+}
+$bakeAt = $latSrc.IndexOf("function Invoke-Reclaim11LatencyBake")
+$restAt = $latSrc.IndexOf("function Restore-Reclaim11LatencyBackup")
+if ($bakeAt -lt 0 -or $restAt -lt 0 -or $restAt -le $bakeAt) {
+    throw "Test-Reclaim11: latency bake/restore functions missing"
+}
+$bakeSrc = $latSrc.Substring($bakeAt, $restAt - $bakeAt)
+$restSrc = $latSrc.Substring($restAt)
+$peThrowAt = $bakeSrc.IndexOf("Refuse: WinPE (MiniNT)")
+$bcdSetAt = $bakeSrc.IndexOf("Invoke-Reclaim11BcdEdit")
+if ($peThrowAt -lt 0 -or $bcdSetAt -lt 0 -or $peThrowAt -ge $bcdSetAt) {
+    throw "Test-Reclaim11: MiniNT refuse must precede bcdedit /set"
+}
+if ($bakeSrc -notmatch '(?s)if \(\$pe -and -not \$WhatIf\).{0,200}Refuse: WinPE \(MiniNT\)') {
+    throw "Test-Reclaim11: non-WhatIf MiniNT throw missing"
+}
+if ($restSrc -notmatch "Test-Reclaim11LatencyPeHost") {
+    throw "Test-Reclaim11: latency restore must call Test-Reclaim11LatencyPeHost"
+}
+if ($restSrc -notmatch "Refuse: WinPE \(MiniNT\)") {
+    throw "Test-Reclaim11: latency restore must refuse MiniNT"
+}
+$whatIfRet = $bakeSrc.IndexOf("return `$manifest")
+if ($whatIfRet -lt 0) { $whatIfRet = $bakeSrc.IndexOf('return $manifest') }
+$writeAt = $bakeSrc.IndexOf("Write-Reclaim11LatencyManifest")
+if ($writeAt -lt 0) {
+    throw "Test-Reclaim11: latency bake must Write-Reclaim11LatencyManifest"
+}
+if ($whatIfRet -ge 0 -and $writeAt -lt $whatIfRet) {
+    throw "Test-Reclaim11: latency WhatIf must not write restore.json"
+}
+$refuseAt = $bakeSrc.IndexOf('if ($refuse)')
+if ($refuseAt -lt 0) { throw "Test-Reclaim11: latency bake missing refuse throw" }
+$afterRefuse = $bakeSrc.Substring($refuseAt)
+$manBeforeSet = $afterRefuse.IndexOf("Write-Reclaim11LatencyManifest")
+$bcdAfterRefuse = $afterRefuse.IndexOf("Invoke-Reclaim11BcdEdit")
+$regAfterRefuse = $afterRefuse.IndexOf("Set-Reclaim11RegDword")
+$pwrAfterRefuse = $afterRefuse.IndexOf("Set-Reclaim11PowerAcIndex")
+if ($manBeforeSet -lt 0 -or $bcdAfterRefuse -lt 0 -or $manBeforeSet -ge $bcdAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before bcdedit /set"
+}
+if ($regAfterRefuse -ge 0 -and $manBeforeSet -ge $regAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before HKLM"
+}
+if ($pwrAfterRefuse -ge 0 -and $manBeforeSet -ge $pwrAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before powercfg"
 }
 try {
     Invoke-Reclaim11LatencyBake -Root $root

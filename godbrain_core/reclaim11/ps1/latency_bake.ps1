@@ -212,6 +212,15 @@ function Set-Reclaim11PowerAcIndex {
     $null = Invoke-Reclaim11PowerCfg -PowerArgs @("/setacvalueindex", $Scheme, $Sub, $Setting, ([string]$Value))
 }
 
+function Write-Reclaim11LatencyManifest {
+    param($Manifest, [string]$Path)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    ($Manifest | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 function Invoke-Reclaim11LatencyBake {
     param(
         [string]$Root,
@@ -326,7 +335,10 @@ function Invoke-Reclaim11LatencyBake {
     }
     if ($refuse) { throw ("Refuse: {0}" -f $refuse) }
 
-    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $false
+    $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $true
+    $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
+    Write-Reclaim11LatencyManifest -Manifest $manifest -Path $manPath
     $applied = @()
     $failed = @()
     foreach ($x in $bcd) {
@@ -362,13 +374,9 @@ function Invoke-Reclaim11LatencyBake {
             $failed += ("power-active:{0}:{1}" -f $activePower, $_.Exception.Message)
         }
     }
-    $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $false
-    $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $true
     $manifest | Add-Member -NotePropertyName applied -NotePropertyValue $applied
     $manifest | Add-Member -NotePropertyName failed -NotePropertyValue $failed
-    $manifest | Add-Member -NotePropertyName manifest_path -NotePropertyValue $manPath
-    $json = $manifest | ConvertTo-Json -Depth 8
-    Set-Content -LiteralPath $manPath -Value $json -Encoding UTF8
+    Write-Reclaim11LatencyManifest -Manifest $manifest -Path $manPath
     $manifest
 }
 
