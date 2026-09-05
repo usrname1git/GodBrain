@@ -107,6 +107,17 @@ start=disabled. Restore:
 Rx/Tx **256–512**. Skips VMware host VMnet / Tailscale / Wi-Fi.
 `pwsh -File nic_tune.ps1 -T`.
 
+**Latency bake** (Expert, in-Windows, VM-only): BCD `{current}`
+`nx AlwaysOff` (DEP off), `tscsyncpolicy Enhanced`,
+`hypervisorlaunchtype Auto`, `vsmlaunchtype Off`, `sos No`,
+`useplatformclock No`, `useplatformtick No`, `disabledynamictick Yes`;
+`{bootmgr}` `bootmenupolicy Legacy`. HKLM
+`GlobalTimerResolutionRequests=1`, `SystemResponsiveness=0`,
+`Win32PrioritySeparation=38`. `restore.json` first. Desk
+(IoTEnterpriseS) refused. WinPE MiniNT refused (that would be the PE
+BCD). Not a power scheme. `pwsh -File latency_bake.ps1 -T`. Restore:
+`pwsh -File latency_bake.ps1 -Restore restore.json`.
+
 Killing blows / Grim Reaper self-elevate to TrustedInstaller via Task
 Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
 SYSTEM and skips that hop.

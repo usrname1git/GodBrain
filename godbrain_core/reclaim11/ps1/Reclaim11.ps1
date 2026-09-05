@@ -24,6 +24,7 @@ $here = Get-Reclaim11Root
 . (Join-Path $ps1Dir "xbox_cleanse.ps1")
 . (Join-Path $ps1Dir "telemetry_cleanse.ps1")
 . (Join-Path $ps1Dir "nic_tune.ps1")
+. (Join-Path $ps1Dir "latency_bake.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -64,6 +65,8 @@ if ($Test) {
     Write-Host (Format-Reclaim11TestReport -Plan $safe -Title "safe_cleanse")
     $nic = Invoke-Reclaim11NicTune -Root $here -WhatIf
     Write-Host (Format-Reclaim11TestReport -Plan $nic -Title "nic_tune")
+    $lat = Invoke-Reclaim11LatencyBake -Root $here -WhatIf
+    Write-Host (Format-Reclaim11TestReport -Plan $lat -Title "latency_bake")
     if ($OutJson) {
         $bundle = [pscustomobject]@{
             what_if = $true
@@ -73,6 +76,7 @@ if ($Test) {
             killing = $kill
             safe    = $safe
             nic     = $nic
+            latency = $lat
         }
         Write-Reclaim11InventoryFile -Inventory $bundle -Path $OutJson | Out-Null
     }
@@ -169,6 +173,7 @@ $btnSafe = Get-Ui BtnSafe
 $btnXbox = Get-Ui BtnXbox
 $btnTelemetry = Get-Ui BtnTelemetry
 $btnNic = Get-Ui BtnNic
+$btnLatency = Get-Ui BtnLatency
 $btnKill = Get-Ui BtnKill
 $btnReaper = Get-Ui BtnReaper
 $btnRun  = Get-Ui BtnRun
@@ -231,6 +236,7 @@ function Show-Inventory($inv) {
     if (-not $pe) { $btnSafe.IsChecked = $false }
     $btnXbox.IsEnabled = $true
     $btnTelemetry.IsEnabled = $true
+    $btnLatency.IsEnabled = $true
     $btnKill.IsEnabled = $pe
     if (-not $pe) { $btnKill.IsChecked = $false }
     $btnReaper.IsEnabled = $pe
@@ -278,10 +284,11 @@ $btnRun.Add_Click({
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
+        $doLatency = [bool]$btnLatency.IsChecked
         $doKill = [bool]$btnKill.IsChecked
         $doReaper = [bool]$btnReaper.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doLatency -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
@@ -345,6 +352,16 @@ $btnRun.Add_Click({
                 [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 NIC tune") | Out-Null
             }
         }
+        if ($doLatency) {
+            try {
+                $plan = Invoke-Reclaim11LatencyBake -Root $here
+                Add-Log ("latency bake applied {0}" -f (@($plan.applied).Count))
+                Add-Log ("manifest {0}" -f $plan.manifest_path)
+            } catch {
+                Add-Log ("LATENCY FAIL  {0}" -f $_.Exception.Message)
+                [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 latency bake") | Out-Null
+            }
+        }
         if ($doKill) {
             try {
                 $plan = Invoke-Reclaim11KillingBlows -Root $here
@@ -389,10 +406,11 @@ $btnTest.Add_Click({
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
         $doNic = [bool]$btnNic.IsChecked
+        $doLatency = [bool]$btnLatency.IsChecked
         $doKill = [bool]$btnKill.IsChecked
         $doReaper = [bool]$btnReaper.IsChecked
-        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doKill -or $doReaper)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
+        if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doLatency -or $doKill -or $doReaper)) {
+            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
@@ -412,6 +430,10 @@ $btnTest.Add_Click({
         if ($doNic) {
             $plan = Invoke-Reclaim11NicTune -Root $here -WhatIf
             Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "nic_tune")
+        }
+        if ($doLatency) {
+            $plan = Invoke-Reclaim11LatencyBake -Root $here -WhatIf
+            Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "latency_bake")
         }
         if ($doKill) {
             $plan = Invoke-Reclaim11KillingBlows -Root $here -WhatIf
