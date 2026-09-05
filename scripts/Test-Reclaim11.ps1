@@ -47,6 +47,9 @@ if ($xamlSrc -notmatch "Send Grim Reaper") {
 if ($xamlSrc -notmatch "hide WU in Settings") {
     throw "Test-Reclaim11: Grim Reaper tick must say hide WU in Settings"
 }
+if ($xamlSrc -notmatch "Latency bake") {
+    throw "Test-Reclaim11: expert ACTIONS must tick Latency bake"
+}
 if ($xamlSrc -notmatch "MUST") {
     throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
 }
@@ -287,6 +290,7 @@ if (-not `$w.FindName('BtnTest')) { throw 'no BtnTest' }
 if (-not `$w.FindName('TogHideCaptures')) { throw 'no TogHideCaptures' }
 if (-not `$w.FindName('BtnTelemetry')) { throw 'no BtnTelemetry' }
 if (-not `$w.FindName('BtnNic')) { throw 'no BtnNic' }
+if (-not `$w.FindName('BtnLatency')) { throw 'no BtnLatency' }
 if (-not `$w.FindName('BtnDoorNoob')) { throw 'no BtnDoorNoob' }
 if (-not `$w.FindName('BtnDoorExpert')) { throw 'no BtnDoorExpert' }
 if (-not `$w.FindName('PanelDoor')) { throw 'no PanelDoor' }
@@ -359,6 +363,9 @@ if ($startnetSrc -notmatch 'Start-Reclaim11Pe\.ps1') {
 if ($startnetSrc -match 'Apply-Reclaim11Offline\.ps1') {
     throw "Test-Reclaim11: startnet must not call Apply-Reclaim11Offline directly"
 }
+if ($startnetSrc -match 'latency_bake') {
+    throw "Test-Reclaim11: startnet must not run latency bake"
+}
 $peDoorSrc = Get-Content -LiteralPath (Join-Path $winpe "Start-Reclaim11Pe.ps1") -Raw -Encoding UTF8
 if ($peDoorSrc -notmatch 'BannerSec = 12') {
     throw "Test-Reclaim11: PE door default banner must be 12 seconds"
@@ -425,7 +432,7 @@ if ($offlineSrc -notmatch 'cannot read EditionID') {
 if ($offlineSrc -notmatch 'EditionId') {
     throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
@@ -726,6 +733,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\Apply-KillingBlows.
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\telemetry_cleanse.ps1"))) {
     throw "Test-Reclaim11: PE must drop C:\\reclaim11\\telemetry_cleanse.ps1"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\latency_bake.ps1"))) {
+    throw "Test-Reclaim11: PE must drop C:\\reclaim11\\latency_bake.ps1"
 }
 $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
@@ -1045,6 +1055,169 @@ $nicSrc = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encodin
 if ($nicSrc -match "BFE|mpssvc") {
     if ($nicSrc -notmatch "Never BFE") { throw "Test-Reclaim11: nic_tune hit BFE without never" }
 }
+
+. (Join-Path $ps1 "latency_bake.ps1")
+$nx = @($script:BcdCurrent | Where-Object { $_.Name -eq "nx" } | Select-Object -First 1)
+if (-not $nx -or [string]$nx.Wanted -ne "AlwaysOff") {
+    throw "Test-Reclaim11: latency bake must set nx AlwaysOff (DEP off)"
+}
+$tsc = @($script:BcdCurrent | Where-Object { $_.Name -eq "tscsyncpolicy" } | Select-Object -First 1)
+if (-not $tsc -or [string]$tsc.Wanted -ne "Enhanced") {
+    throw "Test-Reclaim11: latency bake must set tscsyncpolicy Enhanced"
+}
+foreach ($needBcd in @("hypervisorlaunchtype", "vsmlaunchtype", "sos", "useplatformclock", "useplatformtick", "disabledynamictick")) {
+    if (-not (@($script:BcdCurrent | Where-Object { $_.Name -eq $needBcd }))) {
+        throw "Test-Reclaim11: latency bake missing {current} $needBcd"
+    }
+}
+$bootmgr = @($script:BcdBootmgr | Where-Object { $_.Name -eq "bootmenupolicy" } | Select-Object -First 1)
+if (-not $bootmgr -or [string]$bootmgr.Wanted -ne "Legacy") {
+    throw "Test-Reclaim11: latency bake must set bootmenupolicy Legacy"
+}
+$gtr = @($script:RegBake | Where-Object { $_.Name -eq "GlobalTimerResolutionRequests" } | Select-Object -First 1)
+if (-not $gtr -or [int]$gtr.Wanted -ne 1) {
+    throw "Test-Reclaim11: latency bake must set GlobalTimerResolutionRequests=1"
+}
+$sr = @($script:RegBake | Where-Object { $_.Name -eq "SystemResponsiveness" } | Select-Object -First 1)
+if (-not $sr -or [int]$sr.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must set SystemResponsiveness=0"
+}
+$wps = @($script:RegBake | Where-Object { $_.Name -eq "Win32PrioritySeparation" } | Select-Object -First 1)
+if (-not $wps -or [int]$wps.Wanted -ne 38) {
+    throw "Test-Reclaim11: latency bake must set Win32PrioritySeparation=38"
+}
+$latSrc = Get-Content -LiteralPath (Join-Path $ps1 "latency_bake.ps1") -Raw -Encoding UTF8
+if ($latSrc -match "duplicatescheme|IDLEDISABLE|PROCTHROTTLEMIN") {
+    throw "Test-Reclaim11: latency bake must not pin min processor or kill C-states"
+}
+$usbSs = @($script:PowerAcBake | Where-Object { $_.Name -eq "usb_selective_suspend" } | Select-Object -First 1)
+if (-not $usbSs -or [int]$usbSs.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must disable USB selective suspend"
+}
+$usb3 = @($script:PowerAcBake | Where-Object { $_.Name -eq "usb3_link_power" } | Select-Object -First 1)
+if (-not $usb3 -or [int]$usb3.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must disable USB 3 link power"
+}
+$aspm = @($script:PowerAcBake | Where-Object { $_.Name -eq "pcie_aspm" } | Select-Object -First 1)
+if (-not $aspm -or [int]$aspm.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must set PCIe ASPM Off"
+}
+if ($script:PowerForbiddenGuid -notcontains "61329e62-4cc1-47eb-92fd-5ac16564efdd") {
+    throw "Test-Reclaim11: latency bake must refuse AGGRO"
+}
+if ($script:PowerForbiddenGuid -notcontains "e9a42b02-d5df-448d-aa00-03f14749eb61") {
+    throw "Test-Reclaim11: latency bake must refuse Ultimate"
+}
+if ($script:PowerHighPerfGuid -ne "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") {
+    throw "Test-Reclaim11: latency bake HP guid must stay Microsoft High Performance"
+}
+if ($latSrc -notmatch "function Test-Reclaim11LatencyPeHost") {
+    throw "Test-Reclaim11: latency bake missing Test-Reclaim11LatencyPeHost"
+}
+$bakeAt = $latSrc.IndexOf("function Invoke-Reclaim11LatencyBake")
+$restAt = $latSrc.IndexOf("function Restore-Reclaim11LatencyBackup")
+if ($bakeAt -lt 0 -or $restAt -lt 0 -or $restAt -le $bakeAt) {
+    throw "Test-Reclaim11: latency bake/restore functions missing"
+}
+$bakeSrc = $latSrc.Substring($bakeAt, $restAt - $bakeAt)
+$restSrc = $latSrc.Substring($restAt)
+$peThrowAt = $bakeSrc.IndexOf("Refuse: WinPE (MiniNT)")
+$bcdSetAt = $bakeSrc.IndexOf("Invoke-Reclaim11BcdEdit")
+if ($peThrowAt -lt 0 -or $bcdSetAt -lt 0 -or $peThrowAt -ge $bcdSetAt) {
+    throw "Test-Reclaim11: MiniNT refuse must precede bcdedit /set"
+}
+if ($bakeSrc -notmatch '(?s)if \(\$pe -and -not \$WhatIf\).{0,200}Refuse: WinPE \(MiniNT\)') {
+    throw "Test-Reclaim11: non-WhatIf MiniNT throw missing"
+}
+if ($restSrc -notmatch "Test-Reclaim11LatencyPeHost") {
+    throw "Test-Reclaim11: latency restore must call Test-Reclaim11LatencyPeHost"
+}
+if ($restSrc -notmatch "Refuse: WinPE \(MiniNT\)") {
+    throw "Test-Reclaim11: latency restore must refuse MiniNT"
+}
+$whatIfRet = $bakeSrc.IndexOf("return `$manifest")
+if ($whatIfRet -lt 0) { $whatIfRet = $bakeSrc.IndexOf('return $manifest') }
+$writeAt = $bakeSrc.IndexOf("Write-Reclaim11LatencyManifest")
+if ($writeAt -lt 0) {
+    throw "Test-Reclaim11: latency bake must Write-Reclaim11LatencyManifest"
+}
+if ($whatIfRet -ge 0 -and $writeAt -lt $whatIfRet) {
+    throw "Test-Reclaim11: latency WhatIf must not write restore.json"
+}
+$refuseAt = $bakeSrc.IndexOf('if ($refuse)')
+if ($refuseAt -lt 0) { throw "Test-Reclaim11: latency bake missing refuse throw" }
+$afterRefuse = $bakeSrc.Substring($refuseAt)
+$manBeforeSet = $afterRefuse.IndexOf("Write-Reclaim11LatencyManifest")
+$bcdAfterRefuse = $afterRefuse.IndexOf("Invoke-Reclaim11BcdEdit")
+$regAfterRefuse = $afterRefuse.IndexOf("Set-Reclaim11RegDword")
+$pwrAfterRefuse = $afterRefuse.IndexOf("Set-Reclaim11PowerAcIndex")
+if ($manBeforeSet -lt 0 -or $bcdAfterRefuse -lt 0 -or $manBeforeSet -ge $bcdAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before bcdedit /set"
+}
+if ($regAfterRefuse -ge 0 -and $manBeforeSet -ge $regAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before HKLM"
+}
+if ($pwrAfterRefuse -ge 0 -and $manBeforeSet -ge $pwrAfterRefuse) {
+    throw "Test-Reclaim11: latency bake must write restore.json before powercfg"
+}
+try {
+    Invoke-Reclaim11LatencyBake -Root $root
+    throw "Test-Reclaim11: latency bake must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected latency desk refuse, got $($_.Exception.Message)"
+    }
+}
+$dryLat = Invoke-Reclaim11LatencyBake -Root $root -WhatIf
+if (-not [bool]$dryLat.what_if) { throw "Test-Reclaim11: latency -T must set what_if" }
+if ([bool]$dryLat.mutate) { throw "Test-Reclaim11: latency -T must not mutate" }
+if ([string]$dryLat.would_refuse -notmatch "desk") { throw "Test-Reclaim11: latency -T must report desk refuse" }
+if (-not (@($dryLat.would) | Where-Object { $_ -match "bcd \{current\} nx .+AlwaysOff" })) {
+    throw "Test-Reclaim11: latency -T must list nx AlwaysOff"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "GlobalTimerResolutionRequests" })) {
+    throw "Test-Reclaim11: latency -T must list GlobalTimerResolutionRequests"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "usb_selective_suspend" })) {
+    throw "Test-Reclaim11: latency -T must list USB selective suspend"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "pcie_aspm" })) {
+    throw "Test-Reclaim11: latency -T must list PCIe ASPM"
+}
+if ($dryLat.PSObject.Properties["applied"] -and @($dryLat.applied).Count -gt 0) {
+    throw "Test-Reclaim11: latency -T must not apply"
+}
+if ($dryLat.manifest_path -and (Test-Path -LiteralPath $dryLat.manifest_path)) {
+    throw "Test-Reclaim11: latency -T must not write restore.json"
+}
+$latMan = Join-Path $env:TEMP "reclaim11-lat-ok.json"
+Set-Content -LiteralPath $latMan -Value '{"id":"reclaim11-latency-v1","bcd":[],"registry":[]}' -Encoding UTF8
+try {
+    Restore-Reclaim11LatencyBackup -Manifest $latMan
+    throw "Test-Reclaim11: latency restore must refuse this desk"
+} catch {
+    if ($_.Exception.Message -notmatch "Refuse: desk") {
+        throw "Test-Reclaim11: expected latency restore desk refuse, got $($_.Exception.Message)"
+    }
+}
+$latBad = Join-Path $env:TEMP "reclaim11-lat-bad.json"
+Set-Content -LiteralPath $latBad -Value '{"id":"nope"}' -Encoding UTF8
+try {
+    Restore-Reclaim11LatencyBackup -Manifest $latBad
+    throw "Test-Reclaim11: bad latency manifest must throw"
+} catch {
+    if ($_.Exception.Message -notmatch "not a latency") {
+        throw "Test-Reclaim11: expected latency manifest refuse, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath $latMan, $latBad -Force
+if ($peDoorSrc -match "latency_bake") {
+    throw "Test-Reclaim11: PE door must not run latency bake"
+}
+if ($offlineSrc -notmatch "latency_bake\.ps1") {
+    throw "Test-Reclaim11: PE kit drop must include latency_bake.ps1"
+}
+
 $telMan = Join-Path $env:TEMP "reclaim11-tel-ok.json"
 Set-Content -LiteralPath $telMan -Value '{"id":"reclaim11-telemetry-v1","allow":{"present":false},"services":[]}' -Encoding UTF8
 try {
@@ -1070,11 +1243,20 @@ Remove-Item -LiteralPath $telMan, $telBad -Force
 if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy telemetry_cleanse.ps1"
 }
+if ($isoSrc -notmatch "latency_bake\.ps1") {
+    throw "Test-Reclaim11: ISO builder must copy latency_bake.ps1"
+}
 if ($isoSrc -notmatch "grim_reaper\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy grim_reaper.ps1"
 }
+if ($usbSrc -notmatch "latency_bake\.ps1") {
+    throw "Test-Reclaim11: USB writer must copy latency_bake.ps1"
+}
 if ($launchSrc -notmatch "BtnReaper") {
     throw "Test-Reclaim11: GUI must wire BtnReaper"
+}
+if ($launchSrc -notmatch "BtnLatency") {
+    throw "Test-Reclaim11: GUI must wire BtnLatency"
 }
 if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a ctt folder" }
 

@@ -538,7 +538,7 @@ function Invoke-Reclaim11OfflineApply {
     if (-not (Test-Path -LiteralPath $kitDst)) {
         New-Item -ItemType Directory -Path $kitDst | Out-Null
     }
-    foreach ($n in @("catalog.json", "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1", "offline.ps1")) {
+    foreach ($n in @("catalog.json", "inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "elevate.ps1", "offline.ps1")) {
         $s = $null
         foreach ($cand in @(
                 (Join-Path $kitFrom $n),

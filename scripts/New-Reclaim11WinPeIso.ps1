@@ -147,7 +147,7 @@ try {
     Copy-Item -LiteralPath $cat -Destination (Join-Path $dest "catalog.json") -Force
     Copy-Item -LiteralPath $stub -Destination (Join-Path $dest "DefenderStub.exe") -Force
     $ps1Dir = Join-Path $reclaim "ps1"
-    foreach ($n in @("inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "elevate.ps1")) {
+    foreach ($n in @("inventory.ps1", "killing_blows.ps1", "Apply-KillingBlows.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "elevate.ps1")) {
         $s = Join-Path $ps1Dir $n
         if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11WinPeIso: missing $s" }
         Copy-Item -LiteralPath $s -Destination (Join-Path $dest $n) -Force
