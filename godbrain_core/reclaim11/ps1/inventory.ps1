@@ -57,13 +57,27 @@ function Resolve-Reclaim11Worker {
     throw "Resolve-Reclaim11Worker: missing $Name"
 }
 
-function Get-Reclaim11Pwsh {
+function Get-Reclaim11Pwsh7 {
     # Never Get-Command pwsh / where.exe: Win11 Store stub is WindowsApps.
     $cands = @(
         (Join-Path $PSHOME "pwsh.exe"),
         "C:\pwsh\pwsh.exe",
         (Join-Path ${env:ProgramFiles} "PowerShell\7\pwsh.exe"),
-        (Join-Path ${env:ProgramFiles} "PowerShell\pwsh.exe"),
+        (Join-Path ${env:ProgramFiles} "PowerShell\pwsh.exe")
+    )
+    foreach ($c in $cands) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if ($c -match 'WindowsApps') { continue }
+        if ($c -match 'WindowsPowerShell') { continue }
+        if (Test-Path -LiteralPath $c) { return (Get-Item -LiteralPath $c).FullName }
+    }
+    $null
+}
+
+function Get-Reclaim11Pwsh {
+    $pwsh7 = Get-Reclaim11Pwsh7
+    if ($pwsh7) { return $pwsh7 }
+    $cands = @(
         (Join-Path $PSHOME "powershell.exe"),
         (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe")
     )

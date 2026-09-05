@@ -76,6 +76,12 @@ if ($launchSrc -match 'Get-Command pwsh') {
 if ($launchSrc -notmatch 'Get-Reclaim11Pwsh') {
     throw "Test-Reclaim11: UAC/Grim must use Get-Reclaim11Pwsh"
 }
+if ($launchSrc -notmatch 'install_pwsh\.ps1') {
+    throw "Test-Reclaim11: GUI must dotsource install_pwsh.ps1"
+}
+if ($launchSrc -notmatch 'Show-Reclaim11PwshOffer') {
+    throw "Test-Reclaim11: GUI must offer pwsh MSI on 5.1"
+}
 $cliAt = $launchSrc.IndexOf('function Invoke-Reclaim11GrimReaperCli')
 $cliEnd = $launchSrc.IndexOf('$btnScan = Get-Ui BtnScan')
 if ($cliAt -lt 0 -or $cliEnd -le $cliAt) {
@@ -94,11 +100,11 @@ if ($cliSrc -match 'LASTEXITCODE') {
 if ($cliSrc -notmatch 'Get-Reclaim11WinPeReceipt') {
     throw "Test-Reclaim11: GrimReaperCli must re-read the WinPE receipt"
 }
-if ($launchSrc -notmatch 'Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: PREP MEDIA must name the v9 ISO"
+if ($launchSrc -notmatch 'Reclaim11-WinPE-v10\.iso') {
+    throw "Test-Reclaim11: PREP MEDIA must name the v10 ISO"
 }
 if ($launchSrc -match 'Sort-Object LastWriteTime') {
-    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8 over v9"
+    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8/v9 over v10"
 }
 $prepAt = $launchSrc.IndexOf('$btnPrep.Add_Click')
 $prepEnd = $launchSrc.IndexOf('$window.Add_MouseLeftButtonDown')
@@ -126,6 +132,10 @@ $runAsAt2 = $launchSrc.IndexOf('-Verb RunAs')
 if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
     throw "Test-Reclaim11: -T must skip UAC"
 }
+$offerAt = $launchSrc.IndexOf('Show-Reclaim11PwshOffer')
+if ($offerAt -lt 0 -or $offerAt -lt $testAt) {
+    throw "Test-Reclaim11: pwsh MSI offer must not run on -T"
+}
 if ($launchSrc -notmatch 'Start-Transcript') {
     throw "Test-Reclaim11: GUI path must transcript"
 }
@@ -138,6 +148,30 @@ if ($launchSrc -notmatch 'ProcessRunning') {
 if ($launchSrc -match 'irm https|Invoke-RestMethod|Invoke-Expression|\bwt\.exe\b|\bwinget\b|\bchoco\b') {
     throw "Test-Reclaim11: Reclaim11.ps1 must not irm/iex/wt/winget/choco"
 }
+$instPath = Join-Path $ps1 "install_pwsh.ps1"
+$instSrc = Get-Content -LiteralPath $instPath -Raw -Encoding UTF8
+if ($instSrc -match 'irm |Invoke-Expression|Invoke-RestMethod|\bwinget\b|\bchoco\b|WindowsApps') {
+    throw "Test-Reclaim11: install_pwsh must not irm/iex/winget/choco/WindowsApps"
+}
+if ($instSrc -notmatch "ADD_PATH=1") {
+    throw "Test-Reclaim11: pwsh MSI must set ADD_PATH=1"
+}
+if ($instSrc -notmatch "msiexec") {
+    throw "Test-Reclaim11: pwsh install must use msiexec"
+}
+if ($instSrc -notmatch "PowerShell/PowerShell") {
+    throw "Test-Reclaim11: pwsh MSI must come from GitHub PowerShell/PowerShell"
+}
+if ($instSrc -match "install\.ps1") {
+    throw "Test-Reclaim11: must not download PowerShell install.ps1"
+}
+if ($instSrc -notmatch "MiniNT") {
+    throw "Test-Reclaim11: pwsh MSI must refuse WinPE"
+}
+$invSrc = Get-Content -LiteralPath $invPath -Raw -Encoding UTF8
+if ($invSrc -notmatch "function Get-Reclaim11Pwsh7") {
+    throw "Test-Reclaim11: inventory missing Get-Reclaim11Pwsh7"
+}
 $invOnlyAt = $launchSrc.IndexOf('if ($InventoryOnly)')
 $runAsAt = $launchSrc.IndexOf('-Verb RunAs')
 if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
@@ -146,7 +180,7 @@ if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
 
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
-if ([string]$cat.kit_version -ne "9") { throw "Test-Reclaim11: catalog kit_version 9" }
+if ([string]$cat.kit_version -ne "10") { throw "Test-Reclaim11: catalog kit_version 10" }
 if ([string]$cat.stub_exe -ne "C:\Reclaim11\reclaim11-stub.exe") {
     throw "Test-Reclaim11: catalog stub_exe must be C:\Reclaim11\reclaim11-stub.exe"
 }
@@ -209,14 +243,14 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
 }
-if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
+if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v10\.iso') {
+    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v10.iso"
 }
 if ($readme -match 'attach \*\*v7\*\*') {
-    throw "Test-Reclaim11: README must attach v9, not leftover v7"
+    throw "Test-Reclaim11: README must attach v10, not leftover v7"
 }
-if ($readme -notmatch 'attach \*\*v9\*\*') {
-    throw "Test-Reclaim11: README step 4 must attach v9"
+if ($readme -notmatch 'attach \*\*v10\*\*') {
+    throw "Test-Reclaim11: README step 4 must attach v10"
 }
 if ($readme -match 'C:\\nvme') {
     throw "Test-Reclaim11: README must not name a host nvme path"
@@ -366,6 +400,9 @@ if ($startnetSrc -match 'Apply-Reclaim11Offline\.ps1') {
 if ($startnetSrc -match 'latency_bake') {
     throw "Test-Reclaim11: startnet must not run latency bake"
 }
+if ($startnetSrc -match 'install_pwsh') {
+    throw "Test-Reclaim11: startnet must not install pwsh"
+}
 $peDoorSrc = Get-Content -LiteralPath (Join-Path $winpe "Start-Reclaim11Pe.ps1") -Raw -Encoding UTF8
 if ($peDoorSrc -notmatch 'BannerSec = 12') {
     throw "Test-Reclaim11: PE door default banner must be 12 seconds"
@@ -432,7 +469,7 @@ if ($offlineSrc -notmatch 'cannot read EditionID') {
 if ($offlineSrc -notmatch 'EditionId') {
     throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "install_pwsh.ps1", "elevate.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
@@ -481,8 +518,8 @@ if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn ag
 if ($isoSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
 }
-if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v9\.iso') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v9.iso"
+if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v10\.iso') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v10.iso"
 }
 if ($launchSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"
@@ -524,7 +561,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
@@ -736,6 +773,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\telemetry_cleanse.p
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\latency_bake.ps1"))) {
     throw "Test-Reclaim11: PE must drop C:\\reclaim11\\latency_bake.ps1"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\install_pwsh.ps1"))) {
+    throw "Test-Reclaim11: PE must drop C:\\reclaim11\\install_pwsh.ps1"
 }
 $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
@@ -1246,11 +1286,17 @@ if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
 if ($isoSrc -notmatch "latency_bake\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy latency_bake.ps1"
 }
+if ($isoSrc -notmatch "install_pwsh\.ps1") {
+    throw "Test-Reclaim11: ISO builder must copy install_pwsh.ps1"
+}
 if ($isoSrc -notmatch "grim_reaper\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy grim_reaper.ps1"
 }
 if ($usbSrc -notmatch "latency_bake\.ps1") {
     throw "Test-Reclaim11: USB writer must copy latency_bake.ps1"
+}
+if ($usbSrc -notmatch "install_pwsh\.ps1") {
+    throw "Test-Reclaim11: USB writer must copy install_pwsh.ps1"
 }
 if ($launchSrc -notmatch "BtnReaper") {
     throw "Test-Reclaim11: GUI must wire BtnReaper"

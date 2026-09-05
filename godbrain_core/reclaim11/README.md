@@ -10,10 +10,12 @@ stay locked until a WinPE receipt.
 
 ## What to do
 
-1. Get `Reclaim11-kit-v9.zip` from
-   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v9)
+1. Get `Reclaim11-kit-v10.zip` from
+   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v10)
    and unzip it. Check the `.sha256` next to the zip.
-2. Double-click `Reclaim11.cmd`. You do not type `pwsh`.
+2. Double-click `Reclaim11.cmd`. You do not type `pwsh`. If you only have
+   Windows PowerShell 5.1, the GUI offers the official PowerShell 7 MSI
+   (adds PATH). WinPE stays 5.1.
 3. Click **TEST FIRST** (noob door) or **TEST SELECTED** (expert).
    Nothing is deleted. Read the log.
 4. Then pick a door:
@@ -58,10 +60,10 @@ ADK + WinPE addon **10.1.26100.2454**, not ADK 28000.
 pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 ```
 
-Output: `C:\Reclaim11\Reclaim11-WinPE-v9.iso`.
+Output: `C:\Reclaim11\Reclaim11-WinPE-v10.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 
-Snapshot, attach **v9**. PE **deletes** catalog
+Snapshot, attach **v10**. PE **deletes** catalog
 `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
 (exact names, never a `Wd*.sys` glob), stubs catalog usermode EXEs,
 `reg delete` pack-A keys then Start=4 fallback, IFEO +
