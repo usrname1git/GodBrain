@@ -446,6 +446,15 @@ if ($killSrc -notmatch 'C:\\Reclaim11\\reclaim11-stub\.exe') {
 if ($nukeSrc -notmatch 'windowsupdate') {
     throw "Test-Reclaim11: Grim Reaper must hide windowsupdate in Settings"
 }
+if ($nukeSrc -notmatch 'windowsupdate-optionalupdates') {
+    throw "Test-Reclaim11: Grim Reaper must hide windowsupdate-optionalupdates"
+}
+if ($nukeSrc -match '(?m)^\s*"windowsupdate-optional"\s*$') {
+    throw "Test-Reclaim11: Grim Reaper must not use windowsupdate-optional (not a Settings URI)"
+}
+if ($nukeSrc -notmatch 'RECLAIM11_AS_TI') {
+    throw "Test-Reclaim11: Grim Reaper must skip HKCU on the TI hop"
+}
 if ($nukeSrc -notmatch 'hide:id1;id2') {
     throw "Test-Reclaim11: Grim Reaper must document hide:id1;id2 GPO format"
 }

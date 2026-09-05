@@ -238,9 +238,11 @@ $script:WuHidePages = @(
     "windowsupdate",
     "windowsupdate-action",
     "windowsupdate-history",
-    "windowsupdate-optional",
+    "windowsupdate-optionalupdates",
     "windowsupdate-restartoptions",
-    "windowsupdate-activehours"
+    "windowsupdate-activehours",
+    "windowsupdate-options",
+    "windowsupdate-seekerondemand"
 )
 
 function Get-WipeHidePageIds([string]$Current = "") {
@@ -299,7 +301,10 @@ function Set-WipeWuSettingsHide {
     $hives = New-Object System.Collections.Generic.List[string]
     [void]$hives.Add("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer")
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    if ($sid -ne "S-1-5-18") {
+    # NT SERVICE\TrustedInstaller (elevate.ps1). Do not write TI/.DEFAULT HKCU.
+    $tiSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+    $skipCu = ($sid -eq "S-1-5-18") -or ($sid -eq $tiSid) -or ($env:RECLAIM11_AS_TI -eq "1")
+    if (-not $skipCu) {
         [void]$hives.Add("HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer")
     }
     foreach ($hive in @($hives)) {
@@ -595,6 +600,16 @@ function Test-WipeSelf {
     }
     if ($script:WuHidePages -notcontains "windowsupdate") {
         Write-Host "SELFTEST FAIL WuHidePages missing windowsupdate" -ForegroundColor Red
+        $fail++
+    }
+    foreach ($need in @("windowsupdate-optionalupdates", "windowsupdate-options", "windowsupdate-seekerondemand")) {
+        if ($script:WuHidePages -notcontains $need) {
+            Write-Host ("SELFTEST FAIL WuHidePages missing {0}" -f $need) -ForegroundColor Red
+            $fail++
+        }
+    }
+    if ($script:WuHidePages -contains "windowsupdate-optional") {
+        Write-Host "SELFTEST FAIL WuHidePages has windowsupdate-optional (not a Settings URI)" -ForegroundColor Red
         $fail++
     }
     if ($script:WuHidePages -contains "gaming-gamemode") {
