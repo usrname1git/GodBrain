@@ -1087,8 +1087,29 @@ if (-not $wps -or [int]$wps.Wanted -ne 38) {
     throw "Test-Reclaim11: latency bake must set Win32PrioritySeparation=38"
 }
 $latSrc = Get-Content -LiteralPath (Join-Path $ps1 "latency_bake.ps1") -Raw -Encoding UTF8
-if ($latSrc -match "powercfg|8c5e7fda|61329e62|e9a42b02") {
-    throw "Test-Reclaim11: latency bake must not touch a power scheme"
+if ($latSrc -match "duplicatescheme|IDLEDISABLE|PROCTHROTTLEMIN") {
+    throw "Test-Reclaim11: latency bake must not pin min processor or kill C-states"
+}
+$usbSs = @($script:PowerAcBake | Where-Object { $_.Name -eq "usb_selective_suspend" } | Select-Object -First 1)
+if (-not $usbSs -or [int]$usbSs.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must disable USB selective suspend"
+}
+$usb3 = @($script:PowerAcBake | Where-Object { $_.Name -eq "usb3_link_power" } | Select-Object -First 1)
+if (-not $usb3 -or [int]$usb3.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must disable USB 3 link power"
+}
+$aspm = @($script:PowerAcBake | Where-Object { $_.Name -eq "pcie_aspm" } | Select-Object -First 1)
+if (-not $aspm -or [int]$aspm.Wanted -ne 0) {
+    throw "Test-Reclaim11: latency bake must set PCIe ASPM Off"
+}
+if ($script:PowerForbiddenGuid -notcontains "61329e62-4cc1-47eb-92fd-5ac16564efdd") {
+    throw "Test-Reclaim11: latency bake must refuse AGGRO"
+}
+if ($script:PowerForbiddenGuid -notcontains "e9a42b02-d5df-448d-aa00-03f14749eb61") {
+    throw "Test-Reclaim11: latency bake must refuse Ultimate"
+}
+if ($script:PowerHighPerfGuid -ne "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") {
+    throw "Test-Reclaim11: latency bake HP guid must stay Microsoft High Performance"
 }
 if ($latSrc -notmatch "MiniNT") {
     throw "Test-Reclaim11: latency bake must refuse WinPE MiniNT"
@@ -1110,6 +1131,12 @@ if (-not (@($dryLat.would) | Where-Object { $_ -match "bcd \{current\} nx .+Alwa
 }
 if (-not (@($dryLat.would) | Where-Object { $_ -match "GlobalTimerResolutionRequests" })) {
     throw "Test-Reclaim11: latency -T must list GlobalTimerResolutionRequests"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "usb_selective_suspend" })) {
+    throw "Test-Reclaim11: latency -T must list USB selective suspend"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "pcie_aspm" })) {
+    throw "Test-Reclaim11: latency -T must list PCIe ASPM"
 }
 if ($dryLat.PSObject.Properties["applied"] -and @($dryLat.applied).Count -gt 0) {
     throw "Test-Reclaim11: latency -T must not apply"
