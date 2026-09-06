@@ -900,6 +900,9 @@ if ($nukeSrc -notmatch "WOULD REFUSE  no WinPE receipt") {
 if ($nukeSrc -notmatch "WdFilter\.sys still present") {
     throw "Test-Reclaim11: grim_reaper must refuse if WdFilter.sys is still loadable"
 }
+if ($nukeSrc -notmatch "SetDisableUXWUAccess") {
+    throw "Test-Reclaim11: Grim Reaper must hide Check for updates chrome"
+}
 if ($nukeSrc -notmatch '(?s)& \{\s*\.\s+\$el') {
     throw "Test-Reclaim11: Nuclear TI hop must dotsource elevate.ps1 in a child scope"
 }

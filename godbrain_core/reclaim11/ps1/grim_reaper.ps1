@@ -322,6 +322,12 @@ function Set-WipeWuSettingsHide {
         New-ItemProperty -Path $hive -Name SettingsPageVisibility -Value $merged -PropertyType String -Force | Out-Null
         Write-Host ("  SettingsPageVisibility {0} -> {1}" -f $hive, $merged) -ForegroundColor Yellow
     }
+    $ux = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+    if (-not (Test-Path -LiteralPath $ux)) {
+        New-Item -Path $ux -Force | Out-Null
+    }
+    New-ItemProperty -Path $ux -Name SetDisableUXWUAccess -Value 1 -PropertyType DWord -Force | Out-Null
+    Write-Host "  SetDisableUXWUAccess=1 (Check for updates chrome)" -ForegroundColor Yellow
     foreach ($n in @("SystemSettings", "ApplicationFrameHost")) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
@@ -625,6 +631,13 @@ function Test-WipeSelf {
         Write-Host "SELFTEST FAIL hide:id;hide:id form would only hide the first page" -ForegroundColor Red
         $fail++
     }
+    $uxSrc = Get-Content -LiteralPath $PSCommandPath -Raw -Encoding UTF8
+    if ($uxSrc -notmatch "SetDisableUXWUAccess") {
+        Write-Host "SELFTEST FAIL missing SetDisableUXWUAccess (System Check for updates chrome)" -ForegroundColor Red
+        $fail++
+    } else {
+        Write-Host "SELFTEST ok   SetDisableUXWUAccess hides Check for updates chrome" -ForegroundColor Green
+    }
     if ($fmt -match "gamemode") {
         Write-Host "SELFTEST FAIL merged hide list contains Game Mode" -ForegroundColor Red
         $fail++
@@ -727,6 +740,7 @@ if ($WhatIf) {
     Write-Host "  would IFEO UsoCoreWorker.exe / MoUsoCoreWorker.exe / WaaSMedicAgent.exe"
     Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
     Write-Host ("  would hide WU in Settings ({0}; Game Mode stays)" -f (Merge-WipeHidePages -Current "" -Hide $script:WuHidePages))
+    Write-Host "  would SetDisableUXWUAccess=1 (Check for updates on System)"
     if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
     elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
     elseif (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }

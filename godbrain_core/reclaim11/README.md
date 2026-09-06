@@ -84,7 +84,8 @@ Optional remainder: `grim_reaper.ps1` (GUI: Send Grim Reaper). Compat name:
 `NuclearDefenderWipe-V6_3.ps1`. v6.3 **deletes** named drivers, never stubs
 `.sys` / `.cip`. After 26H1 it also locks WU resurrection
 (`wuauserv` / `UsoSvc` / `WaaSMedicSvc` and named task folders) and
-hides Windows Update in Settings (`hide:windowsupdate;…`, Game Mode stays).
+hides Windows Update in Settings (`hide:windowsupdate;…`, Game Mode stays)
+and `SetDisableUXWUAccess=1` (System page Check for updates chrome).
 `pwsh -File grim_reaper.ps1 -SelfTest`.
 
 Physical USB is a **separate** script (ISO builder stays `/ISO` only):
