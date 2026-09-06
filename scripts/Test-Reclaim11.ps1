@@ -1218,13 +1218,27 @@ $intelProps = @(
     [pscustomobject]@{ DisplayName = "Energy Efficient Ethernet"; RegistryKeyword = "*EEE"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") },
     [pscustomobject]@{ DisplayName = "Receive Side Scaling"; RegistryKeyword = "*RSS"; RegistryValue = @("0"); ValidRegistryValues = @("0", "1") },
     [pscustomobject]@{ DisplayName = "Receive Buffers"; RegistryKeyword = "*ReceiveBuffers"; RegistryValue = @("256"); ValidRegistryValues = @("128", "256", "512", "1024", "2048", "4096") },
-    [pscustomobject]@{ DisplayName = "Transmit Buffers"; RegistryKeyword = "*TransmitBuffers"; RegistryValue = @("256"); ValidRegistryValues = @("128", "256", "512", "1024", "2048") }
+    [pscustomobject]@{ DisplayName = "Transmit Buffers"; RegistryKeyword = "*TransmitBuffers"; RegistryValue = @("256"); ValidRegistryValues = @("128", "256", "512", "1024", "2048") },
+    [pscustomobject]@{ DisplayName = "TCP Checksum Offload (IPv4)"; RegistryKeyword = "*TCPChecksumOffloadIPv4"; RegistryValue = @("3"); ValidRegistryValues = @("0", "1", "2", "3") },
+    [pscustomobject]@{ DisplayName = "Large Send Offload V2 (IPv4)"; RegistryKeyword = "*LsoV2IPv4"; RegistryValue = @("1"); ValidRegistryValues = @("0", "1") },
+    [pscustomobject]@{ DisplayName = "Packet Priority & VLAN"; RegistryKeyword = "*PriorityVLANTag"; RegistryValue = @("3"); ValidRegistryValues = @("0", "1", "2", "3") },
+    [pscustomobject]@{ DisplayName = "Speed & Duplex"; RegistryKeyword = "*SpeedDuplex"; RegistryValue = @("0"); ValidRegistryValues = @("0", "6") }
 )
 $nicPlan = Resolve-Reclaim11NicPlan -AdapterName "Ethernet" -Props $intelProps
 $eee = @($nicPlan | Where-Object { $_.keyword -eq "*EEE" } | Select-Object -First 1)
 if (-not $eee -or $eee.wanted -ne "0") { throw "Test-Reclaim11: NIC map must disable *EEE" }
 $rss = @($nicPlan | Where-Object { $_.keyword -eq "*RSS" } | Select-Object -First 1)
 if (-not $rss -or $rss.wanted -ne "1") { throw "Test-Reclaim11: NIC map must enable *RSS" }
+$csum = @($nicPlan | Where-Object { $_.keyword -eq "*TCPChecksumOffloadIPv4" } | Select-Object -First 1)
+if (-not $csum -or $csum.wanted -ne "0") { throw "Test-Reclaim11: NIC map must disable TCP checksum offload" }
+$lso = @($nicPlan | Where-Object { $_.keyword -eq "*LsoV2IPv4" } | Select-Object -First 1)
+if (-not $lso -or $lso.wanted -ne "0") { throw "Test-Reclaim11: NIC map must disable LSO" }
+$vlan = @($nicPlan | Where-Object { $_.keyword -eq "*PriorityVLANTag" } | Select-Object -First 1)
+if (-not $vlan -or $vlan.wanted -ne "0") { throw "Test-Reclaim11: NIC map must disable Priority/VLAN" }
+$spd = @($nicPlan | Where-Object { $_.keyword -eq "*SpeedDuplex" } | Select-Object -First 1)
+if ($spd) { throw "Test-Reclaim11: NIC map must not force Speed/Duplex" }
+$nicSrcEarly = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encoding UTF8
+if ($nicSrcEarly -match '\*SpeedDuplex') { throw "Test-Reclaim11: nic_tune must not set SpeedDuplex" }
 $rx = @($nicPlan | Where-Object { $_.keyword -eq "*ReceiveBuffers" } | Select-Object -First 1)
 if (-not $rx -or $rx.wanted -ne "256") { throw "Test-Reclaim11: NIC Rx already 256 stays in CS2 band" }
 $fatProps = @(

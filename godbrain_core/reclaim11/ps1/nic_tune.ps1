@@ -1,5 +1,6 @@
-# Gaming NIC tune: disable power-saving / EEE / interrupt moderation,
-# set RSS on, bump Rx/Tx buffers. Keyword map, not per-vendor scripts.
+# Gaming NIC tune: disable power-saving / EEE / interrupt moderation /
+# checksum / LSO / VLAN tags, set RSS on, bump Rx/Tx buffers.
+# Keyword map, not per-vendor scripts. Do not force Speed/Duplex.
 # Physical Ethernet only (skip Wi-Fi, VMware, Tailscale, Bluetooth).
 # restore.json first. -T is DeviceCleanupCmd-t. Never BFE.
 
@@ -24,22 +25,36 @@ $script:NicSkipDesc = @(
     "*Kernel Debug*", "*Npcap*", "*TAP-*"
 )
 
-# Disable = power / latency junk. Not checksum/LSO (CPU vs packets).
+# Disable = power / latency / offload junk. VLAN/priority off (n00b kit;
+# anyone on tagged LAN knows how to turn it back). Not Speed/Duplex.
 $script:NicDisable = @(
     @{ Keyword = "*EEE"; Display = @("Energy Efficient Ethernet", "EEE") },
     @{ Keyword = "*EEELinkAdvertisement"; Display = @("EEE Link Advertisement") },
     @{ Keyword = "*InterruptModeration"; Display = @("Interrupt Moderation") },
     @{ Keyword = "ITR"; Display = @("Interrupt Moderation Rate") },
     @{ Keyword = "*FlowControl"; Display = @("Flow Control") },
+    @{ Keyword = "*TCPChecksumOffloadIPv4"; Display = @("TCP Checksum Offload (IPv4)") },
+    @{ Keyword = "*TCPChecksumOffloadIPv6"; Display = @("TCP Checksum Offload (IPv6)") },
+    @{ Keyword = "*UDPChecksumOffloadIPv4"; Display = @("UDP Checksum Offload (IPv4)") },
+    @{ Keyword = "*UDPChecksumOffloadIPv6"; Display = @("UDP Checksum Offload (IPv6)") },
+    @{ Keyword = "*IPChecksumOffloadIPv4"; Display = @("IPv4 Checksum Offload") },
+    @{ Keyword = "*IPChecksumOffloadIPv6"; Display = @("IPv6 Checksum Offload") },
+    @{ Keyword = "*LsoV2IPv4"; Display = @("Large Send Offload V2 (IPv4)") },
+    @{ Keyword = "*LsoV2IPv6"; Display = @("Large Send Offload V2 (IPv6)") },
+    @{ Keyword = "*LsoV1IPv4"; Display = @("Large Send Offload (IPv4)") },
+    @{ Keyword = "*PriorityVLANTag"; Display = @("Packet Priority & VLAN", "Priority & VLAN") },
     @{ Keyword = "*PMARPOffload"; Display = @("ARP Offload") },
     @{ Keyword = "*PMNSOffload"; Display = @("NS Offload") },
     @{ Keyword = "*WakeOnMagicPacket"; Display = @("Wake on Magic Packet", "Wake on magic packet") },
     @{ Keyword = "*WakeOnPattern"; Display = @("Wake on Pattern Match", "Wake on pattern match") },
+    @{ Keyword = "WakeOnMagicPacketFromS5"; Display = @("Wake On Magic Packet From S5") },
     @{ Keyword = "*PacketCoalescing"; Display = @("Packet Coalescing") },
     @{ Keyword = "EnableWakeOnLan"; Display = @("Wake on LAN", "Wake On LAN") },
     @{ Keyword = "GreenEthernet"; Display = @("Green Ethernet", "GreenEthernet") },
     @{ Keyword = "PowerSavingMode"; Display = @("Power Saving Mode", "Ultra Low Power Mode") },
-    @{ Keyword = "*IdlePowerDown"; Display = @("Reduce Speed On Power Down", "Auto Disable Gigabit") }
+    @{ Keyword = "*IdlePowerDown"; Display = @("Reduce Speed On Power Down", "Auto Disable Gigabit") },
+    @{ Keyword = "*IdleRestriction"; Display = @("Idle power down restriction") },
+    @{ Keyword = "AdaptiveIFS"; Display = @("Adaptive Inter-Frame Spacing") }
 )
 
 $script:NicEnable = @(
