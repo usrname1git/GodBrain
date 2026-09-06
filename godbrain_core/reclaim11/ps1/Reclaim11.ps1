@@ -84,6 +84,30 @@ if ($Test) {
     return
 }
 
+function Start-Reclaim11HiddenHost {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string[]]$ArgumentList,
+        [switch]$RunAs
+    )
+    $quoted = New-Object System.Collections.Generic.List[string]
+    foreach ($a in $ArgumentList) {
+        $s = [string]$a
+        if ($s -match '[\s"]') {
+            [void]$quoted.Add('"' + ($s -replace '"', '""') + '"')
+        } else {
+            [void]$quoted.Add($s)
+        }
+    }
+    $argLine = ($quoted -join " ")
+    $verb = ""
+    if ($RunAs) { $verb = "runas" }
+    $app = New-Object -ComObject Shell.Application
+    # 0 = SW_HIDE. Start-Process -WindowStyle Hidden opens Windows Terminal
+    # as an empty black window when WT is the default console host.
+    [void]$app.ShellExecute($FilePath, $argLine, "", $verb, 0)
+}
+
 $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -93,11 +117,7 @@ if ($sta -ne "STA" -or -not $admin) {
         "-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
     )
     if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
-    if (-not $admin) {
-        Start-Process -FilePath $pwsh -ArgumentList $arg -Verb RunAs -WindowStyle Hidden
-    } else {
-        Start-Process -FilePath $pwsh -ArgumentList $arg -WindowStyle Hidden
-    }
+    Start-Reclaim11HiddenHost -FilePath $pwsh -ArgumentList $arg -RunAs:(-not $admin)
     return
 }
 
@@ -108,7 +128,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
             "-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path
         )
         if ($WinPeLog) { $arg += @("-WinPeLog", $WinPeLog) }
-        Start-Process -FilePath $pwsh7 -ArgumentList $arg -WindowStyle Hidden
+        Start-Reclaim11HiddenHost -FilePath $pwsh7 -ArgumentList $arg
         return
     }
 }
