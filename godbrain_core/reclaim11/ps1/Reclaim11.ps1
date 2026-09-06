@@ -655,7 +655,7 @@ function Select-Reclaim11PrepUsbDisk {
     if ($ok.Count -lt 1) {
         $ref = @($Candidates | ForEach-Object { "disk {0} {1} ({2})" -f $_.number, $_.name, $_.refuse })
         [System.Windows.MessageBox]::Show(
-            ("No USB stick ready (need 2-32 GB USB, not this PC's boot disk, not a USB HDD). Plug one in and click PREP MEDIA again.`n`n{0}" -f ($ref -join "`n")),
+            ("No USB stick ready (need 1 GB+, under 32 GB, not this PC's boot disk). Plug one in and click PREP MEDIA again.`n`n{0}" -f ($ref -join "`n")),
             "Reclaim11 PREP MEDIA") | Out-Null
         return $null
     }
@@ -680,7 +680,7 @@ function Select-Reclaim11PrepUsbDisk {
         }
         $pick = @($ok | Where-Object { $_.number -eq $n }) | Select-Object -First 1
         if (-not $pick) {
-            [System.Windows.MessageBox]::Show("Disk $n is not a legal USB stick.", "Reclaim11 PREP MEDIA") | Out-Null
+            [System.Windows.MessageBox]::Show("Disk $n is not a USB stick we can use (1 GB+, under 32 GB, not the boot disk).", "Reclaim11 PREP MEDIA") | Out-Null
             return $null
         }
     }

@@ -136,6 +136,9 @@ if ($prepSrc -match 'Attach in VMware \(not USB\)') {
 if ($prepSrc -notmatch 'VM recommended') {
     throw "Test-Reclaim11: PREP MEDIA must say VM recommended"
 }
+if ($prepSrc -match '(?i)legal USB') {
+    throw "Test-Reclaim11: PREP MEDIA must not say legal USB"
+}
 if ($prepSrc -notmatch 'ExitCode') {
     throw "Test-Reclaim11: PREP MEDIA must use process ExitCode"
 }
@@ -563,6 +566,8 @@ if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must ca
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
 if ($usbSrc -notmatch "VM") { throw "Test-Reclaim11: USB writer must warn to boot in a VM" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
+if ($usbSrc -notmatch "UsbMinBytes = 1GB") { throw "Test-Reclaim11: USB writer min stick is 1GB" }
+if ($usbSrc -match "(?i)legal") { throw "Test-Reclaim11: USB writer must not say legal stick" }
 if ($usbSrc -notmatch "Get-Reclaim11IsoStub") {
     throw "Test-Reclaim11: USB writer must compile stub via Get-Reclaim11IsoStub"
 }
