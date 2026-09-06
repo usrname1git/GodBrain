@@ -22,7 +22,7 @@ Windows Registry Editor Version 5.00
 "BravePlaylistEnabled"=dword:00000000
 "ShowHomeButton"=dword:00000000
 
-; Shields defaults from the operator's current Brave (desk). Aggressive
+; Shields defaults from a curated Brave profile. Aggressive
 ; vs Standard adblock is not in ADMX; BlockAds is the GPO equivalent.
 "DefaultBraveAdblockSetting"=dword:00000002
 "DefaultBraveHttpsUpgradeSetting"=dword:00000003

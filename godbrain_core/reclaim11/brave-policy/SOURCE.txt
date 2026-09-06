@@ -9,5 +9,5 @@ Fetched 2026-09-02:
   windows/examples/brave.reg   (ALL policies with SAMPLE values — do not import whole)
 
 Home: Brave documents registry because gpedit is not on Home.
-Reclaim11 lockdown.reg is a curated subset (bloat + desk Shields), HKLM+HKCU.
+Reclaim11 lockdown.reg is a curated subset (bloat + Shields), HKLM+HKCU.
 Local cache (outside git): C:\nvme\godbrain-hf-raw\brave-policy-templates\

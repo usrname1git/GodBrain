@@ -314,9 +314,9 @@ $btnRun.Add_Click({
                 "Reclaim11") | Out-Null
             return
         }
-        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Desk/IoT is refused. Continue?"
+        $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Continue?"
         if ($doReaper) {
-            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Desk refused. Continue?"
+            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Continue?"
         }
         $q = [System.Windows.MessageBox]::Show(
             $warn,
@@ -367,7 +367,19 @@ $btnRun.Add_Click({
         }
         if ($doLatency) {
             try {
-                $plan = Invoke-Reclaim11LatencyBake -Root $here
+                $switchHp = $false
+                $hpOffer = Get-Reclaim11LatencyHighPerformanceOffer
+                if ($hpOffer.listed -and -not $hpOffer.already_active) {
+                    $hpQ = [System.Windows.MessageBox]::Show(
+                        "Recommended: switch the active power plan to High Performance.`n`nUSB selective suspend, USB 3 link power, and PCIe ASPM are written onto High Performance and onto the current plan either way. Switch now?",
+                        "Reclaim11 High Performance",
+                        "YesNo",
+                        "Question")
+                    $switchHp = ($hpQ -eq "Yes")
+                } elseif (-not $hpOffer.listed) {
+                    Add-Log "High Performance plan not listed; baking the active plan only."
+                }
+                $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
                 Add-Log ("latency bake applied {0}" -f (@($plan.applied).Count))
                 Add-Log ("manifest {0}" -f $plan.manifest_path)
             } catch {
@@ -504,7 +516,7 @@ $btnNoobTest.Add_Click({
 $btnNoobFix.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Grim Reaper. Desk/IoT refused. Continue?",
+        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Grim Reaper. Continue?",
         "Reclaim11 JUST FIX MY SH*T",
         "YesNo",
         "Warning")

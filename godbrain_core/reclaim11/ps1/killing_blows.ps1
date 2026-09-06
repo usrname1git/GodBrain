@@ -1,5 +1,5 @@
 # Pack-A killing blows after a valid WinPE receipt. Never BFE / mpssvc / FltMgr.
-# Desk (IoTEnterpriseS) is refused. Not Heal. Not a live wipe of the host.
+# Not Heal. Not a live wipe of the running OS without a WinPE receipt.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -12,11 +12,6 @@ function Test-Reclaim11Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p = New-Object Security.Principal.WindowsPrincipal $id
     $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Test-Reclaim11DeskHost {
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-    [string]$n.EditionID -eq "IoTEnterpriseS"
 }
 
 function Test-Reclaim11PackATaskPath {
@@ -87,16 +82,12 @@ function Invoke-Reclaim11KillingBlows {
             throw "Invoke-Reclaim11KillingBlows: pack A lists never-touch $s"
         }
     }
-    $desk = Test-Reclaim11DeskHost
     $admin = Test-Reclaim11Admin
     $receipt = Get-Reclaim11WinPeReceipt
     $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
     $wdPresent = Test-Path -LiteralPath $wd
     $inv = Get-Reclaim11Inventory -Root $Root
     $stub = Get-Reclaim11KillingStub -Catalog $cat
-    if ((-not $WhatIf) -and $desk) {
-        throw "Refuse: desk (IoTEnterpriseS). Killing blows are VM-only. Not M1ABRAMS."
-    }
     if (-not $WhatIf) {
         $el = Resolve-Reclaim11Worker -Name "elevate.ps1" -Root $Root
         . $el
@@ -151,7 +142,6 @@ function Invoke-Reclaim11KillingBlows {
     if ($WhatIf) {
         $checks = @(
             (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "killing blows need TI via admin"),
-            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
             (New-Reclaim11Check -Name "winpe" -Ok ([bool]$receipt) -Detail $(if ($receipt) { [string]$receipt } else { "no reclaim11-winpe.log" })),
             (New-Reclaim11Check -Name "WdFilter" -Ok (-not $wdPresent) -Detail $(if ($wdPresent) { $wd } else { "parked" })),
             (New-Reclaim11Check -Name "never_touch" -Ok ([bool]$inv.never_touch_ok) -Detail "BFE/mpssvc RUNNING"),

@@ -1,6 +1,6 @@
 # Disable connected-experience telemetry. restore.json first.
 # DiagTrack + dmwappushservice (from the old autom8ed nuke lists). AllowTelemetry=0.
-# Never BFE / mpssvc / FltMgr / EventLog. Desk (IoTEnterpriseS) refused.
+# Never BFE / mpssvc / FltMgr / EventLog.
 # No TI hop (HKCU/admin is enough). No scheduled-task glob.
 
 [CmdletBinding()]
@@ -21,11 +21,6 @@ $script:TelemetryServices = @(
     "DiagTrack",
     "dmwappushservice"
 )
-
-function Test-Reclaim11TelemetryDeskHost {
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-    [string]$n.EditionID -eq "IoTEnterpriseS"
-}
 
 function Write-Reclaim11TelemetryManifest {
     param($Manifest, [string]$Path)
@@ -80,11 +75,6 @@ function Invoke-Reclaim11TelemetryCleanse {
         }
     }
 
-    $desk = Test-Reclaim11TelemetryDeskHost
-    if ($desk -and -not $WhatIf) {
-        throw "Refuse: desk (IoTEnterpriseS). Telemetry cleanse is VM-only. Not M1ABRAMS."
-    }
-
     $allow = Get-Reclaim11TelemetryAllowSnapshot
     $svcSnap = @()
     foreach ($name in $script:TelemetryServices) {
@@ -120,8 +110,7 @@ function Invoke-Reclaim11TelemetryCleanse {
             $admin = Test-Reclaim11Admin
         }
         $checks = @(
-            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "telemetry is admin, not TI"),
-            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" }))
+            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "telemetry is admin, not TI")
         )
         $would = @("AllowTelemetry=0")
         foreach ($s in $svcSnap) {
@@ -129,8 +118,7 @@ function Invoke-Reclaim11TelemetryCleanse {
             else { $would += ("skip {0} (absent)" -f $s.name) }
         }
         $refuse = ""
-        if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
-        elseif (-not $admin) { $refuse = "needs elevation" }
+        if (-not $admin) { $refuse = "needs elevation" }
         $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
         $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $false
         $manifest | Add-Member -NotePropertyName checks -NotePropertyValue $checks
@@ -177,9 +165,6 @@ function Restore-Reclaim11TelemetryBackup {
     $m = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$m.id -notlike "reclaim11-telemetry*") {
         throw "Restore-Reclaim11TelemetryBackup: not a telemetry manifest"
-    }
-    if (Test-Reclaim11TelemetryDeskHost) {
-        throw "Refuse: desk (IoTEnterpriseS). Telemetry restore is VM-only. Not M1ABRAMS."
     }
     $restored = @()
     $path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"

@@ -665,15 +665,6 @@ if ($SelfTest) {
     return
 }
 
-function Test-Reclaim11ReaperDeskHost {
-    # Inline EditionID. Do not dotsource inventory.ps1 (StrictMode/Stop).
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
-    if (-not $n) { return $null }
-    $prop = $n.PSObject.Properties["EditionID"]
-    if (-not $prop) { return $null }
-    [string]$prop.Value -eq "IoTEnterpriseS"
-}
-
 function Test-Reclaim11ReaperWinPeReceipt {
     # Inline JSON id. Do not dotsource inventory.ps1 (StrictMode/Stop).
     $root = $env:SystemRoot
@@ -695,17 +686,10 @@ function Test-Reclaim11ReaperWinPeReceipt {
     $false
 }
 
-$desk = Test-Reclaim11ReaperDeskHost
 $hasReceipt = Test-Reclaim11ReaperWinPeReceipt
 $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
 $wdPresent = Test-Path -LiteralPath $wd
 if (-not $WhatIf) {
-    if ($null -eq $desk) {
-        throw "Refuse: cannot read EditionID (needed to refuse desk)"
-    }
-    if ($desk) {
-        throw "Refuse: desk (IoTEnterpriseS). Grim Reaper is VM-only. Not M1ABRAMS."
-    }
     if (-not $hasReceipt) {
         throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
     }
@@ -716,7 +700,6 @@ if (-not $WhatIf) {
 
 if ($WhatIf) {
     Write-Host "TEST ONLY (DeviceCleanupCmd -t). mutate=false." -ForegroundColor Yellow
-    Write-Host ("  desk={0}  (IoTEnterpriseS would refuse)" -f $desk)
     Write-Host ("  winpe_receipt={0}" -f $hasReceipt)
     Write-Host ("  WdFilter.sys present={0}" -f $wdPresent)
     Write-Host ("  stub={0} exists={1}" -f $StubPath, (Test-PeMz $StubPath))
@@ -739,9 +722,7 @@ if ($WhatIf) {
     Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
     Write-Host ("  would hide WU in Settings ({0}; Game Mode stays)" -f (Merge-WipeHidePages -Current "" -Hide $script:WuHidePages))
     Write-Host "  would SetDisableUXWUAccess=1 (Check for updates on System)"
-    if ($null -eq $desk) { Write-Host "WOULD REFUSE  cannot read EditionID" -ForegroundColor Red }
-    elseif ($desk) { Write-Host "WOULD REFUSE  desk (IoTEnterpriseS)" -ForegroundColor Red }
-    elseif (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }
+    if (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }
     elseif ($wdPresent) { Write-Host "WOULD REFUSE  WdFilter.sys still present" -ForegroundColor Red }
     else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
     return

@@ -17,7 +17,7 @@ Rewards, Wallet, VPN, Talk, News, Leo, P3A, metrics, Tor, stats ping:
 **off**. Home button off (`ShowHomeButton=0`). Safe Browsing stays on.
 Download warnings stay on.
 
-Shields (GPO, from the desk profile — not a 40-click Settings tour):
+Shields (GPO, curated Shields, not a 40-click Settings tour):
 
 | Setting | Value |
 |---|---|

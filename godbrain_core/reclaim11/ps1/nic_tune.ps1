@@ -1,7 +1,7 @@
 # Gaming NIC tune: disable power-saving / EEE / interrupt moderation,
 # set RSS on, bump Rx/Tx buffers. Keyword map, not per-vendor scripts.
 # Physical Ethernet only (skip Wi-Fi, VMware, Tailscale, Bluetooth).
-# restore.json first. Desk refused. -T is DeviceCleanupCmd-t. Never BFE.
+# restore.json first. -T is DeviceCleanupCmd-t. Never BFE.
 
 [CmdletBinding()]
 param(
@@ -50,11 +50,6 @@ $script:NicEnable = @(
 $script:NicBufferMin = 256
 $script:NicBufferMax = 512
 $script:NicBufferWant = 512
-
-function Test-Reclaim11NicDeskHost {
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-    [string]$n.EditionID -eq "IoTEnterpriseS"
-}
 
 function Test-Reclaim11NicSkipAdapter {
     param($Adapter)
@@ -222,10 +217,6 @@ function Invoke-Reclaim11NicTune {
     if ([string]::IsNullOrWhiteSpace($Root)) {
         $Root = $script:Reclaim11Here
     }
-    $desk = Test-Reclaim11NicDeskHost
-    if ($desk -and -not $WhatIf) {
-        throw "Refuse: desk (IoTEnterpriseS). NIC tune is VM-only. Not M1ABRAMS."
-    }
     $admin = $false
     if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
         $admin = Test-Reclaim11Admin
@@ -272,12 +263,10 @@ function Invoke-Reclaim11NicTune {
 
     $checks = @(
         (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "Set-NetAdapterAdvancedProperty needs admin"),
-        (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
         (New-Reclaim11Check -Name "ethernet" -Ok ($targets.Count -gt 0) -Detail ("targets={0}" -f $targets.Count))
     )
     $refuse = ""
-    if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
-    elseif (-not $admin) { $refuse = "needs elevation" }
+    if (-not $admin) { $refuse = "needs elevation" }
     elseif ($targets.Count -lt 1) { $refuse = "no physical Ethernet" }
 
     if ($WhatIf) {
@@ -325,9 +314,6 @@ function Restore-Reclaim11NicBackup {
     $m = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$m.id -notlike "reclaim11-nic*") {
         throw "Restore-Reclaim11NicBackup: not a NIC manifest"
-    }
-    if (Test-Reclaim11NicDeskHost) {
-        throw "Refuse: desk (IoTEnterpriseS). NIC restore is VM-only. Not M1ABRAMS."
     }
     $restored = @()
     foreach ($x in @($m.actions)) {

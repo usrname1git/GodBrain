@@ -1,5 +1,5 @@
 # Safe cleanse: move pack-A files to a backup catalog + restore.json. Never delete.
-# Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused when targeting this OS.
+# Never BFE / mpssvc / FltMgr.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -33,11 +33,6 @@ function Invoke-Reclaim11NoobCleanse {
     $live = [string]::IsNullOrWhiteSpace($VolumeRoot)
     if ($live) { $VolumeRoot = $env:SystemDrive }
     $VolumeRoot = $VolumeRoot.TrimEnd("\")
-    $sysDrive = $env:SystemDrive.TrimEnd("\")
-    $deskLive = (Test-Reclaim11DeskHost) -and ($VolumeRoot -eq $sysDrive)
-    if ($deskLive -and -not $WhatIf) {
-        throw "Refuse: desk (IoTEnterpriseS). Safe cleanse is VM-only. Not M1ABRAMS."
-    }
     foreach ($s in @($cat.never_touch_services)) {
         if (@($cat.services_pack_a) -contains $s) {
             throw "Refuse: pack A lists never-touch $s"
@@ -117,7 +112,6 @@ function Invoke-Reclaim11NoobCleanse {
     $manPath = Join-Path $BackupRoot "restore.json"
     if ($WhatIf) {
         $checks = @(
-            (New-Reclaim11Check -Name "desk" -Ok (-not $deskLive) -Detail $(if ($deskLive) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
             (New-Reclaim11Check -Name "WdFilter" -Ok (-not $wdPresent) -Detail $(if ($wdPresent) { $wd } else { "parked or offline volume" }))
         )
         $would = @($items | ForEach-Object { "move {0} -> {1}" -f $_.original, $_.backup })

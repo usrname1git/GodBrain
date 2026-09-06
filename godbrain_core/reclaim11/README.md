@@ -117,14 +117,16 @@ Rx/Tx **256–512**. Skips VMware host VMnet / Tailscale / Wi-Fi.
 `hypervisorlaunchtype Auto`, `vsmlaunchtype Off`, `sos No`,
 `useplatformclock No`, `useplatformtick No`, `disabledynamictick Yes`;
 `{bootmgr}` `bootmenupolicy Legacy`. HKLM
-`GlobalTimerResolutionRequests=1`, `SystemResponsiveness=0`,
+`GlobalTimerResolutionRequests=1`, `SystemResponsiveness=10`,
 `Win32PrioritySeparation=38`. On the **active** plan (and High
 Performance if it exists): USB selective suspend Off, USB 3 link
-power Off, PCIe ASPM Off. Does **not** switch the plan, does **not**
-set min processor 100%, does **not** disable C-states. AGGRO
-(`61329e62`) and Ultimate (`e9a42b02`) refused — those were the
-+idle-heat cooks. High Performance as a 24/7 plan stays out
-(Start-CS2). `restore.json` first. Desk (IoTEnterpriseS) refused.
+power Off, PCIe ASPM Off. The GUI **asks** before switching the
+active plan to High Performance (Yes = `/setactive` that GUID;
+No = bake HP settings but keep the current plan). CLI needs
+`-SwitchHighPerformance`. Does **not** set min processor 100%,
+does **not** disable C-states. AGGRO (`61329e62`) and Ultimate
+(`e9a42b02`) refused — those were the +idle-heat cooks.
+`restore.json` first.
 WinPE MiniNT refused (that would be the PE BCD).
 `pwsh -File latency_bake.ps1 -T`. Restore:
 `pwsh -File latency_bake.ps1 -Restore restore.json`.
@@ -134,6 +136,8 @@ Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
 SYSTEM and skips that hop.
 
 ### From this repo
+
+Run `Test-Reclaim11.ps1` on a VM. Not physical hardware.
 
 ```text
 godbrain_core\reclaim11\Reclaim11.cmd
