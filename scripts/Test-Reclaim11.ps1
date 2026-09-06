@@ -349,7 +349,7 @@ if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
 if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
 if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
 $bloat = @($cat.appx_bloat)
-foreach ($need in @("Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp", "Microsoft.BingWeather", "Microsoft.Todos", "MicrosoftCorporationII.QuickAssist", "Microsoft.BingNews")) {
+foreach ($need in @("Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp", "5319275A.WhatsAppDesktop", "7EE7776C.LinkedInforWindows", "Microsoft.BingWeather", "Microsoft.Todos", "MicrosoftCorporationII.QuickAssist", "Microsoft.BingNews")) {
     if ($bloat -notcontains $need) { throw "Test-Reclaim11: appx_bloat missing $need" }
 }
 $keepAppx = @($cat.never_touch_appx)
