@@ -14,9 +14,10 @@ until a WinPE receipt. Exact flags are under Advanced.
 1. Get `Reclaim11-kit-v10.zip` from
    [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v10)
    and unzip it. Check the `.sha256` next to the zip.
-2. Double-click `Reclaim11.cmd`. You do not type `pwsh`. If you only have
-   Windows PowerShell 5.1, the GUI offers the official PowerShell 7 MSI
-   (adds PATH). WinPE stays 5.1.
+2. Double-click `Reclaim11.cmd`. You do not type `pwsh`. The `.cmd` hops
+   to a hidden host so Windows Terminal does not stay as an empty black
+   window. If you only have Windows PowerShell 5.1, the GUI offers the
+   official PowerShell 7 MSI (adds PATH). WinPE stays 5.1.
 3. Click **TEST FIRST** (noob door) or **TEST SELECTED** (expert).
    Nothing is deleted. Read the log.
 4. Then pick a door:

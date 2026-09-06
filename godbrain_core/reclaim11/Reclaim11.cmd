@@ -1,8 +1,15 @@
 @echo off
 setlocal EnableExtensions
 REM Double-click door. Do not type pwsh. UAC is inside Reclaim11.ps1.
+REM Win11 default terminal is Windows Terminal. start pwsh -WindowStyle Hidden
+REM from this .cmd is an empty black WT window. Reclaim11.vbs Run 0 is not.
 set "KIT=%~dp0"
+set "VBS=%KIT%Reclaim11.vbs"
 set "GUI=%KIT%ps1\Reclaim11.ps1"
+if exist "%VBS%" (
+  start "" "%SystemRoot%\System32\wscript.exe" //nologo "%VBS%"
+  exit /b 0
+)
 if not exist "%GUI%" (
   echo Reclaim11.cmd: missing ps1\Reclaim11.ps1
   exit /b 1

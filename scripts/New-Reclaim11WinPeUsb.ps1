@@ -207,6 +207,7 @@ $kitDest = Join-Path $usbRoot "reclaim11"
 if (-not (Test-Path -LiteralPath $kitDest)) { New-Item -ItemType Directory -Path $kitDest | Out-Null }
 Copy-Item -LiteralPath (Join-Path $reclaim "catalog.json") -Destination (Join-Path $kitDest "catalog.json") -Force
 Copy-Item -LiteralPath (Join-Path $reclaim "Reclaim11.cmd") -Destination (Join-Path $kitDest "Reclaim11.cmd") -Force
+Copy-Item -LiteralPath (Join-Path $reclaim "Reclaim11.vbs") -Destination (Join-Path $kitDest "Reclaim11.vbs") -Force
 $ps1Dest = Join-Path $kitDest "ps1"
 if (-not (Test-Path -LiteralPath $ps1Dest)) { New-Item -ItemType Directory -Path $ps1Dest | Out-Null }
 foreach ($n in $script:KitFiles) {

@@ -24,6 +24,7 @@ if ($OutZip -match 'Reclaim11-kit-v\d+\.zip$' -and $OutZip -notmatch ("Reclaim11
 
 $need = @(
     (Join-Path $kit "Reclaim11.cmd"),
+    (Join-Path $kit "Reclaim11.vbs"),
     (Join-Path $kit "catalog.json"),
     (Join-Path $kit "README.md"),
     (Join-Path $kit "ps1\Reclaim11.ps1"),
@@ -52,6 +53,7 @@ New-Item -ItemType Directory -Path (Join-Path $stage "scripts") | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $stage "brave-policy") | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $kit "Reclaim11.cmd") -Destination (Join-Path $stage "Reclaim11.cmd") -Force
+Copy-Item -LiteralPath (Join-Path $kit "Reclaim11.vbs") -Destination (Join-Path $stage "Reclaim11.vbs") -Force
 Copy-Item -LiteralPath (Join-Path $kit "catalog.json") -Destination (Join-Path $stage "catalog.json") -Force
 Copy-Item -LiteralPath (Join-Path $kit "README.md") -Destination (Join-Path $stage "README.md") -Force
 Get-ChildItem -LiteralPath (Join-Path $kit "ps1") -Filter *.ps1 | ForEach-Object {

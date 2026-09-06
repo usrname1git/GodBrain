@@ -50,8 +50,32 @@ Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
     }
 }
 $cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
+$vbsPath = Join-Path $root "Reclaim11.vbs"
+if (-not (Test-Path -LiteralPath $vbsPath)) { throw "Test-Reclaim11: missing Reclaim11.vbs" }
+$vbsSrc = Get-Content -LiteralPath $vbsPath -Raw -Encoding ASCII
 if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
     throw "Test-Reclaim11: Reclaim11.cmd must launch ps1\Reclaim11.ps1"
+}
+if ($cmdSrc -notmatch 'wscript\.exe') {
+    throw "Test-Reclaim11: Reclaim11.cmd must hop to wscript (WT swallows .cmd)"
+}
+if ($cmdSrc -notmatch 'Reclaim11\.vbs') {
+    throw "Test-Reclaim11: Reclaim11.cmd must launch Reclaim11.vbs"
+}
+if ($cmdSrc -match 'wt\.exe') {
+    throw "Test-Reclaim11: Reclaim11.cmd must not call wt.exe"
+}
+if ($vbsSrc -notmatch 'ps1\\Reclaim11\.ps1') {
+    throw "Test-Reclaim11: Reclaim11.vbs must launch ps1\Reclaim11.ps1"
+}
+if ($vbsSrc -notmatch 'sh\.Run cmd, 0, False') {
+    throw "Test-Reclaim11: Reclaim11.vbs must Run 0 (hidden, no WT window)"
+}
+if ($vbsSrc -match 'WindowsApps' -and $vbsSrc -notmatch 'refusing WindowsApps') {
+    throw "Test-Reclaim11: Reclaim11.vbs must not use the WindowsApps stub"
+}
+if ($vbsSrc -match 'where pwsh') {
+    throw "Test-Reclaim11: Reclaim11.vbs must not where pwsh (WindowsApps stub)"
 }
 if ($cmdSrc -notmatch 'WindowStyle Hidden') {
     throw "Test-Reclaim11: Reclaim11.cmd must hide the PowerShell console"
@@ -107,7 +131,13 @@ $launchSrc = Get-Content -LiteralPath $launch -Raw -Encoding UTF8
 if ($launchSrc -notmatch 'LanguageMode -ne "FullLanguage"') {
     throw "Test-Reclaim11: Reclaim11.ps1 must refuse ConstrainedLanguage"
 }
-if ($launchSrc -notmatch '-Verb RunAs') {
+if ($launchSrc -notmatch 'function Start-Reclaim11HiddenHost') {
+    throw "Test-Reclaim11: STA/admin relaunch must ShellExecute SW_HIDE (WT ignores WindowStyle Hidden)"
+}
+if ($launchSrc -notmatch 'ShellExecute') {
+    throw "Test-Reclaim11: GUI path must UAC-relaunch via ShellExecute"
+}
+if ($launchSrc -notmatch '"runas"') {
     throw "Test-Reclaim11: GUI path must UAC-relaunch"
 }
 if ($launchSrc -notmatch '-WindowStyle Hidden') {
@@ -693,6 +723,9 @@ if ($usbSrc -notmatch "Get-Reclaim11IsoStub") {
 if ($usbSrc -notmatch "ListJson") {
     throw "Test-Reclaim11: USB writer must list sticks as JSON for PREP MEDIA"
 }
+if ($usbSrc -notmatch "Reclaim11\.vbs") {
+    throw "Test-Reclaim11: USB kit copy must include Reclaim11.vbs"
+}
 
 $zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"
 if (-not (Test-Path -LiteralPath $zipBuild)) { throw "Test-Reclaim11: missing New-Reclaim11KitZip.ps1" }
@@ -707,7 +740,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/Reclaim11.vbs", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
