@@ -470,7 +470,7 @@ kernel-named save under `logs\acl` — throw the key; not `/reset`. Save must
 succeed before takeown; restore must succeed before the key is deleted.
 Extra paths from the host manual:
 SystemProfile Windows Defender and `CodeIntegrity\CIPolicies\Active`).
-Heal never launches `wsudo -T`. The NuclearDefenderWipe IFEO/stub/DENY
+Heal never launches `wsudo -T`. The Grim Reaper IFEO/stub/DENY
 SYSTEM lock is not a kernel tool.
 `reg add|delete`, `schtasks /Create|/Change|/Delete|/Run`, `wevtutil cl`,
 `logman start|stop`, `sc start|stop`, `ipconfig /flushdns`. Never:
