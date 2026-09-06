@@ -586,43 +586,133 @@ $btnNoobSafe.Add_Click({
     } finally { $script:ProcessRunning = $false }
 })
 
-$btnPrep.Add_Click({
-    if ($script:ProcessRunning) { return }
-    $build = $null
+function Get-Reclaim11PrepScript([string]$Name) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $here)
     foreach ($c in @(
-            (Join-Path $here "scripts\New-Reclaim11WinPeIso.ps1"),
-            (Join-Path $repoRoot "scripts\New-Reclaim11WinPeIso.ps1")
+            (Join-Path $here "scripts\$Name"),
+            (Join-Path $repoRoot "scripts\$Name")
         )) {
-        if (Test-Path -LiteralPath $c) { $build = $c; break }
+        if (Test-Path -LiteralPath $c) { return $c }
     }
+    $null
+}
+
+function Get-Reclaim11PrepIsoPath {
+    $isoDir = "C:\Reclaim11"
+    $want = Join-Path $isoDir "Reclaim11-WinPE-v10.iso"
+    foreach ($n in @("Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
+        $p = Join-Path $isoDir $n
+        if (Test-Path -LiteralPath $p) {
+            return [pscustomobject]@{ want = $want; iso = $p; have = $true }
+        }
+    }
+    [pscustomobject]@{ want = $want; iso = $want; have = $false }
+}
+
+function Invoke-Reclaim11PrepProcess {
+    param(
+        [Parameter(Mandatory)][string]$Arg,
+        [Parameter(Mandatory)][string]$FailName
+    )
+    $pwsh = Get-Reclaim11Pwsh
+    $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $outFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".out")
+    $errFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".err")
+    try {
+        $p = Start-Process -FilePath $pwsh -ArgumentList $Arg -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $chunks = @()
+        if (Test-Path -LiteralPath $outFile) {
+            $chunks += Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $errFile) {
+            $chunks += Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
+        }
+        $out = ($chunks -join "`n")
+        if ($out) { Add-Log $out.TrimEnd() }
+        if ([int]$p.ExitCode -ne 0) {
+            throw ("{0} exit {1}`n{2}" -f $FailName, $p.ExitCode, $out)
+        }
+        $out
+    } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-Reclaim11PrepUsbCandidates {
+    param([Parameter(Mandatory)][string]$UsbScript)
+    $raw = Invoke-Reclaim11PrepProcess -Arg ("-NoProfile -ExecutionPolicy Bypass -File `"{0}`" -ListJson" -f $UsbScript) -FailName "USB list"
+    $text = [string]$raw
+    $cut = $text.IndexOf("[")
+    if ($cut -lt 0) { $cut = $text.IndexOf("{") }
+    if ($cut -gt 0) { $text = $text.Substring($cut) }
+    $parsed = $text | ConvertFrom-Json
+    @($parsed)
+}
+
+function Select-Reclaim11PrepUsbDisk {
+    param($Candidates)
+    $ok = @($Candidates | Where-Object { $_.ok })
+    if ($ok.Count -lt 1) {
+        $ref = @($Candidates | ForEach-Object { "disk {0} {1} ({2})" -f $_.number, $_.name, $_.refuse })
+        [System.Windows.MessageBox]::Show(
+            ("No USB stick ready (need 2-32 GB USB, not this PC's boot disk, not a USB HDD). Plug one in and click PREP MEDIA again.`n`n{0}" -f ($ref -join "`n")),
+            "Reclaim11 PREP MEDIA") | Out-Null
+        return $null
+    }
+    $pick = $null
+    if ($ok.Count -eq 1) {
+        $pick = $ok[0]
+    } else {
+        $lines = @($ok | ForEach-Object {
+                $lett = if (@($_.letters).Count -gt 0) { ($_.letters -join ",") } else { "-" }
+                "disk {0}  {1}  {2:N1} GB  letter={3}" -f $_.number, $_.name, ($_.size / 1GB), $lett
+            })
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $typed = [Microsoft.VisualBasic.Interaction]::InputBox(
+            ("Several USB sticks.`n`n{0}`n`nDisk number to FORMAT:" -f ($lines -join "`n")),
+            "Reclaim11 USB",
+            "")
+        if ([string]::IsNullOrWhiteSpace($typed)) { return $null }
+        $n = 0
+        if (-not [int]::TryParse($typed.Trim(), [ref]$n)) {
+            [System.Windows.MessageBox]::Show("Not a disk number.", "Reclaim11 PREP MEDIA") | Out-Null
+            return $null
+        }
+        $pick = @($ok | Where-Object { $_.number -eq $n }) | Select-Object -First 1
+        if (-not $pick) {
+            [System.Windows.MessageBox]::Show("Disk $n is not a legal USB stick.", "Reclaim11 PREP MEDIA") | Out-Null
+            return $null
+        }
+    }
+    $lett = if (@($pick.letters).Count -gt 0) { ($pick.letters -join ",") } else { "-" }
+    $q = [System.Windows.MessageBox]::Show(
+        ("FORMAT USB disk {0} ({1}, {2:N1} GB, letter {3})? This ERASES the stick. Not this PC's boot disk.`n`nBoot the stick on the target (VM recommended, not required)." -f $pick.number, $pick.name, ($pick.size / 1GB), $lett),
+        "Reclaim11 PREP MEDIA",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return $null }
+    [int]$pick.number
+}
+
+$btnPrep.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $build = Get-Reclaim11PrepScript "New-Reclaim11WinPeIso.ps1"
+    $usbBuild = Get-Reclaim11PrepScript "New-Reclaim11WinPeUsb.ps1"
     if (-not $build) {
         [System.Windows.MessageBox]::Show(
             "MUST: WinPE ISO builder missing. Use a Reclaim11 kit zip (scripts\New-Reclaim11WinPeIso.ps1) or the GodBrain repo.",
             "Reclaim11 prep media") | Out-Null
         return
     }
-    $isoDir = "C:\Reclaim11"
-    $want = Join-Path $isoDir "Reclaim11-WinPE-v10.iso"
-    $iso = $want
-    foreach ($n in @("Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
-        $p = Join-Path $isoDir $n
-        if (Test-Path -LiteralPath $p) { $iso = $p; break }
-    }
-    $have = Test-Path -LiteralPath $iso
-    $ask = if ($have) {
-        "ISO already at:`n$iso`n`nRebuild v10 to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
-    } else {
-        "Build WinPE ISO to:`n$want`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows."
-    }
-    $q = [System.Windows.MessageBox]::Show($ask, "Reclaim11 PREP MEDIA", "YesNo", "Warning")
-    if ($q -ne "Yes") {
-        if ($have) {
-            [System.Windows.MessageBox]::Show(
-                "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$iso`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json.",
-                "Reclaim11 prep media") | Out-Null
-        }
-        return
+    $isoInfo = Get-Reclaim11PrepIsoPath
+    $want = [string]$isoInfo.want
+    if (-not [bool]$isoInfo.have) {
+        $q = [System.Windows.MessageBox]::Show(
+            ("Build WinPE ISO to:`n{0}`n`nNeeds ADK + WinPE addon 10.1.26100.2454 (not 28000). Several minutes. DISM only against the WinPE image, not this Windows.`n`nThen PREP MEDIA writes a USB. VM recommended, not required." -f $want),
+            "Reclaim11 PREP MEDIA",
+            "YesNo",
+            "Warning")
+        if ($q -ne "Yes") { return }
     }
     $script:ProcessRunning = $true
     $btnPrep.IsEnabled = $false
@@ -630,36 +720,44 @@ $btnPrep.Add_Click({
     $btnRun.IsEnabled = $false
     $btnTest.IsEnabled = $false
     try {
-        Add-Log ("PREP MEDIA building {0}" -f $want)
-        $pwsh = Get-Reclaim11Pwsh
-        $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
-        $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
-        $outFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".out")
-        $errFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".err")
+        if (-not [bool]$isoInfo.have) {
+            Add-Log ("PREP MEDIA building {0}" -f $want)
+            $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
+            $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder"
+            if (-not (Test-Path -LiteralPath $want)) {
+                throw "ISO missing after build: $want"
+            }
+            Add-Log ("PREP MEDIA iso {0}" -f $want)
+        } else {
+            Add-Log ("PREP MEDIA iso exists {0}" -f $isoInfo.iso)
+        }
+        if (-not $usbBuild) {
+            [System.Windows.MessageBox]::Show(
+                ("ISO ready:`n{0}`n`nUSB writer missing (scripts\New-Reclaim11WinPeUsb.ps1). Boot the ISO on the target (VM recommended). Without that boot this GUI is bloat only." -f $(if ([bool]$isoInfo.have) { $isoInfo.iso } else { $want })),
+                "Reclaim11 PREP MEDIA") | Out-Null
+            return
+        }
+        $cands = @(Get-Reclaim11PrepUsbCandidates -UsbScript $usbBuild)
+        $disk = Select-Reclaim11PrepUsbDisk -Candidates $cands
+        if ($null -eq $disk) { return }
+        Add-Log ("PREP MEDIA USB disk {0}" -f $disk)
+        $usbArg = "-NoProfile -ExecutionPolicy Bypass -File `"$usbBuild`" -DiskNumber $disk -Go"
         try {
-            $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-            $chunks = @()
-            if (Test-Path -LiteralPath $outFile) {
-                $chunks += Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+            $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer"
+        } catch {
+            if ($_.Exception.Message -match "boot\.wim") {
+                Add-Log "PREP MEDIA workdir missing; rebuilding ISO payload"
+                $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
+                $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder"
+                $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer"
+            } else {
+                throw
             }
-            if (Test-Path -LiteralPath $errFile) {
-                $chunks += Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
-            }
-            $out = ($chunks -join "`n")
-            if ($out) { Add-Log $out.TrimEnd() }
-            if ([int]$p.ExitCode -ne 0) {
-                throw ("ISO builder exit {0}`n{1}" -f $p.ExitCode, $out)
-            }
-        } finally {
-            Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
         }
-        if (-not (Test-Path -LiteralPath $want)) {
-            throw "ISO missing after build: $want"
-        }
-        Add-Log ("PREP MEDIA ok {0}" -f $want)
+        Add-Log ("PREP MEDIA USB ok disk {0}" -f $disk)
         [System.Windows.MessageBox]::Show(
-            "MUST boot this ISO on the target to remove Defender. In-Windows without a PE receipt is bloat only.`n`nISO ready:`n$want`n`nAttach in VMware (not USB). Snapshot first. Boot the ISO, then disconnect and wpeutil reboot. Operator PE deletes pack-A .sys (no sidecar .bak). This GUI Safe cleanse moves files to backup + restore.json.",
-            "Reclaim11 prep media") | Out-Null
+            "USB ready. Boot the stick on the target to remove Defender. VM recommended first, not required. Without that boot this GUI is bloat only.",
+            "Reclaim11 PREP MEDIA") | Out-Null
     } catch {
         Add-Log ("PREP FAIL  {0}" -f $_.Exception.Message)
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 PREP MEDIA") | Out-Null

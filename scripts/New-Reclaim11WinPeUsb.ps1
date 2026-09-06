@@ -8,6 +8,7 @@ param(
     [switch]$WhatIf,
     [int]$DiskNumber = -1,
     [switch]$Go,
+    [switch]$ListJson,
     [switch]$RefreshPayload,
     [string]$RepoRoot = $PSScriptRoot,
     [string]$WorkDir = "C:\Reclaim11\winpe-work",
@@ -104,6 +105,11 @@ function Copy-Reclaim11PePayload {
         Copy-Item -LiteralPath $s -Destination (Join-Path $dest $n) -Force
     }
     Copy-Item -LiteralPath (Join-Path $winpeSrc "startnet.cmd") -Destination (Join-Path $Mount "Windows\System32\startnet.cmd") -Force
+}
+
+if ($ListJson) {
+    ConvertTo-Json -InputObject @(Get-Reclaim11UsbCandidates) -Depth 6
+    return
 }
 
 $adk = Get-Reclaim11Adk
