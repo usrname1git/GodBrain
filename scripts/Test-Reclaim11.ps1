@@ -53,6 +53,12 @@ if ($xamlSrc -notmatch "Latency bake") {
 if ($xamlSrc -notmatch "MUST") {
     throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
 }
+if ($xamlSrc -match "build a WinPE ISO and boot it") {
+    throw "Test-Reclaim11: door footer must not be ISO-only"
+}
+if ($xamlSrc -notmatch "ISO or USB") {
+    throw "Test-Reclaim11: door must say boot WinPE via ISO or USB"
+}
 if ($xamlSrc -notmatch "bloat only") {
     throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
