@@ -173,13 +173,14 @@ Start-GodBrain. Never logout, `--reset`, or uninstall Tailscale. Start/Heal
 skip the mouth while CS2 is running or has been gone under 10 minutes.
 
 `godbrain_core/reclaim11/` is a WPF kit (Reclaim11), not Heal and not
-Galaxy. Pack A = Defender / PPL / Sense / AppID. Prep media is a WinPE ISO
-(`scripts\New-Reclaim11WinPeIso.ps1`, ADK 10.1.26100.2454) that **deletes**
-named catalog `.sys` (never a usermode EXE over a driver, never `Wd*.sys`).
-`WdBoot` is refused when Secure Boot is on or n/a. GUI Safe cleanse is
-move-only (`restore.json`). Killing blows (IFEO + `sc delete` pack A) require
-that receipt and **refuse IoTEnterpriseS**. Never BFE / `mpssvc` / `FltMgr`.
-VMware ISO before a physical USB. Check: `scripts\Test-Reclaim11.ps1`.
+Galaxy. Pack A = Defender / PPL / Sense / AppID. `WdBoot` stub is refused
+when Secure Boot is on. Prep media is a WinPE ISO (`scripts\New-Reclaim11WinPeIso.ps1`,
+ADK 10.1.26100.2454) that **parks** catalog `.sys` (does not copy a
+usermode EXE over a driver), stubs usermode images, and writes
+`Windows\reclaim11-winpe.log` plus `C:\reclaim11\`. Killing blows (IFEO +
+`sc delete` pack A) require that receipt.
+Never BFE / `mpssvc` / `FltMgr`. VMware ISO before a
+physical USB. Check: `scripts\Test-Reclaim11.ps1` on a VM.
 
 ## Also in the tree, not the Jarvis path
 

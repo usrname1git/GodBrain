@@ -139,7 +139,7 @@ if ($WhatIf -or -not $Go) {
     }
     if ($ok.Count -eq 1) {
         Write-Host ("WOULD format disk {0} ({1}) via MakeWinPEMedia /UFD /F after payload refresh" -f $ok[0].number, $ok[0].name)
-        Write-Host "Do not boot the stick on this IoT desk."
+        Write-Host "Do not boot the stick on the PC that built it."
     } elseif ($ok.Count -lt 1) {
         Write-Host "WOULD REFUSE  no USB stick (need 1GB+, under 32GB, not boot, not C:)"
     } else {
@@ -225,6 +225,6 @@ Copy-Item -LiteralPath $stub -Destination (Join-Path $kitDest "DefenderStub.exe"
     name        = $target.name
     letter      = $destLetter
     kit         = $kitDest
-    note        = "First boot: PE pack-A delete. Reboot. Double-click E:\reclaim11\Reclaim11.cmd (Grim Reaper) in the VM, not this desk."
+    note        = "First boot: PE pack-A delete. Reboot. Double-click E:\reclaim11\Reclaim11.cmd (Grim Reaper) on the target PC."
 } | ConvertTo-Json -Depth 5
 Write-Host "USB ready. Boot in a VM or another PC."

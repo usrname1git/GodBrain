@@ -1,7 +1,7 @@
 # Hide Xbox Game Bar in Settings, sc-delete Xbox usermode services,
 # remove the Appx bloat list. Writes restore.json first (Safe-cleanse style).
 # Game Mode stays. Captures hidden (OBS / ShadowPlay / AMD). Never xboxgip. Never XboxGameCallableUI.
-# Never BFE / mpssvc / FltMgr. Desk (IoTEnterpriseS) refused.
+# Never BFE / mpssvc / FltMgr.
 # Provisioned Appx remove is the old script's Store-seed wipe (VM-only).
 
 [CmdletBinding()]
@@ -90,12 +90,7 @@ function Restart-Reclaim11SettingsApp {
     }
 }
 
-function Test-Reclaim11XboxDeskHost {
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-    [string]$n.EditionID -eq "IoTEnterpriseS"
-}
-
-# Old Appx list + remaining Xbox overlays. Not XboxGameCallableUI (desk kept it).
+# Old Appx list + remaining Xbox overlays. Not XboxGameCallableUI.
 $script:XboxAppx = @(
     "Microsoft.3DBuilder",
     "Microsoft.XboxGameOverlay",
@@ -354,11 +349,7 @@ function Invoke-Reclaim11XboxCleanse {
     }
     $appxNames = @(Get-Reclaim11AppxBloatNames -Catalog $cat)
     if ($appxNames -contains "Microsoft.XboxGameCallableUI") {
-        throw "Refuse: XboxGameCallableUI stays (desk kept it)"
-    }
-    $desk = Test-Reclaim11XboxDeskHost
-    if ($desk -and -not $WhatIf) {
-        throw "Refuse: desk (IoTEnterpriseS). Xbox hide is VM-only. Not M1ABRAMS."
+        throw "Refuse: XboxGameCallableUI stays"
     }
     $admin = $false
     if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
@@ -455,8 +446,7 @@ function Invoke-Reclaim11XboxCleanse {
     if ($WhatIf) {
         $checks = @(
             (New-Reclaim11Check -Name "catalog" -Ok $true -Detail $catPath),
-            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "Hide Xbox is admin, not TI"),
-            (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" }))
+            (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "Hide Xbox is admin, not TI")
         )
         $would = @()
         $would += ("HKLM+HKCU SettingsPageVisibility -> {0}" -f $merged)
@@ -474,8 +464,7 @@ function Invoke-Reclaim11XboxCleanse {
             $would += ("Start policy {0}\\{1}={2}" -f $row.path, $row.name, $row.wanted)
         }
         $refuse = ""
-        if ($desk) { $refuse = "desk (IoTEnterpriseS)" }
-        elseif (-not $admin) { $refuse = "needs elevation" }
+        if (-not $admin) { $refuse = "needs elevation" }
         $manifest | Add-Member -NotePropertyName what_if -NotePropertyValue $true
         $manifest | Add-Member -NotePropertyName mutate -NotePropertyValue $false
         $manifest | Add-Member -NotePropertyName checks -NotePropertyValue $checks
@@ -580,9 +569,6 @@ function Restore-Reclaim11XboxBackup {
     $m = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$m.id -notlike "reclaim11-xbox*") {
         throw "Restore-Reclaim11XboxBackup: not an Xbox/debloat manifest"
-    }
-    if (Test-Reclaim11XboxDeskHost) {
-        throw "Refuse: desk (IoTEnterpriseS). Xbox restore is VM-only. Not M1ABRAMS."
     }
     $restored = @()
 

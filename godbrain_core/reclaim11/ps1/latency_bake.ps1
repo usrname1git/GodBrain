@@ -1,13 +1,15 @@
-# Expert BCD + timer/MMCSS + USB/ASPM bake. restore.json first. Desk refused.
+# Expert BCD + timer/MMCSS + USB/ASPM bake. restore.json first.
 # Not pack A. Not startnet. Not AGGRO/Ultimate (those kill C-states, +idle heat).
-# Not min-processor 100. High Performance switch stays Start-CS2.
+# Not min-processor 100. USB/ASPM on active + High Performance if listed.
+# GUI asks before /setactive High Performance. CLI needs -SwitchHighPerformance.
 # nx AlwaysOff is DEP off — Expert only. MiniNT refused (that is the PE BCD).
 
 [CmdletBinding()]
 param(
     [string]$Restore = "",
     [Alias("T", "Test")]
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    [switch]$SwitchHighPerformance
 )
 
 Set-StrictMode -Version Latest
@@ -39,7 +41,7 @@ $script:RegBake = @(
     @{
         Path = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
         Name = "SystemResponsiveness"
-        Wanted = 0
+        Wanted = 10  # 0-9 clamp to 20 (stock). 10 is the lowest MMCSS keeps.
     },
     @{
         Path = "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl"
@@ -73,11 +75,6 @@ $script:PowerAcBake = @(
         Wanted  = 0
     }
 )
-
-function Test-Reclaim11LatencyDeskHost {
-    $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-    [string]$n.EditionID -eq "IoTEnterpriseS"
-}
 
 function Test-Reclaim11LatencyPeHost {
     Test-Path -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Control\MiniNT"
@@ -184,6 +181,21 @@ function Test-Reclaim11PowerForbiddenGuid {
     @($script:PowerForbiddenGuid | ForEach-Object { $_.ToLowerInvariant() }) -contains $g
 }
 
+function Get-Reclaim11LatencyHighPerformanceOffer {
+    $hp = $script:PowerHighPerfGuid.ToLowerInvariant()
+    $active = Get-Reclaim11ActivePowerGuid
+    $listed = @(Get-Reclaim11ListedPowerGuids)
+    $have = $listed -contains $hp
+    $activeNorm = if ($active) { $active.ToLowerInvariant() } else { "" }
+    [pscustomobject]@{
+        guid            = $hp
+        listed          = [bool]$have
+        already_active  = ($have -and ($activeNorm -eq $hp))
+        active          = $active
+        forbidden       = Test-Reclaim11PowerForbiddenGuid $active
+    }
+}
+
 function Get-Reclaim11PowerBakeSchemes {
     param([string]$Active)
     $listed = @(Get-Reclaim11ListedPowerGuids)
@@ -224,16 +236,13 @@ function Write-Reclaim11LatencyManifest {
 function Invoke-Reclaim11LatencyBake {
     param(
         [string]$Root,
-        [switch]$WhatIf
+        [switch]$WhatIf,
+        [switch]$SwitchHighPerformance
     )
     if ([string]::IsNullOrWhiteSpace($Root)) { $Root = $script:Reclaim11Here }
     $pe = Test-Reclaim11LatencyPeHost
-    $desk = Test-Reclaim11LatencyDeskHost
     if ($pe -and -not $WhatIf) {
         throw "Refuse: WinPE (MiniNT). Latency bake is in-Windows on a VM, not the PE BCD."
-    }
-    if ($desk -and -not $WhatIf) {
-        throw "Refuse: desk (IoTEnterpriseS). Latency bake is VM-only. Not M1ABRAMS."
     }
     $admin = $false
     if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
@@ -300,16 +309,31 @@ function Invoke-Reclaim11LatencyBake {
             $would += ("power {0} {1} {2}->{3}" -f $x.scheme, $x.name, $x.before, $x.wanted)
         }
     }
+    $hpOffer = Get-Reclaim11LatencyHighPerformanceOffer
+    $willSwitchHp = $false
+    if ($SwitchHighPerformance -and $hpOffer.listed -and -not $hpOffer.already_active -and -not (Test-Reclaim11PowerForbiddenGuid $hpOffer.guid)) {
+        $willSwitchHp = $true
+    }
+    if ($hpOffer.already_active) {
+        $would += "active already High Performance"
+    } elseif (-not $hpOffer.listed) {
+        $would += "High Performance not listed; bake active only"
+    } else {
+        $would += "ask High Performance (USB/ASPM baked onto it either way)"
+        if ($willSwitchHp) {
+            $would += ("power-active {0}" -f $hpOffer.guid)
+        } else {
+            $would += ("keep active {0}" -f $activePower)
+        }
+    }
 
     $checks = @(
         (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "bcdedit / HKLM needs admin"),
         (New-Reclaim11Check -Name "winpe" -Ok (-not $pe) -Detail $(if ($pe) { "MiniNT would refuse (PE BCD)" } else { "not WinPE" })),
-        (New-Reclaim11Check -Name "desk" -Ok (-not $desk) -Detail $(if ($desk) { "IoTEnterpriseS would refuse" } else { "not desk SKU" })),
         (New-Reclaim11Check -Name "power" -Ok (-not $powerForbidden) -Detail $(if ($powerForbidden) { "AGGRO/Ultimate idle-disable" } else { "not AGGRO/Ultimate" }))
     )
     $refuse = ""
     if ($pe) { $refuse = "WinPE (MiniNT)" }
-    elseif ($desk) { $refuse = "desk (IoTEnterpriseS)" }
     elseif (-not $admin) { $refuse = "needs elevation" }
     elseif ($powerForbidden) { $refuse = "AGGRO/Ultimate (processor idle disable)" }
 
@@ -320,8 +344,10 @@ function Invoke-Reclaim11LatencyBake {
         registry     = @($regs)
         power        = @($power)
         power_active = $activePower
+        power_high_performance_listed = [bool]$hpOffer.listed
+        power_switch_high_performance = [bool]$willSwitchHp
         backup_root  = $backupRoot
-        note         = "Restore with pwsh -File latency_bake.ps1 -Restore restore.json. Expert. nx AlwaysOff is DEP off. USB/ASPM on AC, not min-processor 100, not C-state kill."
+        note         = "Restore with pwsh -File latency_bake.ps1 -Restore restore.json. Expert. nx AlwaysOff is DEP off. USB/ASPM on AC, not min-processor 100, not C-state kill. High Performance switch is opt-in."
     }
 
     if ($WhatIf) {
@@ -366,12 +392,12 @@ function Invoke-Reclaim11LatencyBake {
             $failed += ("power:{0}:{1}:{2}" -f $x.scheme, $x.name, $_.Exception.Message)
         }
     }
-    if ($activePower -and -not (Test-Reclaim11PowerForbiddenGuid $activePower)) {
+    if ($willSwitchHp) {
         try {
-            $null = Invoke-Reclaim11PowerCfg -PowerArgs @("/setactive", $activePower)
-            $applied += ("power-active:{0}" -f $activePower)
+            $null = Invoke-Reclaim11PowerCfg -PowerArgs @("/setactive", $hpOffer.guid)
+            $applied += ("power-active:{0}" -f $hpOffer.guid)
         } catch {
-            $failed += ("power-active:{0}:{1}" -f $activePower, $_.Exception.Message)
+            $failed += ("power-active:{0}:{1}" -f $hpOffer.guid, $_.Exception.Message)
         }
     }
     $manifest | Add-Member -NotePropertyName applied -NotePropertyValue $applied
@@ -391,9 +417,6 @@ function Restore-Reclaim11LatencyBackup {
     }
     if (Test-Reclaim11LatencyPeHost) {
         throw "Refuse: WinPE (MiniNT). Latency restore is in-Windows on a VM, not the PE BCD."
-    }
-    if (Test-Reclaim11LatencyDeskHost) {
-        throw "Refuse: desk (IoTEnterpriseS). Latency restore is VM-only. Not M1ABRAMS."
     }
     $restored = @()
     foreach ($x in @($m.bcd)) {
@@ -445,7 +468,7 @@ if ($MyInvocation.InvocationName -ne ".") {
     if (-not [string]::IsNullOrWhiteSpace($Restore)) {
         Restore-Reclaim11LatencyBackup -Manifest $Restore | ConvertTo-Json -Depth 6
     } else {
-        $plan = Invoke-Reclaim11LatencyBake -WhatIf:$WhatIf
+        $plan = Invoke-Reclaim11LatencyBake -WhatIf:$WhatIf -SwitchHighPerformance:$SwitchHighPerformance
         if ($WhatIf) {
             Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "latency_bake")
         }

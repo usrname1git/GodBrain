@@ -1,4 +1,5 @@
 # Offline + live-read inventory check for Reclaim11. No wipe. Not Heal.
+# Run on a VM. Not physical hardware.
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot
@@ -6,6 +7,22 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-GodBrainRoot.ps1")
+
+function Test-Reclaim11IsVirtualMachine {
+    try {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    $blob = ("{0} {1} {2}" -f [string]$cs.Manufacturer, [string]$cs.Model, [string]$cs.SystemFamily)
+    if ($blob -match "VMware|VirtualBox|Hyper-V|Virtual Machine|QEMU|KVM|Xen|Parallels|Virtual Platform") {
+        return $true
+    }
+    $false
+}
+if (-not (Test-Reclaim11IsVirtualMachine)) {
+    throw "Test-Reclaim11: run on a VM. Not physical hardware."
+}
 
 $root = Join-Path $RepoRoot "godbrain_core\reclaim11"
 $ps1 = Join-Path $root "ps1"
@@ -17,6 +34,20 @@ $cmdPath = Join-Path $root "Reclaim11.cmd"
 
 foreach ($p in @($catPath, $xamlPath, $invPath, $launch, $cmdPath)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "Test-Reclaim11: missing $p" }
+}
+Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
+    if ($_.Extension -match '\.(jpg|png|exe|bin)$') { return }
+    $t = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($t)) { return }
+    if ($t -match 'M1ABRAMS') {
+        throw ("Test-Reclaim11: kit must not name a host ({0})" -f $_.FullName)
+    }
+    if ($t -match '(?i)(?<![A-Za-z])desk(?![A-Za-z])') {
+        throw ("Test-Reclaim11: kit must not say desk ({0})" -f $_.FullName)
+    }
+    if ($t -match 'Refuse: IoTEnterpriseS') {
+        throw ("Test-Reclaim11: kit must not refuse IoTEnterpriseS ({0})" -f $_.FullName)
+    }
 }
 $cmdSrc = Get-Content -LiteralPath $cmdPath -Raw -Encoding ASCII
 if ($cmdSrc -notmatch 'ps1\\Reclaim11\.ps1') {
@@ -156,6 +187,28 @@ if ($testAt -lt 0 -or $testAt -gt $runAsAt2) {
 $offerAt = $launchSrc.IndexOf('Show-Reclaim11PwshOffer')
 if ($offerAt -lt 0 -or $offerAt -lt $testAt) {
     throw "Test-Reclaim11: pwsh MSI offer must not run on -T"
+}
+$runClickAt = $launchSrc.IndexOf('$btnRun.Add_Click')
+$testClickAt = $launchSrc.IndexOf('$btnTest.Add_Click')
+if ($runClickAt -lt 0 -or $testClickAt -lt 0 -or $testClickAt -le $runClickAt) {
+    throw "Test-Reclaim11: RUN/TEST click handlers missing"
+}
+$runClickSrc = $launchSrc.Substring($runClickAt, $testClickAt - $runClickAt)
+$testClickSrc = $launchSrc.Substring($testClickAt)
+if ($runClickSrc -notmatch "Get-Reclaim11LatencyHighPerformanceOffer") {
+    throw "Test-Reclaim11: RUN latency must ask High Performance"
+}
+if ($runClickSrc -notmatch "Reclaim11 High Performance") {
+    throw "Test-Reclaim11: RUN latency must MessageBox High Performance"
+}
+if ($runClickSrc -notmatch "SwitchHighPerformance") {
+    throw "Test-Reclaim11: RUN latency must pass -SwitchHighPerformance after Yes"
+}
+if ($testClickSrc -match "SwitchHighPerformance") {
+    throw "Test-Reclaim11: TEST latency must not switch High Performance"
+}
+if ($testClickSrc -match "Reclaim11 High Performance") {
+    throw "Test-Reclaim11: TEST latency must not MessageBox High Performance"
 }
 if ($launchSrc -notmatch 'Start-Transcript') {
     throw "Test-Reclaim11: GUI path must transcript"
@@ -482,8 +535,8 @@ $offlineSrc = Get-Content -LiteralPath (Join-Path $winpe "offline.ps1") -Raw -En
 if ($offlineSrc -notmatch 'Get-Reclaim11OfflineEditionId') {
     throw "Test-Reclaim11: offline apply must read offline EditionID"
 }
-if ($offlineSrc -notmatch 'IoTEnterpriseS') {
-    throw "Test-Reclaim11: offline pack A must refuse IoTEnterpriseS"
+if ($offlineSrc -match 'Refuse: IoTEnterpriseS') {
+    throw "Test-Reclaim11: offline pack A must not refuse IoTEnterpriseS"
 }
 if ($offlineSrc -notmatch 'cannot read EditionID') {
     throw "Test-Reclaim11: unread offline EditionID must fail closed"
@@ -650,16 +703,6 @@ try {
         throw "Test-Reclaim11: expected EditionID refuse, got $($_.Exception.Message)"
     }
 }
-$iotThrew = $false
-try {
-    Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "IoTEnterpriseS"
-} catch {
-    $iotThrew = $true
-    if ($_.Exception.Message -notmatch 'Refuse: desk \(IoTEnterpriseS\)') {
-        throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
-    }
-}
-if (-not $iotThrew) { throw "Test-Reclaim11: IoTEnterpriseS must be refused" }
 $rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "Professional"
 if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
 if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }
@@ -677,6 +720,9 @@ if ($fltAfterOn.Hash -ne $fltBefore.Hash) { throw "Test-Reclaim11: fltmgr.sys mu
 if (-not (Test-Path -LiteralPath (Join-Path $fxWin "reclaim11-winpe.log"))) {
     throw "Test-Reclaim11: missing Windows\\reclaim11-winpe.log"
 }
+$rIot = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "IoTEnterpriseS"
+if ($rIot.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: IoTEnterpriseS fixture must apply" }
+if ([string]$rIot.edition_id -ne "IoTEnterpriseS") { throw "Test-Reclaim11: receipt must keep EditionId" }
 
 # Reset WdFilter to a non-MZ so the second pass is visible, keep receipt path.
 [IO.File]::WriteAllBytes((Join-Path $fxWd "WdFilter.sys"), ([byte[]](1, 2, 3, 4)))
@@ -845,14 +891,6 @@ $rst = Restore-Reclaim11NoobBackup -Manifest $noob.manifest_path
 if (-not (Test-Path -LiteralPath (Join-Path $fxNoobDrv "WdFilter.sys.reclaim11.bak"))) {
     throw "Test-Reclaim11: noob restore must put the file back"
 }
-try {
-    Invoke-Reclaim11NoobCleanse -Root $root
-    throw "Test-Reclaim11: safe cleanse must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected safe-cleanse desk refuse, got $($_.Exception.Message)"
-    }
-}
 Remove-Item -LiteralPath $fx, $fx25, $fxNoob -Recurse -Force
 
 . (Join-Path $ps1 "killing_blows.ps1")
@@ -926,17 +964,10 @@ foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
 if ($kbSrc -match "wuauserv") {
     throw "Test-Reclaim11: killing blows must not sc delete wuauserv"
 }
-try {
-    Invoke-Reclaim11KillingBlows -Root $root
-    throw "Test-Reclaim11: killing blows must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected desk refuse, got $($_.Exception.Message)"
-    }
-}
 $dryKill = Invoke-Reclaim11KillingBlows -Root $root -WhatIf
 if (-not [bool]$dryKill.what_if) { throw "Test-Reclaim11: killing -T must set what_if" }
-if ([string]$dryKill.would_refuse -notmatch "desk") { throw "Test-Reclaim11: killing -T must report desk refuse" }
+if ([string]$dryKill.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: killing -T must not refuse IoTEnterpriseS" }
+if ([string]$dryKill.would_refuse -notmatch "winpe") { throw "Test-Reclaim11: killing -T must report no WinPE receipt" }
 if (@($dryKill.would).Count -lt 1) { throw "Test-Reclaim11: killing -T must list would-do" }
 
 . (Join-Path $ps1 "xbox_cleanse.ps1")
@@ -996,18 +1027,10 @@ try {
 $cands = @(Get-Reclaim11XboxServiceCandidates)
 if ($cands -contains "xboxgip") { throw "Test-Reclaim11: xboxgip is the controller driver" }
 if ($cands -contains "BFE") { throw "Test-Reclaim11: Xbox list hit BFE" }
-try {
-    Invoke-Reclaim11XboxCleanse -Root $root
-    throw "Test-Reclaim11: xbox hide must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected xbox desk refuse, got $($_.Exception.Message)"
-    }
-}
 $dryXbox = Invoke-Reclaim11XboxCleanse -Root $root -WhatIf
 if (-not [bool]$dryXbox.what_if) { throw "Test-Reclaim11: xbox -T must set what_if" }
 if ([bool]$dryXbox.mutate) { throw "Test-Reclaim11: xbox -T must not mutate" }
-if ([string]$dryXbox.would_refuse -notmatch "desk") { throw "Test-Reclaim11: xbox -T must report desk refuse" }
+if ([string]$dryXbox.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: xbox -T must not refuse IoTEnterpriseS" }
 if (-not (Test-Path -LiteralPath (Join-Path $root "catalog.json"))) { throw "Test-Reclaim11: catalog vanished after xbox -T" }
 $names = @(Get-Reclaim11AppxBloatNames -Catalog $cat)
 if ($names -notcontains "Microsoft.Copilot") { throw "Test-Reclaim11: union bloat missing Copilot" }
@@ -1053,17 +1076,7 @@ try {
         throw "Test-Reclaim11: expected xbox manifest refuse, got $($_.Exception.Message)"
     }
 }
-$okMan = Join-Path $env:TEMP "reclaim11-xbox-ok.json"
-Set-Content -LiteralPath $okMan -Value '{"id":"reclaim11-xbox-v1","settings_page_visibility":{"before":"","after":""},"services":[],"appx":[]}' -Encoding UTF8
-try {
-    Restore-Reclaim11XboxBackup -Manifest $okMan
-    throw "Test-Reclaim11: xbox restore must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected xbox restore desk refuse, got $($_.Exception.Message)"
-    }
-}
-Remove-Item -LiteralPath $badMan, $okMan -Force
+Remove-Item -LiteralPath $badMan -Force
 
 . (Join-Path $ps1 "telemetry_cleanse.ps1")
 if (Test-Path -LiteralPath (Join-Path $root "ctt")) {
@@ -1077,17 +1090,10 @@ $telSrc = Get-Content -LiteralPath (Join-Path $ps1 "telemetry_cleanse.ps1") -Raw
 if ($telSrc -match "WPFTweaks|christitus|Chris Titus|Set-MpPreference") {
     throw "Test-Reclaim11: telemetry_cleanse must not carry third-party tweak ids"
 }
-try {
-    Invoke-Reclaim11TelemetryCleanse -Root $root
-    throw "Test-Reclaim11: telemetry must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected telemetry desk refuse, got $($_.Exception.Message)"
-    }
-}
 $dryTel = Invoke-Reclaim11TelemetryCleanse -Root $root -WhatIf
 if (-not [bool]$dryTel.what_if) { throw "Test-Reclaim11: telemetry -T must set what_if" }
-if ([string]$dryTel.would_refuse -notmatch "desk") { throw "Test-Reclaim11: telemetry -T must report desk refuse" }
+if ([bool]$dryTel.mutate) { throw "Test-Reclaim11: telemetry -T must not mutate" }
+if ([string]$dryTel.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: telemetry -T must not refuse IoTEnterpriseS" }
 
 . (Join-Path $ps1 "nic_tune.ps1")
 $vmx = [pscustomobject]@{ Name = "Ethernet0"; InterfaceDescription = "vmxnet3 Ethernet Adapter"; PhysicalMediaType = "802.3"; Status = "Up" }
@@ -1123,7 +1129,7 @@ if (-not (@($rtlPlan | Where-Object { $_.keyword -eq "GreenEthernet" -and $_.wan
 $dryNic = Invoke-Reclaim11NicTune -Root $root -WhatIf
 if (-not [bool]$dryNic.what_if) { throw "Test-Reclaim11: nic -T must set what_if" }
 if ([bool]$dryNic.mutate) { throw "Test-Reclaim11: nic -T must not mutate" }
-if ([string]$dryNic.would_refuse -notmatch "desk") { throw "Test-Reclaim11: nic -T must report desk refuse" }
+if ([string]$dryNic.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: nic -T must not refuse IoTEnterpriseS" }
 $nicSrc = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encoding UTF8
 if ($nicSrc -match "BFE|mpssvc") {
     if ($nicSrc -notmatch "Never BFE") { throw "Test-Reclaim11: nic_tune hit BFE without never" }
@@ -1152,8 +1158,8 @@ if (-not $gtr -or [int]$gtr.Wanted -ne 1) {
     throw "Test-Reclaim11: latency bake must set GlobalTimerResolutionRequests=1"
 }
 $sr = @($script:RegBake | Where-Object { $_.Name -eq "SystemResponsiveness" } | Select-Object -First 1)
-if (-not $sr -or [int]$sr.Wanted -ne 0) {
-    throw "Test-Reclaim11: latency bake must set SystemResponsiveness=0"
+if (-not $sr -or [int]$sr.Wanted -ne 10) {
+    throw "Test-Reclaim11: latency bake must set SystemResponsiveness=10 (0-9 clamp to 20)"
 }
 $wps = @($script:RegBake | Where-Object { $_.Name -eq "Win32PrioritySeparation" } | Select-Object -First 1)
 if (-not $wps -or [int]$wps.Wanted -ne 38) {
@@ -1183,6 +1189,15 @@ if ($script:PowerForbiddenGuid -notcontains "e9a42b02-d5df-448d-aa00-03f14749eb6
 }
 if ($script:PowerHighPerfGuid -ne "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") {
     throw "Test-Reclaim11: latency bake HP guid must stay Microsoft High Performance"
+}
+if ($latSrc -notmatch "SwitchHighPerformance") {
+    throw "Test-Reclaim11: latency bake must take -SwitchHighPerformance"
+}
+if ($latSrc -notmatch "function Get-Reclaim11LatencyHighPerformanceOffer") {
+    throw "Test-Reclaim11: latency bake missing High Performance offer"
+}
+if ($latSrc -match "High Performance switch stays Start-CS2") {
+    throw "Test-Reclaim11: latency bake GUI must ask before High Performance, not leave it to Start-CS2"
 }
 if ($latSrc -notmatch "function Test-Reclaim11LatencyPeHost") {
     throw "Test-Reclaim11: latency bake missing Test-Reclaim11LatencyPeHost"
@@ -1233,18 +1248,13 @@ if ($regAfterRefuse -ge 0 -and $manBeforeSet -ge $regAfterRefuse) {
 if ($pwrAfterRefuse -ge 0 -and $manBeforeSet -ge $pwrAfterRefuse) {
     throw "Test-Reclaim11: latency bake must write restore.json before powercfg"
 }
-try {
-    Invoke-Reclaim11LatencyBake -Root $root
-    throw "Test-Reclaim11: latency bake must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected latency desk refuse, got $($_.Exception.Message)"
-    }
+if ($afterRefuse -notmatch '(?s)if \(\$willSwitchHp\).{0,200}/setactive') {
+    throw "Test-Reclaim11: /setactive High Performance only after Yes/-SwitchHighPerformance"
 }
 $dryLat = Invoke-Reclaim11LatencyBake -Root $root -WhatIf
 if (-not [bool]$dryLat.what_if) { throw "Test-Reclaim11: latency -T must set what_if" }
 if ([bool]$dryLat.mutate) { throw "Test-Reclaim11: latency -T must not mutate" }
-if ([string]$dryLat.would_refuse -notmatch "desk") { throw "Test-Reclaim11: latency -T must report desk refuse" }
+if ([string]$dryLat.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: latency -T must not refuse IoTEnterpriseS" }
 if (-not (@($dryLat.would) | Where-Object { $_ -match "bcd \{current\} nx .+AlwaysOff" })) {
     throw "Test-Reclaim11: latency -T must list nx AlwaysOff"
 }
@@ -1257,21 +1267,17 @@ if (-not (@($dryLat.would) | Where-Object { $_ -match "usb_selective_suspend" })
 if (-not (@($dryLat.would) | Where-Object { $_ -match "pcie_aspm" })) {
     throw "Test-Reclaim11: latency -T must list PCIe ASPM"
 }
+if (-not (@($dryLat.would) | Where-Object { $_ -match "High Performance" })) {
+    throw "Test-Reclaim11: latency -T must mention High Performance (ask, listed, or missing)"
+}
+if ([bool]$dryLat.power_switch_high_performance) {
+    throw "Test-Reclaim11: latency -T without -SwitchHighPerformance must not switch HP"
+}
 if ($dryLat.PSObject.Properties["applied"] -and @($dryLat.applied).Count -gt 0) {
     throw "Test-Reclaim11: latency -T must not apply"
 }
 if ($dryLat.manifest_path -and (Test-Path -LiteralPath $dryLat.manifest_path)) {
     throw "Test-Reclaim11: latency -T must not write restore.json"
-}
-$latMan = Join-Path $env:TEMP "reclaim11-lat-ok.json"
-Set-Content -LiteralPath $latMan -Value '{"id":"reclaim11-latency-v1","bcd":[],"registry":[]}' -Encoding UTF8
-try {
-    Restore-Reclaim11LatencyBackup -Manifest $latMan
-    throw "Test-Reclaim11: latency restore must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected latency restore desk refuse, got $($_.Exception.Message)"
-    }
 }
 $latBad = Join-Path $env:TEMP "reclaim11-lat-bad.json"
 Set-Content -LiteralPath $latBad -Value '{"id":"nope"}' -Encoding UTF8
@@ -1283,7 +1289,7 @@ try {
         throw "Test-Reclaim11: expected latency manifest refuse, got $($_.Exception.Message)"
     }
 }
-Remove-Item -LiteralPath $latMan, $latBad -Force
+Remove-Item -LiteralPath $latBad -Force
 if ($peDoorSrc -match "latency_bake") {
     throw "Test-Reclaim11: PE door must not run latency bake"
 }
@@ -1291,16 +1297,6 @@ if ($offlineSrc -notmatch "latency_bake\.ps1") {
     throw "Test-Reclaim11: PE kit drop must include latency_bake.ps1"
 }
 
-$telMan = Join-Path $env:TEMP "reclaim11-tel-ok.json"
-Set-Content -LiteralPath $telMan -Value '{"id":"reclaim11-telemetry-v1","allow":{"present":false},"services":[]}' -Encoding UTF8
-try {
-    Restore-Reclaim11TelemetryBackup -Manifest $telMan -Root $root
-    throw "Test-Reclaim11: telemetry restore must refuse this desk"
-} catch {
-    if ($_.Exception.Message -notmatch "Refuse: desk") {
-        throw "Test-Reclaim11: expected telemetry restore desk refuse, got $($_.Exception.Message)"
-    }
-}
 $telBad = Join-Path $env:TEMP "reclaim11-tel-bad.json"
 Set-Content -LiteralPath $telBad -Value '{"id":"nope"}' -Encoding UTF8
 try {
@@ -1311,7 +1307,7 @@ try {
         throw "Test-Reclaim11: expected telemetry manifest refuse, got $($_.Exception.Message)"
     }
 }
-Remove-Item -LiteralPath $telMan, $telBad -Force
+Remove-Item -LiteralPath $telBad -Force
 
 if ($isoSrc -notmatch "telemetry_cleanse\.ps1") {
     throw "Test-Reclaim11: ISO builder must copy telemetry_cleanse.ps1"
