@@ -35,6 +35,7 @@ $need = @(
     (Join-Path $kit "winpe\Skip-Reclaim11WinRe.ps1"),
     (Join-Path $kit "winpe\startnet.cmd"),
     (Join-Path $kit "winpe\stub.c"),
+    (Join-Path $kit "winpe\reclaim11-stub.exe"),
     (Join-Path $PSScriptRoot "New-Reclaim11WinPeIso.ps1"),
     (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 )
@@ -62,9 +63,20 @@ foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "ExpertPanel.jpg")) {
         Copy-Item -LiteralPath $s -Destination (Join-Path $stage "ui\$n") -Force
     }
 }
-foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c")) {
-    Copy-Item -LiteralPath (Join-Path $kit "winpe\$n") -Destination (Join-Path $stage "winpe\$n") -Force
+foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c", "reclaim11-stub.exe")) {
+    $s = Join-Path $kit "winpe\$n"
+    if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11KitZip: missing $s" }
+    Copy-Item -LiteralPath $s -Destination (Join-Path $stage "winpe\$n") -Force
 }
+$packedStub = Join-Path $stage "winpe\reclaim11-stub.exe"
+$fs = [IO.File]::OpenRead($packedStub)
+try {
+    $mz = New-Object byte[] 2
+    $n = $fs.Read($mz, 0, 2)
+    if ($n -ne 2 -or $mz[0] -ne 0x4D -or $mz[1] -ne 0x5A) {
+        throw "New-Reclaim11KitZip: winpe\reclaim11-stub.exe is not MZ"
+    }
+} finally { $fs.Close() }
 foreach ($n in @("New-Reclaim11WinPeIso.ps1", "New-Reclaim11WinPeUsb.ps1", "Resolve-Reclaim11Kit.ps1")) {
     $s = Join-Path $PSScriptRoot $n
     if (Test-Path -LiteralPath $s) {

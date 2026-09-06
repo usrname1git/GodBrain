@@ -90,6 +90,12 @@ if ($xamlSrc -match "build a WinPE ISO and boot it") {
 if ($xamlSrc -notmatch "ISO or USB") {
     throw "Test-Reclaim11: door must say boot WinPE via ISO or USB"
 }
+if ($xamlSrc -notmatch 'x:Name="BusyBar"') {
+    throw "Test-Reclaim11: PREP MEDIA must show a progress bar"
+}
+if ($xamlSrc -notmatch "IsIndeterminate") {
+    throw "Test-Reclaim11: PREP progress bar must be indeterminate"
+}
 if ($xamlSrc -notmatch "bloat only") {
     throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
@@ -151,6 +157,45 @@ if ($prepAt -lt 0 -or $prepEnd -le $prepAt) {
 $prepSrc = $launchSrc.Substring($prepAt, $prepEnd - $prepAt)
 if ($prepSrc -notmatch 'Start-Process') {
     throw "Test-Reclaim11: PREP MEDIA must Start-Process the ISO builder"
+}
+$prepProcAt = $launchSrc.IndexOf('function Invoke-Reclaim11PrepProcess')
+$usbCandAt = $launchSrc.IndexOf('function Get-Reclaim11PrepUsbCandidates')
+if ($prepProcAt -lt 0 -or $usbCandAt -le $prepProcAt) {
+    throw "Test-Reclaim11: Invoke-Reclaim11PrepProcess missing"
+}
+$prepProcSrc = $launchSrc.Substring($prepProcAt, $usbCandAt - $prepProcAt)
+if ($prepProcSrc -match '-Wait') {
+    throw "Test-Reclaim11: PREP MEDIA must not -Wait on the UI thread"
+}
+if ($prepProcSrc -notmatch 'HasExited') {
+    throw "Test-Reclaim11: PREP MEDIA must poll HasExited and pump the dispatcher"
+}
+if ($launchSrc -notmatch 'function Set-Reclaim11Busy') {
+    throw "Test-Reclaim11: PREP MEDIA must set busy status while ADK/ISO/USB runs"
+}
+if ($launchSrc -notmatch 'function Get-Reclaim11PlainText') {
+    throw "Test-Reclaim11: PREP MEDIA must strip VT before MessageBox"
+}
+if ($launchSrc -notmatch 'function Get-Reclaim11PrepFailText') {
+    throw "Test-Reclaim11: PREP MEDIA must show a plain ADK-missing dialog"
+}
+if ($launchSrc -notmatch 'Select-Object -First 12') {
+    throw "Test-Reclaim11: PREP fail dialog must not dump winget progress bars"
+}
+if ($launchSrc -notmatch 'function Confirm-Reclaim11PrepAdkInstall') {
+    throw "Test-Reclaim11: PREP MEDIA must offer Yes/No when ADK is missing"
+}
+if ($launchSrc -notmatch 'No = stop. Yes = install the addons and continue') {
+    throw "Test-Reclaim11: ADK offer must say No = stop, Yes = install and continue"
+}
+if ($launchSrc -notmatch '-InstallAdk') {
+    throw "Test-Reclaim11: Continue must pass -InstallAdk to the ISO builder"
+}
+if ($launchSrc -match '\bwinget\b') {
+    throw "Test-Reclaim11: GUI must not call winget; ISO builder -InstallAdk does"
+}
+if ($launchSrc -notmatch 'Windows ADK \+ WinPE addon 10\.1\.26100\.2454') {
+    throw "Test-Reclaim11: ADK-missing dialog must name 10.1.26100.2454"
 }
 if ($prepSrc -notmatch 'New-Reclaim11WinPeIso\.ps1') {
     throw "Test-Reclaim11: PREP MEDIA must run New-Reclaim11WinPeIso.ps1"
@@ -535,6 +580,12 @@ $offlineSrc = Get-Content -LiteralPath (Join-Path $winpe "offline.ps1") -Raw -En
 if ($offlineSrc -notmatch 'Get-Reclaim11OfflineEditionId') {
     throw "Test-Reclaim11: offline apply must read offline EditionID"
 }
+if ($offlineSrc -notmatch 'Invoke-Reclaim11RegUnloadBestEffort') {
+    throw "Test-Reclaim11: leftover hive unload must be best-effort (PE reg unload is not loaded)"
+}
+if ($offlineSrc -match '\$null = & reg\.exe unload \$key 2>&1') {
+    throw "Test-Reclaim11: leftover unload must not capture stderr under Stop"
+}
 if ($offlineSrc -match 'Refuse: IoTEnterpriseS') {
     throw "Test-Reclaim11: offline pack A must not refuse IoTEnterpriseS"
 }
@@ -589,6 +640,18 @@ $isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
 if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeIso.ps1" }
 $isoSrc = Get-Content -LiteralPath $isoBuild -Raw -Encoding UTF8
 if ($isoSrc -notmatch "10\.1\.26100\.2454") { throw "Test-Reclaim11: ISO builder must pin ADK 10.1.26100.2454" }
+if ($isoSrc -notmatch "OutputRendering") {
+    throw "Test-Reclaim11: ISO builder must disable VT so PREP MessageBox stays readable"
+}
+if ($isoSrc -notmatch "InstallAdk") {
+    throw "Test-Reclaim11: ISO builder must take -InstallAdk"
+}
+if ($isoSrc -notmatch "function Install-Reclaim11AdkPair") {
+    throw "Test-Reclaim11: ISO builder must install the pinned ADK pair"
+}
+if ($isoSrc -notmatch "--silent") {
+    throw "Test-Reclaim11: ADK winget install must be --silent (no progress dump in MessageBox)"
+}
 if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn against ADK 28000" }
 if ($isoSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
@@ -610,6 +673,9 @@ $kitResolvePath = Join-Path $RepoRoot "scripts\Resolve-Reclaim11Kit.ps1"
 $kitResolveSrc = Get-Content -LiteralPath $kitResolvePath -Raw -Encoding UTF8
 if ($kitResolveSrc -notmatch "function Get-Reclaim11IsoStub") {
     throw "Test-Reclaim11: Resolve-Reclaim11Kit must compile stub.c"
+}
+if ($kitResolveSrc -notmatch 'winpe\\reclaim11-stub\.exe') {
+    throw "Test-Reclaim11: ISO stub must ship in the kit zip (no VS on a noob PC)"
 }
 $usbBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeUsb.ps1"
 if (-not (Test-Path -LiteralPath $usbBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeUsb.ps1" }
@@ -641,7 +707,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
@@ -703,6 +769,21 @@ try {
         throw "Test-Reclaim11: expected EditionID refuse, got $($_.Exception.Message)"
     }
 }
+$fxCfg = Join-Path $fxWin "System32\config"
+New-Item -ItemType Directory -Force -Path $fxCfg | Out-Null
+Set-Content -LiteralPath (Join-Path $fxCfg "SOFTWARE") -Value "not-a-hive" -Encoding ASCII
+try {
+    $null = Get-Reclaim11OfflineEditionId -WindowsRoot $fxWin
+    throw "Test-Reclaim11: garbage SOFTWARE hive must fail closed"
+} catch {
+    if ($_.Exception.Message -match 'parameter is incorrect|NativeCommandError') {
+        throw "Test-Reclaim11: leftover reg unload must not abort pack A"
+    }
+    if ($_.Exception.Message -notmatch 'reg load failed') {
+        throw "Test-Reclaim11: expected reg load failed after leftover unload, got $($_.Exception.Message)"
+    }
+}
+Remove-Item -LiteralPath (Join-Path $fxCfg "SOFTWARE") -Force
 $rOn = Invoke-Reclaim11OfflineApply -CatalogPath $catPath -StubPath $stubFx -WindowsRoot $fxWin -SecureBoot $sbOnFx -EditionId "Professional"
 if ($rOn.id -ne "reclaim11-winpe-v1") { throw "Test-Reclaim11: receipt id" }
 if ($rOn.stub_wdboot) { throw "Test-Reclaim11: SB on must not stub WdBoot" }

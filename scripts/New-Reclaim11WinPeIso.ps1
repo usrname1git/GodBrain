@@ -9,11 +9,15 @@ param(
     [string]$WorkDir = "C:\Reclaim11\winpe-work",
     [string]$StubPath = "C:\Reclaim11\reclaim11-stub.exe",
     [switch]$Probe,
-    [switch]$Reset
+    [switch]$Reset,
+    [switch]$InstallAdk
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (Get-Variable -Name PSStyle -ErrorAction SilentlyContinue) {
+    $PSStyle.OutputRendering = "PlainText"
+}
 
 . (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 
@@ -48,6 +52,33 @@ function Test-Reclaim11Admin {
     $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Install-Reclaim11AdkPair {
+    $winget = Join-Path $env:LocalAppData "Microsoft\WindowsApps\winget.exe"
+    if (-not (Test-Path -LiteralPath $winget)) {
+        throw "New-Reclaim11WinPeIso: winget.exe missing (install App Installer, then retry PREP MEDIA)."
+    }
+    $logDir = "C:\Reclaim11"
+    if (-not (Test-Path -LiteralPath $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+    foreach ($id in @("Microsoft.WindowsADK", "Microsoft.WindowsADK.WinPEAddon")) {
+        Write-Host ("Installing {0} {1} (not 28000)..." -f $id, $AdkVersionPin)
+        $safe = $id.Replace(".", "-")
+        $outLog = Join-Path $logDir ("adk-" + $safe + ".out.log")
+        $errLog = Join-Path $logDir ("adk-" + $safe + ".err.log")
+        $p = Start-Process -FilePath $winget -ArgumentList @(
+            "install", "--id", $id, "--version", $AdkVersionPin, "--exact",
+            "--accept-package-agreements", "--accept-source-agreements",
+            "--disable-interactivity", "--silent"
+        ) -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+        $code = [int]$p.ExitCode
+        Write-Host ("winget {0} exit {1}  log {2}" -f $id, $code, $outLog)
+        if ($code -ne 0) {
+            throw ("New-Reclaim11WinPeIso: winget {0} exit {1}. Log {2}" -f $id, $code, $outLog)
+        }
+    }
+}
+
 $adk = Get-Reclaim11Adk
 if ($Probe) {
     [pscustomobject]@{
@@ -60,6 +91,14 @@ if ($Probe) {
     } | ConvertTo-Json -Compress
     if (-not $adk.present) { exit 2 }
     exit 0
+}
+
+if ((-not $adk.present) -and $InstallAdk) {
+    Install-Reclaim11AdkPair
+    $adk = Get-Reclaim11Adk
+    if (-not $adk.present) {
+        throw "New-Reclaim11WinPeIso: ADK WinPE still missing after install. Click PREP MEDIA again."
+    }
 }
 
 if (-not $adk.present) {

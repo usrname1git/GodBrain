@@ -214,10 +214,17 @@
           </DockPanel>
         </StackPanel>
       </Border>
-      <TextBox Grid.Column="4" x:Name="LogBox"
-               IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-               Background="#080B10" Foreground="#C9D1D9" BorderBrush="#1E2A38"
-               FontFamily="Consolas" FontSize="12" Padding="8"/>
+      <DockPanel Grid.Column="4">
+        <StackPanel x:Name="PanelBusy" DockPanel.Dock="Bottom" Margin="0,8,0,0" Visibility="Collapsed">
+          <TextBlock x:Name="BusyStatus" Foreground="#3DDCFF" Margin="0,0,0,6" TextWrapping="Wrap"/>
+          <ProgressBar x:Name="BusyBar" Height="8" IsIndeterminate="True"
+                       Background="#080B10" Foreground="#3DDCFF" BorderBrush="#1E2A38"/>
+        </StackPanel>
+        <TextBox x:Name="LogBox"
+                 IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                 Background="#080B10" Foreground="#C9D1D9" BorderBrush="#1E2A38"
+                 FontFamily="Consolas" FontSize="12" Padding="8"/>
+      </DockPanel>
     </Grid>
   </DockPanel>
   </Grid>
