@@ -53,6 +53,12 @@ if ($xamlSrc -notmatch "Latency bake") {
 if ($xamlSrc -notmatch "MUST") {
     throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
 }
+if ($xamlSrc -match "build a WinPE ISO and boot it") {
+    throw "Test-Reclaim11: door footer must not be ISO-only"
+}
+if ($xamlSrc -notmatch "ISO or USB") {
+    throw "Test-Reclaim11: door must say boot WinPE via ISO or USB"
+}
 if ($xamlSrc -notmatch "bloat only") {
     throw "Test-Reclaim11: door must say no PE boot = bloat only"
 }
@@ -106,10 +112,10 @@ if ($launchSrc -notmatch 'Reclaim11-WinPE-v10\.iso') {
 if ($launchSrc -match 'Sort-Object LastWriteTime') {
     throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8/v9 over v10"
 }
-$prepAt = $launchSrc.IndexOf('$btnPrep.Add_Click')
+$prepAt = $launchSrc.IndexOf('function Get-Reclaim11PrepScript')
 $prepEnd = $launchSrc.IndexOf('$window.Add_MouseLeftButtonDown')
 if ($prepAt -lt 0 -or $prepEnd -le $prepAt) {
-    throw "Test-Reclaim11: BtnPrep click missing"
+    throw "Test-Reclaim11: BtnPrep helpers missing"
 }
 $prepSrc = $launchSrc.Substring($prepAt, $prepEnd - $prepAt)
 if ($prepSrc -notmatch 'Start-Process') {
@@ -117,6 +123,21 @@ if ($prepSrc -notmatch 'Start-Process') {
 }
 if ($prepSrc -notmatch 'New-Reclaim11WinPeIso\.ps1') {
     throw "Test-Reclaim11: PREP MEDIA must run New-Reclaim11WinPeIso.ps1"
+}
+if ($prepSrc -notmatch 'New-Reclaim11WinPeUsb\.ps1') {
+    throw "Test-Reclaim11: PREP MEDIA must run New-Reclaim11WinPeUsb.ps1"
+}
+if ($prepSrc -notmatch 'DiskNumber') {
+    throw "Test-Reclaim11: PREP MEDIA USB write must pass -DiskNumber"
+}
+if ($prepSrc -match 'Attach in VMware \(not USB\)') {
+    throw "Test-Reclaim11: PREP MEDIA must not require VMware instead of USB"
+}
+if ($prepSrc -notmatch 'VM recommended') {
+    throw "Test-Reclaim11: PREP MEDIA must say VM recommended"
+}
+if ($prepSrc -match '(?i)legal USB') {
+    throw "Test-Reclaim11: PREP MEDIA must not say legal USB"
 }
 if ($prepSrc -notmatch 'ExitCode') {
     throw "Test-Reclaim11: PREP MEDIA must use process ExitCode"
@@ -309,6 +330,7 @@ Remove-Item -LiteralPath $tmpLog, $junkLog -Force
 
 # XAML load in STA (no ShowDialog).
 $xamlTest = @"
+`$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework
 [xml]`$x = Get-Content -LiteralPath '$($xamlPath.Replace("'", "''"))' -Raw -Encoding UTF8
 `$r = New-Object System.Xml.XmlNodeReader `$x
@@ -544,8 +566,13 @@ if ($usbSrc -notmatch "UsbMaxBytes") { throw "Test-Reclaim11: USB writer must ca
 if ($usbSrc -notmatch "IsBoot") { throw "Test-Reclaim11: USB writer must refuse boot disk" }
 if ($usbSrc -notmatch "VM") { throw "Test-Reclaim11: USB writer must warn to boot in a VM" }
 if ($usbSrc -notmatch "32GB") { throw "Test-Reclaim11: USB writer 32GiB cap protects USB HDD" }
+if ($usbSrc -notmatch "UsbMinBytes = 1GB") { throw "Test-Reclaim11: USB writer min stick is 1GB" }
+if ($usbSrc -match "(?i)legal") { throw "Test-Reclaim11: USB writer must not say legal stick" }
 if ($usbSrc -notmatch "Get-Reclaim11IsoStub") {
     throw "Test-Reclaim11: USB writer must compile stub via Get-Reclaim11IsoStub"
+}
+if ($usbSrc -notmatch "ListJson") {
+    throw "Test-Reclaim11: USB writer must list sticks as JSON for PREP MEDIA"
 }
 
 $zipBuild = Join-Path $RepoRoot "scripts\New-Reclaim11KitZip.ps1"

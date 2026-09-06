@@ -8,6 +8,7 @@ param(
     [switch]$WhatIf,
     [int]$DiskNumber = -1,
     [switch]$Go,
+    [switch]$ListJson,
     [switch]$RefreshPayload,
     [string]$RepoRoot = $PSScriptRoot,
     [string]$WorkDir = "C:\Reclaim11\winpe-work",
@@ -20,7 +21,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 
 $script:UsbMaxBytes = 32GB
-$script:UsbMinBytes = 2GB
+$script:UsbMinBytes = 1GB
 $AdkVersionPin = "10.1.26100.2454"
 $reclaim = $Reclaim11Root
 $winpeSrc = Join-Path $reclaim "winpe"
@@ -62,7 +63,7 @@ function Get-Reclaim11UsbCandidates {
         if ([bool]$d.IsBoot -or [bool]$d.IsSystem -or [bool]$d.BootFromDisk) { $why += "boot" }
         if ([string]$d.BusType -ne "USB") { $why += ("bus=" + $d.BusType) }
         if ([int64]$d.Size -gt $script:UsbMaxBytes) { $why += "over-32GiB" }
-        if ([int64]$d.Size -lt $script:UsbMinBytes) { $why += "under-2GiB" }
+        if ([int64]$d.Size -lt $script:UsbMinBytes) { $why += "under-1GiB" }
         $letters = @()
         try {
             $letters = @(Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue |
@@ -106,6 +107,11 @@ function Copy-Reclaim11PePayload {
     Copy-Item -LiteralPath (Join-Path $winpeSrc "startnet.cmd") -Destination (Join-Path $Mount "Windows\System32\startnet.cmd") -Force
 }
 
+if ($ListJson) {
+    ConvertTo-Json -InputObject @(Get-Reclaim11UsbCandidates) -Depth 6
+    return
+}
+
 $adk = Get-Reclaim11Adk
 $cands = @(Get-Reclaim11UsbCandidates)
 $ok = @($cands | Where-Object { $_.ok })
@@ -118,7 +124,7 @@ $plan = [pscustomobject]@{
     work_dir   = $WorkDir
     wim        = $wim
     candidates = $cands
-    legal      = @($ok | ForEach-Object { $_.number })
+    ok_disks   = @($ok | ForEach-Object { $_.number })
     note       = "Disk 0 / >32GiB USB HDD refused. ISO builder stays /ISO only. Boot in a VM or another PC."
 }
 
@@ -127,7 +133,7 @@ if ($WhatIf -or -not $Go) {
     Write-Host ("  ADK {0} present={1}" -f $adk.version, $adk.present)
     Write-Host ("  boot.wim exists={0}" -f (Test-Path -LiteralPath $wim))
     foreach ($c in $cands) {
-        $tag = if ($c.ok) { "LEGAL" } else { "REFUSE " + $c.refuse }
+        $tag = if ($c.ok) { "OK" } else { "SKIP " + $c.refuse }
         $lett = if (@($c.letters).Count -gt 0) { ($c.letters -join ",") } else { "-" }
         Write-Host ("  disk {0} {1} {2:N1} GiB letter={3}  {4}" -f $c.number, $c.name, ($c.size / 1GB), $lett, $tag)
     }
@@ -135,9 +141,9 @@ if ($WhatIf -or -not $Go) {
         Write-Host ("WOULD format disk {0} ({1}) via MakeWinPEMedia /UFD /F after payload refresh" -f $ok[0].number, $ok[0].name)
         Write-Host "Do not boot the stick on this IoT desk."
     } elseif ($ok.Count -lt 1) {
-        Write-Host "WOULD REFUSE  no USB candidate (need 2-32GiB USB, not boot, not C:)"
+        Write-Host "WOULD REFUSE  no USB stick (need 1GB+, under 32GB, not boot, not C:)"
     } else {
-        Write-Host "WOULD REFUSE  multiple legal sticks; pass -DiskNumber N -Go"
+        Write-Host "WOULD REFUSE  several USB sticks; pass -DiskNumber N -Go"
     }
     $plan | ConvertTo-Json -Depth 6
     return
@@ -149,7 +155,7 @@ if (-not (Test-Path -LiteralPath $wim)) {
 }
 if ($DiskNumber -lt 0) {
     if ($ok.Count -eq 1) { $DiskNumber = [int]$ok[0].number }
-    else { throw "New-Reclaim11WinPeUsb: pass -DiskNumber N -Go (legal=$($plan.legal -join ','))" }
+    else { throw "New-Reclaim11WinPeUsb: pass -DiskNumber N -Go (ok=$($plan.ok_disks -join ','))" }
 }
 $target = @($cands | Where-Object { $_.number -eq $DiskNumber }) | Select-Object -First 1
 if (-not $target) { throw "New-Reclaim11WinPeUsb: no disk $DiskNumber" }

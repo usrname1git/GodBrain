@@ -20,8 +20,9 @@ stay locked until a WinPE receipt.
    Nothing is deleted. Read the log.
 4. Then pick a door:
    - **Noob:** Hide Xbox + telemetry. No Defender. No killing blows.
-   - **Expert:** **PREP MEDIA** builds the WinPE ISO. Attach it in the VM,
-     boot it, disconnect, `wpeutil reboot`. After Windows is up, SCAN.
+   - **Expert:** **PREP MEDIA** builds the WinPE ISO if missing, then
+     writes a USB (formats the stick). Boot the ISO or the stick.
+     VM recommended, not required. After Windows is up, SCAN.
      Killing blows / Grim Reaper unlock only after that boot.
 
 Game Mode stays. The Xbox controller driver stays.

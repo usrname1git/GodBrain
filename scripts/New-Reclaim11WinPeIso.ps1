@@ -177,5 +177,5 @@ $p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $makeLine) -Wait -P
 if ($p.ExitCode -ne 0) { throw "New-Reclaim11WinPeIso: MakeWinPEMedia exit $($p.ExitCode)" }
 if (-not (Test-Path -LiteralPath $OutIso)) { throw "New-Reclaim11WinPeIso: ISO missing $OutIso" }
 
-Write-Output ("Reclaim11 WinPE ISO: {0} ({1:N0} bytes). Attach in VMware. Snapshot first. Not USB." -f $OutIso, (Get-Item -LiteralPath $OutIso).Length)
+Write-Output ("Reclaim11 WinPE ISO: {0} ({1:N0} bytes). VM recommended. USB is PREP MEDIA / New-Reclaim11WinPeUsb.ps1." -f $OutIso, (Get-Item -LiteralPath $OutIso).Length)
 exit 0

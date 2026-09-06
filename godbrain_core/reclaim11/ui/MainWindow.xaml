@@ -82,12 +82,12 @@
   <Grid>
   <DockPanel x:Name="PanelDoor" Margin="16">
     <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
-               Text="MUST: build a WinPE ISO and boot it to take Defender. No PE boot = bloat only (Xbox, telemetry). Recommended: VM or TEST first."/>
+               Text="MUST: PREP MEDIA, then boot WinPE (ISO or USB) to take Defender. No PE boot = bloat only (Xbox, telemetry). Recommended: VM or TEST first."/>
     <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
       <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
       <TextBlock Foreground="#7A93A8" Margin="0,4,0,8" Text="This isn't a debloater. It's a Grim Reaper."/>
       <TextBlock Foreground="#7A93A8" Margin="0,0,0,8" TextWrapping="Wrap"
-                 Text="MUST: PREP MEDIA, then boot that WinPE ISO, or Defender stays. Without that boot you only get bloat."/>
+                 Text="MUST: PREP MEDIA, then boot that WinPE (ISO or USB), or Defender stays. Without that boot you only get bloat."/>
       <TextBlock Foreground="#7A93A8" Margin="0,0,0,20" Text="How much do you want to see?"/>
       <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
         <StackPanel>
@@ -99,7 +99,7 @@
       <Button x:Name="BtnDoorExpert" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="YOU BETTER KNOW WTF YOU'RE DOING" FontWeight="SemiBold" Foreground="#3DDCFF"/>
-          <TextBlock Text="PREP MEDIA builds the ISO. Boot it or Defender stays. Then killing blows / Grim Reaper."
+          <TextBlock Text="PREP MEDIA builds the ISO, then writes a USB. Boot that or Defender stays. VM recommended."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -111,7 +111,7 @@
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
         <TextBlock Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
-                   Text="Noob door. Bloat only (Xbox, telemetry). Defender needs a WinPE ISO you build and boot."/>
+                   Text="Noob door. Bloat only (Xbox, telemetry). Defender needs WinPE (ISO or USB) you boot."/>
       </StackPanel>
     </DockPanel>
     <TextBox x:Name="NoobLog" DockPanel.Dock="Bottom" Height="180" Margin="0,12,0,0"
@@ -142,7 +142,7 @@
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
         <TextBlock x:Name="Subtitle" Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
-                   Text="PREP MEDIA, then boot the WinPE ISO, or Defender stays. Recommended: VM or TEST first."/>
+                   Text="PREP MEDIA builds ISO then USB. Boot the stick (VM recommended). Without that boot: bloat only."/>
       </StackPanel>
     </DockPanel>
     <Border DockPanel.Dock="Top" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="10,8" Margin="0,0,0,12">
