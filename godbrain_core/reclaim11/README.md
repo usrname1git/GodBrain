@@ -36,7 +36,7 @@ Game Mode stays. The Xbox controller driver stays.
 ## Advanced
 
 Pack A is Defender / PPL / Sense / AppID. Hide Xbox also clears named
-Start junk (Copilot, new Outlook, Clipchamp, …) and turns off Start
+Start junk (Copilot, new Outlook, Clipchamp, WhatsApp, LinkedIn, …) and turns off Start
 Recommended. Photos, Calculator, Store, Notepad stay. Game Mode stays.
 The Xbox controller driver (`xboxgip`) stays.
 
