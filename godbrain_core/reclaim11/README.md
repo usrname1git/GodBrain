@@ -3,10 +3,11 @@
 **Recommended:** run it on a VM like VMware first, or at least run TEST
 mode and see the result.
 
-**MUST:** build a WinPE ISO and boot it if you want Defender / PPL / Sense
-gone. That offline pass is the kill. Without that boot, this GUI is
-**bloat only** (Xbox, telemetry, NIC). Killing blows and Grim Reaper
-stay locked until a WinPE receipt.
+**MUST:** PREP MEDIA, then boot WinPE (ISO or USB) if you want Defender /
+PPL / Sense gone. That offline pass is the kill. Without that boot the
+GUI is **bloat only** (Xbox, telemetry, NIC, Start junk, BCD timer,
+USB/ASPM, power registry). Killing blows and Grim Reaper stay locked
+until a WinPE receipt. Exact flags are under Advanced.
 
 ## What to do
 
@@ -35,14 +36,33 @@ Game Mode stays. The Xbox controller driver stays.
 
 Pack A is Defender / PPL / Sense / AppID. Hide Xbox also clears named
 Start junk (Copilot, new Outlook, Clipchamp, …) and turns off Start
-Recommended. Photos, Calculator, Store, Notepad stay.
+Recommended. Photos, Calculator, Store, Notepad stay. Game Mode stays.
+The Xbox controller driver (`xboxgip`) stays.
 
 ### Rails
 
 - Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
-- Killing blows unlock only after a WinPE receipt. Some Windows SKUs are refused.
+- Killing blows / Grim Reaper unlock only after a WinPE receipt.
 - WinPE waits **12 seconds**: press **H** if Windows won't boot (skips Automatic Repair). Otherwise pack A runs as today. Help writes `reclaim11-winre-skip.log` and does **not** unlock killing blows.
+
+### In-Windows without PE (exact flags)
+
+These are the Expert/noob actions that do not need a WinPE receipt.
+`restore.json` is written first.
+
+- **BCD `{current}`:** `nx AlwaysOff` (DEP off), `tscsyncpolicy Enhanced`,
+  `hypervisorlaunchtype Auto`, `vsmlaunchtype Off`, `sos No`,
+  `useplatformclock No`, `useplatformtick No`, `disabledynamictick Yes`.
+  `{bootmgr}` `bootmenupolicy Legacy`.
+- **HKLM:** `GlobalTimerResolutionRequests=1`,
+  `SystemResponsiveness=10` (0–9 clamp to 20),
+  `Win32PrioritySeparation=38`.
+- **Power (AC, active plan + High Performance if listed):** USB selective
+  suspend Off, USB 3 link power Off, PCIe ASPM Off. GUI **asks** before
+  `/setactive` High Performance. CLI needs `-SwitchHighPerformance`.
+  Not min processor 100%. Not C-state kill. AGGRO (`61329e62`) and
+  Ultimate (`e9a42b02`) refused.
 
 ### Two PE profiles
 
@@ -55,7 +75,9 @@ Recommended. Photos, Calculator, Store, Notepad stay.
 
 ### WinPE ISO (Defender)
 
-ADK + WinPE addon **10.1.26100.2454**, not ADK 28000.
+ADK + WinPE addon **10.1.26100.2454**, not ADK 28000. PREP MEDIA
+asks Yes/No if the pair is missing; Yes installs it and keeps going.
+The kit zip ships `winpe\reclaim11-stub.exe` (MZ). PREP does not need Visual Studio.
 
 ```text
 pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
@@ -63,6 +85,19 @@ pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 
 Output: `C:\Reclaim11\Reclaim11-WinPE-v10.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
+
+### Boot the ISO in VMware
+
+The VM CD/DVD picker browses the **host**, not the guest. Copy
+`C:\Reclaim11\Reclaim11-WinPE-v10.iso` out of the VM (shared folder or
+drag-drop), then VM Settings → CD/DVD → Use ISO image file → that host
+path. EFI firmware. Boot the CD (firmware menu). USB EFI passthrough of
+the PREP stick is the same WinPE; VMware USB is slow, not a kit hang.
+Never boot this ISO or stick on the machine that built it.
+
+Delete the ISO and click PREP MEDIA again after a kit update — an
+existing ISO skips the rebuild, and both ISO and USB bake scripts into
+`boot.wim`.
 
 Snapshot, attach **v10**. PE **deletes** catalog
 `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
@@ -112,23 +147,9 @@ start=disabled. Restore:
 Rx/Tx **256–512**. Skips VMware host VMnet / Tailscale / Wi-Fi.
 `pwsh -File nic_tune.ps1 -T`.
 
-**Latency bake** (Expert, in-Windows, VM-only): BCD `{current}`
-`nx AlwaysOff` (DEP off), `tscsyncpolicy Enhanced`,
-`hypervisorlaunchtype Auto`, `vsmlaunchtype Off`, `sos No`,
-`useplatformclock No`, `useplatformtick No`, `disabledynamictick Yes`;
-`{bootmgr}` `bootmenupolicy Legacy`. HKLM
-`GlobalTimerResolutionRequests=1`, `SystemResponsiveness=10`,
-`Win32PrioritySeparation=38`. On the **active** plan (and High
-Performance if it exists): USB selective suspend Off, USB 3 link
-power Off, PCIe ASPM Off. The GUI **asks** before switching the
-active plan to High Performance (Yes = `/setactive` that GUID;
-No = bake HP settings but keep the current plan). CLI needs
-`-SwitchHighPerformance`. Does **not** set min processor 100%,
-does **not** disable C-states. AGGRO (`61329e62`) and Ultimate
-(`e9a42b02`) refused — those were the +idle-heat cooks.
-`restore.json` first.
-WinPE MiniNT refused (that would be the PE BCD).
-`pwsh -File latency_bake.ps1 -T`. Restore:
+**Latency bake** (Expert, in-Windows): flags are under
+**In-Windows without PE** above. WinPE MiniNT refused (that would be
+the PE BCD). `pwsh -File latency_bake.ps1 -T`. Restore:
 `pwsh -File latency_bake.ps1 -Restore restore.json`.
 
 Killing blows / Grim Reaper self-elevate to TrustedInstaller via Task

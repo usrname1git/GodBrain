@@ -125,6 +125,16 @@ function Get-Reclaim11OfflineSecureBoot {
     }
 }
 
+function Invoke-Reclaim11RegUnloadBestEffort {
+    param([Parameter(Mandatory)][string]$Key)
+    if ([string]::IsNullOrWhiteSpace($Key)) { return }
+    # Leftover unload of an unloaded hive. PE reg.exe prints
+    # "ERROR: The parameter is incorrect" (not "key is not loaded").
+    # Capturing native stderr into a Stop pipeline aborts pack A before
+    # EditionID. cmd swallows stdout/stderr.
+    $null = cmd.exe /c "reg.exe unload `"$Key`" >nul 2>&1"
+}
+
 function Get-Reclaim11OfflineEditionId {
     param([string]$WindowsRoot)
     $hive = Join-Path $WindowsRoot "System32\config\SOFTWARE"
@@ -132,7 +142,7 @@ function Get-Reclaim11OfflineEditionId {
         throw "Refuse: cannot read EditionID. missing SOFTWARE hive."
     }
     $key = "HKLM\R11EDITION"
-    $null = & reg.exe unload $key 2>&1
+    Invoke-Reclaim11RegUnloadBestEffort -Key $key
     $loaded = $false
     try {
         & reg.exe load $key $hive | Out-Null

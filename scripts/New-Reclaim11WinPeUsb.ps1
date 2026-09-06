@@ -17,6 +17,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if (Get-Variable -Name PSStyle -ErrorAction SilentlyContinue) {
+    $PSStyle.OutputRendering = "PlainText"
+}
 
 . (Join-Path $PSScriptRoot "Resolve-Reclaim11Kit.ps1")
 

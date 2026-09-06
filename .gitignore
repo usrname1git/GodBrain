@@ -1,4 +1,5 @@
 *.exe
+!godbrain_core/reclaim11/winpe/reclaim11-stub.exe
 logs/
 inbox/*
 !inbox/.gitkeep

@@ -193,6 +193,9 @@ $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
 $logBox  = Get-Ui LogBox
+$panelBusy = Get-Ui PanelBusy
+$busyBar = Get-Ui BusyBar
+$busyStatus = Get-Ui BusyStatus
 $panelDoor = Get-Ui PanelDoor
 $panelNoob = Get-Ui PanelNoob
 $panelExpert = Get-Ui PanelExpert
@@ -213,6 +216,24 @@ $script:UiDoor = "door"
 function Add-Log([string]$Line) {
     $logBox.AppendText($Line + [Environment]::NewLine)
     $logBox.ScrollToEnd()
+}
+
+function Invoke-Reclaim11UiPump {
+    $window.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::Background)
+}
+
+function Set-Reclaim11Busy {
+    param([string]$Status = "")
+    if (-not $panelBusy) { return }
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        $panelBusy.Visibility = [Windows.Visibility]::Collapsed
+        $window.Title = "Reclaim11"
+        return
+    }
+    $panelBusy.Visibility = [Windows.Visibility]::Visible
+    $busyStatus.Text = $Status
+    $window.Title = "Reclaim11 — $Status"
+    Invoke-Reclaim11UiPump
 }
 
 function Add-NoobLog([string]$Line) {
@@ -621,17 +642,72 @@ function Get-Reclaim11PrepIsoPath {
     [pscustomobject]@{ want = $want; iso = $want; have = $false }
 }
 
+function Get-Reclaim11PlainText {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return "" }
+    $t = [regex]::Replace($Text, '\x1B\[[0-9;?]*[ -/]*[@-~]', "")
+    $t = [regex]::Replace($t, '\x1B\][^\x07\x1B]*(\x07|\x1B\\)', "")
+    $t = [regex]::Replace($t, '\[[0-9;]{1,12}m', "")
+    $t.Trim()
+}
+
+function Get-Reclaim11PrepFailText {
+    param([string]$Raw)
+    $t = Get-Reclaim11PlainText $Raw
+    if ($t -match "still missing after install" -or $t -match "adk-.+\.log") {
+        return "ADK install did not finish. Check C:\Reclaim11\adk-*.log, then click PREP MEDIA again."
+    }
+    if ($t -match "Windows ADK WinPE is missing") {
+        return "Windows ADK + WinPE addon 10.1.26100.2454 is missing (not 28000)."
+    }
+    $lines = @(
+        $t -split "`r?`n" |
+            Where-Object { $_ -notmatch '[█░]|^\s*\d+%\s*$|MB /' -and $_.Length -lt 220 }
+    )
+    if ($lines.Count -gt 12) {
+        $lines = @($lines | Select-Object -First 12) + "..."
+    }
+    ($lines -join "`n").Trim()
+}
+
+function Confirm-Reclaim11PrepAdkInstall {
+    $q = [System.Windows.MessageBox]::Show(
+        @(
+            "Windows ADK + WinPE addon 10.1.26100.2454 is missing (not 28000).",
+            "",
+            "PREP can install the matching pair now (internet, several minutes).",
+            "",
+            "No = stop. Yes = install the addons and continue."
+        ) -join "`n",
+        "Reclaim11 PREP MEDIA",
+        "YesNo",
+        "Warning")
+    $q -eq "Yes"
+}
+
 function Invoke-Reclaim11PrepProcess {
     param(
         [Parameter(Mandatory)][string]$Arg,
-        [Parameter(Mandatory)][string]$FailName
+        [Parameter(Mandatory)][string]$FailName,
+        [string]$Status = ""
     )
     $pwsh = Get-Reclaim11Pwsh
     $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
     $outFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".out")
     $errFile = Join-Path $env:TEMP ("reclaim11-prep-" + $stamp + ".err")
+    $baseStatus = $Status
+    if ($baseStatus) { Set-Reclaim11Busy $baseStatus }
     try {
-        $p = Start-Process -FilePath $pwsh -ArgumentList $Arg -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $p = Start-Process -FilePath $pwsh -ArgumentList $Arg -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $p.HasExited) {
+            if ($baseStatus) {
+                Set-Reclaim11Busy ("{0}  {1:mm\:ss}" -f $baseStatus, $sw.Elapsed)
+            } else {
+                Invoke-Reclaim11UiPump
+            }
+            Start-Sleep -Milliseconds 250
+        }
         $chunks = @()
         if (Test-Path -LiteralPath $outFile) {
             $chunks += Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
@@ -639,8 +715,8 @@ function Invoke-Reclaim11PrepProcess {
         if (Test-Path -LiteralPath $errFile) {
             $chunks += Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
         }
-        $out = ($chunks -join "`n")
-        if ($out) { Add-Log $out.TrimEnd() }
+        $out = Get-Reclaim11PlainText (($chunks -join "`n"))
+        if ($out) { Add-Log $out }
         if ([int]$p.ExitCode -ne 0) {
             throw ("{0} exit {1}`n{2}" -f $FailName, $p.ExitCode, $out)
         }
@@ -735,7 +811,20 @@ $btnPrep.Add_Click({
         if (-not [bool]$isoInfo.have) {
             Add-Log ("PREP MEDIA building {0}" -f $want)
             $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
-            $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder"
+            try {
+                $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder" -Status "Building WinPE ISO"
+            } catch {
+                $adkMiss = (Get-Reclaim11PlainText $_.Exception.Message) -match "Windows ADK WinPE is missing"
+                if (-not $adkMiss) { throw }
+                Set-Reclaim11Busy ""
+                if (-not (Confirm-Reclaim11PrepAdkInstall)) {
+                    Add-Log "PREP MEDIA aborted (ADK install)"
+                    return
+                }
+                Add-Log "PREP MEDIA installing ADK + WinPE addon 10.1.26100.2454"
+                $argInstall = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`" -InstallAdk"
+                $null = Invoke-Reclaim11PrepProcess -Arg $argInstall -FailName "ISO builder" -Status "Installing ADK + WinPE addon"
+            }
             if (-not (Test-Path -LiteralPath $want)) {
                 throw "ISO missing after build: $want"
             }
@@ -750,30 +839,35 @@ $btnPrep.Add_Click({
             return
         }
         $cands = @(Get-Reclaim11PrepUsbCandidates -UsbScript $usbBuild)
+        Set-Reclaim11Busy ""
         $disk = Select-Reclaim11PrepUsbDisk -Candidates $cands
         if ($null -eq $disk) { return }
         Add-Log ("PREP MEDIA USB disk {0}" -f $disk)
         $usbArg = "-NoProfile -ExecutionPolicy Bypass -File `"$usbBuild`" -DiskNumber $disk -Go"
         try {
-            $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer"
+            $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer" -Status "Writing USB"
         } catch {
             if ($_.Exception.Message -match "boot\.wim") {
                 Add-Log "PREP MEDIA workdir missing; rebuilding ISO payload"
                 $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$build`" -OutIso `"$want`""
-                $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder"
-                $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer"
+                $null = Invoke-Reclaim11PrepProcess -Arg $arg -FailName "ISO builder" -Status "Building WinPE ISO"
+                $null = Invoke-Reclaim11PrepProcess -Arg $usbArg -FailName "USB writer" -Status "Writing USB"
             } else {
                 throw
             }
         }
         Add-Log ("PREP MEDIA USB ok disk {0}" -f $disk)
+        Set-Reclaim11Busy ""
         [System.Windows.MessageBox]::Show(
             "USB ready. Boot the stick on the target to remove Defender. VM recommended first, not required. Without that boot this GUI is bloat only.",
             "Reclaim11 PREP MEDIA") | Out-Null
     } catch {
-        Add-Log ("PREP FAIL  {0}" -f $_.Exception.Message)
-        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 PREP MEDIA") | Out-Null
+        $prepFail = Get-Reclaim11PrepFailText $_.Exception.Message
+        Add-Log ("PREP FAIL  {0}" -f $prepFail)
+        Set-Reclaim11Busy ""
+        [System.Windows.MessageBox]::Show($prepFail, "Reclaim11 PREP MEDIA") | Out-Null
     } finally {
+        Set-Reclaim11Busy ""
         $script:ProcessRunning = $false
         $btnPrep.IsEnabled = $true
         $btnScan.IsEnabled = $true
