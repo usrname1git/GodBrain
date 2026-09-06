@@ -144,8 +144,9 @@ Does **not** delete `xboxgip`. Does **not** remove
 start=disabled. Restore:
 `pwsh -File telemetry_cleanse.ps1 -Restore restore.json`.
 
-**Tune NIC** (Ethernet only): EEE/interrupt moderation/flow/WoL off, RSS on,
-Rx/Tx **256–512**. Skips VMware host VMnet / Tailscale / Wi-Fi.
+**Tune NIC** (Ethernet only): EEE/interrupt moderation/flow/WoL off,
+checksum/LSO/VLAN-priority off, RSS on, Rx/Tx **256–512**. Does not
+force Speed/Duplex. Skips VMware host VMnet / Tailscale / Wi-Fi.
 `pwsh -File nic_tune.ps1 -T`.
 
 **Latency bake** (Expert, in-Windows): flags are under
