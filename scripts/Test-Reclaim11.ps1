@@ -528,9 +528,9 @@ if ($nukeSrc -notmatch 'refuse hide gaming-gamemode') {
     throw "Test-Reclaim11: Grim Reaper must refuse hiding Game Mode"
 }
 $nukeOut = & (Join-Path $PSHOME "pwsh.exe") -NoProfile -File $nukeSelf -SelfTest
-if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Nuclear v6.3 -SelfTest failed" }
-if (($nukeOut | Out-String) -notmatch "SELFTEST v6.3 ok") {
-    throw "Test-Reclaim11: Nuclear v6.3 self-test did not print ok"
+if ($LASTEXITCODE -ne 0) { throw "Test-Reclaim11: Grim Reaper -SelfTest failed" }
+if (($nukeOut | Out-String) -notmatch "SELFTEST Grim Reaper ok") {
+    throw "Test-Reclaim11: Grim Reaper self-test did not print ok"
 }
 $isoBuild = Join-Path $RepoRoot "scripts\New-Reclaim11WinPeIso.ps1"
 if (-not (Test-Path -LiteralPath $isoBuild)) { throw "Test-Reclaim11: missing New-Reclaim11WinPeIso.ps1" }
@@ -887,12 +887,15 @@ if (Test-Reclaim11PackATaskPath -Catalog $cat -Path "\Microsoft\Windows\") {
 $kbSrc = Get-Content -LiteralPath (Join-Path $ps1 "killing_blows.ps1") -Raw -Encoding UTF8
 if ($kbSrc -notmatch "Export-ScheduledTask") { throw "Test-Reclaim11: killing blows must snapshot task XML" }
 $nukeSrc = Get-Content -LiteralPath (Join-Path $ps1 "grim_reaper.ps1") -Raw -Encoding UTF8
-if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Nuclear must delete ExploitGuard tasks" }
+if ($nukeSrc -notmatch "ExploitGuard") { throw "Test-Reclaim11: Grim Reaper must delete ExploitGuard tasks" }
 if ($nukeSrc -match '\.\s+\$invPath') {
-    throw "Test-Reclaim11: Nuclear must not dotsource inventory.ps1 into wipe scope"
+    throw "Test-Reclaim11: Grim Reaper must not dotsource inventory.ps1 into wipe scope"
 }
-if ($nukeSrc -notmatch "Test-Reclaim11NuclearWinPeReceipt") {
+if ($nukeSrc -notmatch "Test-Reclaim11ReaperWinPeReceipt") {
     throw "Test-Reclaim11: grim_reaper must re-check WinPE receipt (not only GUI SCAN)"
+}
+if ($nukeSrc -match "Nuclear") {
+    throw "Test-Reclaim11: grim_reaper must be named Grim Reaper, not Nuclear"
 }
 if ($nukeSrc -notmatch "WOULD REFUSE  no WinPE receipt") {
     throw "Test-Reclaim11: grim_reaper -T must WOULD REFUSE without a receipt"
@@ -904,20 +907,20 @@ if ($nukeSrc -notmatch "SetDisableUXWUAccess") {
     throw "Test-Reclaim11: Grim Reaper must hide Check for updates chrome"
 }
 if ($nukeSrc -notmatch '(?s)& \{\s*\.\s+\$el') {
-    throw "Test-Reclaim11: Nuclear TI hop must dotsource elevate.ps1 in a child scope"
+    throw "Test-Reclaim11: Grim Reaper TI hop must dotsource elevate.ps1 in a child scope"
 }
 foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe")) {
     if ($nukeSrc -notmatch [regex]::Escape($wu)) {
-        throw "Test-Reclaim11: Nuclear remainder must name WU $wu"
+        throw "Test-Reclaim11: Grim Reaper remainder must name WU $wu"
     }
 }
 if ($nukeSrc -notmatch "usosvc\.dll") {
-    throw "Test-Reclaim11: Nuclear must never-stub usosvc.dll"
+    throw "Test-Reclaim11: Grim Reaper must never-stub usosvc.dll"
 }
 $catJson = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8
 foreach ($wu in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
     if ($catJson -match $wu) {
-        throw "Test-Reclaim11: pack A catalog must not list WU $wu (26H1 Update stays until Nuclear)"
+        throw "Test-Reclaim11: pack A catalog must not list WU $wu (26H1 Update stays until Grim Reaper)"
     }
 }
 if ($kbSrc -match "wuauserv") {

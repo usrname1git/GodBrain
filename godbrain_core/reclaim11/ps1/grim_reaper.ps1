@@ -1,11 +1,9 @@
-# ================================================
-# FINAL NUCLEAR DEFENDER WIPE v6.3 - boot-safe
-# ================================================
-# v6.2 copied DefenderStub.exe over kernel .sys and over
+# Grim Reaper. Remainder after WinPE pack A. Boot-safe.
+# Old wipe copied DefenderStub.exe over kernel .sys and over
 # CodeIntegrity\CIPolicies\Active *.cip, then DENY SYSTEM.
 # That is Automatic Repair ("couldn't be repaired") on 25H2.
 #
-# v6.3:
+# This door:
 #   - DELETE named .sys (never stub a driver with a usermode PE).
 #   - Never touch CIPolicies / CodeIntegrity.
 #   - Never stub .cip, .reclaim11.bak, mscoree.dll, fltmgr, BFE/mpssvc.
@@ -35,7 +33,7 @@ param(
 $ErrorActionPreference = "Continue"
 $WipeVersion = "6.3"
 
-Write-Host ("=== FINAL NUCLEAR WIPE v{0} (boot-safe) ===" -f $WipeVersion) -ForegroundColor Red
+Write-Host ("=== Grim Reaper v{0} (boot-safe) ===" -f $WipeVersion) -ForegroundColor Red
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($here)) { $here = $PWD.Path }
@@ -469,7 +467,7 @@ function Remove-WipeDriver([string]$Path) {
 
 function Remove-WipePackAScheduledTasks {
     # Named folders only. Never a host-wide task glob. WU/Medic/USO are
-    # Nuclear remainder (resurrection lock), not killing-blows pack A.
+    # Grim Reaper remainder (resurrection lock), not killing-blows pack A.
     $allow = @(
         "\Microsoft\Windows\Windows Defender",
         "\Microsoft\Windows\ExploitGuard",
@@ -657,9 +655,9 @@ function Test-WipeSelf {
         Write-Host "SELFTEST ok   refuse hide gaming-gamemode" -ForegroundColor Green
     }
     if ($fail -gt 0) {
-        throw ("Nuclear v6.3 -SelfTest failed ({0})" -f $fail)
+        throw ("Grim Reaper -SelfTest failed ({0})" -f $fail)
     }
-    Write-Host "SELFTEST v6.3 ok" -ForegroundColor Green
+    Write-Host "SELFTEST Grim Reaper ok" -ForegroundColor Green
 }
 
 if ($SelfTest) {
@@ -667,7 +665,7 @@ if ($SelfTest) {
     return
 }
 
-function Test-Reclaim11NuclearDeskHost {
+function Test-Reclaim11ReaperDeskHost {
     # Inline EditionID. Do not dotsource inventory.ps1 (StrictMode/Stop).
     $n = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue
     if (-not $n) { return $null }
@@ -676,7 +674,7 @@ function Test-Reclaim11NuclearDeskHost {
     [string]$prop.Value -eq "IoTEnterpriseS"
 }
 
-function Test-Reclaim11NuclearWinPeReceipt {
+function Test-Reclaim11ReaperWinPeReceipt {
     # Inline JSON id. Do not dotsource inventory.ps1 (StrictMode/Stop).
     $root = $env:SystemRoot
     if ([string]::IsNullOrWhiteSpace($root)) { return $false }
@@ -697,8 +695,8 @@ function Test-Reclaim11NuclearWinPeReceipt {
     $false
 }
 
-$desk = Test-Reclaim11NuclearDeskHost
-$hasReceipt = Test-Reclaim11NuclearWinPeReceipt
+$desk = Test-Reclaim11ReaperDeskHost
+$hasReceipt = Test-Reclaim11ReaperWinPeReceipt
 $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
 $wdPresent = Test-Path -LiteralPath $wd
 if (-not $WhatIf) {
@@ -706,7 +704,7 @@ if (-not $WhatIf) {
         throw "Refuse: cannot read EditionID (needed to refuse desk)"
     }
     if ($desk) {
-        throw "Refuse: desk (IoTEnterpriseS). Nuclear is VM-only. Not M1ABRAMS."
+        throw "Refuse: desk (IoTEnterpriseS). Grim Reaper is VM-only. Not M1ABRAMS."
     }
     if (-not $hasReceipt) {
         throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
@@ -761,7 +759,7 @@ if (Test-Path -LiteralPath $el) {
     if (-not $hop.continue) {
         if ($hop.output) { Write-Host $hop.output }
         if ([int]$hop.exit_code -ne 0) {
-            throw ("TI nuclear exit {0}" -f $hop.exit_code)
+            throw ("TI Grim Reaper exit {0}" -f $hop.exit_code)
         }
         return
     }
@@ -773,7 +771,7 @@ if (-not (Test-PeMz $StubPath)) {
     throw "reclaim11-stub.exe is missing or not a PE (MZ). PREP MEDIA compiles it to C:\Reclaim11\reclaim11-stub.exe. PE also drops %SystemRoot%\reclaim11-stub.exe. Do not copy a .cmd to .exe."
 }
 
-$log = Join-Path $here ("FINAL NUCLEAR WIPE v{0}.txt" -f $WipeVersion)
+$log = Join-Path $here ("grim-reaper-v{0}.txt" -f $WipeVersion)
 Start-Transcript -Path $log -Force | Out-Null
 try {
     $script:SecureBootOn = Get-WipeSecureBootOn
