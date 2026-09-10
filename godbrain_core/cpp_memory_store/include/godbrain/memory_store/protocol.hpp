@@ -52,6 +52,30 @@ struct Claim {
     std::vector<std::string> evidence_spans;
 };
 
+struct DocumentMetadata {
+    std::string source_label;
+    std::string display_name;
+    std::string file_sha256;
+    std::string content_sha256;
+    std::string extraction_method;
+    std::vector<std::string> languages;
+    std::string backend;
+    std::string backend_version;
+    int chunk_count = 0;
+    bool has_ocr_confidence = false;
+    double ocr_confidence = 0;
+};
+
+struct SourceChunk {
+    int index = 0;
+    int count = 0;
+    int start_byte = 0;
+    int end_byte = 0;
+    std::string text;
+    bool has_confidence = false;
+    double confidence = 0;
+};
+
 struct SkillExtracted {
     std::string name;
     std::string content;
@@ -77,7 +101,11 @@ struct DistillationPayload {
     std::vector<std::string> opsec_candidates;
     std::vector<SkillExtracted> skills_extracted;
     bool has_document = false;
+    DocumentMetadata document;
+    std::vector<SourceChunk> chunks;
 };
+
+bool validate_document_payload(const DistillationPayload& p, std::string* err);
 
 std::string json_escape(const std::string& s);
 std::string skill_procedure_text(const SkillExtracted& skill);

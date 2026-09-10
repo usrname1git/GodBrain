@@ -48,6 +48,7 @@ bool embedding_cosine(const std::vector<float>& left, const std::vector<float>& 
 bool embedding_embed(
     const EmbeddingRuntime& runtime, const std::string& content, std::vector<float>* vector, std::string* err);
 bool embedding_embed_fake(int dimension, const std::string& content, std::vector<float>* vector, std::string* err);
+bool sha256_hex(const std::string& bytes, std::string* hex, std::string* err);
 
 int run_embedding_self_test();
 

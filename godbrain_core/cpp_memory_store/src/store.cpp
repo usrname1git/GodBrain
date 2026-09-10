@@ -380,6 +380,19 @@ static bool ensure_indexes(StoreHandle* h, std::string* err) {
         bson_destroy(&keys);
         if (!ok) return false;
     }
+    {
+        bson_t keys = BSON_INITIALIZER;
+        BSON_APPEND_INT32(&keys, "source_hash", 1);
+        BSON_APPEND_INT32(&keys, "extractor_id", 1);
+        BSON_APPEND_INT32(&keys, "extractor_version", 1);
+        BSON_APPEND_INT32(&keys, "schema_version", 1);
+        BSON_APPEND_INT32(&keys, "chunk_index", 1);
+        bson_t* opt = BCON_NEW("unique", BCON_BOOL(true), "name", "source_chunk_extractor_identity");
+        bool ok = create_unique_index(h, "chunks", &keys, opt, err, "chunks index");
+        bson_destroy(opt);
+        bson_destroy(&keys);
+        if (!ok) return false;
+    }
     return true;
 }
 
@@ -553,6 +566,29 @@ bool store_ingest(
     if (!retry_of.empty()) {
         BSON_APPEND_UTF8(&set_on, "retry_of", retry_of.c_str());
     }
+    bson_t doc_meta = BSON_INITIALIZER;
+    if (payload.has_document) {
+        BSON_APPEND_UTF8(&doc_meta, "source_label", payload.document.source_label.c_str());
+        BSON_APPEND_UTF8(&doc_meta, "display_name", payload.document.display_name.c_str());
+        BSON_APPEND_UTF8(&doc_meta, "file_sha256", payload.document.file_sha256.c_str());
+        BSON_APPEND_UTF8(&doc_meta, "content_sha256", payload.document.content_sha256.c_str());
+        BSON_APPEND_UTF8(&doc_meta, "extraction_method", payload.document.extraction_method.c_str());
+        bson_t langs = BSON_INITIALIZER;
+        for (size_t i = 0; i < payload.document.languages.size(); ++i) {
+            char idx[16];
+            std::snprintf(idx, sizeof idx, "%zu", i);
+            BSON_APPEND_UTF8(&langs, idx, payload.document.languages[i].c_str());
+        }
+        BSON_APPEND_ARRAY(&doc_meta, "languages", &langs);
+        bson_destroy(&langs);
+        BSON_APPEND_UTF8(&doc_meta, "backend", payload.document.backend.c_str());
+        BSON_APPEND_UTF8(&doc_meta, "backend_version", payload.document.backend_version.c_str());
+        BSON_APPEND_INT32(&doc_meta, "chunk_count", payload.document.chunk_count);
+        if (payload.document.has_ocr_confidence) {
+            BSON_APPEND_DOUBLE(&doc_meta, "ocr_confidence", payload.document.ocr_confidence);
+        }
+        BSON_APPEND_DOCUMENT(&set_on, "document", &doc_meta);
+    }
     bson_t update = BSON_INITIALIZER;
     BSON_APPEND_DOCUMENT(&update, "$setOnInsert", &set_on);
 
@@ -566,6 +602,7 @@ bool store_ingest(
     bson_error_t error{};
     bool ok = mongoc_collection_find_and_modify_with_opts(runs, &filter, fm, &reply, &error);
     mongoc_find_and_modify_opts_destroy(fm);
+    bson_destroy(&doc_meta);
     bson_destroy(&set_on);
     bson_destroy(&update);
     bson_t* run_doc = nullptr;
@@ -622,6 +659,9 @@ bool store_ingest(
         BSON_APPEND_UTF8(&oq, "extractor_id", extractor.c_str());
         BSON_APPEND_UTF8(&oq, "extractor_version", payload.extractor_version.c_str());
         BSON_APPEND_UTF8(&oq, "schema_version", payload.schema_version.c_str());
+        if (payload.has_document) {
+            BSON_APPEND_UTF8(&oq, "document.file_sha256", payload.document.file_sha256.c_str());
+        }
         bson_t oset = BSON_INITIALIZER;
         BSON_APPEND_UTF8(&oset, "source_hash", source_hash.c_str());
         BSON_APPEND_UTF8(&oset, "external_source_id", payload.provenance.source_id.c_str());
@@ -630,12 +670,36 @@ bool store_ingest(
         BSON_APPEND_UTF8(&oset, "schema_version", payload.schema_version.c_str());
         BSON_APPEND_UTF8(&oset, "run_id", run_id.c_str());
         BSON_APPEND_DATE_TIME(&oset, "created_at", now);
+        bson_t obs_doc = BSON_INITIALIZER;
+        if (payload.has_document) {
+            BSON_APPEND_UTF8(&obs_doc, "source_label", payload.document.source_label.c_str());
+            BSON_APPEND_UTF8(&obs_doc, "display_name", payload.document.display_name.c_str());
+            BSON_APPEND_UTF8(&obs_doc, "file_sha256", payload.document.file_sha256.c_str());
+            BSON_APPEND_UTF8(&obs_doc, "content_sha256", payload.document.content_sha256.c_str());
+            BSON_APPEND_UTF8(&obs_doc, "extraction_method", payload.document.extraction_method.c_str());
+            bson_t langs = BSON_INITIALIZER;
+            for (size_t i = 0; i < payload.document.languages.size(); ++i) {
+                char idx[16];
+                std::snprintf(idx, sizeof idx, "%zu", i);
+                BSON_APPEND_UTF8(&langs, idx, payload.document.languages[i].c_str());
+            }
+            BSON_APPEND_ARRAY(&obs_doc, "languages", &langs);
+            bson_destroy(&langs);
+            BSON_APPEND_UTF8(&obs_doc, "backend", payload.document.backend.c_str());
+            BSON_APPEND_UTF8(&obs_doc, "backend_version", payload.document.backend_version.c_str());
+            BSON_APPEND_INT32(&obs_doc, "chunk_count", payload.document.chunk_count);
+            if (payload.document.has_ocr_confidence) {
+                BSON_APPEND_DOUBLE(&obs_doc, "ocr_confidence", payload.document.ocr_confidence);
+            }
+            BSON_APPEND_DOCUMENT(&oset, "document", &obs_doc);
+        }
         bson_t oupd = BSON_INITIALIZER;
         BSON_APPEND_DOCUMENT(&oupd, "$setOnInsert", &oset);
         bson_t oopts = BSON_INITIALIZER;
         BSON_APPEND_BOOL(&oopts, "upsert", true);
         ok = mongoc_collection_update_one(obs, &oq, &oupd, &oopts, nullptr, &error);
         bson_destroy(&oq);
+        bson_destroy(&obs_doc);
         bson_destroy(&oset);
         bson_destroy(&oupd);
         bson_destroy(&oopts);
@@ -696,6 +760,76 @@ bool store_ingest(
             fail_created_run(h, run_id, used_lease, "resolve source");
             if (err) *err = "failed to resolve immutable source";
             return false;
+        }
+        if (!payload.chunks.empty()) {
+            mongoc_collection_t* chunks = coll(h, "chunks");
+            for (const SourceChunk& ch : payload.chunks) {
+                bson_t fq = BSON_INITIALIZER;
+                BSON_APPEND_UTF8(&fq, "source_hash", source_hash.c_str());
+                BSON_APPEND_UTF8(&fq, "extractor_id", extractor.c_str());
+                BSON_APPEND_UTF8(&fq, "extractor_version", payload.extractor_version.c_str());
+                BSON_APPEND_UTF8(&fq, "schema_version", payload.schema_version.c_str());
+                BSON_APPEND_INT32(&fq, "chunk_index", ch.index);
+                bson_t setc = BSON_INITIALIZER;
+                BSON_APPEND_UTF8(&setc, "source_hash", source_hash.c_str());
+                BSON_APPEND_UTF8(&setc, "extractor_id", extractor.c_str());
+                BSON_APPEND_UTF8(&setc, "extractor_version", payload.extractor_version.c_str());
+                BSON_APPEND_UTF8(&setc, "schema_version", payload.schema_version.c_str());
+                BSON_APPEND_INT32(&setc, "chunk_index", ch.index);
+                BSON_APPEND_INT32(&setc, "start_byte", ch.start_byte);
+                BSON_APPEND_INT32(&setc, "end_byte", ch.end_byte);
+                BSON_APPEND_UTF8(&setc, "text", ch.text.c_str());
+                BSON_APPEND_INT32(&setc, "chunk_count", ch.count);
+                if (ch.has_confidence) BSON_APPEND_DOUBLE(&setc, "confidence", ch.confidence);
+                bson_t cupd = BSON_INITIALIZER;
+                BSON_APPEND_DOCUMENT(&cupd, "$setOnInsert", &setc);
+                bson_t copts = BSON_INITIALIZER;
+                BSON_APPEND_BOOL(&copts, "upsert", true);
+                bool cok = mongoc_collection_update_one(chunks, &fq, &cupd, &copts, nullptr, &error);
+                bson_destroy(&fq);
+                bson_destroy(&setc);
+                bson_destroy(&cupd);
+                bson_destroy(&copts);
+                if (!cok && error.code != 11000) {
+                    mongoc_collection_destroy(chunks);
+                    fail_created_run(h, run_id, used_lease, "stage chunks");
+                    return bson_ok(false, error, err, "stage source chunks");
+                }
+                bson_t rq = BSON_INITIALIZER;
+                BSON_APPEND_UTF8(&rq, "source_hash", source_hash.c_str());
+                BSON_APPEND_UTF8(&rq, "extractor_id", extractor.c_str());
+                BSON_APPEND_UTF8(&rq, "extractor_version", payload.extractor_version.c_str());
+                BSON_APPEND_UTF8(&rq, "schema_version", payload.schema_version.c_str());
+                BSON_APPEND_INT32(&rq, "chunk_index", ch.index);
+                mongoc_cursor_t* ccur = mongoc_collection_find_with_opts(chunks, &rq, nullptr, nullptr);
+                const bson_t* stored = nullptr;
+                bool got = mongoc_cursor_next(ccur, &stored);
+                std::string stored_text;
+                int stored_start = -1, stored_end = -1, stored_count = -1;
+                if (got) {
+                    iter_utf8(stored, "text", &stored_text);
+                    bson_iter_t cit;
+                    if (bson_iter_init_find(&cit, stored, "start_byte") && BSON_ITER_HOLDS_INT32(&cit)) {
+                        stored_start = bson_iter_int32(&cit);
+                    }
+                    if (bson_iter_init_find(&cit, stored, "end_byte") && BSON_ITER_HOLDS_INT32(&cit)) {
+                        stored_end = bson_iter_int32(&cit);
+                    }
+                    if (bson_iter_init_find(&cit, stored, "chunk_count") && BSON_ITER_HOLDS_INT32(&cit)) {
+                        stored_count = bson_iter_int32(&cit);
+                    }
+                }
+                mongoc_cursor_destroy(ccur);
+                bson_destroy(&rq);
+                if (!got || stored_text != ch.text || stored_start != ch.start_byte || stored_end != ch.end_byte ||
+                    stored_count != ch.count) {
+                    mongoc_collection_destroy(chunks);
+                    fail_created_run(h, run_id, used_lease, "chunk conflict");
+                    if (err) *err = "stored source chunk conflicts with immutable chunk content";
+                    return false;
+                }
+            }
+            mongoc_collection_destroy(chunks);
         }
 
         bson_t run_q = BSON_INITIALIZER;

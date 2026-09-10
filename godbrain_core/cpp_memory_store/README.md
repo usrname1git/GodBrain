@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 10)
+# C++ Alexandria Memory Store (cut 11)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays. This tree is the C++ replacement; Start/Heal still launch Go until this
@@ -48,6 +48,10 @@ Cut 9: search citations load bounded `sources` and emit `evidence` spans
 Cut 10: `rag-eval.exe` offline hybrid fixture (`-corpus` path, default Go
 testdata). `-live` still uses Go. Thresholds match Go (Recall/MRR/nDCG ≥ 0.90,
 citation 1.0, no leakage).
+
+Cut 11: ingest `document` + `chunks` (Local-Document-Adapter). Same gates as Go:
+metadata and chunks together, `content_sha256` of `raw_transcript`, contiguous
+UTF-8 byte ranges, forbidden-secret scan, immutable `chunks` collection.
 
 Start/Heal still launch Go.
 
