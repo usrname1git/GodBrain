@@ -214,6 +214,7 @@ foreach ($n in $script:KitFiles) {
     Copy-Item -LiteralPath (Join-Path $script:Ps1Dir $n) -Destination (Join-Path $ps1Dest $n) -Force
 }
 Copy-Item -LiteralPath (Join-Path $script:Ps1Dir "Reclaim11.ps1") -Destination (Join-Path $ps1Dest "Reclaim11.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $script:Ps1Dir "rustdesk.ps1") -Destination (Join-Path $ps1Dest "rustdesk.ps1") -Force
 $uiSrc = Join-Path $reclaim "ui"
 if (Test-Path -LiteralPath $uiSrc) {
     $uiDest = Join-Path $kitDest "ui"

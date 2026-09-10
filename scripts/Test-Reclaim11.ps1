@@ -1509,8 +1509,18 @@ if ($launchSrc -notmatch "BtnNoobRustDesk") {
 if ($isoSrc -match "rustdesk\.ps1") {
     throw "Test-Reclaim11: ISO builder must not pack rustdesk.ps1"
 }
-if ($usbSrc -match "rustdesk\.ps1") {
-    throw "Test-Reclaim11: USB writer must not pack rustdesk.ps1"
+$usbKitFiles = [regex]::Match($usbSrc, '(?s)\$script:KitFiles = @\((.*?)\)')
+if (-not $usbKitFiles.Success) {
+    throw "Test-Reclaim11: USB writer missing KitFiles"
+}
+if ($usbKitFiles.Groups[1].Value -match "rustdesk") {
+    throw "Test-Reclaim11: USB PE KitFiles must not include rustdesk.ps1"
+}
+if ($usbSrc -notmatch 'Join-Path \$script:Ps1Dir "rustdesk\.ps1"') {
+    throw "Test-Reclaim11: USB in-Windows kit must copy rustdesk.ps1"
+}
+if ($usbSrc -notmatch 'Join-Path \$ps1Dest "rustdesk\.ps1"') {
+    throw "Test-Reclaim11: USB in-Windows rustdesk.ps1 must land in ps1Dest"
 }
 if ($offlineSrc -match "rustdesk\.ps1") {
     throw "Test-Reclaim11: PE kit drop must not include rustdesk.ps1"
@@ -1530,6 +1540,12 @@ if ($rdSrc -match '--config') {
 }
 if ($rdSrc -match 'releases/latest') {
     throw "Test-Reclaim11: rustdesk.ps1 must not use /releases/latest"
+}
+if ($rdSrc -match '(?s)Get-Reclaim11RustDeskExe\s*\r?\n\s*if \(-not \$installed\)') {
+    throw "Test-Reclaim11: rustdesk must not skip --silent-install when exe exists"
+}
+if ($rdSrc -notmatch '--silent-install') {
+    throw "Test-Reclaim11: rustdesk live path must --silent-install the hashed pin"
 }
 if ($rdSrc -notmatch "Show-Reclaim11RustDeskChooser") {
     throw "Test-Reclaim11: rustdesk.ps1 missing Expert chooser"

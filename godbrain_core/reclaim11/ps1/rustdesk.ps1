@@ -250,22 +250,20 @@ function Install-Reclaim11RustDesk {
         }
     }
 
-    $installed = Get-Reclaim11RustDeskExe
+    $p = Start-Process -FilePath $exePath -ArgumentList @("--silent-install") -Wait -PassThru -WindowStyle Hidden
+    $code = [int]$p.ExitCode
+    if ($code -ne 0) {
+        throw ("Install-Reclaim11RustDesk: --silent-install exit {0}" -f $code)
+    }
+    $deadline = [datetime]::UtcNow.AddSeconds(90)
+    $installed = $null
+    do {
+        $installed = Get-Reclaim11RustDeskExe
+        if ($installed) { break }
+        Start-Sleep -Milliseconds 400
+    } while ([datetime]::UtcNow -lt $deadline)
     if (-not $installed) {
-        $p = Start-Process -FilePath $exePath -ArgumentList @("--silent-install") -Wait -PassThru -WindowStyle Hidden
-        $code = [int]$p.ExitCode
-        if ($code -ne 0) {
-            throw ("Install-Reclaim11RustDesk: --silent-install exit {0}" -f $code)
-        }
-        $deadline = [datetime]::UtcNow.AddSeconds(90)
-        do {
-            $installed = Get-Reclaim11RustDeskExe
-            if ($installed) { break }
-            Start-Sleep -Milliseconds 400
-        } while ([datetime]::UtcNow -lt $deadline)
-        if (-not $installed) {
-            throw "Install-Reclaim11RustDesk: rustdesk.exe missing after --silent-install"
-        }
+        throw "Install-Reclaim11RustDesk: rustdesk.exe missing after --silent-install"
     }
 
     if ($InstallService) {
