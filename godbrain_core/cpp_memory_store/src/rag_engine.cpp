@@ -702,6 +702,61 @@ HttpResponse handle_health(RagEngine* e) {
     return json_status(h.ready ? 200 : 503, health_json(h));
 }
 
+bool same_corpus_counts(const RagCorpusCounts& a, const RagCorpusCounts& b) {
+    return a.committed_runs == b.committed_runs && a.committed_nodes == b.committed_nodes &&
+           a.committed_links == b.committed_links && a.projected_nodes == b.projected_nodes &&
+           a.projected_links == b.projected_links && a.projected_embeddings == b.projected_embeddings;
+}
+
+bool same_semantic_capability(const HealthSnap& a, const HealthSnap& b) {
+    if (a.semantic_configured != b.semantic_configured || a.semantic_available != b.semantic_available ||
+        a.semantic_required != b.semantic_required || a.degradation != b.degradation) {
+        return false;
+    }
+    if (a.meta.has_embedding != b.meta.has_embedding) return false;
+    if (!a.meta.has_embedding) return true;
+    return embedding_identity_equal(a.meta.embedding, b.meta.embedding);
+}
+
+bool same_optional_millis(bool has_a, int64_t a, bool has_b, int64_t b) {
+    if (has_a != has_b) return false;
+    return !has_a || a == b;
+}
+
+bool valid_response_capability(
+    const HealthSnap& health, const std::string& retrieval, bool hybrid, const std::string& degradation) {
+    if (retrieval == "lexical") return !hybrid;
+    if (retrieval == "hybrid") {
+        return health.semantic_available && health.meta.has_embedding && hybrid && degradation.empty();
+    }
+    return false;
+}
+
+bool same_search_snapshot(
+    const HealthSnap& before,
+    const HealthSnap& after,
+    const std::string& retrieval,
+    bool hybrid,
+    const std::string& degradation) {
+    return before.ready && after.ready && before.mongo == "ok" && after.mongo == "ok" &&
+           !before.meta.active_generation.empty() &&
+           before.meta.active_generation == after.meta.active_generation &&
+           before.meta.building_generation == after.meta.building_generation &&
+           !before.meta.projection_version.empty() &&
+           before.meta.projection_version == after.meta.projection_version &&
+           before.meta.projection_schema == after.meta.projection_schema &&
+           before.meta.indexer_version == after.meta.indexer_version &&
+           before.retrieval_mode == after.retrieval_mode && same_semantic_capability(before, after) &&
+           same_corpus_counts(before.counts, after.counts) &&
+           same_optional_millis(
+               before.latest_committed, before.committed_at, after.latest_committed, after.committed_at) &&
+           same_optional_millis(
+               before.latest_projected, before.projected_at, after.latest_projected, after.projected_at) &&
+           same_optional_millis(
+               before.latest_embedded, before.embedded_at, after.latest_embedded, after.embedded_at) &&
+           valid_response_capability(before, retrieval, hybrid, degradation);
+}
+
 std::string utf8_snip(const std::string& content, const std::vector<std::string>& tokens, int max_bytes) {
     if (max_bytes <= 0 || content.empty()) return "";
     if (static_cast<int>(content.size()) <= max_bytes) return content;
@@ -1052,6 +1107,8 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         return api_error(400, "retrieval_mode must be auto, lexical, or hybrid");
     }
 
+    // Do not return hits if generation or corpus counts moved before after-health.
+    for (int attempt = 0; attempt < 2; ++attempt) {
     HealthSnap before;
     std::string herr;
     if (!fill_health(e, &before, &herr) || !before.ready) {
@@ -1349,7 +1406,14 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     }
     o << "],\"context_bytes_used\":" << used << ",\"untrusted_data_notice\":\"" << json_escape(kNotice)
       << "\"}";
-    return json_status(200, o.str());
+    HealthSnap after;
+    std::string aerr;
+    if (!fill_health(e, &after, &aerr)) return api_error(503, "search_unavailable");
+    if (same_search_snapshot(before, after, retrieval, hybrid, degradation)) {
+        return json_status(200, o.str());
+    }
+    }
+    return api_error(503, "search_unavailable");
 }
 
 std::string graph_label(const std::string& content, const std::string& fallback) {
