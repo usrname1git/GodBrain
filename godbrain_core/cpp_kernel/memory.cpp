@@ -504,6 +504,8 @@ std::string resolve_memory_store() {
     if (!override_path.empty()) return override_path;
     const std::string dir = exe_dir();
     const std::string candidates[] = {
+        dir + "\\..\\..\\build\\cpp_memory_store\\Release\\memory-store.exe",
+        dir + "\\..\\cpp_memory_store\\memory-store.exe",
         dir + "\\memory-store.exe",
         dir + "\\..\\memory_store\\memory-store.exe",
         dir + "\\..\\..\\godbrain_core\\memory_store\\memory-store.exe",

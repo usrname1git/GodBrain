@@ -582,18 +582,19 @@ the operator `message`, never the quote. Loopback ask without
 Galaxy: `scripts\Ask-GodBrain.ps1` POSTs `/api/chat`. Chat generate stays
 loopback-only. `/idea` and `/ideas` are the idea category.
 
-`godbrain_core/memory_store/` is the active Alexandria write boundary. It
-validates provenance and ingestion state, then stores immutable sources
-and knowledge nodes plus append-only run-to-node links in MongoDB.
+`godbrain_core/cpp_memory_store/` is the desk Alexandria write/retrieval
+boundary (Start/Heal prefer `build/cpp_memory_store/Release`). Go
+`godbrain_core/memory_store/` stays as rollback. Both validate provenance
+and ingestion state, then store immutable sources and knowledge nodes plus
+append-only run-to-node links in MongoDB.
 
-`godbrain_core/memory_store/cmd/rag-service/` is the canonical committed
-Golden Record retrieval boundary on `127.0.0.1:8084`. It searches the
-generation-addressed `rag_documents` projection, optionally fuses bounded
-generation-addressed local embeddings, resolves citations through
-append-only `rag_provenance`, and exposes a bounded graph/document read
-for Galaxy. The C++ and Go routers fail closed when this service is
-unavailable, unready, or invalid. The experimental Rust router still uses
-search-only and returns `410` for `/api/graph` and `/api/node`.
+`rag-service.exe` on `127.0.0.1:8084` searches the generation-addressed
+`rag_documents` projection, optionally fuses bounded generation-addressed
+local embeddings, resolves citations through append-only `rag_provenance`,
+and exposes a bounded graph/document read for Galaxy. The C++ and Go
+routers fail closed when this service is unavailable, unready, or invalid.
+The experimental Rust router still uses search-only and returns `410` for
+`/api/graph` and `/api/node`.
 
 `LLM/colibri_LLM/` is a substantial nested Colibri engine project. Treat
 it as an interchangeable inference implementation, not as a protocol

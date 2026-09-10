@@ -37,6 +37,17 @@ function Write-Log([string]$Message) {
     Write-Host $line
 }
 
+function Resolve-AlexandriaExe([string]$Name) {
+    foreach ($p in @(
+            (Join-Path $RepoRoot "build\cpp_memory_store\Release\$Name"),
+            (Join-Path $RepoRoot "godbrain_core\cpp_memory_store\$Name"),
+            (Join-Path $RepoRoot "godbrain_core\memory_store\$Name")
+        )) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return Join-Path $RepoRoot "godbrain_core\memory_store\$Name"
+}
+
 function Test-Port([string]$HostName, [int]$Port) {
     try {
         $client = New-Object System.Net.Sockets.TcpClient
@@ -235,10 +246,11 @@ if (-not $env:MONGODB_URI) {
     $env:MONGODB_URI = "mongodb://127.0.0.1:27017"
 }
 
-$rag = Join-Path $RepoRoot "godbrain_core\memory_store\rag-service.exe"
+$rag = Resolve-AlexandriaExe "rag-service.exe"
 if (Test-Port "127.0.0.1" 8084) {
     Write-Log "skip rag-service (:8084 already listening)"
 } else {
+    Write-Log "rag-service $rag"
     Start-LoggedProcess -Name "rag-service" -FilePath $rag `
         -WorkingDirectory (Split-Path $rag -Parent)
 }

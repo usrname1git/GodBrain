@@ -6,8 +6,15 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Building Alexandria Pipeline..."
 
+# 0. C++ store (desk default). Go build below remains rollback.
+Write-Host "Building C++ memory-store / rag-service / rag-rebuild..."
+cmake -S "$RepoRoot\godbrain_core\cpp_memory_store" -B "$RepoRoot\build\cpp_memory_store" -DBUILD_TESTING=ON
+if ($LASTEXITCODE -ne 0) { throw "C++ memory-store cmake failed" }
+cmake --build "$RepoRoot\build\cpp_memory_store" --config Release
+if ($LASTEXITCODE -ne 0) { throw "C++ memory-store build failed" }
+
 # 1. Build Memory Store and canonical retrieval tools
-Write-Host "Building Memory Store and RAG tools (Go)..."
+Write-Host "Building Memory Store and RAG tools (Go, rollback)..."
 Push-Location "$RepoRoot\godbrain_core\memory_store"
 try {
     go build -o memory-store.exe ./cmd/memory-store

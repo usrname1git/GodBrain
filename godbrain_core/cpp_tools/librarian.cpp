@@ -35,6 +35,23 @@ static std::string get_exe_dir() {
     return pos == std::string::npos ? "" : full.substr(0, pos);
 }
 
+static bool file_exists_path(const std::string& path) {
+    DWORD attr = GetFileAttributesA(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+static std::string resolve_memory_store_exe(const std::string& exe_dir) {
+    const std::string candidates[] = {
+        exe_dir + "\\..\\..\\build\\cpp_memory_store\\Release\\memory-store.exe",
+        exe_dir + "\\..\\cpp_memory_store\\memory-store.exe",
+        exe_dir + "\\..\\memory_store\\memory-store.exe",
+    };
+    for (const auto& candidate : candidates) {
+        if (file_exists_path(candidate)) return candidate;
+    }
+    return exe_dir + "\\..\\memory_store\\memory-store.exe";
+}
+
 static std::vector<char> child_environment_with(const std::string& name, const std::string& value) {
     LPCH raw_environment = GetEnvironmentStringsA();
     if (!raw_environment) {
@@ -1117,7 +1134,7 @@ int main(int argc, char* argv[]) {
     LibrarianConfig config{
         env_llm ? std::string(env_llm) : exe_dir + "\\..\\..\\LLM\\colibri_LLM\\c\\colibri.exe",
         env_prompt ? std::string(env_prompt) : exe_dir + "\\prompts\\hermes_v1.json",
-        env_mongo ? std::string(env_mongo) : exe_dir + "\\..\\memory_store\\memory-store.exe",
+        env_mongo ? std::string(env_mongo) : resolve_memory_store_exe(exe_dir),
         load_mouth_model_id(),
         "N/A",
         env_or("GODBRAIN_MOUTH_HOST", "127.0.0.1"),

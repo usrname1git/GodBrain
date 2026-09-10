@@ -105,7 +105,10 @@ if ($Record) {
     if ([string]::IsNullOrWhiteSpace($OriginNodeID)) {
         throw "Verify-SkillLab -Record needs -OriginNodeID (the candidate skill node)"
     }
-    $store = Join-Path $RepoRoot "godbrain_core\memory_store\memory-store.exe"
+    $store = Join-Path $RepoRoot "build\cpp_memory_store\Release\memory-store.exe"
+    if (-not (Test-Path -LiteralPath $store)) {
+        $store = Join-Path $RepoRoot "godbrain_core\memory_store\memory-store.exe"
+    }
     if (-not (Test-Path -LiteralPath $store)) {
         throw "Verify-SkillLab: missing $store"
     }
