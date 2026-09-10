@@ -219,6 +219,26 @@ std::string read_file_limited(const std::string& path, size_t cap, bool* truncat
     return data;
 }
 
+bool dest_on_disk(const std::string& path, bool* exists, uint64_t* size) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad)) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {
+            *exists = false;
+            *size = 0;
+            return true;
+        }
+        return false;
+    }
+    if ((fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) return false;
+    *exists = true;
+    ULARGE_INTEGER sz;
+    sz.LowPart = fad.nFileSizeLow;
+    sz.HighPart = fad.nFileSizeHigh;
+    *size = sz.QuadPart;
+    return true;
+}
+
 std::string keccak_hex(const std::string& body) {
     uint8_t hash[32] = {};
     Keccak256::getHash(reinterpret_cast<const uint8_t*>(body.data()), body.size(), hash);
@@ -228,7 +248,7 @@ std::string keccak_hex(const std::string& body) {
     return out.str();
 }
 
-// Write next to path.tmp then replace. Dest is never truncated on failure.
+// Dest is untouched unless replace succeeds.
 bool commit_file_bytes(const std::string& path, const std::string& next, std::string* err) {
     const std::string tmp = path + ".gb-tmp";
     {
@@ -246,8 +266,9 @@ bool commit_file_bytes(const std::string& path, const std::string& next, std::st
         }
     }
     if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD e = GetLastError();
         DeleteFileA(tmp.c_str());
-        if (err) *err = "replace failed err=" + std::to_string(GetLastError());
+        if (err) *err = "replace failed err=" + std::to_string(e);
         return false;
     }
     return true;
@@ -1874,9 +1895,24 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
                 const size_t slash = full.find_last_of("\\/");
                 if (slash != std::string::npos) ensure_dir(full.substr(0, slash));
                 const bool append = contains_ci(c.args, "append");
+                bool exists = false;
+                uint64_t on_disk = 0;
+                if (!dest_on_disk(full, &exists, &on_disk)) {
+                    out << "write_local_file: dest unread " << full << "\n";
+                    continue;
+                }
                 bool trunc = false;
                 const std::string original = read_file_limited(full, kMaxWriteBytes, &trunc);
-                if (trunc) {
+                if (append) {
+                    if (exists && on_disk > kMaxWriteBytes) {
+                        out << "write_local_file: file too large\n";
+                        continue;
+                    }
+                    if (exists && (trunc || static_cast<uint64_t>(original.size()) != on_disk)) {
+                        out << "write_local_file: dest unread\n";
+                        continue;
+                    }
+                } else if (trunc) {
                     out << "write_local_file: file too large\n";
                     continue;
                 }
