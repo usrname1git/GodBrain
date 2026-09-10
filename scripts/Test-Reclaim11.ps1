@@ -105,6 +105,15 @@ if ($xamlSrc -notmatch "hide WU in Settings") {
 if ($xamlSrc -notmatch "Latency bake") {
     throw "Test-Reclaim11: expert ACTIONS must tick Latency bake"
 }
+if ($xamlSrc -notmatch 'x:Name="BtnRustDesk"') {
+    throw "Test-Reclaim11: expert door must have RUSTDESK button"
+}
+if ($xamlSrc -notmatch "INSTALL RUSTDESK TO GET REMOTE SUPPORT") {
+    throw "Test-Reclaim11: noob door must offer Install RustDesk to get remote support"
+}
+if ($xamlSrc -match '(?s)x:Name="PanelNoob".*PasswordBox') {
+    throw "Test-Reclaim11: noob panel must not have a PasswordBox"
+}
 if ($xamlSrc -notmatch "MUST") {
     throw "Test-Reclaim11: door must say MUST boot WinPE for Defender"
 }
@@ -348,6 +357,22 @@ if ($cat.gates.stub_wdboot_if_secure_boot -ne "refuse") {
 }
 if ($cat.gates.prep_media -ne "winpe-iso") { throw "Test-Reclaim11: prep_media is winpe-iso" }
 if ($cat.winpe_receipt -ne "Windows\reclaim11-winpe.log") { throw "Test-Reclaim11: winpe receipt path" }
+if (-not $cat.PSObject.Properties["rustdesk"]) { throw "Test-Reclaim11: catalog missing rustdesk pin" }
+if ([string]$cat.rustdesk.github_repo -ne "rustdesk/rustdesk") {
+    throw "Test-Reclaim11: rustdesk github_repo must be rustdesk/rustdesk"
+}
+if ([string]$cat.rustdesk.tag -eq "latest" -or [string]::IsNullOrWhiteSpace([string]$cat.rustdesk.tag)) {
+    throw "Test-Reclaim11: rustdesk tag must be a named release"
+}
+if ([string]$cat.rustdesk.asset -notmatch '^rustdesk-.+-x86_64\.exe$') {
+    throw "Test-Reclaim11: rustdesk asset must be x86_64.exe"
+}
+if ([string]$cat.rustdesk.sha256 -notmatch '^[0-9a-f]{64}$') {
+    throw "Test-Reclaim11: rustdesk sha256 must be 64 hex chars"
+}
+if ([string]$cat.rustdesk.servers -ne "public-official") {
+    throw "Test-Reclaim11: rustdesk servers must be public-official"
+}
 $bloat = @($cat.appx_bloat)
 foreach ($need in @("Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp", "5319275A.WhatsAppDesktop", "7EE7776C.LinkedInforWindows", "Microsoft.BingWeather", "Microsoft.Todos", "MicrosoftCorporationII.QuickAssist", "Microsoft.BingNews")) {
     if ($bloat -notcontains $need) { throw "Test-Reclaim11: appx_bloat missing $need" }
@@ -413,6 +438,15 @@ if ($readme -notmatch 'hides Windows Update in Settings') {
 if ($readme -notmatch 'Recommended') {
     throw "Test-Reclaim11: README must recommend VM or TEST first"
 }
+if ($readme -notmatch 'Official public RustDesk servers') {
+    throw "Test-Reclaim11: README must name official public RustDesk servers"
+}
+if ($readme -notmatch 'one-time codes only') {
+    throw "Test-Reclaim11: README must say noob RustDesk is one-time codes only"
+}
+if ($readme -notmatch 'Password is never logged') {
+    throw "Test-Reclaim11: README must say RustDesk password is never logged"
+}
 if ($readme -match 'W11_STORAGE|One WPF window|auto-crown|Never BFE') {
     throw "Test-Reclaim11: README must not carry host-specific or Never-BFE slogan copy"
 }
@@ -477,6 +511,8 @@ if (-not `$w.FindName('BtnNic')) { throw 'no BtnNic' }
 if (-not `$w.FindName('BtnLatency')) { throw 'no BtnLatency' }
 if (-not `$w.FindName('BtnDoorNoob')) { throw 'no BtnDoorNoob' }
 if (-not `$w.FindName('BtnDoorExpert')) { throw 'no BtnDoorExpert' }
+if (-not `$w.FindName('BtnRustDesk')) { throw 'no BtnRustDesk' }
+if (-not `$w.FindName('BtnNoobRustDesk')) { throw 'no BtnNoobRustDesk' }
 if (-not `$w.FindName('PanelDoor')) { throw 'no PanelDoor' }
 if (-not `$w.FindName('PanelNoob')) { throw 'no PanelNoob' }
 if (-not `$w.FindName('PanelExpert')) { throw 'no PanelExpert' }
@@ -625,7 +661,7 @@ if ($offlineSrc -notmatch 'cannot read EditionID') {
 if ($offlineSrc -notmatch 'EditionId') {
     throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "install_pwsh.ps1", "elevate.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "install_pwsh.ps1", "elevate.ps1", "rustdesk.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
@@ -740,7 +776,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/Reclaim11.vbs", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/Reclaim11.vbs", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/ps1/rustdesk.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
@@ -963,6 +999,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\latency_bake.ps1"))
 }
 if (-not (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\install_pwsh.ps1"))) {
     throw "Test-Reclaim11: PE must drop C:\\reclaim11\\install_pwsh.ps1"
+}
+if (Test-Path -LiteralPath (Join-Path $fx25 "reclaim11\rustdesk.ps1")) {
+    throw "Test-Reclaim11: PE must not drop rustdesk.ps1"
 }
 $ss = [IO.File]::ReadAllBytes((Join-Path $fx25Win "System32\smartscreen.exe"))
 if ($ss[0] -ne 0x4D -or $ss[1] -ne 0x5A) {
@@ -1461,7 +1500,79 @@ if ($launchSrc -notmatch "BtnReaper") {
 if ($launchSrc -notmatch "BtnLatency") {
     throw "Test-Reclaim11: GUI must wire BtnLatency"
 }
+if ($launchSrc -notmatch "BtnRustDesk") {
+    throw "Test-Reclaim11: GUI must wire BtnRustDesk"
+}
+if ($launchSrc -notmatch "BtnNoobRustDesk") {
+    throw "Test-Reclaim11: GUI must wire BtnNoobRustDesk"
+}
+if ($isoSrc -match "rustdesk\.ps1") {
+    throw "Test-Reclaim11: ISO builder must not pack rustdesk.ps1"
+}
+if ($usbSrc -match "rustdesk\.ps1") {
+    throw "Test-Reclaim11: USB writer must not pack rustdesk.ps1"
+}
+if ($offlineSrc -match "rustdesk\.ps1") {
+    throw "Test-Reclaim11: PE kit drop must not include rustdesk.ps1"
+}
 if ($isoSrc -match "\\ctt") { throw "Test-Reclaim11: ISO builder must not copy a ctt folder" }
+
+. (Join-Path $ps1 "rustdesk.ps1")
+$rdSrc = Get-Content -LiteralPath (Join-Path $ps1 "rustdesk.ps1") -Raw -Encoding UTF8
+if ($rdSrc -match 'irm\s*\||Invoke-Expression') {
+    throw "Test-Reclaim11: rustdesk.ps1 must not irm/iex"
+}
+if ($rdSrc -notmatch "WinPE MiniNT refused") {
+    throw "Test-Reclaim11: rustdesk.ps1 must refuse MiniNT"
+}
+if ($rdSrc -match '--config') {
+    throw "Test-Reclaim11: rustdesk.ps1 must not mention --config"
+}
+if ($rdSrc -match 'releases/latest') {
+    throw "Test-Reclaim11: rustdesk.ps1 must not use /releases/latest"
+}
+if ($rdSrc -notmatch "Show-Reclaim11RustDeskChooser") {
+    throw "Test-Reclaim11: rustdesk.ps1 missing Expert chooser"
+}
+if ($rdSrc -notmatch "Permanent password: I type it") {
+    throw "Test-Reclaim11: Expert chooser must offer typed password"
+}
+if ($rdSrc -notmatch "Generate a password and show it once") {
+    throw "Test-Reclaim11: Expert chooser must offer generate-once"
+}
+if ($rdSrc -notmatch "No permanent password \(one-time only\)") {
+    throw "Test-Reclaim11: Expert chooser must offer one-time"
+}
+if ($launchSrc -notmatch "PasswordMode one-time") {
+    throw "Test-Reclaim11: noob RustDesk door must be one-time"
+}
+$rdPlan = Get-Reclaim11RustDeskPlan -Root $root
+if ($rdPlan.url -notmatch [regex]::Escape("releases/download/$($rdPlan.tag)/")) {
+    throw "Test-Reclaim11: rustdesk URL must use the pinned tag"
+}
+if ($rdPlan.url -match "latest") { throw "Test-Reclaim11: rustdesk URL must not say latest" }
+$dryRd = Install-Reclaim11RustDesk -Root $root -WhatIf -PasswordMode one-time -InstallService
+if (-not [bool]$dryRd.what_if) { throw "Test-Reclaim11: rustdesk -T must set what_if" }
+if ([bool]$dryRd.mutate) { throw "Test-Reclaim11: rustdesk -T must not mutate" }
+if ([string]$dryRd.servers -ne "public-official") { throw "Test-Reclaim11: rustdesk -T servers" }
+if ([string]$dryRd.password_mode -ne "one-time") { throw "Test-Reclaim11: rustdesk -T mode" }
+if ($dryRd.PSObject.Properties["password"]) {
+    throw "Test-Reclaim11: rustdesk -T must not carry a password property"
+}
+if ($dryRd.PSObject.Properties["one_shot_password"]) {
+    throw "Test-Reclaim11: rustdesk -T must not carry one_shot_password"
+}
+$rdJson = $dryRd | ConvertTo-Json -Depth 6
+if ($rdJson -match '"password"\s*:') {
+    throw "Test-Reclaim11: rustdesk -T JSON must not include a password field"
+}
+$rdReport = Format-Reclaim11TestReport -Plan $dryRd -Title "rustdesk"
+if ($rdReport -notmatch "public-official") {
+    throw "Test-Reclaim11: rustdesk -T report must name public-official"
+}
+if ($rdReport -notmatch "no --password \(one-time only\)") {
+    throw "Test-Reclaim11: rustdesk -T report must say no --password"
+}
 
 . (Join-Path $ps1 "elevate.ps1")
 $elSrc = Get-Content -LiteralPath (Join-Path $ps1 "elevate.ps1") -Raw -Encoding UTF8
