@@ -305,6 +305,14 @@ int main() {
     pass &= expect(pyfailr.find("exit=7") != std::string::npos, "python exit=7");
     pass &= expect(!fail_ok, "execute_calls all_ok false on exit 7");
 
+    bool miss_ok = true;
+    const std::string miss_block =
+        "*** TOOL\nname: search_local\npath: C:\\Temp\\GitHub\\godbrain-tool-test.txt\n"
+        "args: content:zzzx-no-match-gb124\n*** END\n";
+    const std::string missr = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(miss_block), &miss_ok);
+    pass &= expect(miss_ok, "search_local no-match does not fail hop");
+
     const std::string js =
         "*** TOOL\nname: run_node\n<<<<\nconsole.log('node-ok')\n>>>>\n*** END\n";
     const std::string jsres = local_tools::run_tools_from_text(js);

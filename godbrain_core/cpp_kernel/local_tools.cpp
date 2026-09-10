@@ -1647,10 +1647,12 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
 std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
     std::ostringstream out;
     bool ok = true;
-    auto runp = [&](const std::string& exe, const std::string& args, DWORD to) {
-        const ProcessResult r = run_process(exe, args, to);
-        if (r.exit != 0 || r.timeout) ok = false;
+    auto take_proc = [&](const ProcessResult& r, int max_ok_exit) {
+        if (r.timeout || r.exit > max_ok_exit) ok = false;
         return format_process(r);
+    };
+    auto runp = [&](const std::string& exe, const std::string& args, DWORD to) {
+        return take_proc(run_process(exe, args, to), 0);
     };
     const size_t cap = yolo_active() ? 16u : 8u;
     size_t n = 0;
@@ -1901,7 +1903,8 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
                     const std::string rargs =
                         "-n --max-count 20 --max-filesize 512K -g !.git " +
                         quote_path(needle) + " " + quote_path(full);
-                    out << runp(rg, rargs, kToolTimeoutMs) << "\n";
+                    out << take_proc(run_process(rg, rargs, kToolTimeoutMs), 1)
+                        << "\n";
                 } else {
                     search_dir(full, needle, 0, depth, content, seen, hits, out);
                     out << "hits=" << hits << " scanned=" << seen << "\n";

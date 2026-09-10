@@ -1716,11 +1716,12 @@ static void save_chain(const std::string& goal, const std::string& ledger,
     std::string id = prev.value("id", "");
     const std::string prev_goal = prev.value("goal", "");
     const std::string prev_status = prev.value("status", "");
-    if (prev_status == "cancelled") {
+    const bool same_flight =
+        !id.empty() && (goal == prev_goal || is_continue_command(goal));
+    if (prev_status == "cancelled" && same_flight) {
         return;
     }
-    const bool reuse = !id.empty() && prev_status == "running" &&
-                       (goal == prev_goal || is_continue_command(goal));
+    const bool reuse = prev_status == "running" && same_flight;
     if (!reuse) id = mint_chain_id(goal);
     std::string status = "running";
     if (!answer.empty()) status = hops_ok ? "done" : "failed";
@@ -1749,8 +1750,11 @@ static void save_chain(const std::string& goal, const std::string& ledger,
                                    std::to_string(hops));
 }
 
-static bool chain_is_cancelled() {
-    return load_chain().value("status", "") == "cancelled";
+static bool chain_is_cancelled(const std::string& goal) {
+    const json ch = load_chain();
+    if (ch.value("status", "") != "cancelled") return false;
+    const std::string prev_goal = ch.value("goal", "");
+    return goal == prev_goal || is_continue_command(goal);
 }
 
 static json load_chain() {
@@ -2242,7 +2246,7 @@ static void handle_cancel_chain(const httplib::Request&, httplib::Response& res)
         write_chain_glance(res, json::object());
         return;
     }
-    if (body.value("status", "") != "cancelled") {
+    if (body.value("status", "") == "running") {
         body["status"] = "cancelled";
         body["at"] = utc_stamp();
         const std::string path = chain_path();
@@ -3116,13 +3120,21 @@ std::string run_colibri_serve(
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
     int chain_hops = 0;
+    const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
     bool hops_ok = true;
+    {
+        const json prev_ch = load_chain();
+        if (prev_ch.value("status", "") == "running" &&
+            (chain_goal == prev_ch.value("goal", "") ||
+             is_continue_command(chain_goal))) {
+            hops_ok = prev_ch.value("hop_ok", true);
+        }
+    }
     bool unused49_seen = false;
     const json tool_defs =
-        native_tools ? local_tools::openai_tool_defs_for(
-                           tool_hint.empty() ? user : tool_hint)
+        native_tools ? local_tools::openai_tool_defs_for(chain_goal)
                      : json::array();
-    const std::string hop_hint0 = tool_hint.empty() ? user : tool_hint;
+    const std::string hop_hint0 = chain_goal;
     if (llama_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
@@ -3415,7 +3427,7 @@ std::string run_colibri_serve(
             if (!tc.contains("type")) tc["type"] = "function";
             tcs.push_back(tc);
         }
-        if (chain_is_cancelled()) {
+        if (chain_is_cancelled(chain_goal)) {
             assembled = "chain cancelled";
             if (spoken) *spoken = assembled;
             break;
@@ -3425,7 +3437,7 @@ std::string run_colibri_serve(
         std::string tool_out;
         bool hop_ok = true;
         for (size_t i = 0; i < tcs.size(); ++i) {
-            if (chain_is_cancelled()) {
+            if (chain_is_cancelled(chain_goal)) {
                 hop_ok = false;
                 break;
             }
@@ -3439,7 +3451,7 @@ std::string run_colibri_serve(
             tool_out += one;
         }
         hops_ok = hops_ok && hop_ok;
-        if (chain_is_cancelled()) {
+        if (chain_is_cancelled(chain_goal)) {
             assembled = "chain cancelled";
             if (spoken) *spoken = assembled;
             break;
@@ -3458,7 +3470,7 @@ std::string run_colibri_serve(
         continue;
     }
     if (!local_tools::has_tool_block(assembled)) break;
-    if (chain_is_cancelled()) {
+    if (chain_is_cancelled(chain_goal)) {
         assembled = "chain cancelled";
         if (spoken) *spoken = assembled;
         break;
