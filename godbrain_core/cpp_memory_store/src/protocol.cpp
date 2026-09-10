@@ -1,4 +1,5 @@
 #include "godbrain/memory_store/protocol.hpp"
+#include "godbrain/memory_store/embedding.hpp"
 #include "godbrain/memory_store/json.hpp"
 #include "godbrain/memory_store/state_machine.hpp"
 #include "godbrain/memory_store/embedding.hpp"
@@ -14,6 +15,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <regex>
 #include <iomanip>
 #include <sstream>
 #include <utility>
@@ -77,6 +79,30 @@ const char* kPayloadKeys[] = {
     "core_concepts",
     "opsec_candidates",
     "skills_extracted",
+    nullptr,
+};
+
+const char* kDocumentKeys[] = {
+    "source_label",
+    "display_name",
+    "file_sha256",
+    "content_sha256",
+    "extraction_method",
+    "languages",
+    "backend",
+    "backend_version",
+    "chunk_count",
+    "ocr_confidence",
+    nullptr,
+};
+
+const char* kChunkKeys[] = {
+    "index",
+    "count",
+    "start_byte",
+    "end_byte",
+    "text",
+    "confidence",
     nullptr,
 };
 
@@ -541,11 +567,170 @@ bool validate_query_skills(const QuerySkillsRequest& r, std::string* err) {
     return true;
 }
 
-bool validate_pre_ingestion(const DistillationPayload& p, std::string* err) {
-    if (p.has_document) {
-        if (err) *err = "document payload not in cpp memory-store protocol cut 1";
+bool is_lower_hex(const std::string& value, int byte_len) {
+    if (static_cast<int>(value.size()) != byte_len * 2) return false;
+    for (unsigned char c : value) {
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    return true;
+}
+
+bool is_safe_display_name(const std::string& value) {
+    if (value.empty() || value.size() > 128 || value == "." || value == "..") return false;
+    for (unsigned char c : value) {
+        if (c == '/' || c == '\\' || c == ':' || c <= 0x1f || (c >= 0x7f && c <= 0x9f)) return false;
+    }
+    return true;
+}
+
+bool contains_forbidden_document_content(std::string value) {
+    for (char& c : value) {
+        if (c == '\r' || c == '\v' || c == '\f') c = '\n';
+    }
+    std::string lower = value;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower.find("otpauth://") != std::string::npos || lower.find("otpauth-migration://") != std::string::npos) {
+        return true;
+    }
+    if (value.find("-----BEGIN ") != std::string::npos && value.find("PRIVATE KEY-----") != std::string::npos) {
+        return true;
+    }
+    static const std::regex kForbidden[] = {
+        std::regex(R"(\bbearer[ \t]+[A-Za-z0-9._~+/=-]{16,})", std::regex::icase),
+        std::regex(R"(\b(?:AKIA|ASIA)[A-Z0-9]{16}\b)"),
+        std::regex(R"(\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{40,255})\b)"),
+        std::regex(R"(\bAIza[0-9A-Za-z_-]{35}\b)"),
+        std::regex(R"(\bxox[baprs]-[A-Za-z0-9-]{20,}\b)"),
+        std::regex(R"(\b(?:sk_live_|rk_live_)[0-9A-Za-z]{16,}\b)"),
+        std::regex(R"(\beyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\b)"),
+        std::regex(
+            R"((?:api[_-]?key|password|passwd|private[_-]?key|client[_-]?secret|access[_-]?token|bearer[_-]?token)[\s]*[:=][\s]*["']?[^\s"']{8,})",
+            std::regex::icase),
+    };
+    for (const auto& re : kForbidden) {
+        if (std::regex_search(value, re)) return true;
+    }
+    return false;
+}
+
+bool is_local_document(const DistillationPayload& p) {
+    std::string extractor = p.extractor_id.empty() ? kDefaultExtractorID : p.extractor_id;
+    return extractor == "Local-Document-Adapter" || p.provenance.source_type == "local_document" ||
+           p.provenance.source_id.rfind("local-document:", 0) == 0 || p.has_document || !p.chunks.empty();
+}
+
+bool validate_document_payload(const DistillationPayload& p, std::string* err) {
+    if (!is_local_document(p)) return true;
+    if (!p.has_document || p.chunks.empty()) {
+        if (err) *err = "document metadata and chunks must be provided together";
         return false;
     }
+    const DocumentMetadata& d = p.document;
+    std::string extractor = p.extractor_id.empty() ? kDefaultExtractorID : p.extractor_id;
+    if (!safe_extractor_id(extractor) || p.extractor_version.empty() || p.extractor_version.size() > 128 ||
+        p.schema_version.empty() || p.schema_version.size() > 64) {
+        if (err) *err = "document extractor identity is invalid";
+        return false;
+    }
+    if (d.source_label.empty() || d.display_name.empty() || d.extraction_method.empty() || d.backend.empty() ||
+        d.backend_version.empty() || d.languages.empty()) {
+        if (err) *err = "document provenance fields must not be blank";
+        return false;
+    }
+    if (d.source_label.size() > 64 || d.display_name.size() > 128 || d.extraction_method.size() > 64 ||
+        d.backend.size() > 64 || d.backend_version.size() > 64 || d.languages.size() > 8) {
+        if (err) *err = "document provenance exceeds field bounds";
+        return false;
+    }
+    if (!safe_extractor_id(d.source_label) || !is_safe_display_name(d.display_name)) {
+        if (err) *err = "document source label or display name is unsafe";
+        return false;
+    }
+    if (!is_lower_hex(d.file_sha256, 32) || !is_lower_hex(d.content_sha256, 32)) {
+        if (err) *err = "document SHA-256 fields must be lowercase hexadecimal";
+        return false;
+    }
+    if (d.has_ocr_confidence && (d.ocr_confidence < 0 || d.ocr_confidence > 1)) {
+        if (err) *err = "document OCR confidence is out of bounds";
+        return false;
+    }
+    const std::string expected_id = "local-document:" + d.source_label + ":" + d.display_name;
+    if (p.provenance.source_id != expected_id) {
+        if (err) *err = "document metadata does not match its safe source identity";
+        return false;
+    }
+    std::string langs;
+    for (size_t i = 0; i < d.languages.size(); ++i) {
+        if (i) langs.push_back(',');
+        langs += d.languages[i];
+    }
+    if (p.provenance.source_type != "local_document" || p.provenance.language != langs) {
+        if (err) *err = "document provenance does not match its safe source identity";
+        return false;
+    }
+    std::string digest;
+    std::string herr;
+    if (!sha256_hex(p.raw_transcript, &digest, &herr) || digest != d.content_sha256) {
+        if (err) *err = "document content_sha256 does not match raw_transcript";
+        return false;
+    }
+    if (d.chunk_count != static_cast<int>(p.chunks.size()) || p.chunks.size() > 256) {
+        if (err) *err = "document chunk_count does not match bounded chunks";
+        return false;
+    }
+    if (contains_forbidden_document_content(p.raw_transcript) ||
+        contains_forbidden_document_content(d.source_label) ||
+        contains_forbidden_document_content(d.display_name)) {
+        if (err) *err = "document contains forbidden sensitive content";
+        return false;
+    }
+    int previous_end = 0;
+    const std::string& raw = p.raw_transcript;
+    for (size_t i = 0; i < p.chunks.size(); ++i) {
+        const SourceChunk& ch = p.chunks[i];
+        if (ch.index != static_cast<int>(i) || ch.count != static_cast<int>(p.chunks.size())) {
+            if (err) *err = "document chunks must have contiguous indexes and a consistent count";
+            return false;
+        }
+        if (ch.start_byte < 0 || ch.end_byte <= ch.start_byte || ch.end_byte > static_cast<int>(raw.size()) ||
+            ch.end_byte - ch.start_byte > 32 * 1024) {
+            if (err) *err = "document chunk byte range is invalid";
+            return false;
+        }
+        if (raw.substr(static_cast<size_t>(ch.start_byte), static_cast<size_t>(ch.end_byte - ch.start_byte)) !=
+            ch.text) {
+            if (err) *err = "document chunk text does not match raw_transcript byte range";
+            return false;
+        }
+        std::string gap = raw.substr(static_cast<size_t>(previous_end), static_cast<size_t>(ch.start_byte - previous_end));
+        bool gap_ws = true;
+        for (unsigned char c : gap) {
+            if (std::isspace(c) == 0) {
+                gap_ws = false;
+                break;
+            }
+        }
+        if (ch.start_byte < previous_end || !gap_ws) {
+            if (err) *err = "document chunks overlap or omit non-whitespace content";
+            return false;
+        }
+        if (ch.has_confidence && (ch.confidence < 0 || ch.confidence > 1)) {
+            if (err) *err = "document chunk confidence is out of bounds";
+            return false;
+        }
+        previous_end = ch.end_byte;
+    }
+    std::string trail = raw.substr(static_cast<size_t>(previous_end));
+    for (unsigned char c : trail) {
+        if (std::isspace(c) == 0) {
+            if (err) *err = "document chunks omit trailing non-whitespace content";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_pre_ingestion(const DistillationPayload& p, std::string* err) {
     std::string extractor = p.extractor_id.empty() ? kDefaultExtractorID : p.extractor_id;
     if (!safe_extractor_id(extractor) || p.extractor_version.empty() ||
         p.extractor_version.size() > 128 || p.schema_version.empty() ||
@@ -569,7 +754,7 @@ bool validate_pre_ingestion(const DistillationPayload& p, std::string* err) {
         }
         return false;
     }
-    return true;
+    return validate_document_payload(p, err);
 }
 
 bool classify_and_parse(const std::string& json_text, Route* route, std::string* err) {
@@ -843,7 +1028,70 @@ bool classify_and_parse(const std::string& json_text, Route* route, std::string*
         }
     }
 
-    route->ingest.has_document = json_has(root, "document") || json_has(root, "chunks");
+    if (json_has(root, "document")) {
+        const Json* doc = json_get(root, "document");
+        if (doc == nullptr || !json_is_object(*doc)) {
+            if (err) *err = "document metadata and chunks must be provided together";
+            return false;
+        }
+        if (!json_reject_unknown_keys(*doc, kDocumentKeys, err)) return false;
+        json_string(*doc, "source_label", &route->ingest.document.source_label);
+        json_string(*doc, "display_name", &route->ingest.document.display_name);
+        json_string(*doc, "file_sha256", &route->ingest.document.file_sha256);
+        json_string(*doc, "content_sha256", &route->ingest.document.content_sha256);
+        json_string(*doc, "extraction_method", &route->ingest.document.extraction_method);
+        json_string(*doc, "backend", &route->ingest.document.backend);
+        json_string(*doc, "backend_version", &route->ingest.document.backend_version);
+        double cc = 0;
+        if (json_has(*doc, "chunk_count") && json_number(*doc, "chunk_count", &cc)) {
+            route->ingest.document.chunk_count = static_cast<int>(cc);
+        }
+        if (json_has(*doc, "ocr_confidence")) {
+            route->ingest.document.has_ocr_confidence = true;
+            json_number(*doc, "ocr_confidence", &route->ingest.document.ocr_confidence);
+        }
+        const Json* langs = json_get(*doc, "languages");
+        if (langs != nullptr) {
+            if (langs->kind != Json::Kind::Array) {
+                if (err) *err = "document provenance fields must not be blank";
+                return false;
+            }
+            for (const Json& v : langs->arr) {
+                if (v.kind != Json::Kind::String) {
+                    if (err) *err = "document provenance fields must not be blank";
+                    return false;
+                }
+                route->ingest.document.languages.push_back(v.str);
+            }
+        }
+        route->ingest.has_document = true;
+    }
+    if (json_has(root, "chunks")) {
+        const Json* chunks = json_get(root, "chunks");
+        if (chunks == nullptr || chunks->kind != Json::Kind::Array) {
+            if (err) *err = "document metadata and chunks must be provided together";
+            return false;
+        }
+        for (const Json& item : chunks->arr) {
+            if (!json_is_object(item)) {
+                if (err) *err = "document chunks must have contiguous indexes and a consistent count";
+                return false;
+            }
+            if (!json_reject_unknown_keys(item, kChunkKeys, err)) return false;
+            SourceChunk ch;
+            double n = 0;
+            if (json_number(item, "index", &n)) ch.index = static_cast<int>(n);
+            if (json_number(item, "count", &n)) ch.count = static_cast<int>(n);
+            if (json_number(item, "start_byte", &n)) ch.start_byte = static_cast<int>(n);
+            if (json_number(item, "end_byte", &n)) ch.end_byte = static_cast<int>(n);
+            json_string(item, "text", &ch.text);
+            if (json_has(item, "confidence")) {
+                ch.has_confidence = true;
+                json_number(item, "confidence", &ch.confidence);
+            }
+            route->ingest.chunks.push_back(std::move(ch));
+        }
+    }
     return validate_pre_ingestion(route->ingest, err);
 }
 
@@ -973,6 +1221,41 @@ int run_self_test() {
         hash + "\",\"language\":\"mixed\"},\"skills_extracted\":true}}";
     err.clear();
     check(!classify_and_parse(bad_skills, &r, &err), "skills-extracted-type");
+
+    const std::string doc_text = "hello world notes.";
+    const std::string doc_k = keccak256_hex(doc_text);
+    std::string doc_sha;
+    check(sha256_hex(doc_text, &doc_sha, &err), "doc-sha");
+    const std::string file_sha = doc_sha;
+    const std::string doc_json =
+        std::string("{\"extractor_id\":\"Local-Document-Adapter\",\"extractor_version\":\"v1\",") +
+        "\"schema_version\":\"1.0\",\"raw_transcript\":\"" + doc_text +
+        "\",\"payload\":{\"trust_tier\":\"candidate\",\"provenance\":{"
+        "\"source_id\":\"local-document:notes.txt:notes.txt\",\"source_type\":\"local_document\","
+        "\"source_hash\":\"" +
+        doc_k + "\",\"language\":\"en\"}},\"document\":{\"source_label\":\"notes.txt\","
+                "\"display_name\":\"notes.txt\",\"file_sha256\":\"" +
+        file_sha + "\",\"content_sha256\":\"" + doc_sha +
+        "\",\"extraction_method\":\"text\",\"languages\":[\"en\"],\"backend\":\"utf8\","
+        "\"backend_version\":\"1\",\"chunk_count\":1},\"chunks\":[{\"index\":0,\"count\":1,"
+        "\"start_byte\":0,\"end_byte\":" +
+        std::to_string(doc_text.size()) + ",\"text\":\"" + doc_text + "\"}]}";
+    err.clear();
+    check(classify_and_parse(doc_json, &r, &err) && r.ingest.chunks.size() == 1, "document-ok");
+    err.clear();
+    check(!classify_and_parse(
+              std::string("{\"extractor_id\":\"Local-Document-Adapter\",\"extractor_version\":\"v1\",") +
+                  "\"schema_version\":\"1.0\",\"raw_transcript\":\"" + doc_text +
+                  "\",\"payload\":{\"trust_tier\":\"candidate\",\"provenance\":{"
+                  "\"source_id\":\"local-document:notes.txt:notes.txt\",\"source_type\":\"local_document\","
+                  "\"source_hash\":\"" +
+                  doc_k + "\",\"language\":\"en\"}},\"document\":{\"source_label\":\"notes.txt\","
+                          "\"display_name\":\"notes.txt\",\"file_sha256\":\"" +
+                  file_sha + "\",\"content_sha256\":\"" + doc_sha +
+                  "\",\"extraction_method\":\"text\",\"languages\":[\"en\"],\"backend\":\"utf8\","
+                  "\"backend_version\":\"1\",\"chunk_count\":0}}",
+              &r, &err),
+          "document-chunks-required");
 
     check(allowed_run_transition(kRunStaging, kRunValidated), "run-stag-val");
     check(allowed_run_transition(kRunStaging, kRunFailed), "run-stag-fail");

@@ -146,6 +146,8 @@ std::wstring fields_join(const std::wstring& in) {
     return out;
 }
 
+}  // namespace
+
 bool sha256_hex(const std::string& bytes, std::string* hex, std::string* err) {
     BCRYPT_ALG_HANDLE alg = nullptr;
     NTSTATUS st = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
@@ -173,6 +175,8 @@ bool sha256_hex(const std::string& bytes, std::string* hex, std::string* err) {
     *hex = o.str();
     return true;
 }
+
+namespace {
 
 std::string wide_lower(const std::wstring& w) {
     if (w.empty()) return "";
