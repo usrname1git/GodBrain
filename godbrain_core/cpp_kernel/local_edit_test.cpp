@@ -442,6 +442,13 @@ int main() {
         }
     }
 
+    std::string receipt_body;
+    int receipt_calls = 0;
+    local_edit::set_receipt_sink([&](const std::string& body) {
+        receipt_body = body;
+        ++receipt_calls;
+        return std::string(64, 'a');
+    });
     {
         std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
         out << "EDIT_FIXTURE=old\n";
@@ -467,10 +474,23 @@ int main() {
         !expect(result.before_hash != result.after_hash, "hash moved") ||
         !expect(result.preview_path.find("local_edit_fixture") != std::string::npos,
                 "preview path") ||
-        !expect(!result.rolled_back, "txt apply is not rolled")) {
+        !expect(!result.rolled_back, "txt apply is not rolled") ||
+        !expect(local_edit::receipt_eligible(result), "passing edit is receipt eligible") ||
+        !expect(receipt_calls == 1, "passing edit mints one receipt") ||
+        !expect(result.receipt_saved, "receipt_saved") ||
+        !expect(result.receipt_id.size() == 64, "receipt_id from sink") ||
+        !expect(receipt_body.find("source_type=edit_receipt") != std::string::npos,
+                "receipt source_type") ||
+        !expect(receipt_body.find("skill_promote_eligible=false") !=
+                    std::string::npos,
+                "receipt cannot promote") ||
+        !expect(result.report.find("receipt candidate") != std::string::npos,
+                "report names receipt")) {
         std::cerr << "hash report=" << result.report
                   << " before=" << result.before_hash.size()
-                  << " after=" << result.after_hash.size() << std::endl;
+                  << " after=" << result.after_hash.size()
+                  << " calls=" << receipt_calls << std::endl;
+        local_edit::set_receipt_sink({});
         return 1;
     }
 
@@ -510,7 +530,10 @@ int main() {
             !expect(!result.applied, "bad ps1 not left applied") ||
             !expect(ps1_body == "Write-Output 1\n", "ps1 restored") ||
             !expect(result.report.find("rolled back") != std::string::npos,
-                    "report says rolled back")) {
+                    "report says rolled back") ||
+            !expect(!local_edit::receipt_eligible(result),
+                    "rolled edit is not receipt eligible") ||
+            !expect(!result.receipt_saved, "rolled edit does not mint")) {
             std::cerr << "rollback report=" << result.report
                       << " body=" << ps1_body << std::endl;
             return 1;
@@ -549,11 +572,17 @@ int main() {
         !expect(!result.check_ran, "missing verifier did not run") ||
         !expect(body == "EDIT_FIXTURE=old\n", "fixture restored") ||
         !expect(result.report.find("check did not run") != std::string::npos,
-                "report says check did not run")) {
+                "report says check did not run") ||
+        !expect(!local_edit::receipt_eligible(result),
+                "missing verifier is not receipt eligible") ||
+        !expect(!result.receipt_saved, "missing verifier does not mint") ||
+        !expect(receipt_calls == 1, "rollbacks do not mint extra receipts")) {
         std::cerr << "missing verifier report=" << result.report
-                  << " body=" << body << std::endl;
+                  << " body=" << body << " calls=" << receipt_calls << std::endl;
+        local_edit::set_receipt_sink({});
         return 1;
     }
+    local_edit::set_receipt_sink({});
 
     std::cout << "local_edit_test ok" << std::endl;
     return 0;

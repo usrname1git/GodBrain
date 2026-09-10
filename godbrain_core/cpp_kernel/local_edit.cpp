@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <mutex>
@@ -26,6 +27,8 @@
 namespace local_edit {
 
 static std::string g_verify_script_override;
+static ReceiptSink g_receipt_sink;
+static std::mutex g_receipt_mu;
 
 namespace {
 
@@ -505,6 +508,8 @@ void save_result(
             << ",\"check_ran\":" << (check.ran ? "true" : "false")
             << ",\"check_ok\":" << (check.ok ? "true" : "false")
             << ",\"skill_promote_eligible\":false"
+            << ",\"receipt_saved\":" << (extra.receipt_saved ? "true" : "false")
+            << ",\"receipt_id\":\"" << json_escape(extra.receipt_id) << "\""
             << ",\"before_hash\":\"" << json_escape(extra.before_hash) << "\""
             << ",\"after_hash\":\"" << json_escape(extra.after_hash) << "\""
             << ",\"preview_path\":\"" << json_escape(extra.preview_path) << "\""
@@ -805,6 +810,34 @@ void set_verify_script_for_test(const std::string& path) {
     g_verify_script_override = path;
 }
 
+void set_receipt_sink(ReceiptSink sink) {
+    std::lock_guard<std::mutex> lock(g_receipt_mu);
+    g_receipt_sink = std::move(sink);
+}
+
+bool receipt_eligible(const Result& result) {
+    return result.applied && result.check_ran && result.check_ok &&
+           !result.rolled_back;
+}
+
+std::string format_edit_receipt(const Result& result) {
+    std::ostringstream out;
+    out << "/edit applied and bounded check passed (candidate until /verify).\n"
+        << "claim_class=playbook\n"
+        << "sector=local-edit\n"
+        << "source_type=edit_receipt\n"
+        << "skill_promote_eligible=false\n"
+        << "verification_profile=local-edit-apply-v1\n"
+        << "check_profile=" << result.check_profile << "\n"
+        << "path=" << result.preview_path << "\n"
+        << "before_hash=" << result.before_hash << "\n"
+        << "after_hash=" << result.after_hash << "\n"
+        << "check_ran=true\n"
+        << "check_ok=true\n"
+        << "rolled_back=false\n";
+    return out.str();
+}
+
 bool apply_still_open(const std::string& text) {
     const size_t apply_sp = text.rfind("*** APPLY");
     const size_t apply_t = text.rfind("***APPLY");
@@ -946,6 +979,27 @@ Result maybe_apply(
             result.report += " -> " + result.after_hash.substr(0, 12);
         }
         result.report += "\n";
+    }
+    if (receipt_eligible(result)) {
+        ReceiptSink sink;
+        {
+            std::lock_guard<std::mutex> receipt_lock(g_receipt_mu);
+            sink = g_receipt_sink;
+        }
+        if (sink) {
+            try {
+                const std::string id = sink(format_edit_receipt(result));
+                if (!id.empty()) {
+                    result.receipt_saved = true;
+                    result.receipt_id = id;
+                    result.report += "receipt candidate " + id.substr(0, 12) + "\n";
+                } else {
+                    result.report += "receipt fail\n";
+                }
+            } catch (...) {
+                result.report += "receipt fail\n";
+            }
+        }
     }
     save_result(result.applied, result.rolled_back, result.report, check, result);
     return result;

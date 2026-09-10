@@ -2115,6 +2115,14 @@ static void handle_last_edit(const httplib::Request&, httplib::Response& res) {
             reply << " check=" << check_profile << "/" << check_state;
         }
         reply << " promote=no";
+        const std::string rid = body.value("receipt_id", "");
+        if (body.value("receipt_saved", false) && rid.size() >= 12) {
+            reply << " receipt=" << rid.substr(0, 12);
+        } else if (body.value("applied", false) &&
+                   body.value("check_ok", false) &&
+                   !body.value("rolled_back", false)) {
+            reply << " receipt=none";
+        }
         const std::string pold = body.value("preview_old", "");
         const std::string pnew = body.value("preview_new", "");
         if (!pold.empty() || !pnew.empty()) {
@@ -3637,6 +3645,14 @@ int main() {
         std::cout << "[SYS] WARNING: GODBRAIN_API_TOKEN is not set. Requests carrying 'command_type' will be rejected (403) "
                      "until a token is configured in the environment." << std::endl;
     }
+
+    local_edit::set_receipt_sink([](const std::string& body) {
+        const json stored = memory::save_thought(
+            {{"content", body},
+             {"sector", "local-edit"},
+             {"source_type", "edit_receipt"}});
+        return stored.value("stable_id", std::string());
+    });
 
     g_frontend_dir = resolve_frontend_dir();
     load_oracle_turns();
