@@ -2,6 +2,7 @@
 
 #include "godbrain/memory_store/json.hpp"
 #include "godbrain/memory_store/protocol.hpp"
+#include "godbrain/memory_store/snapshot.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -702,59 +703,35 @@ HttpResponse handle_health(RagEngine* e) {
     return json_status(h.ready ? 200 : 503, health_json(h));
 }
 
-bool same_corpus_counts(const RagCorpusCounts& a, const RagCorpusCounts& b) {
-    return a.committed_runs == b.committed_runs && a.committed_nodes == b.committed_nodes &&
-           a.committed_links == b.committed_links && a.projected_nodes == b.projected_nodes &&
-           a.projected_links == b.projected_links && a.projected_embeddings == b.projected_embeddings;
-}
-
-bool same_semantic_capability(const HealthSnap& a, const HealthSnap& b) {
-    if (a.semantic_configured != b.semantic_configured || a.semantic_available != b.semantic_available ||
-        a.semantic_required != b.semantic_required || a.degradation != b.degradation) {
-        return false;
-    }
-    if (a.meta.has_embedding != b.meta.has_embedding) return false;
-    if (!a.meta.has_embedding) return true;
-    return embedding_identity_equal(a.meta.embedding, b.meta.embedding);
-}
-
-bool same_optional_millis(bool has_a, int64_t a, bool has_b, int64_t b) {
-    if (has_a != has_b) return false;
-    return !has_a || a == b;
-}
-
-bool valid_response_capability(
-    const HealthSnap& health, const std::string& retrieval, bool hybrid, const std::string& degradation) {
-    if (retrieval == "lexical") return !hybrid;
-    if (retrieval == "hybrid") {
-        return health.semantic_available && health.meta.has_embedding && hybrid && degradation.empty();
-    }
-    return false;
-}
-
-bool same_search_snapshot(
-    const HealthSnap& before,
-    const HealthSnap& after,
-    const std::string& retrieval,
-    bool hybrid,
-    const std::string& degradation) {
-    return before.ready && after.ready && before.mongo == "ok" && after.mongo == "ok" &&
-           !before.meta.active_generation.empty() &&
-           before.meta.active_generation == after.meta.active_generation &&
-           before.meta.building_generation == after.meta.building_generation &&
-           !before.meta.projection_version.empty() &&
-           before.meta.projection_version == after.meta.projection_version &&
-           before.meta.projection_schema == after.meta.projection_schema &&
-           before.meta.indexer_version == after.meta.indexer_version &&
-           before.retrieval_mode == after.retrieval_mode && same_semantic_capability(before, after) &&
-           same_corpus_counts(before.counts, after.counts) &&
-           same_optional_millis(
-               before.latest_committed, before.committed_at, after.latest_committed, after.committed_at) &&
-           same_optional_millis(
-               before.latest_projected, before.projected_at, after.latest_projected, after.projected_at) &&
-           same_optional_millis(
-               before.latest_embedded, before.embedded_at, after.latest_embedded, after.embedded_at) &&
-           valid_response_capability(before, retrieval, hybrid, degradation);
+SearchHealthSnap to_search_snap(const HealthSnap& h) {
+    SearchHealthSnap s;
+    s.ready = h.ready;
+    s.mongo = h.mongo;
+    s.active_generation = h.meta.active_generation;
+    s.building_generation = h.meta.building_generation;
+    s.projection_version = h.meta.projection_version;
+    s.projection_schema = h.meta.projection_schema;
+    s.indexer_version = h.meta.indexer_version;
+    s.retrieval_mode = h.retrieval_mode;
+    s.semantic_configured = h.semantic_configured;
+    s.semantic_available = h.semantic_available;
+    s.semantic_required = h.semantic_required;
+    s.degradation = h.degradation;
+    s.has_embedding = h.meta.has_embedding;
+    s.embedding = h.meta.embedding;
+    s.committed_runs = h.counts.committed_runs;
+    s.committed_nodes = h.counts.committed_nodes;
+    s.committed_links = h.counts.committed_links;
+    s.projected_nodes = h.counts.projected_nodes;
+    s.projected_links = h.counts.projected_links;
+    s.projected_embeddings = h.counts.projected_embeddings;
+    s.latest_committed = h.latest_committed;
+    s.latest_projected = h.latest_projected;
+    s.latest_embedded = h.latest_embedded;
+    s.committed_at = h.committed_at;
+    s.projected_at = h.projected_at;
+    s.embedded_at = h.embedded_at;
+    return s;
 }
 
 std::string utf8_snip(const std::string& content, const std::vector<std::string>& tokens, int max_bytes) {
@@ -1108,12 +1085,18 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     }
 
     // Do not return hits if generation or corpus counts moved before after-health.
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    for (int attempt = 0; attempt < kMaxSearchAttempts; ++attempt) {
     HealthSnap before;
     std::string herr;
-    if (!fill_health(e, &before, &herr) || !before.ready) {
-        if (mode == "hybrid" && !before.semantic_available) return api_error(503, "semantic_unavailable");
-        return api_error(503, "search_unavailable");
+    if (!fill_health(e, &before, &herr)) return api_error(503, "search_unavailable");
+    switch (search_before_gate(to_search_snap(before), mode)) {
+        case BeforeSearch::Proceed:
+            break;
+        case BeforeSearch::SemanticUnavailable:
+            return api_error(503, "semantic_unavailable");
+        case BeforeSearch::Unready:
+        default:
+            return api_error(503, "search_unavailable");
     }
 
     std::string retrieval = "lexical";
@@ -1409,7 +1392,9 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     HealthSnap after;
     std::string aerr;
     if (!fill_health(e, &after, &aerr)) return api_error(503, "search_unavailable");
-    if (same_search_snapshot(before, after, retrieval, hybrid, degradation)) {
+    const EmbeddingIdentity* resp_emb = hybrid ? &before.meta.embedding : nullptr;
+    if (search_after_gate(to_search_snap(before), to_search_snap(after), retrieval, hybrid, degradation, resp_emb) ==
+        AfterSearch::Accept) {
         return json_status(200, o.str());
     }
     }

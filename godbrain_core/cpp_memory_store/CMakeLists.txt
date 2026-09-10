@@ -23,6 +23,7 @@ add_library(cpp_memory_store_core
     src/state_machine.cpp
     src/store.cpp
     src/embedding.cpp
+    src/rag_snapshot.cpp
 )
 target_include_directories(cpp_memory_store_core
     PUBLIC include

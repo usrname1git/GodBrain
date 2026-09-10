@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 12)
+# C++ Alexandria Memory Store (cut 13)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -59,6 +59,11 @@ UTF-8 byte ranges, forbidden-secret scan, immutable `chunks` collection.
 Cut 12: `rag-service` search retries once if generation/health moved mid-query
 (Go `searchConsistently`). Unready or hybrid-without-embeddings still fail
 closed on the first look.
+
+Cut 13: offline snapshot self-test ports Go `http_test.go` searchConsistently
+cases (stable snapshot, partial interleave, retry-fresh, rebuild bound, hybrid
+identity). `search_before_gate` / `search_after_gate` are shared with
+`rag-service`.
 
 Start/Heal prefer this tree's Release exes, then Go.
 
