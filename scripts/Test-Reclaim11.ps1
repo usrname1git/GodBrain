@@ -93,8 +93,38 @@ if ($xamlSrc -match 'Chris-style|christitus') {
 if ($xamlSrc -notmatch "Grim Reaper") {
     throw "Test-Reclaim11: door must say Grim Reaper"
 }
-if ($xamlSrc -notmatch "YOU BETTER KNOW WTF") {
-    throw "Test-Reclaim11: expert door must warn WTF"
+if ($xamlSrc -match "TOO DUMB|YOU BETTER KNOW WTF") {
+    throw "Test-Reclaim11: door copy must not insult the beginner"
+}
+if ($xamlSrc -notmatch "Beginner-friendly") {
+    throw "Test-Reclaim11: beginner door must say Beginner-friendly"
+}
+if ($xamlSrc -notmatch "Less detailed customization") {
+    throw "Test-Reclaim11: beginner door must say less detailed customization"
+}
+if ($xamlSrc -notmatch "Power User") {
+    throw "Test-Reclaim11: expert door must say Power User"
+}
+if ($xamlSrc -notmatch "Expected to know what you're doing") {
+    throw "Test-Reclaim11: expert door must say expected to know what you're doing"
+}
+if ($xamlSrc -match "JUST FIX MY SH") {
+    throw "Test-Reclaim11: beginner primary action must not say JUST FIX"
+}
+if ($xamlSrc -notmatch "RUN ALL FIXES") {
+    throw "Test-Reclaim11: beginner door must offer RUN ALL FIXES"
+}
+if ($xamlSrc -notmatch "Restore Everything") {
+    throw "Test-Reclaim11: door must offer Restore Everything"
+}
+if ($xamlSrc -notmatch "Custom Restore") {
+    throw "Test-Reclaim11: door must offer Custom Restore"
+}
+if ($xamlSrc -notmatch 'x:Name="BtnNoobNic"') {
+    throw "Test-Reclaim11: beginner door must offer TUNE NIC"
+}
+if ($xamlSrc -notmatch 'x:Name="BtnNoobLatency"') {
+    throw "Test-Reclaim11: beginner door must offer latency bake"
 }
 if ($xamlSrc -notmatch "Send Grim Reaper") {
     throw "Test-Reclaim11: expert ACTIONS must tick Send Grim Reaper"
@@ -414,8 +444,8 @@ if ($readme -match 'Heal never launches this') {
 if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
     throw "Test-Reclaim11: README must say MUST boot WinPE or bloat only"
 }
-if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg') {
-    throw "Test-Reclaim11: README must show DoorChooser.jpg and ExpertPanel.jpg"
+if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg' -or $readme -notmatch 'ui/NoobPanel\.jpg') {
+    throw "Test-Reclaim11: README must show DoorChooser.jpg, ExpertPanel.jpg, and NoobPanel.jpg"
 }
 if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v11\.iso') {
     throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v11.iso"
@@ -450,7 +480,7 @@ if ($readme -notmatch 'Password is never logged') {
 if ($readme -match 'W11_STORAGE|One WPF window|auto-crown|Never BFE') {
     throw "Test-Reclaim11: README must not carry host-specific or Never-BFE slogan copy"
 }
-foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg")) {
+foreach ($shot in @("DoorChooser.jpg", "ExpertPanel.jpg", "NoobPanel.jpg")) {
     if (-not (Test-Path -LiteralPath (Join-Path $root "ui\$shot"))) {
         throw "Test-Reclaim11: missing ui\$shot"
     }
@@ -513,6 +543,11 @@ if (-not `$w.FindName('BtnDoorNoob')) { throw 'no BtnDoorNoob' }
 if (-not `$w.FindName('BtnDoorExpert')) { throw 'no BtnDoorExpert' }
 if (-not `$w.FindName('BtnRustDesk')) { throw 'no BtnRustDesk' }
 if (-not `$w.FindName('BtnNoobRustDesk')) { throw 'no BtnNoobRustDesk' }
+if (-not `$w.FindName('BtnDoorRestoreAll')) { throw 'no BtnDoorRestoreAll' }
+if (-not `$w.FindName('BtnDoorRestoreCustom')) { throw 'no BtnDoorRestoreCustom' }
+if (-not `$w.FindName('BtnNoobFix')) { throw 'no BtnNoobFix' }
+if (-not `$w.FindName('BtnNoobNic')) { throw 'no BtnNoobNic' }
+if (-not `$w.FindName('BtnNoobLatency')) { throw 'no BtnNoobLatency' }
 if (-not `$w.FindName('PanelDoor')) { throw 'no PanelDoor' }
 if (-not `$w.FindName('PanelNoob')) { throw 'no PanelNoob' }
 if (-not `$w.FindName('PanelExpert')) { throw 'no PanelExpert' }
@@ -661,7 +696,7 @@ if ($offlineSrc -notmatch 'cannot read EditionID') {
 if ($offlineSrc -notmatch 'EditionId') {
     throw "Test-Reclaim11: offline apply must accept EditionId for fixtures"
 }
-foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "install_pwsh.ps1", "elevate.ps1", "rustdesk.ps1")) {
+foreach ($need in @("killing_blows.ps1", "Apply-KillingBlows.ps1", "inventory.ps1", "noob_cleanse.ps1", "Apply-NoobCleanse.ps1", "Restore-Reclaim11Noob.ps1", "grim_reaper.ps1", "NuclearDefenderWipe-V6_3.ps1", "xbox_cleanse.ps1", "telemetry_cleanse.ps1", "nic_tune.ps1", "latency_bake.ps1", "install_pwsh.ps1", "elevate.ps1", "rustdesk.ps1", "restore.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $ps1 $need))) { throw "Test-Reclaim11: missing $need" }
 }
 $nukeSelf = Join-Path $ps1 "grim_reaper.ps1"
@@ -776,7 +811,7 @@ $zip = [IO.Compression.ZipFile]::OpenRead($zipOut)
 try {
     $zipNames = @($zip.Entries | ForEach-Object { $_.FullName.Replace("\", "/") })
 } finally { $zip.Dispose() }
-foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/Reclaim11.vbs", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/ps1/rustdesk.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
+foreach ($need in @("Reclaim11/Reclaim11.cmd", "Reclaim11/Reclaim11.vbs", "Reclaim11/catalog.json", "Reclaim11/ps1/Reclaim11.ps1", "Reclaim11/ps1/install_pwsh.ps1", "Reclaim11/ps1/rustdesk.ps1", "Reclaim11/ps1/restore.ps1", "Reclaim11/winpe/offline.ps1", "Reclaim11/winpe/Start-Reclaim11Pe.ps1", "Reclaim11/winpe/Skip-Reclaim11WinRe.ps1", "Reclaim11/winpe/reclaim11-stub.exe", "Reclaim11/scripts/New-Reclaim11WinPeIso.ps1", "Reclaim11/scripts/Resolve-Reclaim11Kit.ps1")) {
     if ($zipNames -notcontains $need) { throw "Test-Reclaim11: kit zip missing $need" }
 }
 if (@($zipNames | Where-Object { $_ -match "Start-GodBrain" }).Count -gt 0) {
@@ -1506,6 +1541,15 @@ if ($launchSrc -notmatch "BtnRustDesk") {
 if ($launchSrc -notmatch "BtnNoobRustDesk") {
     throw "Test-Reclaim11: GUI must wire BtnNoobRustDesk"
 }
+if ($launchSrc -notmatch "BtnDoorRestoreAll") {
+    throw "Test-Reclaim11: GUI must wire Restore Everything"
+}
+if ($launchSrc -notmatch "BtnDoorRestoreCustom") {
+    throw "Test-Reclaim11: GUI must wire Custom Restore"
+}
+if ($launchSrc -notmatch "RESTORE SELECTED") {
+    throw "Test-Reclaim11: Custom Restore must relabel RUN SELECTED"
+}
 if ($isoSrc -match "rustdesk\.ps1") {
     throw "Test-Reclaim11: ISO builder must not pack rustdesk.ps1"
 }
@@ -1521,6 +1565,12 @@ if ($usbSrc -notmatch 'Join-Path \$script:Ps1Dir "rustdesk\.ps1"') {
 }
 if ($usbSrc -notmatch 'Join-Path \$ps1Dest "rustdesk\.ps1"') {
     throw "Test-Reclaim11: USB in-Windows rustdesk.ps1 must land in ps1Dest"
+}
+if ($usbKitFiles.Groups[1].Value -match "restore") {
+    throw "Test-Reclaim11: USB PE KitFiles must not include restore.ps1"
+}
+if ($usbSrc -notmatch 'Join-Path \$ps1Dest "restore\.ps1"') {
+    throw "Test-Reclaim11: USB in-Windows kit must copy restore.ps1"
 }
 if ($offlineSrc -match "rustdesk\.ps1") {
     throw "Test-Reclaim11: PE kit drop must not include rustdesk.ps1"
@@ -1588,6 +1638,21 @@ if ($rdReport -notmatch "public-official") {
 }
 if ($rdReport -notmatch "no --password \(one-time only\)") {
     throw "Test-Reclaim11: rustdesk -T report must say no --password"
+}
+
+. (Join-Path $ps1 "restore.ps1")
+if ((Get-Reclaim11RestoreKind "reclaim11-xbox-v1") -ne "xbox") { throw "Test-Reclaim11: restore kind xbox" }
+if ((Get-Reclaim11RestoreKind "reclaim11-telemetry-v1") -ne "telemetry") { throw "Test-Reclaim11: restore kind telemetry" }
+if ((Get-Reclaim11RestoreKind "reclaim11-nic-v1") -ne "nic") { throw "Test-Reclaim11: restore kind nic" }
+if ((Get-Reclaim11RestoreKind "reclaim11-latency-v1") -ne "latency") { throw "Test-Reclaim11: restore kind latency" }
+if ((Get-Reclaim11RestoreKind "reclaim11-noob-v1") -ne "safe") { throw "Test-Reclaim11: restore kind safe" }
+if ((Get-Reclaim11RestoreKind "reclaim11-killing-blows-v1") -ne "kill") { throw "Test-Reclaim11: restore kind kill" }
+$emptyRestore = Restore-Reclaim11Selected -Kinds @("xbox") -WhatIf
+if (-not [bool]$emptyRestore.what_if) { throw "Test-Reclaim11: restore -T must set what_if" }
+if ([bool]$emptyRestore.mutate) { throw "Test-Reclaim11: restore -T must not mutate" }
+$rstSrc = Get-Content -LiteralPath (Join-Path $ps1 "restore.ps1") -Raw -Encoding UTF8
+if ($rstSrc -notmatch "killing blows have no restore") {
+    throw "Test-Reclaim11: kill restore must throw"
 }
 
 . (Join-Path $ps1 "elevate.ps1")

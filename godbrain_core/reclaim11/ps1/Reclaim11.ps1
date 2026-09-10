@@ -27,6 +27,7 @@ $here = Get-Reclaim11Root
 . (Join-Path $ps1Dir "latency_bake.ps1")
 . (Join-Path $ps1Dir "install_pwsh.ps1")
 . (Join-Path $ps1Dir "rustdesk.ps1")
+. (Join-Path $ps1Dir "restore.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -226,18 +227,33 @@ $panelExpert = Get-Ui PanelExpert
 $noobLog = Get-Ui NoobLog
 $btnDoorNoob = Get-Ui BtnDoorNoob
 $btnDoorExpert = Get-Ui BtnDoorExpert
+$btnDoorRestoreAll = Get-Ui BtnDoorRestoreAll
+$btnDoorRestoreCustom = Get-Ui BtnDoorRestoreCustom
 $btnNoobBack = Get-Ui BtnNoobBack
 $btnExpertBack = Get-Ui BtnExpertBack
 $btnNoobTest = Get-Ui BtnNoobTest
 $btnNoobFix = Get-Ui BtnNoobFix
 $btnNoobXbox = Get-Ui BtnNoobXbox
 $btnNoobTel = Get-Ui BtnNoobTel
+$btnNoobNic = Get-Ui BtnNoobNic
+$btnNoobLatency = Get-Ui BtnNoobLatency
 $btnNoobRustDesk = Get-Ui BtnNoobRustDesk
 $btnNoobSafe = Get-Ui BtnNoobSafe
 $btnRustDesk = Get-Ui BtnRustDesk
+$actionsHeader = Get-Ui ActionsHeader
+$actionsHint = Get-Ui ActionsHint
+$subtitle = Get-Ui Subtitle
+$footer = Get-Ui Footer
 $script:LastInventory = $null
 $script:ProcessRunning = $false
 $script:UiDoor = "door"
+$script:UiRestore = $false
+$script:ApplyRunLabel = [string]$btnRun.Content
+$script:ApplyTestLabel = [string]$btnTest.Content
+$script:ApplySubtitle = [string]$subtitle.Text
+$script:ApplyFooter = [string]$footer.Text
+$script:ApplyActionsHeader = [string]$actionsHeader.Text
+$script:ApplyActionsHint = [string]$actionsHint.Text
 
 function Add-Log([string]$Line) {
     $logBox.AppendText($Line + [Environment]::NewLine)
@@ -267,8 +283,13 @@ function Add-NoobLog([string]$Line) {
     $noobLog.ScrollToEnd()
 }
 
-function Show-Reclaim11Door([string]$Name) {
+function Show-Reclaim11Door {
+    param(
+        [string]$Name,
+        [switch]$Restore
+    )
     $script:UiDoor = $Name
+    $script:UiRestore = [bool]$Restore
     $panelDoor.Visibility = [Windows.Visibility]::Collapsed
     $panelNoob.Visibility = [Windows.Visibility]::Collapsed
     $panelExpert.Visibility = [Windows.Visibility]::Collapsed
@@ -276,6 +297,37 @@ function Show-Reclaim11Door([string]$Name) {
         "noob" { $panelNoob.Visibility = [Windows.Visibility]::Visible }
         "expert" { $panelExpert.Visibility = [Windows.Visibility]::Visible }
         default { $panelDoor.Visibility = [Windows.Visibility]::Visible }
+    }
+    if ($Name -eq "expert" -and $Restore) {
+        $btnRun.Content = "RESTORE SELECTED"
+        $btnTest.Content = "TEST RESTORE"
+        $subtitle.Text = "Custom Restore. Tick what to undo from restore.json. Newest backup first."
+        $footer.Text = "Restore uses C:\reclaim11\backup\*\restore.json. Killing blows / Grim Reaper have no restore."
+        $actionsHeader.Text = "RESTORE"
+        $actionsHint.Text = "Tick what to restore, then RESTORE SELECTED. Newest stamp first."
+        $btnPrep.Visibility = [Windows.Visibility]::Collapsed
+        $btnRustDesk.Visibility = [Windows.Visibility]::Collapsed
+        $kinds = @{}
+        foreach ($row in @(Get-Reclaim11RestoreManifests)) { $kinds[[string]$row.kind] = $true }
+        $btnSafe.IsEnabled = [bool]$kinds["safe"]
+        $btnXbox.IsEnabled = [bool]$kinds["xbox"]
+        $btnTelemetry.IsEnabled = [bool]$kinds["telemetry"]
+        $btnNic.IsEnabled = [bool]$kinds["nic"]
+        $btnLatency.IsEnabled = [bool]$kinds["latency"]
+        $btnKill.IsEnabled = $false
+        $btnReaper.IsEnabled = $false
+        $btnSafe.IsChecked = $false
+        $btnKill.IsChecked = $false
+        $btnReaper.IsChecked = $false
+    } elseif ($Name -eq "expert") {
+        $btnRun.Content = $script:ApplyRunLabel
+        $btnTest.Content = $script:ApplyTestLabel
+        $subtitle.Text = $script:ApplySubtitle
+        $footer.Text = $script:ApplyFooter
+        $actionsHeader.Text = $script:ApplyActionsHeader
+        $actionsHint.Text = $script:ApplyActionsHint
+        $btnPrep.Visibility = [Windows.Visibility]::Visible
+        $btnRustDesk.Visibility = [Windows.Visibility]::Visible
     }
 }
 
@@ -321,6 +373,7 @@ function Show-Inventory($inv) {
     }
     Add-Log ("winpe_log {0}" -f $inv.gates.winpe_log)
     Add-Log "scan is read-only. MUST boot a WinPE ISO for Defender. No receipt = bloat only. Safe / killing blows / Grim Reaper stay locked."
+    if ($script:UiRestore) { Show-Reclaim11Door "expert" -Restore }
 }
 
 $btnScan.Add_Click({
@@ -333,6 +386,33 @@ $btnScan.Add_Click({
     }
 })
 
+function Confirm-Reclaim11LatencyHighPerformance {
+    $switchHp = $false
+    $hpOffer = Get-Reclaim11LatencyHighPerformanceOffer
+    if ($hpOffer.listed -and -not $hpOffer.already_active) {
+        $hpQ = [System.Windows.MessageBox]::Show(
+            "Recommended: switch the active power plan to High Performance.`n`nUSB selective suspend, USB 3 link power, and PCIe ASPM are written onto High Performance and onto the current plan either way. Switch now?",
+            "Reclaim11 High Performance",
+            "YesNo",
+            "Question")
+        $switchHp = ($hpQ -eq "Yes")
+    } elseif (-not $hpOffer.listed) {
+        Add-Log "High Performance plan not listed; baking the active plan only."
+        Add-NoobLog "High Performance plan not listed; baking the active plan only."
+    }
+    $switchHp
+}
+
+function Get-Reclaim11RestoreKindsFromTicks {
+    $kinds = @()
+    if ([bool]$btnSafe.IsChecked) { $kinds += "safe" }
+    if ([bool]$btnXbox.IsChecked) { $kinds += "xbox" }
+    if ([bool]$btnTelemetry.IsChecked) { $kinds += "telemetry" }
+    if ([bool]$btnNic.IsChecked) { $kinds += "nic" }
+    if ([bool]$btnLatency.IsChecked) { $kinds += "latency" }
+    $kinds
+}
+
 $btnRun.Add_Click({
     if ($script:ProcessRunning) { return }
     $script:ProcessRunning = $true
@@ -340,6 +420,24 @@ $btnRun.Add_Click({
     $btnTest.IsEnabled = $false
     $btnScan.IsEnabled = $false
     try {
+        if ($script:UiRestore) {
+            $kinds = @(Get-Reclaim11RestoreKindsFromTicks)
+            if ($kinds.Count -lt 1) {
+                [System.Windows.MessageBox]::Show("Tick Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
+                return
+            }
+            $q = [System.Windows.MessageBox]::Show(
+                "Restore the ticked actions from C:\reclaim11\backup (newest stamp first). Continue?",
+                "Reclaim11 RESTORE SELECTED",
+                "YesNo",
+                "Warning")
+            if ($q -ne "Yes") { return }
+            $plan = Restore-Reclaim11Selected -Kinds $kinds -Root $here
+            Add-Log ("restore kinds {0} manifests {1}" -f ($kinds -join ","), @($plan.items).Count)
+            foreach ($f in @($plan.failed)) { Add-Log ("RESTORE FAIL  {0}" -f $f) }
+            if (@($plan.failed).Count -lt 1) { Add-Log "restore done" }
+            return
+        }
         $doSafe = [bool]$btnSafe.IsChecked
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
@@ -414,18 +512,7 @@ $btnRun.Add_Click({
         }
         if ($doLatency) {
             try {
-                $switchHp = $false
-                $hpOffer = Get-Reclaim11LatencyHighPerformanceOffer
-                if ($hpOffer.listed -and -not $hpOffer.already_active) {
-                    $hpQ = [System.Windows.MessageBox]::Show(
-                        "Recommended: switch the active power plan to High Performance.`n`nUSB selective suspend, USB 3 link power, and PCIe ASPM are written onto High Performance and onto the current plan either way. Switch now?",
-                        "Reclaim11 High Performance",
-                        "YesNo",
-                        "Question")
-                    $switchHp = ($hpQ -eq "Yes")
-                } elseif (-not $hpOffer.listed) {
-                    Add-Log "High Performance plan not listed; baking the active plan only."
-                }
+                $switchHp = Confirm-Reclaim11LatencyHighPerformance
                 $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
                 Add-Log ("latency bake applied {0}" -f (@($plan.applied).Count))
                 Add-Log ("manifest {0}" -f $plan.manifest_path)
@@ -474,6 +561,20 @@ $btnTest.Add_Click({
     $btnTest.IsEnabled = $false
     $btnScan.IsEnabled = $false
     try {
+        if ($script:UiRestore) {
+            $kinds = @(Get-Reclaim11RestoreKindsFromTicks)
+            if ($kinds.Count -lt 1) {
+                [System.Windows.MessageBox]::Show("Tick Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
+                return
+            }
+            Add-Log "TEST RESTORE. mutate=false."
+            $plan = Restore-Reclaim11Selected -Kinds $kinds -Root $here -WhatIf
+            Add-Log ("would restore {0} manifest(s)" -f @($plan.items).Count)
+            foreach ($it in @($plan.items)) {
+                Add-Log ("  would  {0}  {1}" -f $it.kind, $it.path)
+            }
+            return
+        }
         $doSafe = [bool]$btnSafe.IsChecked
         $doXbox = [bool]$btnXbox.IsChecked
         $doTelemetry = [bool]$btnTelemetry.IsChecked
@@ -528,12 +629,44 @@ $btnDoorNoob.Add_Click({
     Show-Reclaim11Door "noob"
     try {
         Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
-        Add-NoobLog "Noob door. TEST FIRST lists what would happen. JUST FIX MY SH*T = Xbox + telemetry after TEST. Killing blows live on the expert door."
+        Add-NoobLog "Beginner mode. TEST FIRST lists Xbox, telemetry, NIC, latency bake. RUN ALL FIXES applies those. Killing blows live on the Power User door."
     } catch {
         Add-NoobLog ("scan FAIL  {0}" -f $_.Exception.Message)
     }
 })
 $btnDoorExpert.Add_Click({ Show-Reclaim11Door "expert" })
+$btnDoorRestoreAll.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $rows = @(Get-Reclaim11RestoreManifests | Where-Object { @("xbox", "telemetry", "nic", "latency", "safe") -contains $_.kind })
+    if ($rows.Count -lt 1) {
+        [System.Windows.MessageBox]::Show("Nothing to restore. No restore.json under C:\reclaim11\backup.", "Reclaim11 Restore Everything") | Out-Null
+        return
+    }
+    $q = [System.Windows.MessageBox]::Show(
+        ("Restore Xbox, telemetry, NIC, latency bake, and Safe cleanse from {0} backup(s). Newest first. Not Grim Reaper. Continue?" -f $rows.Count),
+        "Reclaim11 Restore Everything",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $plan = Restore-Reclaim11Selected -Kinds @("xbox", "telemetry", "nic", "latency", "safe") -Root $here
+        $msg = ("Restored {0} manifest(s). Failed {1}." -f @($plan.items).Count, @($plan.failed).Count)
+        if (@($plan.failed).Count -gt 0) { $msg = $msg + "`n`n" + (@($plan.failed) -join "`n") }
+        [System.Windows.MessageBox]::Show($msg, "Reclaim11 Restore Everything") | Out-Null
+    } catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Restore Everything") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+$btnDoorRestoreCustom.Add_Click({
+    Show-Reclaim11Door "expert" -Restore
+    try {
+        Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
+        Add-Log "Custom Restore. Tick what to undo. TEST RESTORE lists restore.json. Killing blows / Grim Reaper have no restore."
+    } catch {
+        Add-Log ("scan FAIL  {0}" -f $_.Exception.Message)
+    }
+})
 $btnNoobBack.Add_Click({ Show-Reclaim11Door "door" })
 $btnExpertBack.Add_Click({ Show-Reclaim11Door "door" })
 
@@ -547,6 +680,10 @@ $btnNoobTest.Add_Click({
         Add-NoobLog (Format-Reclaim11TestReport -Plan $xbox -Title "xbox")
         $tel = Invoke-Reclaim11TelemetryCleanse -Root $here -WhatIf
         Add-NoobLog (Format-Reclaim11TestReport -Plan $tel -Title "telemetry")
+        $nic = Invoke-Reclaim11NicTune -Root $here -WhatIf
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $nic -Title "nic")
+        $lat = Invoke-Reclaim11LatencyBake -Root $here -WhatIf
+        Add-NoobLog (Format-Reclaim11TestReport -Plan $lat -Title "latency")
         $pe = $false
         if ($script:LastInventory -and $script:LastInventory.gates) {
             $pe = [bool]$script:LastInventory.gates.killing_blows
@@ -563,8 +700,8 @@ $btnNoobTest.Add_Click({
 $btnNoobFix.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "TEST already listed Xbox + telemetry. This RUNS them on THIS Windows. restore.json first. Not Grim Reaper. Continue?",
-        "Reclaim11 JUST FIX MY SH*T",
+        "RUN ALL FIXES on THIS Windows: Hide Xbox, telemetry, NIC tune, latency bake (BCD + registry + power). restore.json first. Not Defender. Not Grim Reaper. Continue?",
+        "Reclaim11 RUN ALL FIXES",
         "YesNo",
         "Warning")
     if ($q -ne "Yes") { return }
@@ -579,6 +716,15 @@ $btnNoobFix.Add_Click({
             $plan = Invoke-Reclaim11TelemetryCleanse -Root $here
             Add-NoobLog ("telemetry  {0}" -f $plan.manifest_path)
         } catch { Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message) }
+        try {
+            $plan = Invoke-Reclaim11NicTune -Root $here
+            Add-NoobLog ("nic  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("NIC FAIL  {0}" -f $_.Exception.Message) }
+        try {
+            $switchHp = Confirm-Reclaim11LatencyHighPerformance
+            $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
+            Add-NoobLog ("latency  {0}" -f $plan.manifest_path)
+        } catch { Add-NoobLog ("LATENCY FAIL  {0}" -f $_.Exception.Message) }
     } finally { $script:ProcessRunning = $false }
 })
 
@@ -598,6 +744,43 @@ $btnNoobXbox.Add_Click({
     } catch {
         Add-NoobLog ("XBOX FAIL  {0}" -f $_.Exception.Message)
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobNic.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Tune Ethernet NIC (offloads off, RSS on, Rx/Tx 256-512). restore.json first. Continue?",
+        "Reclaim11 TUNE NIC",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $plan = Invoke-Reclaim11NicTune -Root $here
+        Add-NoobLog ("nic  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("NIC FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 NIC tune") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+})
+
+$btnNoobLatency.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $q = [System.Windows.MessageBox]::Show(
+        "Latency bake: BCD, timer/MMCSS, USB/ASPM power. restore.json first. Continue?",
+        "Reclaim11 LATENCY BAKE",
+        "YesNo",
+        "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        $switchHp = Confirm-Reclaim11LatencyHighPerformance
+        $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
+        Add-NoobLog ("latency  {0}" -f $plan.manifest_path)
+    } catch {
+        Add-NoobLog ("LATENCY FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 latency bake") | Out-Null
     } finally { $script:ProcessRunning = $false }
 })
 

@@ -18,11 +18,12 @@ until a WinPE receipt. Exact flags are under Advanced.
    to a hidden host so Windows Terminal does not stay as an empty black
    window. If you only have Windows PowerShell 5.1, the GUI offers the
    official PowerShell 7 MSI (adds PATH). WinPE stays 5.1.
-3. Click **TEST FIRST** (noob door) or **TEST SELECTED** (expert).
+3. Click **TEST FIRST** (Beginner) or **TEST SELECTED** (Power User).
    Nothing is deleted. Read the log.
 4. Then pick a door:
-   - **Noob:** Hide Xbox + telemetry. No Defender. No killing blows.
-   - **Expert:** **PREP MEDIA** builds the WinPE ISO if missing, then
+   - **Beginner:** Hide Xbox, telemetry, NIC, BCD/registry/power. No Defender. No killing blows.
+     **RUN ALL FIXES** applies those. Restore from the first screen.
+   - **Power User:** **PREP MEDIA** builds the WinPE ISO if missing, then
      writes a USB (formats the stick). Boot the ISO or the stick.
      VM recommended, not required. After Windows is up, SCAN.
      Killing blows / Grim Reaper unlock only after that boot.
@@ -32,6 +33,8 @@ Game Mode stays. The Xbox controller driver stays.
 ![Door chooser](ui/DoorChooser.jpg)
 
 ![Expert panel](ui/ExpertPanel.jpg)
+
+![Noob panel](ui/NoobPanel.jpg)
 
 ## Advanced
 
@@ -161,7 +164,7 @@ the PE BCD). `pwsh -File latency_bake.ps1 -T`. Restore:
 **RustDesk** (in-Windows, not WinPE): Expert **RUSTDESK** button
 chooses permanent password (type it / generate and show once / one-time
 only) and whether to install the unattended service (default on).
-Noob door is one button, **Install RustDesk to get remote support**,
+Beginner mode is one button, **Install RustDesk to get remote support**,
 one-time codes only. Official public RustDesk servers. Pinned GitHub
 release + SHA256 in `catalog.json` (not latest). Password is never
 logged. `pwsh -File rustdesk.ps1 -T`.
