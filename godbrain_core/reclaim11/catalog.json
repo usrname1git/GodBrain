@@ -79,6 +79,14 @@
     "prep_media": "winpe-iso",
     "killing_blows": "after-winpe-log"
   },
+  "rustdesk": {
+    "github_repo": "rustdesk/rustdesk",
+    "tag": "1.4.9",
+    "asset": "rustdesk-1.4.9-x86_64.exe",
+    "sha256": "eaedeb0088e687bf46f7c46a9c6ea5493ce51f3134dfd6acbedb47b5b9136274",
+    "size": 24472432,
+    "servers": "public-official"
+  },
   "never_touch_appx": [
     "Microsoft.XboxGameCallableUI",
     "Microsoft.WindowsStore",

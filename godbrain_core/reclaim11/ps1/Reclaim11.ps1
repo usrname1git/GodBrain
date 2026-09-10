@@ -26,6 +26,7 @@ $here = Get-Reclaim11Root
 . (Join-Path $ps1Dir "nic_tune.ps1")
 . (Join-Path $ps1Dir "latency_bake.ps1")
 . (Join-Path $ps1Dir "install_pwsh.ps1")
+. (Join-Path $ps1Dir "rustdesk.ps1")
 
 function Write-Reclaim11InventoryFile {
     param($Inventory, [string]$Path)
@@ -68,6 +69,8 @@ if ($Test) {
     Write-Host (Format-Reclaim11TestReport -Plan $nic -Title "nic_tune")
     $lat = Invoke-Reclaim11LatencyBake -Root $here -WhatIf
     Write-Host (Format-Reclaim11TestReport -Plan $lat -Title "latency_bake")
+    $rd = Install-Reclaim11RustDesk -Root $here -WhatIf -PasswordMode one-time -InstallService
+    Write-Host (Format-Reclaim11TestReport -Plan $rd -Title "rustdesk")
     if ($OutJson) {
         $bundle = [pscustomobject]@{
             what_if = $true
@@ -78,6 +81,7 @@ if ($Test) {
             safe    = $safe
             nic     = $nic
             latency = $lat
+            rustdesk = $rd
         }
         Write-Reclaim11InventoryFile -Inventory $bundle -Path $OutJson | Out-Null
     }
@@ -228,7 +232,9 @@ $btnNoobTest = Get-Ui BtnNoobTest
 $btnNoobFix = Get-Ui BtnNoobFix
 $btnNoobXbox = Get-Ui BtnNoobXbox
 $btnNoobTel = Get-Ui BtnNoobTel
+$btnNoobRustDesk = Get-Ui BtnNoobRustDesk
 $btnNoobSafe = Get-Ui BtnNoobSafe
+$btnRustDesk = Get-Ui BtnRustDesk
 $script:LastInventory = $null
 $script:ProcessRunning = $false
 $script:UiDoor = "door"
@@ -611,6 +617,108 @@ $btnNoobTel.Add_Click({
         Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message)
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 telemetry") | Out-Null
     } finally { $script:ProcessRunning = $false }
+})
+
+function Write-Reclaim11RustDeskUiLog {
+    param($Result, [switch]$Noob)
+    $line1 = ("rustdesk id {0}" -f $Result.id)
+    $line2 = ("rustdesk mode={0} service={1} servers={2} tag={3}" -f `
+            $Result.password_mode, $Result.install_service, $Result.servers, $Result.tag)
+    if ($Noob) {
+        Add-NoobLog $line1
+        Add-NoobLog $line2
+    } else {
+        Add-Log $line1
+        Add-Log $line2
+    }
+}
+
+$btnRustDesk.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $choice = Show-Reclaim11RustDeskChooser -Owner $window
+    if (-not $choice) { return }
+    try {
+        $pin = Get-Reclaim11RustDeskPlan -Root $here
+        $msg = @(
+            ("Install official RustDesk {0} on THIS Windows?" -f $pin.tag),
+            "",
+            $pin.asset,
+            ("sha256 {0}" -f $pin.sha256),
+            ("servers {0}" -f $pin.servers),
+            ("mode {0}" -f $choice.password_mode),
+            ("service {0}" -f $choice.install_service),
+            "",
+            "Password is never logged. Continue?"
+        ) -join "`n"
+        $q = [System.Windows.MessageBox]::Show($msg, "Reclaim11 RustDesk", "YesNo", "Warning")
+        if ($q -ne "Yes") { return }
+        $script:ProcessRunning = $true
+        $btnRustDesk.IsEnabled = $false
+        $btnNoobRustDesk.IsEnabled = $false
+        $btnScan.IsEnabled = $false
+        $btnPrep.IsEnabled = $false
+        $btnRun.IsEnabled = $false
+        $btnTest.IsEnabled = $false
+        try {
+            Set-Reclaim11Busy "Installing official RustDesk"
+            $plan = Install-Reclaim11RustDesk -Root $here -PasswordMode $choice.password_mode `
+                -Password $choice.password -InstallService:([bool]$choice.install_service)
+            Write-Reclaim11RustDeskUiLog $plan
+            $done = if ($plan.password_mode -eq "one-time") {
+                "RustDesk ID: {0}`n`nOne-time password is in the RustDesk window. It is not stored here." -f $plan.id
+            } else {
+                "RustDesk ID: {0}`n`nPermanent password is what you set. It was not logged." -f $plan.id
+            }
+            [System.Windows.MessageBox]::Show($done, "Reclaim11 RustDesk") | Out-Null
+        } catch {
+            Add-Log ("RUSTDESK FAIL  {0}" -f $_.Exception.Message)
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 RustDesk") | Out-Null
+        } finally {
+            Set-Reclaim11Busy ""
+        }
+    } finally {
+        if ($choice.password) {
+            try { $choice.password.Dispose() } catch { }
+        }
+        $script:ProcessRunning = $false
+        $btnRustDesk.IsEnabled = $true
+        $btnNoobRustDesk.IsEnabled = $true
+        $btnScan.IsEnabled = $true
+        $btnPrep.IsEnabled = $true
+        $btnRun.IsEnabled = $true
+        $btnTest.IsEnabled = $true
+    }
+})
+
+$btnNoobRustDesk.Add_Click({
+    if ($script:ProcessRunning) { return }
+    $pin = Get-Reclaim11RustDeskPlan -Root $here
+    $msg = @(
+        "Install RustDesk to get remote support?",
+        "",
+        "Official public servers. One-time codes only (no permanent password).",
+        "",
+        ("{0} {1}" -f $pin.tag, $pin.asset),
+        ("sha256 {0}" -f $pin.sha256),
+        "",
+        "Continue?"
+    ) -join "`n"
+    $q = [System.Windows.MessageBox]::Show($msg, "Reclaim11 RustDesk", "YesNo", "Warning")
+    if ($q -ne "Yes") { return }
+    $script:ProcessRunning = $true
+    try {
+        Set-Reclaim11Busy "Installing official RustDesk"
+        $plan = Install-Reclaim11RustDesk -Root $here -PasswordMode one-time -InstallService
+        Write-Reclaim11RustDeskUiLog $plan -Noob
+        $done = "RustDesk ID: {0}`n`nThe one-time password is in the RustDesk window. It is not stored here." -f $plan.id
+        [System.Windows.MessageBox]::Show($done, "Reclaim11 RustDesk") | Out-Null
+    } catch {
+        Add-NoobLog ("RUSTDESK FAIL  {0}" -f $_.Exception.Message)
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 RustDesk") | Out-Null
+    } finally {
+        Set-Reclaim11Busy ""
+        $script:ProcessRunning = $false
+    }
 })
 
 $btnNoobSafe.Add_Click({

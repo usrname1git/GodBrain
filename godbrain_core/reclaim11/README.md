@@ -158,6 +158,14 @@ force Speed/Duplex. Skips VMware host VMnet / Tailscale / Wi-Fi.
 the PE BCD). `pwsh -File latency_bake.ps1 -T`. Restore:
 `pwsh -File latency_bake.ps1 -Restore restore.json`.
 
+**RustDesk** (in-Windows, not WinPE): Expert **RUSTDESK** button
+chooses permanent password (type it / generate and show once / one-time
+only) and whether to install the unattended service (default on).
+Noob door is one button, **Install RustDesk to get remote support**,
+one-time codes only. Official public RustDesk servers. Pinned GitHub
+release + SHA256 in `catalog.json` (not latest). Password is never
+logged. `pwsh -File rustdesk.ps1 -T`.
+
 Killing blows / Grim Reaper self-elevate to TrustedInstaller via Task
 Scheduler (Admin → SYSTEM → TI). No wsudo / MinSudo. WinPE is already
 SYSTEM and skips that hop.
