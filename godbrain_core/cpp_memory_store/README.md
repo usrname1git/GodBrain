@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 7)
+# C++ Alexandria Memory Store (cut 8)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays. This tree is the C++ replacement; Start/Heal still launch Go until this
@@ -35,6 +35,11 @@ Cut 7: stdin `record_skill_run` / `promote_skill` / `query_skills`. Same allowli
 and gates as Go (`desk-v1` one fixture; `galaxy-html-v1` / `frontend-*-v1` two
 distinct passing fixtures; `local-edit-apply-v1` cannot promote). Origin must be
 verified, content-hash bound, linked to a committed run.
+
+Cut 8: stdin `stale_pins`. Kernel `/observe` uses this when `os_pin` moves:
+verified `windows-sre` cards that carry a different `os_pin=` become `stale`
+(not deleted). Learn-class cards without `os_pin=` stay verified. Already-stale
+mismatches are counted so RAG projection can resync.
 
 Start/Heal still launch Go.
 

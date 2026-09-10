@@ -100,6 +100,14 @@ const char* kJudgmentKeys[] = {
     nullptr,
 };
 
+const char* kStalePinsKeys[] = {
+    "command",
+    "sector",
+    "pin",
+    "reasoning",
+    nullptr,
+};
+
 const char* kRecordSkillKeys[] = {
     "command",
     "skill_name",
@@ -388,6 +396,48 @@ bool validate_status_judgment(const StatusJudgment& j, std::string* err) {
     return true;
 }
 
+bool valid_os_pin(const std::string& pin) {
+    if (pin.empty() || pin.size() > 80) return false;
+    for (unsigned char ch : pin) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' ||
+            ch == '/' || ch == '_' || ch == '-') {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool has_mismatched_os_pin(const std::string& content, const std::string& pin) {
+    if (content.find("os_pin=") == std::string::npos) return false;
+    return content.find(std::string("os_pin=") + pin) == std::string::npos;
+}
+
+bool validate_stale_pins(const StalePinsRequest& r, std::string* err) {
+    if (r.command != kStalePinsCommand) {
+        if (err) *err = "stale_pins requires windows-sre sector and a pin";
+        return false;
+    }
+    std::string sector = r.sector;
+    while (!sector.empty() && std::isspace(static_cast<unsigned char>(sector.front())) != 0) {
+        sector.erase(sector.begin());
+    }
+    while (!sector.empty() && std::isspace(static_cast<unsigned char>(sector.back())) != 0) sector.pop_back();
+    std::string pin = r.pin;
+    while (!pin.empty() && std::isspace(static_cast<unsigned char>(pin.front())) != 0) pin.erase(pin.begin());
+    while (!pin.empty() && std::isspace(static_cast<unsigned char>(pin.back())) != 0) pin.pop_back();
+    std::string reason = collapse_ws(r.reasoning);
+    if (sector != "windows-sre" || !valid_os_pin(pin) || static_cast<int>(reason.size()) < kMinJudgmentReason) {
+        if (err) *err = "stale_pins requires windows-sre sector and a pin";
+        return false;
+    }
+    if (static_cast<int>(r.reasoning.size()) > kMaxJudgmentReason) {
+        if (err) *err = "stale_pins requires windows-sre sector and a pin";
+        return false;
+    }
+    return true;
+}
+
 bool skill_profile_allowed(const std::string& profile) {
     return profile == "local-edit-apply-v1" || profile == "galaxy-html-v1" || profile == "frontend-spa-v1" ||
            profile == "frontend-nextjs-v1" || profile == "desk-v1";
@@ -545,10 +595,14 @@ bool classify_and_parse(const std::string& json_text, Route* route, std::string*
         if (!require_string_field(root, "reasoning", &route->judgment.reasoning, err)) return false;
         return validate_status_judgment(route->judgment, err);
     }
-    if (command == "stale_pins") {
+    if (command == kStalePinsCommand) {
+        if (!json_reject_unknown_keys(root, kStalePinsKeys, err)) return false;
         route->kind = CommandKind::StalePins;
-        if (err) *err = "stale_pins not in cpp memory-store protocol cut 1";
-        return false;
+        route->stale_pins.command = command;
+        json_string(root, "sector", &route->stale_pins.sector);
+        json_string(root, "pin", &route->stale_pins.pin);
+        json_string(root, "reasoning", &route->stale_pins.reasoning);
+        return validate_stale_pins(route->stale_pins, err);
     }
     if (command == kRecordSkillRunCommand) {
         if (!json_reject_unknown_keys(root, kRecordSkillKeys, err)) return false;
@@ -900,6 +954,17 @@ int run_self_test() {
     const std::string qskills = "{\"command\":\"query_skills\",\"query\":\"desk\",\"limit\":5}";
     err.clear();
     check(classify_and_parse(qskills, &r, &err) && r.kind == CommandKind::QuerySkills, "query-skills-ok");
+    const std::string stale =
+        "{\"command\":\"stale_pins\",\"sector\":\"windows-sre\",\"pin\":\"IoTEnterpriseS/26100.1\","
+        "\"reasoning\":\"os_pin changed previous -> live\"}";
+    err.clear();
+    check(classify_and_parse(stale, &r, &err) && r.kind == CommandKind::StalePins, "stale-pins-ok");
+    check(has_mismatched_os_pin("os_pin=old/1", "new/1") && !has_mismatched_os_pin("os_pin=new/1", "new/1"),
+          "os-pin-mismatch");
+    err.clear();
+    check(!classify_and_parse(
+              "{\"command\":\"stale_pins\",\"sector\":\"tanks\",\"pin\":\"x\",\"reasoning\":\"abcd\"}", &r, &err),
+          "stale-pins-sector");
     const std::string bad_skills =
         std::string("{\"extractor_version\":\"v1\",\"schema_version\":\"1.0\",") +
         "\"raw_transcript\":\"hello\",\"payload\":{\"trust_tier\":\"candidate\","

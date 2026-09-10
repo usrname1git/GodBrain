@@ -1,6 +1,7 @@
 #include "godbrain/memory_store/store.hpp"
 #include "godbrain/memory_store/state_machine.hpp"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -120,6 +121,16 @@ std::string promote_skill_receipt_json(const PromoteSkillReceiptOut& r) {
     return o.str();
 }
 
+std::string stale_pins_receipt_json(const StalePinsReceiptOut& r) {
+    std::ostringstream o;
+    o << "{\"status\":\"" << json_escape(r.status) << "\""
+      << ",\"sector\":\"" << json_escape(r.sector) << "\""
+      << ",\"pin\":\"" << json_escape(r.pin) << "\""
+      << ",\"stale\":" << r.stale
+      << ",\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
+    return o.str();
+}
+
 std::string query_skills_receipt_json(const QuerySkillsReceiptOut& r) {
     std::ostringstream o;
     o << "{\"status\":\"" << json_escape(r.status) << "\",\"count\":" << r.count << ",\"skills\":[";
@@ -152,6 +163,10 @@ bool store_ingest(StoreHandle*, const DistillationPayload&, StoreReceipt*, std::
     return false;
 }
 bool store_set_status(StoreHandle*, const StatusJudgment&, JudgmentReceiptOut*, std::string* err) {
+    if (err) *err = "mongo-c-driver not linked";
+    return false;
+}
+bool store_stale_pins(StoreHandle*, const StalePinsRequest&, StalePinsReceiptOut*, std::string* err) {
     if (err) *err = "mongo-c-driver not linked";
     return false;
 }
@@ -1042,6 +1057,96 @@ bool store_set_status(
     receipt->from = from;
     receipt->to = judgment.status;
     receipt->status = (from == judgment.status) ? "idempotent_noop" : "judged";
+    receipt->timestamp = utc_now();
+    return true;
+}
+
+bool store_stale_pins(
+    StoreHandle* h, const StalePinsRequest& request, StalePinsReceiptOut* receipt, std::string* err) {
+    if (h == nullptr || receipt == nullptr) {
+        if (err) *err = "store not open";
+        return false;
+    }
+    if (!validate_stale_pins(request, err)) return false;
+    std::string pin = request.pin;
+    while (!pin.empty() && std::isspace(static_cast<unsigned char>(pin.front())) != 0) pin.erase(pin.begin());
+    while (!pin.empty() && std::isspace(static_cast<unsigned char>(pin.back())) != 0) pin.pop_back();
+    std::string sector = request.sector;
+    while (!sector.empty() && std::isspace(static_cast<unsigned char>(sector.front())) != 0) {
+        sector.erase(sector.begin());
+    }
+    while (!sector.empty() && std::isspace(static_cast<unsigned char>(sector.back())) != 0) sector.pop_back();
+    bson_t filter = BSON_INITIALIZER;
+    BSON_APPEND_UTF8(&filter, "sector", sector.c_str());
+    bson_t in_arr = BSON_INITIALIZER;
+    BSON_APPEND_UTF8(&in_arr, "0", kStatusVerified);
+    BSON_APPEND_UTF8(&in_arr, "1", kStatusStale);
+    bson_t in = BSON_INITIALIZER;
+    BSON_APPEND_ARRAY(&in, "$in", &in_arr);
+    BSON_APPEND_DOCUMENT(&filter, "status", &in);
+    BSON_APPEND_REGEX(&filter, "content", "os_pin=", "");
+    bson_t opts = BSON_INITIALIZER;
+    BSON_APPEND_INT64(&opts, "limit", 500);
+    mongoc_collection_t* nodes = coll(h, "knowledge_nodes");
+    mongoc_cursor_t* cur = mongoc_collection_find_with_opts(nodes, &filter, &opts, nullptr);
+    const bson_t* doc = nullptr;
+    int stale = 0;
+    while (mongoc_cursor_next(cur, &doc)) {
+        std::string content, status;
+        iter_utf8(doc, "content", &content);
+        iter_utf8(doc, "status", &status);
+        if (!has_mismatched_os_pin(content, pin)) continue;
+        bson_iter_t it;
+        if (!bson_iter_init_find(&it, doc, "_id") || !BSON_ITER_HOLDS_OID(&it)) continue;
+        bson_oid_t oid = *bson_iter_oid(&it);
+        char hex[25];
+        bson_oid_to_string(&oid, hex);
+        if (status == kStatusVerified) {
+            StatusJudgment j;
+            j.command = kJudgmentCommand;
+            j.id = hex;
+            j.status = kStatusStale;
+            j.reasoning = request.reasoning;
+            JudgmentReceiptOut jr;
+            std::string jerr;
+            if (!store_set_status(h, j, &jr, &jerr)) {
+                mongoc_cursor_destroy(cur);
+                mongoc_collection_destroy(nodes);
+                bson_destroy(&filter);
+                bson_destroy(&in_arr);
+                bson_destroy(&in);
+                bson_destroy(&opts);
+                if (err) *err = jerr;
+                return false;
+            }
+        } else if (!sync_projected_node_status(h->client, h->db_name, oid, kStatusStale, err)) {
+            mongoc_cursor_destroy(cur);
+            mongoc_collection_destroy(nodes);
+            bson_destroy(&filter);
+            bson_destroy(&in_arr);
+            bson_destroy(&in);
+            bson_destroy(&opts);
+            if (err) *err = std::string("RAG status sync failed: ") + *err;
+            return false;
+        }
+        ++stale;
+    }
+    bson_error_t error{};
+    bool failed = mongoc_cursor_error(cur, &error);
+    mongoc_cursor_destroy(cur);
+    mongoc_collection_destroy(nodes);
+    bson_destroy(&filter);
+    bson_destroy(&in_arr);
+    bson_destroy(&in);
+    bson_destroy(&opts);
+    if (failed) {
+        if (err) *err = error.message;
+        return false;
+    }
+    receipt->status = "ok";
+    receipt->sector = sector;
+    receipt->pin = pin;
+    receipt->stale = stale;
     receipt->timestamp = utc_now();
     return true;
 }

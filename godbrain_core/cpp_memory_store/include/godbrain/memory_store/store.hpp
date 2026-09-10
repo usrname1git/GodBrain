@@ -59,11 +59,20 @@ struct QuerySkillsReceiptOut {
     std::string timestamp;
 };
 
+struct StalePinsReceiptOut {
+    std::string status;
+    std::string sector;
+    std::string pin;
+    int stale = 0;
+    std::string timestamp;
+};
+
 std::string store_receipt_json(const StoreReceipt& r);
 std::string judgment_receipt_json(const JudgmentReceiptOut& r);
 std::string skill_run_receipt_json(const SkillRunReceiptOut& r);
 std::string promote_skill_receipt_json(const PromoteSkillReceiptOut& r);
 std::string query_skills_receipt_json(const QuerySkillsReceiptOut& r);
+std::string stale_pins_receipt_json(const StalePinsReceiptOut& r);
 
 bool store_available();
 
@@ -76,6 +85,8 @@ bool store_ingest(
     StoreHandle* h, const DistillationPayload& payload, StoreReceipt* receipt, std::string* err);
 bool store_set_status(
     StoreHandle* h, const StatusJudgment& judgment, JudgmentReceiptOut* receipt, std::string* err);
+bool store_stale_pins(
+    StoreHandle* h, const StalePinsRequest& request, StalePinsReceiptOut* receipt, std::string* err);
 bool store_record_skill_run(
     StoreHandle* h, const RecordSkillRunRequest& request, SkillRunReceiptOut* receipt, std::string* err);
 bool store_promote_skill(
