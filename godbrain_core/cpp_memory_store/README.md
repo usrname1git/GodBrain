@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 11)
+# C++ Alexandria Memory Store (cut 12)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -47,12 +47,18 @@ Cut 9: search citations load bounded `sources` and emit `evidence` spans
 `available` / `partial` / `missing_provenance` / `unavailable`.
 
 Cut 10: `rag-eval.exe` offline hybrid fixture (`-corpus` path, default Go
-testdata). `-live` still uses Go. Thresholds match Go (Recall/MRR/nDCG ≥ 0.90,
+testdata). `-live` queries loopback `:8084` with desk needles (`-desk`,
+`-strict`). Desk file decode matches Go (unknown fields, duplicate ids,
+needles). `--self-test` is offline. Thresholds match Go (Recall/MRR/nDCG ≥ 0.90,
 citation 1.0, no leakage).
 
 Cut 11: ingest `document` + `chunks` (Local-Document-Adapter). Same gates as Go:
 metadata and chunks together, `content_sha256` of `raw_transcript`, contiguous
 UTF-8 byte ranges, forbidden-secret scan, immutable `chunks` collection.
+
+Cut 12: `rag-service` search retries once if generation/health moved mid-query
+(Go `searchConsistently`). Unready or hybrid-without-embeddings still fail
+closed on the first look.
 
 Start/Heal prefer this tree's Release exes, then Go.
 

@@ -1,5 +1,6 @@
 #include "godbrain/memory_store/embedding.hpp"
 #include "godbrain/memory_store/json.hpp"
+#include "godbrain/memory_store/protocol.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -18,6 +19,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 #endif
 
 namespace {
@@ -27,8 +30,11 @@ using godbrain::memory::embedding_cosine;
 using godbrain::memory::embedding_embed_fake;
 using godbrain::memory::json_bool;
 using godbrain::memory::json_get;
+using godbrain::memory::json_is_object;
 using godbrain::memory::json_number;
+using godbrain::memory::json_reject_unknown_keys;
 using godbrain::memory::json_string;
+using godbrain::memory::json_escape;
 using godbrain::memory::parse_json;
 
 constexpr const char* kCorpusVersion = "godbrain-hybrid-eval-v1";
@@ -272,6 +278,376 @@ std::vector<EvalDoc> evaluate_query(
     return results;
 }
 
+bool loopback_http(const wchar_t* host, uint16_t port, const wchar_t* verb, const wchar_t* path,
+                   const std::string& body, int* status, std::string* resp, std::string* err) {
+#if !defined(_WIN32)
+    *err = "live eval requires WinHTTP";
+    return false;
+#else
+    HINTERNET session = WinHttpOpen(L"godbrain-rag-eval", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                                    WINHTTP_NO_PROXY_BYPASS, 0);
+    if (session == nullptr) {
+        *err = "WinHttpOpen failed";
+        return false;
+    }
+    WinHttpSetTimeouts(session, 500, 500, 8000, 8000);
+    DWORD disable = WINHTTP_DISABLE_REDIRECTS;
+    WinHttpSetOption(session, WINHTTP_OPTION_DISABLE_FEATURE, &disable, sizeof disable);
+    HINTERNET connect = WinHttpConnect(session, host, port, 0);
+    if (connect == nullptr) {
+        WinHttpCloseHandle(session);
+        *err = "connect failed";
+        return false;
+    }
+    HINTERNET request = WinHttpOpenRequest(connect, verb, path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           0);
+    if (request == nullptr) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        *err = "open request failed";
+        return false;
+    }
+    BOOL sent = FALSE;
+    if (body.empty()) {
+        sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    } else {
+        WinHttpAddRequestHeaders(request, L"Content-Type: application/json\r\n", (ULONG)-1, WINHTTP_ADDREQ_FLAG_ADD);
+        sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                  (LPVOID)body.data(), static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0);
+    }
+    if (!sent || !WinHttpReceiveResponse(request, nullptr)) {
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        *err = "request failed";
+        return false;
+    }
+    DWORD code = 0;
+    DWORD clen = sizeof code;
+    WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code,
+                        &clen, WINHTTP_NO_HEADER_INDEX);
+    *status = static_cast<int>(code);
+    std::string out;
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
+        if (out.size() + avail > 64 * 1024) avail = static_cast<DWORD>(64 * 1024 - out.size());
+        if (avail == 0) break;
+        std::string chunk(avail, '\0');
+        DWORD got = 0;
+        if (!WinHttpReadData(request, chunk.data(), avail, &got) || got == 0) break;
+        out.append(chunk.data(), got);
+        if (out.size() >= 64 * 1024) break;
+    }
+    *resp = std::move(out);
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return true;
+#endif
+}
+
+std::string ascii_lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+std::string trim_copy(const std::string& s) {
+    size_t a = 0;
+    size_t b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a])) != 0) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1])) != 0) --b;
+    return s.substr(a, b - a);
+}
+
+int utf8_runes(const std::string& s) {
+    int n = 0;
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if ((c & 0x80) == 0) i += 1;
+        else if ((c & 0xE0) == 0xC0) i += 2;
+        else if ((c & 0xF0) == 0xE0) i += 3;
+        else i += 4;
+        if (i > s.size()) break;
+        ++n;
+    }
+    return n;
+}
+
+std::vector<std::string> match_needles(const std::string& text, const std::vector<std::string>& needles) {
+    std::string lower = ascii_lower(text);
+    std::vector<std::string> matched;
+    std::set<std::string> seen;
+    for (const std::string& n : needles) {
+        std::string key = ascii_lower(n);
+        if (seen.count(key)) continue;
+        if (lower.find(key) != std::string::npos) {
+            matched.push_back(n);
+            seen.insert(key);
+        }
+    }
+    return matched;
+}
+
+bool live_origin_ok(const std::string& origin) {
+    return origin == "http://127.0.0.1:8084" || origin == "http://localhost:8084";
+}
+
+struct DeskQuery {
+    std::string id, query, sector;
+    std::vector<std::string> needles;
+};
+
+struct DeskFile {
+    std::string version;
+    int top_k = 0;
+    std::vector<DeskQuery> queries;
+};
+
+bool decode_desk_eval(const std::string& raw, DeskFile* out, std::string* err) {
+    *out = DeskFile{};
+    Json root;
+    if (!parse_json(raw, &root, err) || !json_is_object(root)) {
+        if (err && err->empty()) *err = "desk evaluation file must contain exactly one JSON document";
+        return false;
+    }
+    const char* root_keys[] = {"version", "top_k", "queries", nullptr};
+    if (!json_reject_unknown_keys(root, root_keys, err)) {
+        if (err) *err = "desk evaluation file has unknown field";
+        return false;
+    }
+    json_string(root, "version", &out->version);
+    double topkd = 0;
+    if (!json_number(root, "top_k", &topkd)) {
+        if (err) *err = "desk evaluation top_k is invalid";
+        return false;
+    }
+    out->top_k = static_cast<int>(topkd);
+    if (out->version != "godbrain-desk-eval-v1") {
+        if (err) *err = "desk evaluation version is invalid";
+        return false;
+    }
+    if (out->top_k < 1 || out->top_k > 25) {
+        if (err) *err = "desk evaluation top_k is invalid";
+        return false;
+    }
+    const Json* qs = json_get(root, "queries");
+    if (qs == nullptr || qs->kind != Json::Kind::Array || qs->arr.empty() || qs->arr.size() > 50) {
+        if (err) *err = "desk evaluation query count is invalid";
+        return false;
+    }
+    const char* qkeys[] = {"id", "query", "needles", "sector", nullptr};
+    std::set<std::string> seen;
+    for (const Json& q : qs->arr) {
+        if (!json_is_object(q) || !json_reject_unknown_keys(q, qkeys, err)) {
+            if (err) *err = "desk evaluation query is invalid";
+            return false;
+        }
+        DeskQuery dq;
+        json_string(q, "id", &dq.id);
+        json_string(q, "query", &dq.query);
+        json_string(q, "sector", &dq.sector);
+        dq.id = trim_copy(dq.id);
+        dq.query = trim_copy(dq.query);
+        dq.sector = trim_copy(dq.sector);
+        if (dq.id.empty() || dq.id.size() > 64) {
+            if (err) *err = "desk evaluation query id is invalid";
+            return false;
+        }
+        if (!seen.insert(dq.id).second) {
+            if (err) *err = "desk evaluation query id is duplicated";
+            return false;
+        }
+        if (dq.query.empty() || utf8_runes(dq.query) > 256) {
+            if (err) *err = "desk evaluation query text is invalid";
+            return false;
+        }
+        const Json* ns = json_get(q, "needles");
+        if (ns == nullptr || ns->kind != Json::Kind::Array || ns->arr.empty() || ns->arr.size() > 8) {
+            if (err) *err = "desk evaluation needles are invalid";
+            return false;
+        }
+        for (const Json& n : ns->arr) {
+            if (n.kind != Json::Kind::String) {
+                if (err) *err = "desk evaluation needle is invalid";
+                return false;
+            }
+            std::string needle = trim_copy(n.str);
+            if (needle.empty() || utf8_runes(needle) > 64) {
+                if (err) *err = "desk evaluation needle is invalid";
+                return false;
+            }
+            dq.needles.push_back(std::move(needle));
+        }
+        out->queries.push_back(std::move(dq));
+    }
+    return true;
+}
+
+int run_eval_self_test() {
+    int failed = 0;
+    auto check = [&](bool ok, const char* name) {
+        if (!ok) {
+            std::fprintf(stderr, "FAIL %s\n", name);
+            ++failed;
+        }
+    };
+    const char* good =
+        "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[\"Heal\",\"Watch\"],"
+        "\"sector\":\"windows-sre\"}]}";
+    DeskFile file;
+    std::string err;
+    check(decode_desk_eval(good, &file, &err) && file.queries.size() == 1 && file.queries[0].id == "heal-never-kills",
+          "desk-ok");
+    file = {};
+    err.clear();
+    const char* extra =
+        "{\"extra\":true,\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[\"Heal\"]}]}";
+    check(!decode_desk_eval(extra, &file, &err), "desk-unknown");
+    file = {};
+    err.clear();
+    const char* dup =
+        "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[\"Heal\"]},"
+        "{\"id\":\"heal-never-kills\",\"query\":\"Watch never kills\",\"needles\":[\"Watch\"]}]}";
+    check(!decode_desk_eval(dup, &file, &err), "desk-dup-id");
+    file = {};
+    err.clear();
+    const char* noneedle =
+        "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[]}]}";
+    check(!decode_desk_eval(noneedle, &file, &err), "desk-needles");
+    check(live_origin_ok("http://127.0.0.1:8084") && live_origin_ok("http://localhost:8084") &&
+              !live_origin_ok("http://127.0.0.1:8083") && !live_origin_ok("https://127.0.0.1:8084"),
+          "live-origin");
+    auto needles = match_needles("Heal Watch never kills", {"Heal", "missing"});
+    check(needles.size() == 1 && needles[0] == "Heal", "needles");
+    if (failed == 0) std::fprintf(stderr, "cpp rag-eval self-test ok\n");
+    return failed == 0 ? 0 : 1;
+}
+
+int run_live(const std::string& desk_path, const std::string& origin, bool strict) {
+    std::string o = origin;
+    while (!o.empty() && (o.back() == '/' || o.back() == '\\')) o.pop_back();
+    if (!live_origin_ok(o)) {
+        std::cerr << "RAG evaluation failed: live eval is loopback-only, got \"" << origin << "\"\n";
+        return 1;
+    }
+    std::string err;
+    std::string raw = read_file(desk_path, &err);
+    if (raw.empty()) {
+        std::cerr << "RAG evaluation failed: " << err << "\n";
+        return 1;
+    }
+    DeskFile file;
+    if (!decode_desk_eval(raw, &file, &err)) {
+        std::cerr << "RAG evaluation failed: " << err << "\n";
+        return 1;
+    }
+    int status = 0;
+    std::string health_body;
+    if (!loopback_http(L"127.0.0.1", 8084, L"GET", L"/health", "", &status, &health_body, &err)) {
+        std::cerr << "RAG evaluation failed: " << err << "\n";
+        return 1;
+    }
+    Json health;
+    bool ready = false;
+    if (status == 200 && parse_json(health_body, &health, &err)) json_bool(health, "ready", &ready);
+    if (!ready) {
+        std::cerr << "RAG evaluation failed: RAG " << o << " is unready\n";
+        return 1;
+    }
+    int hits = 0, misses = 0, empty = 0;
+    std::ostringstream report;
+    report << "{\n  \"version\": \"godbrain-desk-eval-v1\",\n  \"endpoint\": \"" << o
+           << "/v1/search\",\n  \"ready\": true,\n  \"query_count\": " << file.queries.size()
+           << ",\n  \"queries\": [\n";
+    for (size_t i = 0; i < file.queries.size(); ++i) {
+        const DeskQuery& q = file.queries[i];
+        std::ostringstream body;
+        body << "{\"query\":\"" << json_escape(q.query) << "\",\"top_k\":" << file.top_k
+             << ",\"status\":\"verified\"";
+        if (!q.sector.empty()) body << ",\"sector\":\"" << json_escape(q.sector) << "\"";
+        body << "}";
+        int sc = 0;
+        std::string resp;
+        std::string qerr;
+        bool hit = false;
+        int count = 0;
+        std::string snippet;
+        std::string error;
+        std::vector<std::string> matched;
+        if (!loopback_http(L"127.0.0.1", 8084, L"POST", L"/v1/search", body.str(), &sc, &resp, &qerr)) {
+            error = qerr;
+            ++misses;
+        } else if (sc != 200) {
+            error = "status " + std::to_string(sc);
+            ++misses;
+        } else {
+            Json search;
+            if (!parse_json(resp, &search, &qerr) || search.kind != Json::Kind::Object) {
+                error = "invalid search response";
+                ++misses;
+            } else {
+                const Json* results = json_get(search, "results");
+                if (results && results->kind == Json::Kind::Array) {
+                    count = static_cast<int>(results->arr.size());
+                    std::string combined;
+                    for (const Json& r : results->arr) {
+                        std::string snip, sid;
+                        json_string(r, "snippet", &snip);
+                        json_string(r, "stable_id", &sid);
+                        combined += snip;
+                        combined.push_back('\n');
+                        combined += sid;
+                        combined.push_back('\n');
+                        if (snippet.empty()) snippet = snip.size() > 160 ? snip.substr(0, 160) : snip;
+                    }
+                    if (count == 0) {
+                        ++empty;
+                        ++misses;
+                    } else {
+                        matched = match_needles(combined, q.needles);
+                        hit = !matched.empty();
+                        if (hit) ++hits;
+                        else ++misses;
+                    }
+                } else {
+                    ++empty;
+                    ++misses;
+                }
+            }
+        }
+        if (i) report << ",\n";
+        report << "    {\"id\":\"" << json_escape(q.id) << "\",\"query\":\"" << json_escape(q.query)
+               << "\",\"hit\":" << (hit ? "true" : "false") << ",\"count\":" << count;
+        if (!matched.empty()) {
+            report << ",\"matched_needles\":[";
+            for (size_t m = 0; m < matched.size(); ++m) {
+                if (m) report << ",";
+                report << "\"" << json_escape(matched[m]) << "\"";
+            }
+            report << "]";
+        }
+        if (!snippet.empty()) report << ",\"snippet\":\"" << json_escape(snippet) << "\"";
+        if (!error.empty()) report << ",\"error\":\"" << json_escape(error) << "\"";
+        report << "}";
+    }
+    report << "\n  ],\n  \"hits\": " << hits << ",\n  \"misses\": " << misses << ",\n  \"empty\": " << empty << "\n}\n";
+    std::cout << report.str();
+    if (hits == 0) {
+        std::cerr << "RAG evaluation failed: live desk eval: RAG ready but zero needle hits\n";
+        return 1;
+    }
+    if (strict && misses > 0) {
+        std::cerr << "RAG evaluation failed: live desk eval: " << misses << " miss(es) under -strict\n";
+        return 1;
+    }
+    return 0;
+}
+
 int percentile(std::vector<int> v, int p) {
     std::sort(v.begin(), v.end());
     int idx = (static_cast<int>(v.size()) * p + 99) / 100;
@@ -283,14 +659,22 @@ int percentile(std::vector<int> v, int p) {
 
 int main(int argc, char** argv) {
     std::string corpus_path = "godbrain_core/memory_store/rag/testdata/hybrid_eval_corpus.json";
+    std::string desk_path = "godbrain_core/memory_store/rag/testdata/desk_eval_queries.json";
+    std::string endpoint = "http://127.0.0.1:8084";
+    bool live = false;
+    bool strict = false;
+    bool self_test = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "-corpus" && i + 1 < argc) corpus_path = argv[++i];
-        else if (a == "-live") {
-            std::cerr << "C++ rag-eval live desk is not in this cut; use Go rag-eval.exe -live\n";
-            return 1;
-        }
+        else if (a == "-desk" && i + 1 < argc) desk_path = argv[++i];
+        else if (a == "-endpoint" && i + 1 < argc) endpoint = argv[++i];
+        else if (a == "-live") live = true;
+        else if (a == "-strict") strict = true;
+        else if (a == "-self-test" || a == "--self-test") self_test = true;
     }
+    if (self_test) return run_eval_self_test();
+    if (live) return run_live(desk_path, endpoint, strict);
     std::string err;
     std::string raw = read_file(corpus_path, &err);
     if (raw.empty()) {

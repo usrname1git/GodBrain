@@ -107,4 +107,9 @@ if(BUILD_TESTING)
         target_compile_options(cpp_memory_store_tests PRIVATE /W4 /WX /permissive- /EHsc)
     endif()
     add_test(NAME cpp_memory_store_protocol COMMAND cpp_memory_store_tests)
+    add_test(NAME cpp_rag_eval_self COMMAND rag-eval --self-test)
+    add_test(
+        NAME cpp_rag_eval_offline
+        COMMAND rag-eval -corpus "${CMAKE_CURRENT_SOURCE_DIR}/../memory_store/rag/testdata/hybrid_eval_corpus.json"
+    )
 endif()
