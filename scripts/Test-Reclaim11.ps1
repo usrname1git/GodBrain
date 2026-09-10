@@ -159,8 +159,11 @@ if ($xamlSrc -notmatch 'x:Name="BusyBar"') {
 if ($xamlSrc -notmatch "IsIndeterminate") {
     throw "Test-Reclaim11: PREP progress bar must be indeterminate"
 }
-if ($xamlSrc -notmatch "bloat only") {
-    throw "Test-Reclaim11: door must say no PE boot = bloat only"
+if ($xamlSrc -notmatch "All optimizations and debloat still work") {
+    throw "Test-Reclaim11: door must say all optimizations and debloat still work"
+}
+if ($xamlSrc -match "only get bloat|No PE boot = bloat only") {
+    throw "Test-Reclaim11: door must not say you only get bloat without PE"
 }
 if ($xamlSrc -match "Never BFE") {
     throw "Test-Reclaim11: door copy must not say Never BFE"
@@ -441,8 +444,8 @@ if ($readme -match '(?m)^# Reclaim11 \(not Heal') {
 if ($readme -match 'Heal never launches this') {
     throw "Test-Reclaim11: README Rails must not mention Heal never launches"
 }
-if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'bloat only') {
-    throw "Test-Reclaim11: README must say MUST boot WinPE or bloat only"
+if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'all optimizations and debloat still work') {
+    throw "Test-Reclaim11: README must say MUST boot WinPE; optimizations still work"
 }
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg' -or $readme -notmatch 'ui/NoobPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg, ExpertPanel.jpg, and NoobPanel.jpg"
