@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 #include <windows.h>
@@ -89,12 +90,52 @@ int main() {
     CreateDirectoryA("C:\\Temp\\GitHub", nullptr);
     const std::string wres = local_tools::run_tools_from_text(write_block);
     pass &= expect(wres.find("write_local_file ok") != std::string::npos, "write ok");
+    pass &= expect(wres.find("before=") != std::string::npos && wres.find("after=") != std::string::npos,
+                   "write hashes");
     {
         std::ifstream in("C:\\Temp\\GitHub\\godbrain-tool-test.txt");
         std::string body;
         std::getline(in, body);
         pass &= expect(body == "hello-tools", "wrote bytes");
     }
+    pass &= expect(GetFileAttributesA("C:\\Temp\\GitHub\\godbrain-tool-test.txt.gb-tmp") ==
+                       INVALID_FILE_ATTRIBUTES,
+                   "write left no tmp");
+
+    const char kAppend[] = "C:\\Temp\\GitHub\\godbrain-tool-append.txt";
+    const std::string append_seed =
+        "*** TOOL\nname: write_local_file\npath: C:\\Temp\\GitHub\\godbrain-tool-append.txt\n"
+        "<<<<\nalpha\n>>>>\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(append_seed).find("write_local_file ok") !=
+                       std::string::npos,
+                   "append seed");
+    const std::string append_block =
+        "*** TOOL\nname: write_local_file\npath: C:\\Temp\\GitHub\\godbrain-tool-append.txt\n"
+        "args: append\n<<<<\nbeta\n>>>>\n*** END\n";
+    const std::string ares = local_tools::run_tools_from_text(append_block);
+    pass &= expect(ares.find("write_local_file ok") != std::string::npos &&
+                       ares.find("append") != std::string::npos,
+                   "append ok");
+    {
+        std::ifstream in(kAppend);
+        std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        pass &= expect(all == "alpha\nbeta\n", "append kept dest");
+    }
+    HANDLE lock = CreateFileA(kAppend, GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    pass &= expect(lock != INVALID_HANDLE_VALUE, "append lock open");
+    if (lock != INVALID_HANDLE_VALUE) {
+        const std::string locked =
+            "*** TOOL\nname: write_local_file\npath: C:\\Temp\\GitHub\\godbrain-tool-append.txt\n"
+            "args: append\n<<<<\ngamma\n>>>>\n*** END\n";
+        const std::string lres = local_tools::run_tools_from_text(locked);
+        pass &= expect(lres.find("dest unread") != std::string::npos, "append unread");
+        CloseHandle(lock);
+        std::ifstream in2(kAppend);
+        std::string all2((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+        pass &= expect(all2 == "alpha\nbeta\n", "append unread left dest");
+    }
+    DeleteFileA(kAppend);
 
     const std::string deny =
         "*** TOOL\nname: write_local_file\npath: C:\\Windows\\Temp\\nope.txt\n"
@@ -148,12 +189,29 @@ int main() {
         "old: hello-tools\n<<<<\nhello-desk\n>>>>\n*** END\n";
     const std::string eres_edit = local_tools::run_tools_from_text(edit_block);
     pass &= expect(eres_edit.find("edit_local_file ok") != std::string::npos, "edit ok");
+    pass &= expect(eres_edit.find("before=") != std::string::npos &&
+                       eres_edit.find("after=") != std::string::npos,
+                   "edit hashes");
     {
         std::ifstream in2("C:\\Temp\\GitHub\\godbrain-tool-test.txt");
         std::string body2;
         std::getline(in2, body2);
         pass &= expect(body2 == "hello-desk", "edit wrote");
     }
+    const std::string edit_miss_block =
+        "*** TOOL\nname: edit_local_file\npath: C:\\Temp\\GitHub\\godbrain-tool-test.txt\n"
+        "old: not-in-file\n<<<<\nwiped\n>>>>\n*** END\n";
+    const std::string edit_miss_res = local_tools::run_tools_from_text(edit_miss_block);
+    pass &= expect(edit_miss_res.find("old_text not found") != std::string::npos, "edit miss");
+    {
+        std::ifstream in3("C:\\Temp\\GitHub\\godbrain-tool-test.txt");
+        std::string body3;
+        std::getline(in3, body3);
+        pass &= expect(body3 == "hello-desk", "miss did not write");
+    }
+    pass &= expect(GetFileAttributesA("C:\\Temp\\GitHub\\godbrain-tool-test.txt.gb-tmp") ==
+                       INVALID_FILE_ATTRIBUTES,
+                   "edit left no tmp");
 
     const std::string elev =
         "*** TOOL\nname: run_elevate\n<<<<\nwhoami\n>>>>\n*** END\n";

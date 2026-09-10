@@ -8,10 +8,13 @@
 #include <cctype>
 #include <chrono>
 #include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <thread>
 #include <vector>
+
+#include "../cpp_tools/keccak256.hpp"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -214,6 +217,61 @@ std::string read_file_limited(const std::string& path, size_t cap, bool* truncat
     if (got > cap) data.resize(cap);
     else data.resize(got);
     return data;
+}
+
+bool dest_on_disk(const std::string& path, bool* exists, uint64_t* size) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad)) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) {
+            *exists = false;
+            *size = 0;
+            return true;
+        }
+        return false;
+    }
+    if ((fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) return false;
+    *exists = true;
+    ULARGE_INTEGER sz;
+    sz.LowPart = fad.nFileSizeLow;
+    sz.HighPart = fad.nFileSizeHigh;
+    *size = sz.QuadPart;
+    return true;
+}
+
+std::string keccak_hex(const std::string& body) {
+    uint8_t hash[32] = {};
+    Keccak256::getHash(reinterpret_cast<const uint8_t*>(body.data()), body.size(), hash);
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (int i = 0; i < 32; ++i) out << std::setw(2) << static_cast<int>(hash[i]);
+    return out.str();
+}
+
+// Dest is untouched unless replace succeeds.
+bool commit_file_bytes(const std::string& path, const std::string& next, std::string* err) {
+    const std::string tmp = path + ".gb-tmp";
+    {
+        std::ofstream outf(tmp, std::ios::binary | std::ios::trunc);
+        if (!outf) {
+            if (err) *err = "cannot write temp";
+            return false;
+        }
+        outf.write(next.data(), static_cast<std::streamsize>(next.size()));
+        outf.close();
+        if (!outf) {
+            DeleteFileA(tmp.c_str());
+            if (err) *err = "temp flush failed";
+            return false;
+        }
+    }
+    if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD e = GetLastError();
+        DeleteFileA(tmp.c_str());
+        if (err) *err = "replace failed err=" + std::to_string(e);
+        return false;
+    }
+    return true;
 }
 
 bool looks_binary(const std::string& data) {
@@ -1837,17 +1895,40 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
                 const size_t slash = full.find_last_of("\\/");
                 if (slash != std::string::npos) ensure_dir(full.substr(0, slash));
                 const bool append = contains_ci(c.args, "append");
-                std::ofstream outf(
-                    full, std::ios::binary |
-                              (append ? std::ios::app : std::ios::trunc));
-                if (!outf) {
-                    out << "write_local_file: cannot write " << full << "\n";
+                bool exists = false;
+                uint64_t on_disk = 0;
+                if (!dest_on_disk(full, &exists, &on_disk)) {
+                    out << "write_local_file: dest unread " << full << "\n";
                     continue;
                 }
-                outf.write(c.content.data(),
-                           static_cast<std::streamsize>(c.content.size()));
-                out << "write_local_file ok bytes=" << c.content.size() << " "
-                    << (append ? "append " : "") << full << "\n";
+                bool trunc = false;
+                const std::string original = read_file_limited(full, kMaxWriteBytes, &trunc);
+                if (append) {
+                    if (exists && on_disk > kMaxWriteBytes) {
+                        out << "write_local_file: file too large\n";
+                        continue;
+                    }
+                    if (exists && (trunc || static_cast<uint64_t>(original.size()) != on_disk)) {
+                        out << "write_local_file: dest unread\n";
+                        continue;
+                    }
+                } else if (trunc) {
+                    out << "write_local_file: file too large\n";
+                    continue;
+                }
+                std::string next = append ? original + c.content : c.content;
+                if (next.size() > kMaxWriteBytes) {
+                    out << "write_local_file: body too large\n";
+                    continue;
+                }
+                std::string werr;
+                if (!commit_file_bytes(full, next, &werr)) {
+                    out << "write_local_file: cannot write " << full << " " << werr << "\n";
+                    continue;
+                }
+                out << "write_local_file ok bytes=" << c.content.size()
+                    << " before=" << keccak_hex(original) << " after=" << keccak_hex(next)
+                    << " " << (append ? "append " : "") << full << "\n";
             } else if (c.name == "run_strings") {
                 std::string exe = find_exe("strings64");
                 if (exe.empty()) exe = find_exe("strings");
@@ -1965,11 +2046,12 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
                     continue;
                 }
                 bool trunc = false;
-                std::string data = read_file_limited(full, kMaxWriteBytes, &trunc);
+                const std::string original = read_file_limited(full, kMaxWriteBytes, &trunc);
                 if (trunc) {
                     out << "edit_local_file: file too large\n";
                     continue;
                 }
+                std::string data = original;
                 const bool all = contains_ci(c.args, "replace_all");
                 size_t at = data.find(old_text);
                 if (at == std::string::npos) {
@@ -1983,14 +2065,14 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
                     if (!all) break;
                     at = data.find(old_text, at + c.content.size());
                 }
-                std::ofstream outf(full, std::ios::binary | std::ios::trunc);
-                if (!outf) {
-                    out << "edit_local_file: cannot write " << full << "\n";
+                std::string werr;
+                if (!commit_file_bytes(full, data, &werr)) {
+                    out << "edit_local_file: cannot write " << full << " " << werr << "\n";
                     continue;
                 }
-                outf.write(data.data(), static_cast<std::streamsize>(data.size()));
-                out << "edit_local_file ok replacements=" << nrep << " " << full
-                    << "\n";
+                out << "edit_local_file ok replacements=" << nrep
+                    << " before=" << keccak_hex(original) << " after=" << keccak_hex(data)
+                    << " " << full << "\n";
             }
             continue;
         }
