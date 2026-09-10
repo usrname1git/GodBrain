@@ -156,22 +156,22 @@ if ($SelfTestEnv) {
             "MONGODB_DB_NAME", "GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION",
             "GODBRAIN_EMBEDDING_ENDPOINT", "GODBRAIN_EMBEDDING_MODEL",
             "GODBRAIN_EMBEDDING_MODEL_REVISION", "GODBRAIN_EMBEDDING_MODEL_SHA256",
-            "GODBRAIN_EMBEDDING_DIMENSION", "GODBRAIN_RAG_EMBEDDING_REQUIRED"
+            "GODBRAIN_EMBEDDING_DIMENSION", "GODBRAIN_RAG_EMBEDDING_REQUIRED",
+            "GODBRAIN_RAG_PORT"
         )) {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     }
     try {
         $env:MONGODB_DB_NAME = "godbrain-selftest"
-        $list = New-GodBrainChildEnvironment -Extra @{
-            GODBRAIN_API_TOKEN                   = "x-test-token"
-            GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION = "hybrid-v1"
-            GODBRAIN_EMBEDDING_ENDPOINT          = "http://127.0.0.1:11434/v1/embeddings"
-            GODBRAIN_EMBEDDING_MODEL             = "local-model-name"
-            GODBRAIN_EMBEDDING_MODEL_REVISION    = "operator-pin"
-            GODBRAIN_EMBEDDING_MODEL_SHA256      = ("a" * 64)
-            GODBRAIN_EMBEDDING_DIMENSION         = "768"
-            GODBRAIN_RAG_EMBEDDING_REQUIRED      = "false"
-        }
+        $env:GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION = "hybrid-v1"
+        $env:GODBRAIN_EMBEDDING_ENDPOINT = "http://127.0.0.1:11434/v1/embeddings"
+        $env:GODBRAIN_EMBEDDING_MODEL = "local-model-name"
+        $env:GODBRAIN_EMBEDDING_MODEL_REVISION = "operator-pin"
+        $env:GODBRAIN_EMBEDDING_MODEL_SHA256 = ("a" * 64)
+        $env:GODBRAIN_EMBEDDING_DIMENSION = "768"
+        $env:GODBRAIN_RAG_EMBEDDING_REQUIRED = "false"
+        $env:GODBRAIN_RAG_PORT = "9999"
+        $list = New-GodBrainChildEnvironment -Extra @{ GODBRAIN_API_TOKEN = "x-test-token" }
         $names = @($list | ForEach-Object { ($_ -split "=", 2)[0] })
         $map = @{}
         foreach ($entry in $list) {
