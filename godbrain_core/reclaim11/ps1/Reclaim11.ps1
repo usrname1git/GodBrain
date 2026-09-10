@@ -364,7 +364,11 @@ function Show-Reclaim11Door {
         $btnLatency.IsEnabled = [bool]$kinds["latency"]
         $btnKill.IsEnabled = $false
         $btnReaper.IsEnabled = $false
-        $btnSafe.IsChecked = $false
+        if (-not $btnSafe.IsEnabled) { $btnSafe.IsChecked = $false }
+        if (-not $btnXbox.IsEnabled) { $btnXbox.IsChecked = $false }
+        if (-not $btnTelemetry.IsEnabled) { $btnTelemetry.IsChecked = $false }
+        if (-not $btnNic.IsEnabled) { $btnNic.IsChecked = $false }
+        if (-not $btnLatency.IsEnabled) { $btnLatency.IsChecked = $false }
         $btnKill.IsChecked = $false
         $btnReaper.IsChecked = $false
     } elseif ($Name -eq "expert") {
@@ -448,11 +452,11 @@ function Confirm-Reclaim11LatencyHighPerformance {
 
 function Get-Reclaim11RestoreKindsFromTicks {
     $kinds = @()
-    if ([bool]$btnSafe.IsChecked) { $kinds += "safe" }
-    if ([bool]$btnXbox.IsChecked) { $kinds += "xbox" }
-    if ([bool]$btnTelemetry.IsChecked) { $kinds += "telemetry" }
-    if ([bool]$btnNic.IsChecked) { $kinds += "nic" }
-    if ([bool]$btnLatency.IsChecked) { $kinds += "latency" }
+    if ([bool]$btnSafe.IsEnabled -and [bool]$btnSafe.IsChecked) { $kinds += "safe" }
+    if ([bool]$btnXbox.IsEnabled -and [bool]$btnXbox.IsChecked) { $kinds += "xbox" }
+    if ([bool]$btnTelemetry.IsEnabled -and [bool]$btnTelemetry.IsChecked) { $kinds += "telemetry" }
+    if ([bool]$btnNic.IsEnabled -and [bool]$btnNic.IsChecked) { $kinds += "nic" }
+    if ([bool]$btnLatency.IsEnabled -and [bool]$btnLatency.IsChecked) { $kinds += "latency" }
     $kinds
 }
 
