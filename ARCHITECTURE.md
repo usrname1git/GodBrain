@@ -16,7 +16,7 @@ verify, then repeat or stop. The bottleneck is the verifier, not the model.
 | Listener | Process | Job |
 |---|---|---|
 | `:27017` | Windows service `MongoDB` | Vault. Immutable sources + Golden Records. |
-| `:8084` | `rag-service.exe` | Committed Golden Record search / graph / document. |
+| `:8084` | `rag-service.exe` | Committed Golden Record search / graph / document. Start/Heal still launch the Go binary. C++ sibling is `godbrain_core/cpp_memory_store/`. |
 | `:8000` | `llama-server` or `coli serve` | One GPU mouth. Chat and Librarian share it. |
 | `:8083` | `godbrain-kernel.exe` | Galaxy, HTTP API, privileged `command_type`. Loopback chat. |
 
