@@ -20,6 +20,8 @@ struct Result {
     std::string preview_path;
     std::string preview_old;
     std::string preview_new;
+    bool receipt_saved = false;
+    std::string receipt_id;
 };
 
 struct Preview {
@@ -36,6 +38,10 @@ std::string edit_user_with_excerpt(const std::string& user_msg);
 Preview preview_apply_blocks(const std::string& text);
 std::string check_profile_for(const std::string& rel);
 void set_verify_script_for_test(const std::string& path);
+bool receipt_eligible(const Result& result);
+std::string format_edit_receipt(const Result& result);
+using ReceiptSink = std::function<std::string(const std::string& body)>;
+void set_receipt_sink(ReceiptSink sink);
 
 Result maybe_apply(
     const std::string& user_msg,
