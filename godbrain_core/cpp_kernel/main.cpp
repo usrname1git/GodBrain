@@ -1701,7 +1701,8 @@ static std::vector<json> load_core_event_tail(size_t n) {
 }
 
 static void save_chain(const std::string& goal, const std::string& ledger,
-                       const std::string& answer, int hops) {
+                       const std::string& answer, int hops,
+                       const std::string& phase = "", bool hops_ok = true) {
     json prev;
     {
         std::ifstream in(chain_path(), std::ios::binary);
@@ -1715,16 +1716,24 @@ static void save_chain(const std::string& goal, const std::string& ledger,
     std::string id = prev.value("id", "");
     const std::string prev_goal = prev.value("goal", "");
     const std::string prev_status = prev.value("status", "");
-    const bool reuse = !id.empty() && prev_status == "running" &&
-                       (goal == prev_goal || is_continue_command(goal));
+    const bool same_flight =
+        !id.empty() && (goal == prev_goal || is_continue_command(goal));
+    if (prev_status == "cancelled" && same_flight) {
+        return;
+    }
+    const bool reuse = prev_status == "running" && same_flight;
     if (!reuse) id = mint_chain_id(goal);
+    std::string status = "running";
+    if (!answer.empty()) status = hops_ok ? "done" : "failed";
     json doc = {
         {"id", id},
-        {"status", answer.empty() ? "running" : "done"},
+        {"status", status},
         {"goal", goal.substr(0, 500)},
         {"ledger", ledger.substr(0, 4000)},
         {"answer", answer.substr(0, 2000)},
         {"hops", hops},
+        {"hop_ok", hops_ok},
+        {"phase", phase.empty() ? (answer.empty() ? "after" : "final") : phase},
         {"at", utc_stamp()},
         {"at_tick", static_cast<int>(GetTickCount())},
     };
@@ -1739,6 +1748,13 @@ static void save_chain(const std::string& goal, const std::string& ledger,
                 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     append_core_event("chain", doc.value("status", "") + " hops=" +
                                    std::to_string(hops));
+}
+
+static bool chain_is_cancelled(const std::string& goal) {
+    const json ch = load_chain();
+    if (ch.value("status", "") != "cancelled") return false;
+    const std::string prev_goal = ch.value("goal", "");
+    return goal == prev_goal || is_continue_command(goal);
 }
 
 static json load_chain() {
@@ -2005,6 +2021,9 @@ static std::string format_brief_text() {
             reply << "\nchain=" << ch.value("id", "").substr(0, 12)
                   << "/" << ch.value("status", "?")
                   << " hops=" << ch.value("hops", 0);
+            if (ch.contains("hop_ok") && !ch.value("hop_ok", true)) {
+                reply << " hop_ok=0";
+            }
         }
     }
     const std::string text = reply.str();
@@ -2158,6 +2177,12 @@ static void write_chain_glance(httplib::Response& res, json body) {
         reply << "chain=" << body.value("id", "")
               << " " << body.value("status", "?")
               << " hops=" << body.value("hops", 0);
+        if (body.contains("hop_ok") && !body.value("hop_ok", true)) {
+            reply << " hop_ok=0";
+        }
+        if (body.value("phase", "") == "before") {
+            reply << " uncertain";
+        }
         const std::string goal = body.value("goal", "");
         if (!goal.empty()) reply << "\n" << clip_pending_line(goal, 120);
     }
@@ -2221,7 +2246,7 @@ static void handle_cancel_chain(const httplib::Request&, httplib::Response& res)
         write_chain_glance(res, json::object());
         return;
     }
-    if (body.value("status", "") != "cancelled") {
+    if (body.value("status", "") == "running") {
         body["status"] = "cancelled";
         body["at"] = utc_stamp();
         const std::string path = chain_path();
@@ -3095,12 +3120,21 @@ std::string run_colibri_serve(
         native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
     int chain_hops = 0;
+    const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
+    bool hops_ok = true;
+    {
+        const json prev_ch = load_chain();
+        if (prev_ch.value("status", "") == "running" &&
+            (chain_goal == prev_ch.value("goal", "") ||
+             is_continue_command(chain_goal))) {
+            hops_ok = prev_ch.value("hop_ok", true);
+        }
+    }
     bool unused49_seen = false;
     const json tool_defs =
-        native_tools ? local_tools::openai_tool_defs_for(
-                           tool_hint.empty() ? user : tool_hint)
+        native_tools ? local_tools::openai_tool_defs_for(chain_goal)
                      : json::array();
-    const std::string hop_hint0 = tool_hint.empty() ? user : tool_hint;
+    const std::string hop_hint0 = chain_goal;
     if (llama_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
@@ -3393,15 +3427,38 @@ std::string run_colibri_serve(
             if (!tc.contains("type")) tc["type"] = "function";
             tcs.push_back(tc);
         }
+        if (chain_is_cancelled(chain_goal)) {
+            assembled = "chain cancelled";
+            if (spoken) *spoken = assembled;
+            break;
+        }
+        save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
+                   chain_hops + 1, "before", hops_ok);
         std::string tool_out;
+        bool hop_ok = true;
         for (size_t i = 0; i < tcs.size(); ++i) {
+            if (chain_is_cancelled(chain_goal)) {
+                hop_ok = false;
+                break;
+            }
             auto one_calls = local_tools::calls_from_openai(json::array({tcs[i]}));
+            bool one_ok = true;
             const std::string one =
                 one_calls.empty() ? std::string("unknown tool\n")
-                                  : local_tools::execute_calls(one_calls);
+                                  : local_tools::execute_calls(one_calls, &one_ok);
+            if (one_calls.empty()) one_ok = false;
+            hop_ok = hop_ok && one_ok;
             tool_out += one;
         }
+        hops_ok = hops_ok && hop_ok;
+        if (chain_is_cancelled(chain_goal)) {
+            assembled = "chain cancelled";
+            if (spoken) *spoken = assembled;
+            break;
+        }
         flatten_tool_turn(tool_out);
+        save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
+                   chain_hops, "after", hops_ok);
         assembled.clear();
         if (spoken) spoken->clear();
         if (llama_mouth && !local_tools::yolo_active()) {
@@ -3413,9 +3470,22 @@ std::string run_colibri_serve(
         continue;
     }
     if (!local_tools::has_tool_block(assembled)) break;
-    const std::string tool_out = local_tools::run_tools_from_text(assembled);
+    if (chain_is_cancelled(chain_goal)) {
+        assembled = "chain cancelled";
+        if (spoken) *spoken = assembled;
+        break;
+    }
+    save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
+               chain_hops + 1, "before", hops_ok);
+    bool hop_ok = true;
+    const std::string tool_out =
+        local_tools::execute_calls(local_tools::parse_tool_blocks(assembled),
+                                   &hop_ok);
+    hops_ok = hops_ok && hop_ok;
     if (tool_out.empty()) break;
     flatten_tool_turn(tool_out);
+    save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
+               chain_hops, "after", hops_ok);
     assembled.clear();
     if (spoken) spoken->clear();
     if (llama_mouth && !local_tools::yolo_active()) {
@@ -3459,7 +3529,7 @@ std::string run_colibri_serve(
     if (spoken && spoken->empty()) *spoken = assembled;
     if (chain_hops > 0 || !tool_ledger.empty()) {
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
-                   chain_hops);
+                   chain_hops, "final", hops_ok);
     }
     {
         std::ofstream dbg(

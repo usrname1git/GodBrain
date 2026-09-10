@@ -295,6 +295,23 @@ int main() {
         "*** TOOL\nname: run_python\n<<<<\nprint('py-ok')\n>>>>\n*** END\n";
     const std::string pyres = local_tools::run_tools_from_text(py);
     pass &= expect(pyres.find("py-ok") != std::string::npos, "python inline");
+    pass &= expect(pyres.find("exit=0") != std::string::npos, "python exit=0");
+
+    const std::string pyfail =
+        "*** TOOL\nname: run_python\n<<<<\nimport sys\nsys.exit(7)\n>>>>\n*** END\n";
+    bool fail_ok = true;
+    const std::string pyfailr = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(pyfail), &fail_ok);
+    pass &= expect(pyfailr.find("exit=7") != std::string::npos, "python exit=7");
+    pass &= expect(!fail_ok, "execute_calls all_ok false on exit 7");
+
+    bool miss_ok = true;
+    const std::string miss_block =
+        "*** TOOL\nname: search_local\npath: C:\\Temp\\GitHub\\godbrain-tool-test.txt\n"
+        "args: content:zzzx-no-match-gb124\n*** END\n";
+    const std::string missr = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(miss_block), &miss_ok);
+    pass &= expect(miss_ok, "search_local no-match does not fail hop");
 
     const std::string js =
         "*** TOOL\nname: run_node\n<<<<\nconsole.log('node-ok')\n>>>>\n*** END\n";

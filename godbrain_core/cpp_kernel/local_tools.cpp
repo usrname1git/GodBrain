@@ -224,15 +224,35 @@ bool looks_binary(const std::string& data) {
     return false;
 }
 
-std::string run_process(const std::string& exe, const std::string& args,
-                        DWORD timeout_ms) {
+struct ProcessResult {
+    int exit = 1;
+    bool timeout = false;
+    std::string text;
+};
+
+std::string format_process(const ProcessResult& r) {
+    std::ostringstream o;
+    o << "exit=" << r.exit << " timeout=" << (r.timeout ? 1 : 0) << "\n";
+    if (r.text.empty()) {
+        o << "(no output)\n";
+    } else {
+        o << r.text;
+        if (r.text.back() != '\n') o << "\n";
+    }
+    return o.str();
+}
+
+ProcessResult run_process(const std::string& exe, const std::string& args,
+                          DWORD timeout_ms) {
+    ProcessResult r;
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
     HANDLE out_rd = nullptr;
     HANDLE out_wr = nullptr;
     if (!CreatePipe(&out_rd, &out_wr, &sa, 0)) {
-        return "Error: pipe failed.";
+        r.text = "Error: pipe failed.";
+        return r;
     }
     SetHandleInformation(out_rd, HANDLE_FLAG_INHERIT, 0);
 
@@ -265,7 +285,8 @@ std::string run_process(const std::string& exe, const std::string& args,
     if (!started) {
         close_handle(out_rd);
         close_handle(job);
-        return "Error: CreateProcess failed for " + exe;
+        r.text = "Error: CreateProcess failed for " + exe;
+        return r;
     }
     if (job && !AssignProcessToJobObject(job, pi.hProcess)) {
         TerminateProcess(pi.hProcess, 1);
@@ -274,7 +295,8 @@ std::string run_process(const std::string& exe, const std::string& args,
         CloseHandle(pi.hThread);
         close_handle(out_rd);
         close_handle(job);
-        return "Error: Job Object assign failed.";
+        r.text = "Error: Job Object assign failed.";
+        return r;
     }
     ResumeThread(pi.hThread);
 
@@ -302,14 +324,20 @@ std::string run_process(const std::string& exe, const std::string& args,
         TerminateProcess(pi.hProcess, 1);
         std::lock_guard<std::mutex> lock(mu);
         out += "\n[timeout]";
+        r.timeout = true;
     }
     if (reader.joinable()) reader.join();
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    if (code == STILL_ACTIVE) code = 1;
+    r.exit = static_cast<int>(code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     close_handle(out_rd);
     close_handle(job);
     if (truncated) out += "\n[truncated 256KiB]";
-    return out.empty() ? "(no output)" : out;
+    r.text = out;
+    return r;
 }
 
 std::string find_on_path(const char* name) {
@@ -395,7 +423,8 @@ std::string run_git_at(const std::string& repo, const std::string& extra) {
     if (git.empty()) return "";
     return run_process(git,
                        "--no-pager -C " + quote_path(repo) + " " + extra,
-                       8000);
+                       8000)
+        .text;
 }
 
 std::string build_changed_context(const std::string& dir) {
@@ -1008,12 +1037,17 @@ bool acl_root_denied(const std::string& full) {
     return false;
 }
 
-std::string run_ti_file(const std::string& tmp) {
+ProcessResult run_ti_file(const std::string& tmp) {
+    ProcessResult r;
     const std::string pwsh = find_pwsh();
-    if (pwsh.empty()) return "pwsh.exe not found";
+    if (pwsh.empty()) {
+        r.text = "pwsh.exe not found";
+        return r;
+    }
     if (!file_exists(kWsudo)) {
-        return "acl: wsudo.exe missing under C:\\Tools\\TeamM2. "
-               "takeown/icacls need wsudo -T (TrustedInstaller).";
+        r.text = "acl: wsudo.exe missing under C:\\Tools\\TeamM2. "
+                 "takeown/icacls need wsudo -T (TrustedInstaller).";
+        return r;
     }
     return run_process(kWsudo,
                        "-T -w " + quote_path(pwsh) +
@@ -1610,8 +1644,16 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
     return calls;
 }
 
-std::string execute_calls(const std::vector<Call>& calls) {
+std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
     std::ostringstream out;
+    bool ok = true;
+    auto take_proc = [&](const ProcessResult& r, int max_ok_exit) {
+        if (r.timeout || r.exit > max_ok_exit) ok = false;
+        return format_process(r);
+    };
+    auto runp = [&](const std::string& exe, const std::string& args, DWORD to) {
+        return take_proc(run_process(exe, args, to), 0);
+    };
     const size_t cap = yolo_active() ? 16u : 8u;
     size_t n = 0;
     for (const auto& raw : calls) {
@@ -1815,7 +1857,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 }
                 const std::string args = "-accepteula -n 6 " + quote_path(full);
                 out << "run_strings " << full << "\n"
-                    << run_process(exe, args, kToolTimeoutMs) << "\n";
+                    << runp(exe, args, kToolTimeoutMs) << "\n";
             } else if (c.name == "run_sqlite3") {
                 if (c.sql.empty()) {
                     out << "run_sqlite3: sql required\n";
@@ -1836,7 +1878,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 const std::string args =
                     "-readonly " + quote_path(full) + " " + quote_path(c.sql);
                 out << "run_sqlite3 " << full << "\n"
-                    << run_process(exe, args, kToolTimeoutMs) << "\n";
+                    << runp(exe, args, kToolTimeoutMs) << "\n";
             } else if (c.name == "search_local") {
                 std::string needle = c.args;
                 if (needle.empty()) needle = c.sql;
@@ -1861,7 +1903,8 @@ std::string execute_calls(const std::vector<Call>& calls) {
                     const std::string rargs =
                         "-n --max-count 20 --max-filesize 512K -g !.git " +
                         quote_path(needle) + " " + quote_path(full);
-                    out << run_process(rg, rargs, kToolTimeoutMs) << "\n";
+                    out << take_proc(run_process(rg, rargs, kToolTimeoutMs), 1)
+                        << "\n";
                 } else {
                     search_dir(full, needle, 0, depth, content, seen, hits, out);
                     out << "hits=" << hits << " scanned=" << seen << "\n";
@@ -1987,7 +2030,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             }
             args = with_accepteula(args);
             out << "run_sysint " << sys_stem << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2023,7 +2066,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             if (mutate && yolo_required_msg(out, "run_reg " + w)) continue;
             const std::string exe = system32("reg.exe");
             out << "run_reg " << w << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2048,7 +2091,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             if (mutate && yolo_required_msg(out, "run_wevtutil " + w)) continue;
             const std::string exe = system32("wevtutil.exe");
             out << "run_wevtutil " << w << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2070,7 +2113,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             if (mutate && yolo_required_msg(out, "run_logman " + w)) continue;
             const std::string exe = system32("logman.exe");
             out << "run_logman " << w << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2095,7 +2138,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             }
             const std::string exe = system32("schtasks.exe");
             out << "run_schtasks " << w << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2109,14 +2152,14 @@ std::string execute_calls(const std::vector<Call>& calls) {
             static const char* kHost[] = {
                 "tasklist", "whoami", "hostname", "where", "systeminfo",
                 "netstat", "fltmc", "driverquery", "ipconfig", "sc", nullptr};
-            bool ok = false;
+            bool host_ok = false;
             for (int i = 0; kHost[i]; ++i) {
                 if (host == kHost[i]) {
-                    ok = true;
+                    host_ok = true;
                     break;
                 }
             }
-            if (!ok) {
+            if (!host_ok) {
                 out << "run_host denied: " << host
                     << " (tasklist whoami hostname where systeminfo netstat "
                        "fltmc driverquery ipconfig sc-query).\n";
@@ -2169,7 +2212,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             }
             const std::string exe = system32((host + ".exe").c_str());
             out << "run_host " << host << "\n"
-                << run_process(exe, args, kToolTimeoutMs) << "\n";
+                << runp(exe, args, kToolTimeoutMs) << "\n";
             continue;
         }
 
@@ -2208,7 +2251,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                     args += " " + c.args;
                 }
                 out << "run_pwsh -File " << full << "\n"
-                    << run_process(pwsh, args, kPwshTimeoutMs) << "\n";
+                    << runp(pwsh, args, kPwshTimeoutMs) << "\n";
                 continue;
             }
             if (c.content.empty() && !c.args.empty()) c.content = c.args;
@@ -2228,7 +2271,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
             const std::string args =
                 "-NoProfile -NonInteractive -File " + quote_path(tmp);
             out << "run_pwsh inline\n"
-                << run_process(pwsh, args, kPwshTimeoutMs) << "\n";
+                << runp(pwsh, args, kPwshTimeoutMs) << "\n";
             continue;
         }
 
@@ -2251,7 +2294,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 }
                 const std::string full = canon_path(c.path);
                 out << c.name << " " << full << "\n"
-                    << run_process(exe, quote_path(full) +
+                    << runp(exe, quote_path(full) +
                                             (c.args.empty() ? "" : " " + c.args),
                                    kPwshTimeoutMs)
                     << "\n";
@@ -2272,7 +2315,7 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 continue;
             }
             out << c.name << " inline\n"
-                << run_process(exe, quote_path(tmp), kPwshTimeoutMs) << "\n";
+                << runp(exe, quote_path(tmp), kPwshTimeoutMs) << "\n";
             continue;
         }
 
@@ -2373,8 +2416,10 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 out << c.name << ": cannot write temp script\n";
                 continue;
             }
+            const ProcessResult ti = run_ti_file(tmp);
+            if (ti.exit != 0 || ti.timeout) ok = false;
             out << c.name << " " << full << "\n"
-                << run_ti_file(tmp) << "\n";
+                << format_process(ti);
             continue;
         }
 
@@ -2428,12 +2473,13 @@ std::string execute_calls(const std::vector<Call>& calls) {
                 continue;
             }
             out << "run_elevate\n"
-                << run_process(launcher, args, kPwshTimeoutMs) << "\n";
+                << runp(launcher, args, kPwshTimeoutMs) << "\n";
             continue;
         }
 
         out << unknown_tool_msg(c.name);
     }
+    if (all_ok) *all_ok = ok;
     return out.str();
 }
 
