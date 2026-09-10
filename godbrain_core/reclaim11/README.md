@@ -40,6 +40,10 @@ Start junk (Copilot, new Outlook, Clipchamp, WhatsApp, LinkedIn, …) and turns 
 Recommended. Photos, Calculator, Store, Notepad stay. Game Mode stays.
 The Xbox controller driver (`xboxgip`) stays.
 
+VMware CD/DVD browses the **host**. Copy
+`C:\Reclaim11\Reclaim11-WinPE-v11.iso` out of the VM, then attach that
+host path. USB EFI is the same WinPE.
+
 ### Rails
 
 - Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
