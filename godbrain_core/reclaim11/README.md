@@ -11,8 +11,8 @@ flags are under Advanced.
 
 ## What to do
 
-1. Get `Reclaim11-kit-v11.zip` from
-   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v11)
+1. Get `Reclaim11-kit-v12.zip` from
+   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v12)
    and unzip it. Check the `.sha256` next to the zip.
 2. Double-click `Reclaim11.cmd`. You do not type `pwsh`. The `.cmd` hops
    to a hidden host so Windows Terminal does not stay as an empty black
@@ -44,7 +44,7 @@ Recommended. Photos, Calculator, Store, Notepad stay. Game Mode stays.
 The Xbox controller driver (`xboxgip`) stays.
 
 VMware CD/DVD browses the **host**. Copy
-`C:\Reclaim11\Reclaim11-WinPE-v11.iso` out of the VM, then attach that
+`C:\Reclaim11\Reclaim11-WinPE-v12.iso` out of the VM, then attach that
 host path. USB EFI is the same WinPE.
 
 ### Rails
@@ -91,13 +91,13 @@ The kit zip ships `winpe\reclaim11-stub.exe` (MZ). PREP does not need Visual Stu
 pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 ```
 
-Output: `C:\Reclaim11\Reclaim11-WinPE-v11.iso`.
+Output: `C:\Reclaim11\Reclaim11-WinPE-v12.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 
 ### Boot the ISO in VMware
 
 The VM CD/DVD picker browses the **host**, not the guest. Copy
-`C:\Reclaim11\Reclaim11-WinPE-v11.iso` out of the VM (shared folder or
+`C:\Reclaim11\Reclaim11-WinPE-v12.iso` out of the VM (shared folder or
 drag-drop), then VM Settings → CD/DVD → Use ISO image file → that host
 path. EFI firmware. Boot the CD (firmware menu). USB EFI passthrough of
 the PREP stick is the same WinPE; VMware USB is slow, not a kit hang.
@@ -107,7 +107,7 @@ Delete the ISO and click PREP MEDIA again after a kit update — an
 existing ISO skips the rebuild, and both ISO and USB bake scripts into
 `boot.wim`.
 
-Snapshot, attach **v11**. PE **deletes** catalog
+Snapshot, attach **v12**. PE **deletes** catalog
 `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
 (exact names, never a `Wd*.sys` glob), stubs catalog usermode EXEs,
 `reg delete` pack-A keys then Start=4 fallback, IFEO +

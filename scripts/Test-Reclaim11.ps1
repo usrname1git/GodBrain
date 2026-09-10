@@ -215,11 +215,11 @@ if ($cliSrc -match 'LASTEXITCODE') {
 if ($cliSrc -notmatch 'Get-Reclaim11WinPeReceipt') {
     throw "Test-Reclaim11: GrimReaperCli must re-read the WinPE receipt"
 }
-if ($launchSrc -notmatch 'Reclaim11-WinPE-v11\.iso') {
-    throw "Test-Reclaim11: PREP MEDIA must name the v11 ISO"
+if ($launchSrc -notmatch 'Reclaim11-WinPE-v12\.iso') {
+    throw "Test-Reclaim11: PREP MEDIA must name the v12 ISO"
 }
 if ($launchSrc -match 'Sort-Object LastWriteTime') {
-    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8/v9/v10 over v11"
+    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote v7/v8/v9/v10/v11 over v12"
 }
 $prepAt = $launchSrc.IndexOf('function Get-Reclaim11PrepScript')
 $prepEnd = $launchSrc.IndexOf('$window.Add_MouseLeftButtonDown')
@@ -371,7 +371,7 @@ if ($invOnlyAt -lt 0 -or $runAsAt -lt 0 -or $invOnlyAt -gt $runAsAt) {
 
 $cat = Get-Content -LiteralPath $catPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($cat.id -ne "reclaim11-pack-a-v1") { throw "Test-Reclaim11: catalog id" }
-if ([string]$cat.kit_version -ne "11") { throw "Test-Reclaim11: catalog kit_version 11" }
+if ([string]$cat.kit_version -ne "12") { throw "Test-Reclaim11: catalog kit_version 12" }
 if ([string]$cat.stub_exe -ne "C:\Reclaim11\reclaim11-stub.exe") {
     throw "Test-Reclaim11: catalog stub_exe must be C:\Reclaim11\reclaim11-stub.exe"
 }
@@ -450,14 +450,14 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'all optimizations a
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/ExpertPanel\.jpg' -or $readme -notmatch 'ui/NoobPanel\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg, ExpertPanel.jpg, and NoobPanel.jpg"
 }
-if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v11\.iso') {
-    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v11.iso"
+if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v12\.iso') {
+    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v12.iso"
 }
 if ($readme -match 'attach \*\*v7\*\*') {
-    throw "Test-Reclaim11: README must attach v11, not leftover v7"
+    throw "Test-Reclaim11: README must attach v12, not leftover v7"
 }
-if ($readme -notmatch 'attach \*\*v11\*\*') {
-    throw "Test-Reclaim11: README step 4 must attach v11"
+if ($readme -notmatch 'attach \*\*v12\*\*') {
+    throw "Test-Reclaim11: README step 4 must attach v12"
 }
 if ($readme -match 'C:\\nvme') {
     throw "Test-Reclaim11: README must not name a host nvme path"
@@ -760,8 +760,8 @@ if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn ag
 if ($isoSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
 }
-if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v11\.iso') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v11.iso"
+if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v12\.iso') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v12.iso"
 }
 if ($launchSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"
