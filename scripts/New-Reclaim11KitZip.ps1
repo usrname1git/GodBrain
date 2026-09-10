@@ -59,7 +59,7 @@ Copy-Item -LiteralPath (Join-Path $kit "README.md") -Destination (Join-Path $sta
 Get-ChildItem -LiteralPath (Join-Path $kit "ps1") -Filter *.ps1 | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage "ps1\$($_.Name)") -Force
 }
-foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "ExpertPanel.jpg")) {
+foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "ExpertPanel.jpg", "NoobPanel.jpg")) {
     $s = Join-Path $kit "ui\$n"
     if (Test-Path -LiteralPath $s) {
         Copy-Item -LiteralPath $s -Destination (Join-Path $stage "ui\$n") -Force

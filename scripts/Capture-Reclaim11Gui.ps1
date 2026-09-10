@@ -1,6 +1,8 @@
 # One-shot STA capture of the Reclaim11 WPF window. Not Heal.
 [CmdletBinding()]
 param(
+    [ValidateSet("door", "expert", "noob")]
+    [string]$Door = "door",
     [string]$OutPng = ""
 )
 
@@ -10,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
 if ($sta -ne "STA") {
     $pwsh = Join-Path $PSHOME "pwsh.exe"
-    $arg = @("-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path)
+    $arg = @("-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path, "-Door", $Door)
     if ($OutPng) { $arg += @("-OutPng", $OutPng) }
     $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow
     exit $p.ExitCode
@@ -25,7 +27,7 @@ $here = Join-Path $repo "godbrain_core\reclaim11"
 if (-not $OutPng) {
     $OutPng = Join-Path $here "ui\MainWindow.png"
 }
-. (Join-Path $here "inventory.ps1")
+. (Join-Path $here "ps1\inventory.ps1")
 
 [xml]$xaml = Get-Content -LiteralPath (Join-Path $here "ui\MainWindow.xaml") -Raw -Encoding UTF8
 $reader = New-Object System.Xml.XmlNodeReader $xaml
@@ -68,6 +70,18 @@ foreach ($s in $inv.services) {
 }
 $lines += "scan is read-only. Safe cleanse / killing blows locked until WinPE receipt"
 $log.Text = $lines -join [Environment]::NewLine
+if (Get-Ui NoobLog) {
+    (Get-Ui NoobLog).Text = "Beginner mode. TEST FIRST lists what would happen. INSTALL RUSTDESK TO GET REMOTE SUPPORT = official public servers, one-time codes only."
+}
+
+(Get-Ui PanelDoor).Visibility = [Windows.Visibility]::Collapsed
+(Get-Ui PanelNoob).Visibility = [Windows.Visibility]::Collapsed
+(Get-Ui PanelExpert).Visibility = [Windows.Visibility]::Collapsed
+switch ($Door) {
+    "noob" { (Get-Ui PanelNoob).Visibility = [Windows.Visibility]::Visible }
+    "expert" { (Get-Ui PanelExpert).Visibility = [Windows.Visibility]::Visible }
+    default { (Get-Ui PanelDoor).Visibility = [Windows.Visibility]::Visible }
+}
 
 $window.Add_ContentRendered({
     $dpi = 96.0
@@ -75,7 +89,13 @@ $window.Add_ContentRendered({
     $h = [Math]::Max(1, [int]$window.ActualHeight)
     $bmp = New-Object Windows.Media.Imaging.RenderTargetBitmap $w, $h, $dpi, $dpi, ([Windows.Media.PixelFormats]::Pbgra32)
     $bmp.Render($window)
-    $enc = New-Object Windows.Media.Imaging.PngBitmapEncoder
+    $ext = [IO.Path]::GetExtension($OutPng).ToLowerInvariant()
+    if ($ext -eq ".jpg" -or $ext -eq ".jpeg") {
+        $enc = New-Object Windows.Media.Imaging.JpegBitmapEncoder
+        $enc.QualityLevel = 90
+    } else {
+        $enc = New-Object Windows.Media.Imaging.PngBitmapEncoder
+    }
     $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bmp))
     $dir = Split-Path -Parent $OutPng
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
