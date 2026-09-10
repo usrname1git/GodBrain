@@ -1,9 +1,10 @@
 # C++ Alexandria Memory Store (cut 11)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
-stays. This tree is the C++ replacement; Start/Heal still launch Go until this
-exe is tested against a disposable Mongo db (never the live `godbrain` db from
-ctest).
+stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
+(`rag-service`, `rag-rebuild`) then the Go folder. Kernel and Librarian
+resolve `memory-store.exe` the same way. Never write live `godbrain` from
+ctest (use `godbrain_cpp_store_test`).
 
 Cut 1 (offline, no Mongo): 15 MiB cap, unknown-field/trailing fail, ingest
 validate (`trust_tier=candidate`, Keccak-256 `source_hash`), `set_status` DAG,
@@ -53,7 +54,7 @@ Cut 11: ingest `document` + `chunks` (Local-Document-Adapter). Same gates as Go:
 metadata and chunks together, `content_sha256` of `raw_transcript`, contiguous
 UTF-8 byte ranges, forbidden-secret scan, immutable `chunks` collection.
 
-Start/Heal still launch Go.
+Start/Heal prefer this tree's Release exes, then Go.
 
 ```powershell
 .\scripts\Fetch-MongoCDriver.ps1

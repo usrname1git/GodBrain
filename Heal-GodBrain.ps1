@@ -209,8 +209,19 @@ function Get-DiagnoseLayer($probe) {
     return "ok"
 }
 
+function Resolve-AlexandriaExe([string]$Name) {
+    foreach ($p in @(
+            (Join-Path $RepoRoot "build\cpp_memory_store\Release\$Name"),
+            (Join-Path $RepoRoot "godbrain_core\cpp_memory_store\$Name"),
+            (Join-Path $RepoRoot "godbrain_core\memory_store\$Name")
+        )) {
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return Join-Path $RepoRoot "godbrain_core\memory_store\$Name"
+}
+
 function Invoke-AllowlistedRagRebuild {
-    $exe = Join-Path $RepoRoot "godbrain_core\memory_store\rag-rebuild.exe"
+    $exe = Resolve-AlexandriaExe "rag-rebuild.exe"
     if (-not (Test-Path -LiteralPath $exe)) { return "skip:missing-exe" }
     $stamp = Join-Path $logDir "heal-rag-rebuild.stamp"
     if (Test-Path -LiteralPath $stamp) {
