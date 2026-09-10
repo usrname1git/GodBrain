@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 8)
+# C++ Alexandria Memory Store (cut 10)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays. This tree is the C++ replacement; Start/Heal still launch Go until this
@@ -40,6 +40,14 @@ Cut 8: stdin `stale_pins`. Kernel `/observe` uses this when `os_pin` moves:
 verified `windows-sre` cards that carry a different `os_pin=` become `stale`
 (not deleted). Learn-class cards without `os_pin=` stay verified. Already-stale
 mismatches are counted so RAG projection can resync.
+
+Cut 9: search citations load bounded `sources` and emit `evidence` spans
+(`byte_valid` / `not_provided` / `invalid` / `partial`). Citation status is
+`available` / `partial` / `missing_provenance` / `unavailable`.
+
+Cut 10: `rag-eval.exe` offline hybrid fixture (`-corpus` path, default Go
+testdata). `-live` still uses Go. Thresholds match Go (Recall/MRR/nDCG ≥ 0.90,
+citation 1.0, no leakage).
 
 Start/Heal still launch Go.
 

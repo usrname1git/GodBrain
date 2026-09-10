@@ -729,6 +729,276 @@ std::string utf8_snip(const std::string& content, const std::vector<std::string>
     return content.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
 }
 
+constexpr int kMaxCitationsPerResult = 6;
+constexpr int kMaxEvidencePerCitation = 4;
+constexpr int kMaxEvidenceSpansInspect = 64;
+constexpr int kMaxEvidenceExcerptBytes = 256;
+constexpr int kMaxSourceReadBytes = 15 * 1024 * 1024;
+constexpr int kMaxTotalSourceReadBytes = 24 * 1024 * 1024;
+
+bool utf8_rune_start(unsigned char c) { return (c & 0xC0) != 0x80; }
+
+bool utf8_valid_range(const std::string& s, int start, int end) {
+    if (start < 0 || end > static_cast<int>(s.size()) || end <= start) return false;
+    if (start > 0 && !utf8_rune_start(static_cast<unsigned char>(s[static_cast<size_t>(start)]))) return false;
+    if (end < static_cast<int>(s.size()) &&
+        !utf8_rune_start(static_cast<unsigned char>(s[static_cast<size_t>(end)]))) {
+        return false;
+    }
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data() + start);
+    const unsigned char* last = reinterpret_cast<const unsigned char*>(s.data() + end);
+    while (p < last) {
+        if (*p < 0x80) {
+            ++p;
+            continue;
+        }
+        int need = 0;
+        if ((*p & 0xE0) == 0xC0) need = 1;
+        else if ((*p & 0xF0) == 0xE0) need = 2;
+        else if ((*p & 0xF8) == 0xF0) need = 3;
+        else return false;
+        if (p + need >= last) return false;
+        for (int i = 1; i <= need; ++i) {
+            if ((p[i] & 0xC0) != 0x80) return false;
+        }
+        p += need + 1;
+    }
+    return true;
+}
+
+std::string utf8_truncate(const std::string& s, int max_bytes) {
+    if (max_bytes <= 0) return "";
+    if (static_cast<int>(s.size()) <= max_bytes) return s;
+    int end = max_bytes;
+    while (end > 0 && !utf8_rune_start(static_cast<unsigned char>(s[static_cast<size_t>(end)]))) --end;
+    return s.substr(0, static_cast<size_t>(end));
+}
+
+void iter_string_array(const bson_t* doc, const char* key, std::vector<std::string>* out) {
+    bson_iter_t it, sub;
+    if (!bson_iter_init_find(&it, doc, key) || !BSON_ITER_HOLDS_ARRAY(&it) || !bson_iter_recurse(&it, &sub)) {
+        return;
+    }
+    while (bson_iter_next(&sub)) {
+        if (BSON_ITER_HOLDS_UTF8(&sub)) out->push_back(bson_iter_utf8(&sub, nullptr));
+    }
+}
+
+std::string resolve_evidence_json(
+    const std::string& content, const std::vector<std::string>& spans, int budget, std::string* status, int* used) {
+    *used = 0;
+    if (spans.empty()) {
+        *status = "not_provided";
+        return "[]";
+    }
+    struct Parsed {
+        std::string raw;
+        int start = 0;
+        int end = 0;
+    };
+    std::vector<Parsed> valid;
+    int invalid = 0;
+    std::vector<std::string> inspect = spans;
+    if (static_cast<int>(inspect.size()) > kMaxEvidenceSpansInspect) {
+        invalid += static_cast<int>(inspect.size()) - kMaxEvidenceSpansInspect;
+        inspect.resize(static_cast<size_t>(kMaxEvidenceSpansInspect));
+    }
+    for (const std::string& span : inspect) {
+        int start = 0, end = 0;
+        if (!parse_evidence_span(span, &start, &end) || !utf8_valid_range(content, start, end)) {
+            ++invalid;
+            continue;
+        }
+        valid.push_back(Parsed{span, start, end});
+    }
+    std::sort(valid.begin(), valid.end(), [](const Parsed& a, const Parsed& b) {
+        if (a.start != b.start) return a.start < b.start;
+        if (a.end != b.end) return a.end < b.end;
+        return a.raw < b.raw;
+    });
+    if (static_cast<int>(valid.size()) > kMaxEvidencePerCitation) {
+        valid.resize(static_cast<size_t>(kMaxEvidencePerCitation));
+    }
+    std::ostringstream o;
+    o << "[";
+    int n = 0;
+    int bytes = 0;
+    for (const Parsed& p : valid) {
+        int available = budget - bytes;
+        if (available <= 0) break;
+        std::string piece = content.substr(static_cast<size_t>(p.start), static_cast<size_t>(p.end - p.start));
+        std::string excerpt = utf8_truncate(piece, (std::min)(kMaxEvidenceExcerptBytes, available));
+        bytes += static_cast<int>(excerpt.size());
+        if (n) o << ",";
+        o << "{\"span\":\"" << json_escape(p.raw) << "\",\"start_byte\":" << p.start << ",\"end_byte\":" << p.end
+          << ",\"excerpt\":\"" << json_escape(excerpt) << "\",\"byte_valid\":true}";
+        ++n;
+    }
+    o << "]";
+    *used = bytes;
+    if (n == 0) *status = "invalid";
+    else if (invalid > 0) *status = "partial";
+    else *status = "byte_valid";
+    return o.str();
+}
+
+bool load_bounded_source(
+    RagEngine* e, const std::string& source_hash, const std::string& source_id, int max_bytes,
+    std::string* content, int* byte_length) {
+    bson_t q = BSON_INITIALIZER;
+    BSON_APPEND_UTF8(&q, "source_hash", source_hash.c_str());
+    if (source_id.size() == 24 && bson_oid_is_valid(source_id.c_str(), 24)) {
+        bson_oid_t oid;
+        bson_oid_init_from_string(&oid, source_id.c_str());
+        BSON_APPEND_OID(&q, "_id", &oid);
+    }
+    bson_t opts = BSON_INITIALIZER;
+    BSON_APPEND_INT64(&opts, "limit", 1);
+    mongoc_collection_t* sources = coll(e, "sources");
+    mongoc_cursor_t* cur = mongoc_collection_find_with_opts(sources, &q, &opts, nullptr);
+    const bson_t* doc = nullptr;
+    bool found = mongoc_cursor_next(cur, &doc);
+    if (cursor_failed(cur)) {
+        mongoc_cursor_destroy(cur);
+        mongoc_collection_destroy(sources);
+        bson_destroy(&q);
+        bson_destroy(&opts);
+        return false;
+    }
+    if (!found) {
+        mongoc_cursor_destroy(cur);
+        mongoc_collection_destroy(sources);
+        bson_destroy(&q);
+        bson_destroy(&opts);
+        *byte_length = 0;
+        content->clear();
+        return true;
+    }
+    iter_utf8(doc, "content", content);
+    *byte_length = static_cast<int>(content->size());
+    mongoc_cursor_destroy(cur);
+    mongoc_collection_destroy(sources);
+    bson_destroy(&q);
+    bson_destroy(&opts);
+    if (*byte_length > max_bytes) content->clear();
+    return true;
+}
+
+bool resolve_citations(
+    RagEngine* e,
+    const std::string& generation,
+    const std::string& node_id,
+    int source_budget,
+    int excerpt_budget,
+    std::string* cites_json,
+    std::string* cite_status,
+    int* source_used,
+    int* excerpt_used) {
+    *source_used = 0;
+    *excerpt_used = 0;
+    *cite_status = "missing_provenance";
+    *cites_json = "[]";
+    bson_t pq = BSON_INITIALIZER;
+    BSON_APPEND_UTF8(&pq, "generation", generation.c_str());
+    if (node_id.size() == 24 && bson_oid_is_valid(node_id.c_str(), 24)) {
+        bson_oid_t oid;
+        bson_oid_init_from_string(&oid, node_id.c_str());
+        BSON_APPEND_OID(&pq, "node_id", &oid);
+    }
+    bson_t sort = BSON_INITIALIZER;
+    BSON_APPEND_INT32(&sort, "source_hash", 1);
+    BSON_APPEND_INT32(&sort, "external_source_id", 1);
+    BSON_APPEND_INT32(&sort, "run_id", 1);
+    bson_t opts = BSON_INITIALIZER;
+    BSON_APPEND_DOCUMENT(&opts, "sort", &sort);
+    BSON_APPEND_INT64(&opts, "limit", kMaxCitationsPerResult);
+    mongoc_collection_t* prov = coll(e, "rag_provenance");
+    mongoc_cursor_t* pcur = mongoc_collection_find_with_opts(prov, &pq, &opts, nullptr);
+    const bson_t* prow = nullptr;
+    std::ostringstream cj;
+    cj << "[";
+    int cn = 0;
+    int invalid = 0;
+    while (mongoc_cursor_next(pcur, &prow)) {
+        std::string run_id, sh, ext, ex, ev, sch, sid;
+        iter_utf8(prow, "run_id", &run_id);
+        iter_utf8(prow, "source_hash", &sh);
+        iter_utf8(prow, "external_source_id", &ext);
+        iter_utf8(prow, "extractor_id", &ex);
+        iter_utf8(prow, "extractor_version", &ev);
+        iter_utf8(prow, "schema_version", &sch);
+        sid = oid_hex(prow, "source_id");
+        if (run_id.empty() || run_id.size() > 128 || sh.empty() || sh.size() > 128 || ext.size() > 512 ||
+            ex.size() > 128 || ev.size() > 128 || sch.size() > 128) {
+            ++invalid;
+            continue;
+        }
+        int max_read = (std::min)(kMaxSourceReadBytes, source_budget - *source_used);
+        if (max_read <= 0) {
+            ++invalid;
+            continue;
+        }
+        std::string content;
+        int blen = 0;
+        if (!load_bounded_source(e, sh, sid, max_read, &content, &blen)) {
+            mongoc_cursor_destroy(pcur);
+            mongoc_collection_destroy(prov);
+            bson_destroy(&pq);
+            bson_destroy(&sort);
+            bson_destroy(&opts);
+            return false;
+        }
+        if (blen < 0 || blen > max_read || (content.empty() && blen > 0)) {
+            ++invalid;
+            continue;
+        }
+        *source_used += blen;
+        std::vector<std::string> spans;
+        iter_string_array(prow, "evidence_spans", &spans);
+        std::string ev_status;
+        int used = 0;
+        std::string ev_json = resolve_evidence_json(content, spans, excerpt_budget - *excerpt_used, &ev_status, &used);
+        *excerpt_used += used;
+        int64_t cat = 0;
+        bson_iter_t it;
+        if (bson_iter_init_find(&it, prow, "committed_at") && BSON_ITER_HOLDS_DATE_TIME(&it)) {
+            cat = bson_iter_date_time(&it);
+        }
+        if (cn) cj << ",";
+        cj << "{\"run_id\":\"" << json_escape(run_id) << "\",\"source_hash\":\"" << json_escape(sh) << "\"";
+        if (!ext.empty()) cj << ",\"external_source_id\":\"" << json_escape(ext) << "\"";
+        cj << ",\"extractor_id\":\"" << json_escape(ex) << "\",\"extractor_version\":\"" << json_escape(ev)
+           << "\",\"schema_version\":\"" << json_escape(sch) << "\",\"committed_at\":\"" << iso_from_millis(cat)
+           << "\",\"evidence_status\":\"" << json_escape(ev_status) << "\"";
+        if (ev_status != "not_provided") cj << ",\"evidence\":" << ev_json;
+        cj << "}";
+        ++cn;
+    }
+    cj << "]";
+    if (cursor_failed(pcur)) {
+        mongoc_cursor_destroy(pcur);
+        mongoc_collection_destroy(prov);
+        bson_destroy(&pq);
+        bson_destroy(&sort);
+        bson_destroy(&opts);
+        return false;
+    }
+    mongoc_cursor_destroy(pcur);
+    mongoc_collection_destroy(prov);
+    bson_destroy(&pq);
+    bson_destroy(&sort);
+    bson_destroy(&opts);
+    if (cn == 0) {
+        *cite_status = "unavailable";
+        if (invalid == 0) *cite_status = "missing_provenance";
+        *cites_json = "[]";
+        return true;
+    }
+    *cite_status = invalid > 0 ? "partial" : "available";
+    *cites_json = cj.str();
+    return true;
+}
+
 HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     if (media_type(req.content_type) != "application/json") {
         return api_error(415, "content_type_must_be_application_json");
@@ -1043,67 +1313,25 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     o << ",\"results\":[";
     int used = 0;
     int remain = context_bytes;
+    int source_budget = kMaxTotalSourceReadBytes;
     for (size_t i = 0; i < hits.size(); ++i) {
         if (remain <= 0) break;
         if (i) o << ",";
         std::string snip = utf8_snip(hits[i].content, tokens, std::min(640, remain));
         remain -= static_cast<int>(snip.size());
         used += static_cast<int>(snip.size());
-        std::string cite_status = "missing_provenance";
-        std::string cites = "[]";
-        mongoc_collection_t* prov = coll(e, "rag_provenance");
-        bson_t pq = BSON_INITIALIZER;
-        BSON_APPEND_UTF8(&pq, "generation", before.meta.active_generation.c_str());
-        bson_oid_t oid;
-        if (hits[i].node_id.size() == 24 && bson_oid_is_valid(hits[i].node_id.c_str(), 24)) {
-            bson_oid_init_from_string(&oid, hits[i].node_id.c_str());
-            BSON_APPEND_OID(&pq, "node_id", &oid);
-        }
-        bson_t popts = BSON_INITIALIZER;
-        BSON_APPEND_INT32(&popts, "limit", 6);
-        mongoc_cursor_t* pcur = mongoc_collection_find_with_opts(prov, &pq, &popts, nullptr);
-        const bson_t* prow = nullptr;
-        std::ostringstream cj;
-        cj << "[";
-        int cn = 0;
-        while (mongoc_cursor_next(pcur, &prow)) {
-            std::string run_id, sh, ext, ex, ev, sch;
-            iter_utf8(prow, "run_id", &run_id);
-            iter_utf8(prow, "source_hash", &sh);
-            iter_utf8(prow, "external_source_id", &ext);
-            iter_utf8(prow, "extractor_id", &ex);
-            iter_utf8(prow, "extractor_version", &ev);
-            iter_utf8(prow, "schema_version", &sch);
-            int64_t cat = 0;
-            bson_iter_t it;
-            if (bson_iter_init_find(&it, prow, "committed_at") && BSON_ITER_HOLDS_DATE_TIME(&it)) {
-                cat = bson_iter_date_time(&it);
-            }
-            if (cn) cj << ",";
-            cj << "{\"run_id\":\"" << json_escape(run_id) << "\",\"source_hash\":\"" << json_escape(sh)
-               << "\"";
-            if (!ext.empty()) cj << ",\"external_source_id\":\"" << json_escape(ext) << "\"";
-            cj << ",\"extractor_id\":\"" << json_escape(ex) << "\",\"extractor_version\":\"" << json_escape(ev)
-               << "\",\"schema_version\":\"" << json_escape(sch) << "\",\"committed_at\":\""
-               << iso_from_millis(cat) << "\",\"evidence_status\":\"not_provided\"}";
-            ++cn;
-        }
-        cj << "]";
-        if (cursor_failed(pcur)) {
-            mongoc_cursor_destroy(pcur);
-            mongoc_collection_destroy(prov);
-            bson_destroy(&pq);
-            bson_destroy(&popts);
+        std::string cite_status;
+        std::string cites;
+        int src_used = 0;
+        int ex_used = 0;
+        if (!resolve_citations(
+                e, before.meta.active_generation, hits[i].node_id, source_budget, remain, &cites, &cite_status,
+                &src_used, &ex_used)) {
             return api_error(503, "search_unavailable");
         }
-        mongoc_cursor_destroy(pcur);
-        mongoc_collection_destroy(prov);
-        bson_destroy(&pq);
-        bson_destroy(&popts);
-        if (cn > 0) {
-            cite_status = "available";
-            cites = cj.str();
-        }
+        source_budget -= src_used;
+        remain -= ex_used;
+        used += ex_used;
         o << "{\"node_id\":\"" << json_escape(hits[i].node_id) << "\",\"stable_id\":\""
           << json_escape(hits[i].stable_id) << "\",\"node_version\":\"" << json_escape(hits[i].version)
           << "\",\"kind\":\"" << json_escape(hits[i].kind) << "\",\"sector\":\"" << json_escape(hits[i].sector)
