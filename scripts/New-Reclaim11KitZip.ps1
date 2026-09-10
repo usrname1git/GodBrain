@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v10.zip"
+    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v11.zip"
 )
 
 Set-StrictMode -Version Latest
