@@ -50,7 +50,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | C++ kernel + Galaxy (`godbrain_core/cpp_kernel`, `godbrain_core/frontend`) | daily-driver on this host | `:8083`, `/edit`, privileged `command_type` |
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) | daily-driver | `:8084` Golden Records; lexical default |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
-| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v10) | Windows repair ISO/zip; not the Jarvis loop |
+| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v11) | Windows repair ISO/zip; not the Jarvis loop |
 | [Skill Lab](godbrain_core/skill_lab/README.md) | source + one fixture gate | promotion needs a second independent fixture before it is usable policy |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
 | Go / Rust routers | experimental | not the operator UI |
