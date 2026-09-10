@@ -135,7 +135,11 @@ $env:MONGODB_DB_NAME = "godbrain" # default
 `127.0.0.1` and defaults to `8084`.
 The C++ kernel and the experimental Go/Rust routers are pinned to
 `127.0.0.1:8084/v1/search`. Changing the service port makes retrieval fail
-closed. Start-GodBrain does not pass this variable to `rag-service.exe`.
+closed. Start-GodBrain does **not** copy `GODBRAIN_RAG_PORT` into WMI children
+(kernel stays on `:8084`). It **does** forward `MONGODB_DB_NAME`,
+`GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION`, and the full embedding identity
+(`GODBRAIN_EMBEDDING_*` plus `GODBRAIN_RAG_EMBEDDING_REQUIRED`) so
+`rag-service` and kernel-spawned `memory-store` cannot diverge.
 `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` adds a deterministic ranking preference
 for the configured node schema without hiding older schemas.
 

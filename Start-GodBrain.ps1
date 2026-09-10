@@ -60,7 +60,11 @@ function New-GodBrainChildEnvironment {
         "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN",
         "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH", "PUBLIC",
         "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
-        "MONGODB_URI", "GODBRAIN_API_TOKEN"
+        "MONGODB_URI", "MONGODB_DB_NAME", "GODBRAIN_API_TOKEN",
+        "GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION",
+        "GODBRAIN_EMBEDDING_ENDPOINT", "GODBRAIN_EMBEDDING_MODEL",
+        "GODBRAIN_EMBEDDING_MODEL_REVISION", "GODBRAIN_EMBEDDING_MODEL_SHA256",
+        "GODBRAIN_EMBEDDING_DIMENSION", "GODBRAIN_RAG_EMBEDDING_REQUIRED"
     )
     $map = [ordered]@{}
     foreach ($name in $keep) {
@@ -147,23 +151,59 @@ function Start-LoggedProcess {
 }
 
 if ($SelfTestEnv) {
-    $list = New-GodBrainChildEnvironment -Extra @{ GODBRAIN_API_TOKEN = "x-test-token" }
-    $names = @($list | ForEach-Object { ($_ -split "=", 2)[0] })
-    $cmdSample = @(
-        "@echo off",
-        "set `"MONGODB_URI=mongodb://127.0.0.1:27017`""
-    ) -join "`n"
-    if ($names -notcontains "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: WMI list missing token" }
-    if ($names -notcontains "PATH") { throw "SelfTestEnv: WMI list missing PATH" }
-    if ($names -notcontains "SystemRoot") { throw "SelfTestEnv: WMI list missing SystemRoot" }
-    if ($cmdSample -match "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: launch.cmd would contain token" }
-    $hasReal = $false
-    foreach ($entry in $list) {
-        if ($entry -like "GODBRAIN_API_TOKEN=x-test-token") { $hasReal = $true }
+    $saved = @{}
+    foreach ($name in @(
+            "MONGODB_DB_NAME", "GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION",
+            "GODBRAIN_EMBEDDING_ENDPOINT", "GODBRAIN_EMBEDDING_MODEL",
+            "GODBRAIN_EMBEDDING_MODEL_REVISION", "GODBRAIN_EMBEDDING_MODEL_SHA256",
+            "GODBRAIN_EMBEDDING_DIMENSION", "GODBRAIN_RAG_EMBEDDING_REQUIRED",
+            "GODBRAIN_RAG_PORT"
+        )) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     }
-    if (-not $hasReal) { throw "SelfTestEnv: Extra token was not applied" }
-    Write-Host ("SelfTestEnv ok keys={0} token=set path=set cmd_has_token=false" -f ($names.Count))
-    exit 0
+    try {
+        $env:MONGODB_DB_NAME = "godbrain-selftest"
+        $env:GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION = "hybrid-v1"
+        $env:GODBRAIN_EMBEDDING_ENDPOINT = "http://127.0.0.1:11434/v1/embeddings"
+        $env:GODBRAIN_EMBEDDING_MODEL = "local-model-name"
+        $env:GODBRAIN_EMBEDDING_MODEL_REVISION = "operator-pin"
+        $env:GODBRAIN_EMBEDDING_MODEL_SHA256 = ("a" * 64)
+        $env:GODBRAIN_EMBEDDING_DIMENSION = "768"
+        $env:GODBRAIN_RAG_EMBEDDING_REQUIRED = "false"
+        $env:GODBRAIN_RAG_PORT = "9999"
+        $list = New-GodBrainChildEnvironment -Extra @{ GODBRAIN_API_TOKEN = "x-test-token" }
+        $names = @($list | ForEach-Object { ($_ -split "=", 2)[0] })
+        $map = @{}
+        foreach ($entry in $list) {
+            $pair = $entry -split "=", 2
+            $map[$pair[0]] = $pair[1]
+        }
+        $cmdSample = @(
+            "@echo off",
+            "set `"MONGODB_URI=mongodb://127.0.0.1:27017`""
+        ) -join "`n"
+        if ($names -notcontains "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: WMI list missing token" }
+        if ($names -notcontains "PATH") { throw "SelfTestEnv: WMI list missing PATH" }
+        if ($names -notcontains "SystemRoot") { throw "SelfTestEnv: WMI list missing SystemRoot" }
+        if ($names -contains "GODBRAIN_RAG_PORT") { throw "SelfTestEnv: WMI list must not copy GODBRAIN_RAG_PORT" }
+        if ($cmdSample -match "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: launch.cmd would contain token" }
+        if ($map["GODBRAIN_API_TOKEN"] -ne "x-test-token") { throw "SelfTestEnv: Extra token was not applied" }
+        if ($map["MONGODB_DB_NAME"] -ne "godbrain-selftest") { throw "SelfTestEnv: process MONGODB_DB_NAME was not forwarded" }
+        if ($map["GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION"] -ne "hybrid-v1") { throw "SelfTestEnv: schema preference was not forwarded" }
+        if ($map["GODBRAIN_EMBEDDING_ENDPOINT"] -notlike "http://127.0.0.1:*") { throw "SelfTestEnv: embedding endpoint was not forwarded" }
+        if ($map["GODBRAIN_EMBEDDING_MODEL"] -ne "local-model-name") { throw "SelfTestEnv: embedding model was not forwarded" }
+        if ($map["GODBRAIN_EMBEDDING_DIMENSION"] -ne "768") { throw "SelfTestEnv: embedding dimension was not forwarded" }
+        Write-Host ("SelfTestEnv ok keys={0} token=set db=set embed=set cmd_has_token=false" -f ($names.Count))
+        exit 0
+    } finally {
+        foreach ($name in $saved.Keys) {
+            if ([string]::IsNullOrEmpty($saved[$name])) {
+                Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -Path "Env:$name" -Value $saved[$name]
+            }
+        }
+    }
 }
 
 Write-Log "GodBrain logon start from $RepoRoot"
