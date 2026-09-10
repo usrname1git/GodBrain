@@ -82,6 +82,49 @@ HttpResponse api_error(int status, const std::string& message) {
     return json_status(status, std::string("{\"error\":\"") + json_escape(message) + "\"}");
 }
 
+bool cursor_failed(mongoc_cursor_t* cur) {
+    bson_error_t error{};
+    return cur != nullptr && mongoc_cursor_error(cur, &error);
+}
+
+struct GLink {
+    std::string src;
+    std::string tgt;
+    std::string kind;
+};
+
+bool star_links(
+    std::map<std::string, std::vector<std::string>> groups,
+    const char* kind,
+    int budget,
+    std::vector<GLink>* out) {
+    auto multi = [&]() {
+        for (auto& kv : groups) {
+            auto mem = kv.second;
+            std::sort(mem.begin(), mem.end());
+            mem.erase(std::unique(mem.begin(), mem.end()), mem.end());
+            if (mem.size() >= 2) return true;
+        }
+        return false;
+    };
+    if (budget <= 0) return multi();
+    std::vector<std::string> keys;
+    keys.reserve(groups.size());
+    for (auto& kv : groups) keys.push_back(kv.first);
+    std::sort(keys.begin(), keys.end());
+    for (const std::string& key : keys) {
+        auto mem = groups[key];
+        std::sort(mem.begin(), mem.end());
+        mem.erase(std::unique(mem.begin(), mem.end()), mem.end());
+        if (mem.size() < 2) continue;
+        for (size_t i = 1; i < mem.size(); ++i) {
+            if (static_cast<int>(out->size()) >= budget) return true;
+            out->push_back(GLink{mem[0], mem[i], kind});
+        }
+    }
+    return false;
+}
+
 std::string media_type(const std::string& content_type) {
     auto semi = content_type.find(';');
     std::string t = semi == std::string::npos ? content_type : content_type.substr(0, semi);
@@ -805,6 +848,17 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         if (!valid_hit_shape(h, doc)) continue;
         lexical.push_back(std::move(h));
     }
+    if (cursor_failed(cur)) {
+        mongoc_cursor_destroy(cur);
+        mongoc_collection_destroy(docs);
+        bson_destroy(&filter);
+        bson_destroy(&text);
+        bson_destroy(&meta);
+        bson_destroy(&proj);
+        bson_destroy(&sort);
+        bson_destroy(&opts);
+        return api_error(503, "search_unavailable");
+    }
     mongoc_cursor_destroy(cur);
     mongoc_collection_destroy(docs);
     bson_destroy(&filter);
@@ -865,6 +919,14 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
             if (sim < kMinSemanticSim) continue;
             h.vector_sim = sim;
             semantic.push_back(std::move(h));
+        }
+        if (cursor_failed(sem_cur)) {
+            mongoc_cursor_destroy(sem_cur);
+            mongoc_collection_destroy(sem_docs);
+            bson_destroy(&sem_filter);
+            bson_destroy(&sem_sort);
+            bson_destroy(&sem_opts);
+            return api_error(503, "search_unavailable");
         }
         mongoc_cursor_destroy(sem_cur);
         mongoc_collection_destroy(sem_docs);
@@ -1027,6 +1089,13 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
             ++cn;
         }
         cj << "]";
+        if (cursor_failed(pcur)) {
+            mongoc_cursor_destroy(pcur);
+            mongoc_collection_destroy(prov);
+            bson_destroy(&pq);
+            bson_destroy(&popts);
+            return api_error(503, "search_unavailable");
+        }
         mongoc_cursor_destroy(pcur);
         mongoc_collection_destroy(prov);
         bson_destroy(&pq);
@@ -1119,6 +1188,15 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
         n.conf = iter_double(doc, "confidence", 0);
         nodes.push_back(std::move(n));
     }
+    if (cursor_failed(cur)) {
+        mongoc_cursor_destroy(cur);
+        mongoc_collection_destroy(docs);
+        bson_destroy(&filter);
+        bson_destroy(&ne);
+        bson_destroy(&sort);
+        bson_destroy(&opts);
+        return api_error(503, "graph_unavailable");
+    }
     mongoc_cursor_destroy(cur);
     mongoc_collection_destroy(docs);
     bson_destroy(&filter);
@@ -1127,20 +1205,8 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
     bson_destroy(&opts);
     bool truncated = static_cast<int>(nodes.size()) > limit;
     if (truncated) nodes.resize(static_cast<size_t>(limit));
-    std::ostringstream o;
-    o << "{\"generation\":\"" << json_escape(h.meta.active_generation) << "\",\"projection_version\":\""
-      << kProjVer << "\",\"projection_schema\":\"" << kProjSchema << "\",\"count\":" << nodes.size()
-      << ",\"truncated\":" << (truncated ? "true" : "false") << ",\"links_truncated\":false,\"nodes\":[";
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        if (i) o << ",";
-        o << "{\"node_id\":\"" << json_escape(nodes[i].id) << "\",\"stable_id\":\""
-          << json_escape(nodes[i].stable) << "\",\"kind\":\"" << json_escape(nodes[i].kind)
-          << "\",\"sector\":\"" << json_escape(nodes[i].sector) << "\",\"status\":\""
-          << json_escape(nodes[i].status) << "\",\"confidence\":" << nodes[i].conf << ",\"label\":\""
-          << json_escape(graph_label(nodes[i].content, nodes[i].stable)) << "\"}";
-    }
-    o << "],\"links\":[";
     std::map<std::string, std::vector<std::string>> by_hash;
+    std::map<std::string, std::vector<std::string>> by_run;
     if (nodes.size() >= 2) {
         mongoc_collection_t* prov = coll(e, "rag_provenance");
         bson_t in_arr = BSON_INITIALIZER;
@@ -1160,9 +1226,20 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
         mongoc_cursor_t* pcur = mongoc_collection_find_with_opts(prov, &pq, nullptr, nullptr);
         const bson_t* prow = nullptr;
         while (mongoc_cursor_next(pcur, &prow)) {
-            std::string sh, nid = oid_hex(prow, "node_id");
+            std::string sh, rid, nid = oid_hex(prow, "node_id");
             iter_utf8(prow, "source_hash", &sh);
-            if (!sh.empty() && !nid.empty()) by_hash[sh].push_back(nid);
+            iter_utf8(prow, "run_id", &rid);
+            if (nid.empty()) continue;
+            if (!sh.empty()) by_hash[sh].push_back(nid);
+            else if (!rid.empty()) by_run[rid].push_back(nid);
+        }
+        if (cursor_failed(pcur)) {
+            mongoc_cursor_destroy(pcur);
+            mongoc_collection_destroy(prov);
+            bson_destroy(&in_arr);
+            bson_destroy(&in);
+            bson_destroy(&pq);
+            return api_error(503, "graph_unavailable");
         }
         mongoc_cursor_destroy(pcur);
         mongoc_collection_destroy(prov);
@@ -1170,20 +1247,29 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
         bson_destroy(&in);
         bson_destroy(&pq);
     }
-    int linkn = 0;
-    for (auto& kv : by_hash) {
-        auto& mem = kv.second;
-        std::sort(mem.begin(), mem.end());
-        mem.erase(std::unique(mem.begin(), mem.end()), mem.end());
-        if (mem.size() < 2) continue;
-        for (size_t i = 1; i < mem.size(); ++i) {
-            if (linkn) o << ",";
-            o << "{\"source\":\"" << json_escape(mem[0]) << "\",\"target\":\"" << json_escape(mem[i])
-              << "\",\"kind\":\"same_source\"}";
-            ++linkn;
-            if (linkn >= 1000) break;
-        }
-        if (linkn >= 1000) break;
+    std::vector<GLink> links;
+    bool links_truncated = star_links(by_hash, "same_source", 1000, &links);
+    if (!links_truncated) {
+        links_truncated = star_links(by_run, "same_run", 1000 - static_cast<int>(links.size()), &links);
+    }
+    std::ostringstream o;
+    o << "{\"generation\":\"" << json_escape(h.meta.active_generation) << "\",\"projection_version\":\""
+      << kProjVer << "\",\"projection_schema\":\"" << kProjSchema << "\",\"count\":" << nodes.size()
+      << ",\"truncated\":" << (truncated ? "true" : "false")
+      << ",\"links_truncated\":" << (links_truncated ? "true" : "false") << ",\"nodes\":[";
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (i) o << ",";
+        o << "{\"node_id\":\"" << json_escape(nodes[i].id) << "\",\"stable_id\":\""
+          << json_escape(nodes[i].stable) << "\",\"kind\":\"" << json_escape(nodes[i].kind)
+          << "\",\"sector\":\"" << json_escape(nodes[i].sector) << "\",\"status\":\""
+          << json_escape(nodes[i].status) << "\",\"confidence\":" << nodes[i].conf << ",\"label\":\""
+          << json_escape(graph_label(nodes[i].content, nodes[i].stable)) << "\"}";
+    }
+    o << "],\"links\":[";
+    for (size_t i = 0; i < links.size(); ++i) {
+        if (i) o << ",";
+        o << "{\"source\":\"" << json_escape(links[i].src) << "\",\"target\":\""
+          << json_escape(links[i].tgt) << "\",\"kind\":\"" << json_escape(links[i].kind) << "\"}";
     }
     o << "]}";
     return json_status(200, o.str());
@@ -1209,10 +1295,11 @@ HttpResponse handle_document(RagEngine* e, const HttpRequest& req) {
     const bson_t* doc = nullptr;
     bool found = mongoc_cursor_next(cur, &doc);
     if (!found) {
+        const bool failed = cursor_failed(cur);
         mongoc_cursor_destroy(cur);
         mongoc_collection_destroy(docs);
         bson_destroy(&filter);
-        return api_error(404, "document not found");
+        return api_error(failed ? 503 : 404, failed ? "document_unavailable" : "document not found");
     }
     std::string nid = oid_hex(doc, "node_id");
     std::string stable, ver, kind, sector, status, schema, content;
