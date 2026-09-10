@@ -176,7 +176,7 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 | `GODBRAIN_TEMP_DIR` | Native ingestors | Override temp script/output location |
 | `GODBRAIN_TELEMETRY_LOG` | ETW daemon prototype | Override telemetry log location |
 | `MONGODB_URI` | `memory-store.exe` and `rag-rebuild.exe` require it. `rag-service.exe` defaults if unset. `rag-eval.exe` does not use it. | Connection string. Start copies it into WMI children; keep-list default is `mongodb://127.0.0.1:27017`. |
-| `MONGODB_DB_NAME` | Mongo-backed commands (`memory-store`, `rag-rebuild`, `rag-service`) | Override database. Default `godbrain`. Not in the Start-GodBrain WMI keep-list. |
+| `MONGODB_DB_NAME` | Mongo-backed commands (`memory-store`, `rag-rebuild`, `rag-service`) | Override database. Default `godbrain`. Copied into Start-GodBrain WMI children. |
 | `GODBRAIN_RAG_PORT` | RAG service only | Numeric bind port. **Do not set on this desk.** The C++ kernel is hardcoded to `127.0.0.1:8084`. Changing the port desyncs Galaxy/chat. |
 | `GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION` | RAG service | Optional schema version ranking preference |
 | `GODBRAIN_EMBEDDING_ENDPOINT` | `memory-store.exe`, `rag-rebuild.exe`, `rag-service.exe` | Optional exact-loopback embedding HTTP origin. All three call `rag.EmbeddingRuntimeFromEnvironment()`. |
@@ -194,10 +194,11 @@ identity also needs `GODBRAIN_EMBEDDING_MODEL_REVISION`,
 invalid or incomplete identity fails those three executables, not only search.
 
 Start-GodBrain launches children through WMI with a **keep-list**: `PATH` and
-friends, `MONGODB_URI`, `GODBRAIN_API_TOKEN`. It does **not** copy User
-`GODBRAIN_RAG_*` or embedding vars into `rag-service.exe`. Those only apply if
-that process already has them (interactive shell, or you add them to the
-keep-list). The desk default is lexical RAG on `:8084`.
+friends, `MONGODB_URI`, `MONGODB_DB_NAME`, `GODBRAIN_API_TOKEN`,
+`GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION`, and the embedding identity
+(`GODBRAIN_EMBEDDING_*`, `GODBRAIN_RAG_EMBEDDING_REQUIRED`). It does **not**
+copy `GODBRAIN_RAG_PORT` (kernel is hardcoded to `127.0.0.1:8084`). Empty
+optional vars stay omitted. The desk default is lexical RAG on `:8084`.
 
 Secrets must not be committed, logged, inserted into prompts, or stored in
 graph records.

@@ -10,7 +10,7 @@ Models inherit the same Golden Records, and the kernel adds tools a stock
 
 The GodBrain turns local models into a shared, sovereign cognitive system. The core idea:
 
-- **🧠 Model-agnostic mouth** — Plug in *any* LLM behind one kernel door (desk default: Gemma 12B on `llama-server`). No model is special; they inherit the same teachings.
+- **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server on `:8000` (desk default: Gemma 12B on `llama-server`). Not an arbitrary chat API. No model is special; they inherit the same teachings.
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
 - **🛠️ Tools a stock `llama-server` will not give you** — Built into the C++ kernel, not 40 npm MCP servers. Chat `tool_calls` plus `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`). Bounded `/edit` is a separate chat door, not a `command_type`.
 
@@ -39,6 +39,24 @@ commercial API, and `.vscode/mcp.json` is empty on purpose.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
 - **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
+
+### Repository map
+
+This tree is a desk runtime plus a released kit plus research. Maturity is
+**source / offline gate / daily-driver**, not "the folder exists."
+
+| Surface | Maturity | Notes |
+|---|---|---|
+| C++ kernel + Galaxy (`godbrain_core/cpp_kernel`, `godbrain_core/frontend`) | daily-driver on this host | `:8083`, `/edit`, privileged `command_type` |
+| [Memory Store / rag-service](godbrain_core/memory_store/README.md) | daily-driver | `:8084` Golden Records; lexical default |
+| Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
+| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v10) | Windows repair ISO/zip; not the Jarvis loop |
+| [Skill Lab](godbrain_core/skill_lab/README.md) | source + one fixture gate | promotion needs a second independent fixture before it is usable policy |
+| [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
+| Go / Rust routers | experimental | not the operator UI |
+| [polymarket_paper](godbrain_core/polymarket_paper/README.md), [polygon_*](godbrain_core/polygon_observer/README.md) | paper / read-only | no live orders, no wallet |
+| [smart_contracts](godbrain_core/smart_contracts/README.md) | Foundry tree | `forge` validate; not desk runtime |
+| `LLM/colibri_LLM` | vendored mouth | interchangeable generate engine |
 
 The runtime default is **one loop**, not an agent graph: discover → plan →
 execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up. Oracle chat
@@ -166,20 +184,20 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 - Self-directed DISM or registry repair. Named GO, one tool, never a standing allow.
 - Closed-loop patch with zero hand-holding. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated.
 
-### Roadmap
+### Capability (evidence, not folder names)
 
-- [x] Host-listener loop (Heal/Watch: detect → start allowlist → verify → remember)
-- [x] Oracle judge loop (`/verify last` / `/reject last`)
-- [x] Truth loop (host probe / Learn quote auto-verify; playbooks stay candidate)
-- [x] Teachings: Librarian candidates + rag-service retrieve (models inherit committed records)
-- [x] Bounded `/edit` + privileged `pwsh` behind bearer + `reasoning`
-- [ ] Mouth ships web-dev class GodBrain UI/product work (allowlist grows on purpose, still no mouth `git push`)
-- [ ] Copilot-class local loop is the daily driver (Galaxy + kernel tools + judge); Copilot/gemini-cli not required
-- [x] Richer teaching query for the mouth (`/recall <query>` and `query_recent_thoughts` search verified records through `:8084`, not Mongo MCP)
-- [ ] Autonomous CVE ingestion — not b-line
-- [ ] Cross-fleet patch (Devuan / macOS / Windows) — not this machine
-- [ ] Self-directed DISM/registry — **no** standing allow
-- [ ] Detect → reason → patch → verify with zero hand-holding — Heal is the loop; extra patch stays GO-gated
+| Item | Source | Offline gate | Daily-driver on this desk |
+|---|---|---|---|
+| Heal/Watch listener loop | yes | Start/Heal scripts | yes |
+| `/verify` `/reject` judge | yes | — | yes |
+| Librarian candidates + rag-service retrieve | yes | `go test` memory_store | yes (lexical) |
+| `/recall <query>` verified search via `:8084` | yes | — | yes |
+| Bounded `/edit` + privileged `pwsh` | yes | `Verify-LocalEdit` | yes, allowlist still grows |
+| WMI child env: DB name + embedding identity | yes | `Start-GodBrain.ps1 -SelfTestEnv` | yes after this branch |
+| Durable task ledger / chain continue | AGENTS remaining | — | no |
+| Skill Lab second independent fixture | one fixture exists | Skill Lab README | no — policy not usable yet |
+| Mouth ships web-dev class UI work | destination | — | no |
+| Autonomous CVE / cross-fleet / self-DISM | **no** (standing nos) | — | no |
 
 ## Credits
 
