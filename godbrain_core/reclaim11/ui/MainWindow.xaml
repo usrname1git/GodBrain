@@ -85,12 +85,12 @@
   <Grid>
   <DockPanel x:Name="PanelDoor" Margin="16">
     <TextBlock DockPanel.Dock="Bottom" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap"
-               Text="MUST: PREP MEDIA, then boot WinPE (ISO or USB) to take Defender. No PE boot = bloat only (Xbox, telemetry). Recommended: VM or TEST first."/>
+               Text="MUST: PREP MEDIA, then boot WinPE (ISO or USB) to take Defender. All optimizations and debloat still work. Recommended: VM or TEST first."/>
     <StackPanel VerticalAlignment="Center" MaxWidth="720" HorizontalAlignment="Center">
       <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
       <TextBlock Foreground="#7A93A8" Margin="0,4,0,8" Text="This isn't a debloater. It's a Grim Reaper."/>
       <TextBlock Foreground="#7A93A8" Margin="0,0,0,8" TextWrapping="Wrap"
-                 Text="MUST: PREP MEDIA, then boot that WinPE (ISO or USB), or Defender stays. Without that boot you only get bloat."/>
+                 Text="MUST: PREP MEDIA, then boot that WinPE (ISO or USB), or Defender stays. All optimizations and debloat still work."/>
       <TextBlock Foreground="#7A93A8" Margin="0,0,0,20" Text="Choose a mode"/>
       <Button x:Name="BtnDoorNoob" Style="{StaticResource DoorBtn}">
         <StackPanel>
@@ -157,7 +157,7 @@
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
         <TextBlock x:Name="Subtitle" Foreground="#7A93A8" Margin="0,2,0,0" TextWrapping="Wrap"
-                   Text="PREP MEDIA builds ISO then USB. Boot the stick (VM recommended). Without that boot: bloat only."/>
+                   Text="PREP MEDIA builds ISO then USB. Boot the stick (VM recommended). All optimizations and debloat still work."/>
       </StackPanel>
     </DockPanel>
     <Border DockPanel.Dock="Top" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="10,8" Margin="0,0,0,12">
@@ -188,7 +188,7 @@
       <Button x:Name="BtnRun" DockPanel.Dock="Left" Content="RUN SELECTED" MinWidth="140"/>
       <Button x:Name="BtnTest" DockPanel.Dock="Left" Content="TEST SELECTED" MinWidth="140" Margin="8,0,8,0"/>
       <TextBlock x:Name="Footer" VerticalAlignment="Center" Foreground="#7A93A8"
-                 Text="TEST is no mutate. RUN is live. No WinPE boot = bloat only. Safe/Kill/Reaper lock until a PE receipt."/>
+                 Text="TEST is no mutate. RUN is live. All optimizations and debloat still work. Safe/Kill/Reaper lock until a PE receipt."/>
     </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>

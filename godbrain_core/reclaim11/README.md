@@ -4,10 +4,10 @@
 mode and see the result.
 
 **MUST:** PREP MEDIA, then boot WinPE (ISO or USB) if you want Defender /
-PPL / Sense gone. That offline pass is the kill. Without that boot the
-GUI is **bloat only** (Xbox, telemetry, NIC, Start junk, BCD timer,
-USB/ASPM, power registry). Killing blows and Grim Reaper stay locked
-until a WinPE receipt. Exact flags are under Advanced.
+PPL / Sense gone. That offline pass is the kill. Without that boot **all optimizations and debloat still work** (Xbox,
+telemetry, NIC, Start junk, BCD timer, USB/ASPM, power registry).
+Killing blows and Grim Reaper stay locked until a WinPE receipt. Exact
+flags are under Advanced.
 
 ## What to do
 
@@ -49,7 +49,7 @@ host path. USB EFI is the same WinPE.
 
 ### Rails
 
-- Defender / PPL **require** a WinPE ISO you build and boot. No receipt = bloat only.
+- Defender / PPL **require** a WinPE ISO you build and boot. No receipt: all optimizations and debloat still work.
 - `WdBoot.sys` is ELAM. **Refuse to park/stub it when Secure Boot is on.**
 - Killing blows / Grim Reaper unlock only after a WinPE receipt.
 - WinPE waits **12 seconds**: press **H** if Windows won't boot (skips Automatic Repair). Otherwise pack A runs as today. Help writes `reclaim11-winre-skip.log` and does **not** unlock killing blows.
