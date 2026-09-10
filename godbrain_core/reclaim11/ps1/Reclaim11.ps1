@@ -244,6 +244,54 @@ $actionsHeader = Get-Ui ActionsHeader
 $actionsHint = Get-Ui ActionsHint
 $subtitle = Get-Ui Subtitle
 $footer = Get-Ui Footer
+
+function Add-Reclaim11RowToggle {
+    param($Row, $Toggle)
+    if (-not $Row -or -not $Toggle) { return }
+    $Row.Add_MouseLeftButtonUp({
+        param($sender, $e)
+        if (-not $Toggle.IsEnabled) { return }
+        $walk = $e.OriginalSource
+        while ($null -ne $walk) {
+            if ($walk -eq $Toggle) { return }
+            if ($walk -is [Windows.DependencyObject]) {
+                $walk = [Windows.Media.VisualTreeHelper]::GetParent($walk)
+            } else {
+                break
+            }
+        }
+        $Toggle.IsChecked = -not [bool]$Toggle.IsChecked
+        $e.Handled = $true
+    }.GetNewClosure())
+}
+
+Add-Reclaim11RowToggle (Get-Ui RowSafe) $btnSafe
+Add-Reclaim11RowToggle (Get-Ui RowXbox) $btnXbox
+Add-Reclaim11RowToggle (Get-Ui RowTelemetry) $btnTelemetry
+Add-Reclaim11RowToggle (Get-Ui RowNic) $btnNic
+Add-Reclaim11RowToggle (Get-Ui RowLatency) $btnLatency
+Add-Reclaim11RowToggle (Get-Ui RowKill) $btnKill
+Add-Reclaim11RowToggle (Get-Ui RowReaper) $btnReaper
+Add-Reclaim11RowToggle (Get-Ui RowHideCaptures) $togHideCaptures
+
+function Apply-Reclaim11ExpertGates {
+    if ($script:UiRestore) { return }
+    $pe = $false
+    if ($script:LastInventory -and $script:LastInventory.gates) {
+        $pe = [bool]$script:LastInventory.gates.killing_blows
+    }
+    $btnSafe.IsEnabled = $pe
+    if (-not $pe) { $btnSafe.IsChecked = $false }
+    $btnXbox.IsEnabled = $true
+    $btnTelemetry.IsEnabled = $true
+    $btnNic.IsEnabled = $true
+    $btnLatency.IsEnabled = $true
+    $btnKill.IsEnabled = $pe
+    if (-not $pe) { $btnKill.IsChecked = $false }
+    $btnReaper.IsEnabled = $pe
+    if (-not $pe) { $btnReaper.IsChecked = $false }
+    $btnNoobSafe.IsEnabled = $pe
+}
 $script:LastInventory = $null
 $script:ProcessRunning = $false
 $script:UiDoor = "door"
@@ -301,10 +349,10 @@ function Show-Reclaim11Door {
     if ($Name -eq "expert" -and $Restore) {
         $btnRun.Content = "RESTORE SELECTED"
         $btnTest.Content = "TEST RESTORE"
-        $subtitle.Text = "Custom Restore. Tick what to undo from restore.json. Newest backup first."
+        $subtitle.Text = "Custom Restore. Select what to undo from restore.json. Newest backup first."
         $footer.Text = "Restore uses C:\reclaim11\backup\*\restore.json. Killing blows / Grim Reaper have no restore."
         $actionsHeader.Text = "RESTORE"
-        $actionsHint.Text = "Tick what to restore, then RESTORE SELECTED. Newest stamp first."
+        $actionsHint.Text = "Select what to restore, then RESTORE SELECTED. Newest stamp first."
         $btnPrep.Visibility = [Windows.Visibility]::Collapsed
         $btnRustDesk.Visibility = [Windows.Visibility]::Collapsed
         $kinds = @{}
@@ -328,6 +376,7 @@ function Show-Reclaim11Door {
         $actionsHint.Text = $script:ApplyActionsHint
         $btnPrep.Visibility = [Windows.Visibility]::Visible
         $btnRustDesk.Visibility = [Windows.Visibility]::Visible
+        Apply-Reclaim11ExpertGates
     }
 }
 
@@ -343,17 +392,11 @@ function Show-Inventory($inv) {
     (Get-Ui NeverTouch).Text = if ($inv.never_touch_ok) { "BFE + mpssvc RUNNING" } else { "FAIL  do not continue" }
     (Get-Ui WdBootGate).Text = $inv.gates.reason_wdboot
     $btnPrep.IsEnabled = $true
-    $pe = [bool]$inv.gates.killing_blows
-    $btnSafe.IsEnabled = $pe
-    if (-not $pe) { $btnSafe.IsChecked = $false }
-    $btnXbox.IsEnabled = $true
-    $btnTelemetry.IsEnabled = $true
-    $btnLatency.IsEnabled = $true
-    $btnKill.IsEnabled = $pe
-    if (-not $pe) { $btnKill.IsChecked = $false }
-    $btnReaper.IsEnabled = $pe
-    if (-not $pe) { $btnReaper.IsChecked = $false }
-    $btnNoobSafe.IsEnabled = $pe
+    Apply-Reclaim11ExpertGates
+    if ($script:UiRestore) {
+        $pe = [bool]$inv.gates.killing_blows
+        $btnNoobSafe.IsEnabled = $pe
+    }
     $logBox.Clear()
     Add-Log ("at        {0}" -f $inv.at)
     Add-Log ("catalog   {0}" -f $inv.catalog)
@@ -423,7 +466,7 @@ $btnRun.Add_Click({
         if ($script:UiRestore) {
             $kinds = @(Get-Reclaim11RestoreKindsFromTicks)
             if ($kinds.Count -lt 1) {
-                [System.Windows.MessageBox]::Show("Tick Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
+                [System.Windows.MessageBox]::Show("Select Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
                 return
             }
             $q = [System.Windows.MessageBox]::Show(
@@ -446,7 +489,7 @@ $btnRun.Add_Click({
         $doKill = [bool]$btnKill.IsChecked
         $doReaper = [bool]$btnReaper.IsChecked
         if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doLatency -or $doKill -or $doReaper)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
+            [System.Windows.MessageBox]::Show("Select Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         $unlocked = $false
@@ -564,7 +607,7 @@ $btnTest.Add_Click({
         if ($script:UiRestore) {
             $kinds = @(Get-Reclaim11RestoreKindsFromTicks)
             if ($kinds.Count -lt 1) {
-                [System.Windows.MessageBox]::Show("Tick Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
+                [System.Windows.MessageBox]::Show("Select Xbox, telemetry, NIC, latency bake, and/or Safe cleanse to restore.", "Reclaim11") | Out-Null
                 return
             }
             Add-Log "TEST RESTORE. mutate=false."
@@ -583,7 +626,7 @@ $btnTest.Add_Click({
         $doKill = [bool]$btnKill.IsChecked
         $doReaper = [bool]$btnReaper.IsChecked
         if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doLatency -or $doKill -or $doReaper)) {
-            [System.Windows.MessageBox]::Show("Tick Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
+            [System.Windows.MessageBox]::Show("Select Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
         }
         Add-Log "TEST ONLY (DeviceCleanupCmd -t). mutate=false."
@@ -662,7 +705,7 @@ $btnDoorRestoreCustom.Add_Click({
     Show-Reclaim11Door "expert" -Restore
     try {
         Show-Inventory (Get-Reclaim11Inventory -Root $here -WinPeLog $WinPeLog)
-        Add-Log "Custom Restore. Tick what to undo. TEST RESTORE lists restore.json. Killing blows / Grim Reaper have no restore."
+        Add-Log "Custom Restore. Select what to undo. TEST RESTORE lists restore.json. Killing blows / Grim Reaper have no restore."
     } catch {
         Add-Log ("scan FAIL  {0}" -f $_.Exception.Message)
     }

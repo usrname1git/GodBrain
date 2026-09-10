@@ -48,17 +48,58 @@
       <Setter Property="Margin" Value="0,8,0,0"/>
       <Setter Property="Cursor" Value="Hand"/>
     </Style>
+    <Style x:Key="ActionRow" TargetType="Border">
+      <Setter Property="Padding" Value="4,6,4,6"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="CornerRadius" Value="2"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#1A2430"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
     <Style x:Key="BiosToggle" TargetType="ToggleButton">
-      <Setter Property="Width" Value="56"/>
-      <Setter Property="Height" Value="24"/>
+      <Setter Property="Width" Value="88"/>
+      <Setter Property="Height" Value="28"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ToggleButton">
             <Border x:Name="bd" Background="#1A2430" BorderBrush="#3DDCFF" BorderThickness="1" CornerRadius="2">
               <Grid>
-                <TextBlock x:Name="on" Text="ON" Foreground="#0B0F16" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <TextBlock x:Name="off" Text="OFF" Foreground="#7A93A8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock x:Name="on" Text="ON" Foreground="#0B0F16" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" FontWeight="SemiBold" FontSize="11"/>
+                <TextBlock x:Name="off" Text="OFF" Foreground="#7A93A8" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="11"/>
+                <TextBlock x:Name="locked" Text="LOCKED" Foreground="#8A9AAB" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" FontWeight="SemiBold" FontSize="10"/>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#3DDCFF"/>
+                <Setter TargetName="on" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="off" Property="Visibility" Value="Collapsed"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Background" Value="#2A333E"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#3A4654"/>
+                <Setter TargetName="on" Property="Visibility" Value="Collapsed"/>
+                <Setter TargetName="off" Property="Visibility" Value="Collapsed"/>
+                <Setter TargetName="locked" Property="Visibility" Value="Visible"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="OptionToggle" TargetType="ToggleButton" BasedOn="{StaticResource BiosToggle}">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="bd" Background="#1A2430" BorderBrush="#3DDCFF" BorderThickness="1" CornerRadius="2">
+              <Grid>
+                <TextBlock x:Name="on" Text="ON" Foreground="#0B0F16" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" FontWeight="SemiBold" FontSize="11"/>
+                <TextBlock x:Name="off" Text="OFF" Foreground="#7A93A8" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="11"/>
               </Grid>
             </Border>
             <ControlTemplate.Triggers>
@@ -116,7 +157,7 @@
       <Button x:Name="BtnDoorRestoreCustom" Style="{StaticResource DoorBtn}">
         <StackPanel>
           <TextBlock Text="Custom Restore" FontWeight="SemiBold" Foreground="#3DDCFF"/>
-          <TextBlock Text="Power User panel in reverse. Tick what to restore from C:\reclaim11\backup."
+          <TextBlock Text="Power User panel in reverse. Select what to restore from C:\reclaim11\backup."
                      Foreground="#7A93A8" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel>
       </Button>
@@ -201,32 +242,95 @@
       <Border Grid.Column="0" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="14">
         <StackPanel>
           <TextBlock x:Name="ActionsHeader" Text="ACTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <CheckBox x:Name="BtnSafe" Content="Safe cleanse  (move + restore.json)" IsEnabled="False"/>
-          <CheckBox x:Name="BtnXbox" Content="Hide Xbox + Appx bloat  (restore.json)"/>
-          <CheckBox x:Name="BtnTelemetry" Content="Disable telemetry  (restore.json)"/>
-          <CheckBox x:Name="BtnNic" Content="Tune NIC  (offloads off, RSS on)"/>
-          <CheckBox x:Name="BtnLatency" Content="Latency bake  (BCD + timer + USB/ASPM, restore.json)"/>
-          <CheckBox x:Name="BtnKill" Content="Killing blows  (YOLO delete, after PE)" IsEnabled="False"/>
-          <CheckBox x:Name="BtnReaper" Content="Send Grim Reaper  (remainder + WU lock + hide WU in Settings, after PE)" IsEnabled="False"/>
-          <TextBlock x:Name="ActionsHint" Foreground="#7A93A8" Margin="0,16,0,0" TextWrapping="Wrap" FontSize="12"
-                     Text="Tick what to run, then RUN SELECTED. One style, no Hiren's pile."/>
+          <Border x:Name="RowSafe" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnSafe" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center" IsEnabled="False"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Safe cleanse" FontWeight="SemiBold"/>
+                <TextBlock Text="Move + restore.json" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowXbox" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnXbox" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Hide Xbox + Appx bloat" FontWeight="SemiBold"/>
+                <TextBlock Text="Restore.json" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowTelemetry" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnTelemetry" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Disable telemetry" FontWeight="SemiBold"/>
+                <TextBlock Text="Restore.json" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowNic" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnNic" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Tune NIC" FontWeight="SemiBold"/>
+                <TextBlock Text="Offloads off, RSS on" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowLatency" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnLatency" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Latency bake" FontWeight="SemiBold"/>
+                <TextBlock Text="BCD + timer + USB/ASPM" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowKill" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnKill" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center" IsEnabled="False"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Killing blows" FontWeight="SemiBold"/>
+                <TextBlock Text="Requires WinPE receipt" Foreground="#7A93A8" FontSize="11"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowReaper" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="BtnReaper" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center" IsEnabled="False"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Send Grim Reaper" FontWeight="SemiBold"/>
+                <TextBlock Text="Remainder + WU lock + hide WU in Settings. Requires WinPE receipt."
+                           Foreground="#7A93A8" FontSize="11" TextWrapping="Wrap"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <TextBlock x:Name="ActionsHint" Foreground="#7A93A8" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
+                     Text="Select one or more actions, then RUN SELECTED."/>
         </StackPanel>
       </Border>
       <Border Grid.Column="2" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="14">
         <StackPanel>
-          <TextBlock Text="OPTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,12"/>
-          <DockPanel Margin="0,0,0,12">
-            <ToggleButton x:Name="TogHideCaptures" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True"/>
-            <TextBlock Text="Hide Captures" VerticalAlignment="Center"/>
-          </DockPanel>
-          <DockPanel Margin="0,0,0,12">
-            <ToggleButton x:Name="TogKeepGameMode" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
-            <TextBlock Text="Keep Game Mode" VerticalAlignment="Center"/>
-          </DockPanel>
-          <DockPanel>
-            <ToggleButton x:Name="TogNeverTouch" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
-            <TextBlock Text="Keep Firewall" VerticalAlignment="Center"/>
-          </DockPanel>
+          <TextBlock Text="OPTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <Border x:Name="RowHideCaptures" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="TogHideCaptures" Style="{StaticResource OptionToggle}" DockPanel.Dock="Right" IsChecked="True"/>
+              <TextBlock Text="Hide Captures" VerticalAlignment="Center"/>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowKeepGameMode" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="TogKeepGameMode" Style="{StaticResource OptionToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
+              <TextBlock Text="Keep Game Mode" VerticalAlignment="Center"/>
+            </DockPanel>
+          </Border>
+          <Border x:Name="RowKeepFirewall" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="TogNeverTouch" Style="{StaticResource OptionToggle}" DockPanel.Dock="Right" IsChecked="True" IsEnabled="False"/>
+              <TextBlock Text="Keep Firewall" VerticalAlignment="Center"/>
+            </DockPanel>
+          </Border>
         </StackPanel>
       </Border>
       <DockPanel Grid.Column="4">
