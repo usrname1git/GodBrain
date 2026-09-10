@@ -30,6 +30,7 @@ using godbrain::memory::embedding_cosine;
 using godbrain::memory::embedding_embed_fake;
 using godbrain::memory::json_bool;
 using godbrain::memory::json_get;
+using godbrain::memory::json_has;
 using godbrain::memory::json_is_object;
 using godbrain::memory::json_number;
 using godbrain::memory::json_reject_unknown_keys;
@@ -418,7 +419,7 @@ bool decode_desk_eval(const std::string& raw, DeskFile* out, std::string* err) {
     }
     json_string(root, "version", &out->version);
     double topkd = 0;
-    if (!json_number(root, "top_k", &topkd)) {
+    if (!json_number(root, "top_k", &topkd) || !std::isfinite(topkd) || topkd != std::trunc(topkd)) {
         if (err) *err = "desk evaluation top_k is invalid";
         return false;
     }
@@ -446,7 +447,10 @@ bool decode_desk_eval(const std::string& raw, DeskFile* out, std::string* err) {
         DeskQuery dq;
         json_string(q, "id", &dq.id);
         json_string(q, "query", &dq.query);
-        json_string(q, "sector", &dq.sector);
+        if (json_has(q, "sector") && !json_string(q, "sector", &dq.sector)) {
+            if (err) *err = "desk evaluation query is invalid";
+            return false;
+        }
         dq.id = trim_copy(dq.id);
         dq.query = trim_copy(dq.query);
         dq.sector = trim_copy(dq.sector);
@@ -519,6 +523,18 @@ int run_eval_self_test() {
         "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
         "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[]}]}";
     check(!decode_desk_eval(noneedle, &file, &err), "desk-needles");
+    file = {};
+    err.clear();
+    const char* bad_sector =
+        "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[\"Heal\"],\"sector\":1}]}";
+    check(!decode_desk_eval(bad_sector, &file, &err), "desk-sector-type");
+    file = {};
+    err.clear();
+    const char* frac =
+        "{\"version\":\"godbrain-desk-eval-v1\",\"top_k\":8.5,\"queries\":["
+        "{\"id\":\"heal-never-kills\",\"query\":\"Heal never kills\",\"needles\":[\"Heal\"]}]}";
+    check(!decode_desk_eval(frac, &file, &err), "desk-topk-frac");
     check(live_origin_ok("http://127.0.0.1:8084") && live_origin_ok("http://localhost:8084") &&
               !live_origin_ok("http://127.0.0.1:8083") && !live_origin_ok("https://127.0.0.1:8084"),
           "live-origin");

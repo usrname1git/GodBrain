@@ -1107,7 +1107,7 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         return api_error(400, "retrieval_mode must be auto, lexical, or hybrid");
     }
 
-    // One retry if generation/health moved mid-query (Go searchConsistently).
+    // Do not return hits if generation or corpus counts moved before after-health.
     for (int attempt = 0; attempt < 2; ++attempt) {
     HealthSnap before;
     std::string herr;
