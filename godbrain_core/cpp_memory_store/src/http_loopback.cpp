@@ -150,7 +150,7 @@ void handle_client(SOCKET client, const HttpHandler& handler) {
 
 }  // namespace
 
-int http_serve_loopback(uint16_t port, const HttpHandler& handler, volatile bool* stop) {
+int http_serve_loopback(uint16_t port, const HttpHandler& handler, std::atomic<bool>* stop) {
 #if !defined(_WIN32)
     (void)port;
     (void)handler;
@@ -182,7 +182,7 @@ int http_serve_loopback(uint16_t port, const HttpHandler& handler, volatile bool
     }
     u_long nonblock = 1;
     ioctlsocket(ls, FIONBIO, &nonblock);
-    while (stop == nullptr || !*stop) {
+    while (stop == nullptr || !stop->load()) {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(ls, &fds);

@@ -21,43 +21,23 @@
 namespace godbrain::memory {
 namespace {
 
-std::string json_escape(const std::string& s) {
-    std::string o;
-    o.reserve(s.size() + 8);
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"':
-                o += "\\\"";
-                break;
-            case '\\':
-                o += "\\\\";
-                break;
-            case '\n':
-                o += "\\n";
-                break;
-            case '\r':
-                o += "\\r";
-                break;
-            case '\t':
-                o += "\\t";
-                break;
-            default:
-                if (c < 0x20) {
-                    std::ostringstream h;
-                    h << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
-                    o += h.str();
-                } else {
-                    o.push_back(static_cast<char>(c));
-                }
-        }
-    }
-    return o;
-}
-
 const char* kClaimKeys[] = {
     "claim_id",
     "type",
     "content",
+    "confidence",
+    "evidence_spans",
+    nullptr,
+};
+
+const char* kSkillExtractedKeys[] = {
+    "name",
+    "content",
+    "task_kind",
+    "framework",
+    "verification_profile",
+    "required_inputs",
+    "procedure",
     "confidence",
     "evidence_spans",
     nullptr,
@@ -177,6 +157,39 @@ bool require_string_field(const Json& obj, const char* key, std::string* out, st
 
 }  // namespace
 
+std::string json_escape(const std::string& s) {
+    std::string o;
+    o.reserve(s.size() + 8);
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':
+                o += "\\\"";
+                break;
+            case '\\':
+                o += "\\\\";
+                break;
+            case '\n':
+                o += "\\n";
+                break;
+            case '\r':
+                o += "\\r";
+                break;
+            case '\t':
+                o += "\\t";
+                break;
+            default:
+                if (c < 0x20) {
+                    std::ostringstream h;
+                    h << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+                    o += h.str();
+                } else {
+                    o.push_back(static_cast<char>(c));
+                }
+        }
+    }
+    return o;
+}
+
 std::string keccak256_hex(const std::string& bytes) {
     uint8_t hash[32];
     Keccak256::getHash(
@@ -187,6 +200,69 @@ std::string keccak256_hex(const std::string& bytes) {
         o << std::setw(2) << static_cast<int>(b);
     }
     return o.str();
+}
+
+std::string skill_procedure_text(const SkillExtracted& skill) {
+    if (!skill.content.empty()) return skill.content;
+    std::string o;
+    for (size_t i = 0; i < skill.procedure.size(); ++i) {
+        if (i) o.push_back('\n');
+        o += skill.procedure[i];
+    }
+    return o;
+}
+
+std::string skill_stable_id(const std::string& name, const std::string& content) {
+    return keccak256_hex(std::string("skill") + '\0' + name + '\0' + content);
+}
+
+bool validate_skill_extracted(const SkillExtracted& skill, std::string* err) {
+    if (!safe_extractor_id(skill.name)) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    std::string content = skill_procedure_text(skill);
+    if (content.empty() || content.size() > 8192) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    if (skill.procedure.size() > 32) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    for (const std::string& step : skill.procedure) {
+        if (step.size() > 512) {
+            if (err) *err = "skills_extracted entry is invalid";
+            return false;
+        }
+    }
+    if (skill.required_inputs.size() > 16) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    if (!skill.task_kind.empty()) {
+        if (skill.task_kind.size() > 64) {
+            if (err) *err = "skills_extracted entry is invalid";
+            return false;
+        }
+        std::string id = skill.task_kind;
+        for (char& c : id) {
+            if (c == ' ') c = '-';
+        }
+        if (!safe_extractor_id(id)) {
+            if (err) *err = "skills_extracted entry is invalid";
+            return false;
+        }
+    }
+    if (!skill.framework.empty() && (skill.framework.size() > 64 || !safe_extractor_id(skill.framework))) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    if (skill.confidence < 0 || skill.confidence > 1) {
+        if (err) *err = "skills_extracted entry is invalid";
+        return false;
+    }
+    return true;
 }
 
 std::string error_envelope_json(const std::string& error, const std::string& details) {
@@ -643,6 +719,76 @@ bool classify_and_parse(const std::string& json_text, Route* route, std::string*
     if (!take_strings("core_concepts", &route->ingest.core_concepts)) return false;
     if (!take_strings("opsec_candidates", &route->ingest.opsec_candidates)) return false;
 
+    const Json* extracted = json_get(*payload, "skills_extracted");
+    if (extracted != nullptr) {
+        if (extracted->kind != Json::Kind::Array) {
+            if (err) *err = "skills_extracted must be an array";
+            return false;
+        }
+        size_t n = extracted->arr.size();
+        if (n > static_cast<size_t>(kMaxExtractedSkills)) n = static_cast<size_t>(kMaxExtractedSkills);
+        for (size_t i = 0; i < n; ++i) {
+            const Json& item = extracted->arr[i];
+            if (!json_is_object(item)) {
+                if (err) *err = "skills_extracted entry is invalid";
+                return false;
+            }
+            if (!json_reject_unknown_keys(item, kSkillExtractedKeys, err)) return false;
+            SkillExtracted s;
+            json_string(item, "name", &s.name);
+            json_string(item, "content", &s.content);
+            json_string(item, "task_kind", &s.task_kind);
+            json_string(item, "framework", &s.framework);
+            json_string(item, "verification_profile", &s.verification_profile);
+            json_number(item, "confidence", &s.confidence);
+            auto take_arr = [&](const char* key, std::vector<std::string>* dest) -> bool {
+                const Json* arr = json_get(item, key);
+                if (arr == nullptr) return true;
+                if (arr->kind != Json::Kind::Array) {
+                    if (err) *err = "skills_extracted entry is invalid";
+                    return false;
+                }
+                for (const Json& v : arr->arr) {
+                    if (v.kind != Json::Kind::String) {
+                        if (err) *err = "skills_extracted entry is invalid";
+                        return false;
+                    }
+                    dest->push_back(v.str);
+                }
+                return true;
+            };
+            if (!take_arr("required_inputs", &s.required_inputs)) return false;
+            if (!take_arr("procedure", &s.procedure)) return false;
+            if (!take_arr("evidence_spans", &s.evidence_spans)) return false;
+            s.name = trim_copy(s.name);
+            s.content = trim_copy(s.content);
+            s.task_kind = collapse_ws(s.task_kind);
+            for (char& c : s.task_kind) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            s.framework = trim_copy(s.framework);
+            for (char& c : s.framework) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            s.verification_profile = trim_copy(s.verification_profile);
+            if (!s.verification_profile.empty() && !skill_profile_allowed(s.verification_profile)) {
+                s.verification_profile.clear();
+            }
+            std::vector<std::string> inputs;
+            for (const std::string& in : s.required_inputs) {
+                std::string t = trim_copy(in);
+                if (!t.empty()) inputs.push_back(t);
+            }
+            s.required_inputs = std::move(inputs);
+            std::vector<std::string> steps;
+            for (const std::string& step : s.procedure) {
+                std::string t = trim_copy(step);
+                if (!t.empty()) steps.push_back(t);
+            }
+            s.procedure = std::move(steps);
+            std::string verr;
+            if (!validate_skill_extracted(s, &verr)) continue;
+            if (!validate_evidence_spans(s.evidence_spans, route->ingest.raw_transcript, err)) return false;
+            route->ingest.skills_extracted.push_back(std::move(s));
+        }
+    }
+
     route->ingest.has_document = json_has(root, "document") || json_has(root, "chunks");
     return validate_pre_ingestion(route->ingest, err);
 }
@@ -754,6 +900,14 @@ int run_self_test() {
     const std::string qskills = "{\"command\":\"query_skills\",\"query\":\"desk\",\"limit\":5}";
     err.clear();
     check(classify_and_parse(qskills, &r, &err) && r.kind == CommandKind::QuerySkills, "query-skills-ok");
+    const std::string bad_skills =
+        std::string("{\"extractor_version\":\"v1\",\"schema_version\":\"1.0\",") +
+        "\"raw_transcript\":\"hello\",\"payload\":{\"trust_tier\":\"candidate\","
+        "\"provenance\":{\"source_id\":\"session\",\"source_type\":\"session_transcript\","
+        "\"source_hash\":\"" +
+        hash + "\",\"language\":\"mixed\"},\"skills_extracted\":true}}";
+    err.clear();
+    check(!classify_and_parse(bad_skills, &r, &err), "skills-extracted-type");
 
     check(allowed_run_transition(kRunStaging, kRunValidated), "run-stag-val");
     check(allowed_run_transition(kRunStaging, kRunFailed), "run-stag-fail");

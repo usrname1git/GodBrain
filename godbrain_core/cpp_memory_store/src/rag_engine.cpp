@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <map>
@@ -368,15 +369,18 @@ struct Hit {
     double trust = 0;
     double schema_bonus = 0;
     double freshness = 0;
+    double diversity = 0;
     double total = 0;
     int lexical_rank = 0;
     int semantic_rank = 0;
     int64_t created_ms = 0;
+    std::string source_hash;
 };
 
 void score_hit(Hit* h, const std::string& preferred, bool hybrid) {
-    h->trust = 0.25;
+    h->trust = 0;
     if (h->status == "verified") h->trust = 1.5;
+    else if (h->status == "candidate") h->trust = 0.25;
     else if (h->status == "rejected") h->trust = -1;
     h->schema_bonus = (!preferred.empty() && h->schema == preferred) ? 0.5 : 0;
     h->freshness = 0;
@@ -555,9 +559,15 @@ bool fill_health(RagEngine* e, HealthSnap* h, std::string* err) {
     bson_destroy(&ef);
     mongoc_collection_t* nodes = coll(e, "nodes");
     bson_t empty = BSON_INITIALIZER;
-    h->legacy_nodes = mongoc_collection_count_documents(nodes, &empty, nullptr, nullptr, nullptr, &error);
+    int64_t legacy = mongoc_collection_count_documents(nodes, &empty, nullptr, nullptr, nullptr, &error);
     mongoc_collection_destroy(nodes);
     bson_destroy(&empty);
+    if (legacy < 0) {
+        h->legacy_nodes = 0;
+        h->reasons.push_back("mongodb_unavailable");
+    } else {
+        h->legacy_nodes = legacy;
+    }
 
     if (h->latest_committed && (!h->latest_projected || h->projected_at < h->committed_at)) {
         if (!h->latest_projected) h->lag = static_cast<double>(utc_now_ms() - h->committed_at) / 1000.0;
@@ -775,6 +785,8 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     bson_t sort = BSON_INITIALIZER;
     BSON_APPEND_DOCUMENT(&sort, "text_score", &meta);
     BSON_APPEND_INT32(&sort, "stable_id", 1);
+    BSON_APPEND_INT32(&sort, "node_version", 1);
+    BSON_APPEND_INT32(&sort, "node_id", 1);
     int64_t limit = top_k * 8;
     if (limit < 32) limit = 32;
     if (limit > 200) limit = 200;
@@ -883,28 +895,87 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
 
     const bool hybrid = retrieval == "hybrid";
     for (Hit& h : fused) score_hit(&h, e->preferred_schema, hybrid);
+    for (Hit& h : fused) {
+        bson_t pq = BSON_INITIALIZER;
+        BSON_APPEND_UTF8(&pq, "generation", before.meta.active_generation.c_str());
+        if (h.node_id.size() == 24 && bson_oid_is_valid(h.node_id.c_str(), 24)) {
+            bson_oid_t oid;
+            bson_oid_init_from_string(&oid, h.node_id.c_str());
+            BSON_APPEND_OID(&pq, "node_id", &oid);
+        }
+        bson_t psort = BSON_INITIALIZER;
+        BSON_APPEND_INT32(&psort, "source_hash", 1);
+        BSON_APPEND_INT32(&psort, "external_source_id", 1);
+        BSON_APPEND_INT32(&psort, "run_id", 1);
+        bson_t popts = BSON_INITIALIZER;
+        BSON_APPEND_DOCUMENT(&popts, "sort", &psort);
+        BSON_APPEND_INT64(&popts, "limit", 1);
+        mongoc_collection_t* prov = coll(e, "rag_provenance");
+        mongoc_cursor_t* pcur = mongoc_collection_find_with_opts(prov, &pq, &popts, nullptr);
+        const bson_t* prow = nullptr;
+        if (mongoc_cursor_next(pcur, &prow)) iter_utf8(prow, "source_hash", &h.source_hash);
+        mongoc_cursor_destroy(pcur);
+        mongoc_collection_destroy(prov);
+        bson_destroy(&pq);
+        bson_destroy(&psort);
+        bson_destroy(&popts);
+    }
+    auto hit_better = [](const Hit& a, const Hit& b) {
+        if (a.total != b.total) return a.total > b.total;
+        if (a.stable_id != b.stable_id) return a.stable_id < b.stable_id;
+        if (a.version != b.version) return a.version < b.version;
+        return a.node_id < b.node_id;
+    };
     std::map<std::string, Hit> by_stable;
     for (const Hit& h : fused) {
         auto it = by_stable.find(h.stable_id);
-        if (it == by_stable.end() || h.total > it->second.total ||
-            (h.total == it->second.total && h.node_id < it->second.node_id)) {
-            by_stable[h.stable_id] = h;
-        }
+        if (it == by_stable.end() || hit_better(h, it->second)) by_stable[h.stable_id] = h;
     }
+    std::vector<Hit> remaining;
+    for (auto& kv : by_stable) remaining.push_back(std::move(kv.second));
+    std::sort(remaining.begin(), remaining.end(), hit_better);
+    std::map<std::string, int> source_uses;
+    std::map<std::string, int> sector_uses;
     std::vector<Hit> hits;
-    for (auto& kv : by_stable) hits.push_back(std::move(kv.second));
-    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
-        if (a.total != b.total) return a.total > b.total;
-        return a.stable_id < b.stable_id;
-    });
-    if (static_cast<int>(hits.size()) > top_k) hits.resize(static_cast<size_t>(top_k));
+    while (!remaining.empty() && static_cast<int>(hits.size()) < top_k) {
+        size_t best = 0;
+        double best_score = -1e300;
+        for (size_t i = 0; i < remaining.size(); ++i) {
+            double penalty = 0;
+            if (!remaining[i].source_hash.empty()) {
+                penalty += static_cast<double>(source_uses[remaining[i].source_hash]) * 0.35;
+            }
+            penalty += static_cast<double>(sector_uses[remaining[i].sector]) * 0.08;
+            double score = remaining[i].total - penalty;
+            if (score > best_score || (score == best_score && hit_better(remaining[i], remaining[best]))) {
+                best = i;
+                best_score = score;
+            }
+        }
+        Hit chosen = remaining[best];
+        chosen.diversity = best_score - chosen.total;
+        chosen.total = best_score;
+        hits.push_back(std::move(chosen));
+        if (!hits.back().source_hash.empty()) source_uses[hits.back().source_hash]++;
+        sector_uses[hits.back().sector]++;
+        remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(best));
+    }
 
     std::ostringstream o;
     o << "{\"query\":\"" << json_escape(query) << "\",\"normalized_query\":\"" << json_escape(normalized)
       << "\",\"generation\":\"" << json_escape(before.meta.active_generation)
       << "\",\"projection_version\":\"" << json_escape(before.meta.projection_version)
       << "\",\"retrieval_mode\":\"" << retrieval << "\",\"requested_mode\":\"" << json_escape(mode) << "\"";
-    if (!degradation.empty() && mode != "lexical") {
+    if (hybrid) {
+        const EmbeddingIdentity& id = before.meta.embedding;
+        o << ",\"embedding\":{\"provider_kind\":\"" << json_escape(id.provider_kind)
+          << "\",\"model_identifier\":\"" << json_escape(id.model_identifier)
+          << "\",\"model_revision\":\"" << json_escape(id.model_revision)
+          << "\",\"model_hash\":\"" << json_escape(id.model_hash) << "\",\"dimension\":" << id.dimension
+          << ",\"embedding_schema\":\"" << json_escape(id.schema_version)
+          << "\",\"indexer_version\":\"" << json_escape(id.indexer_version)
+          << "\",\"vector_backend\":\"" << json_escape(id.vector_backend) << "\"}";
+    } else if (!degradation.empty() && mode != "lexical") {
         o << ",\"degradation_reason\":\"" << json_escape(degradation) << "\"";
     }
     o << ",\"results\":[";
@@ -952,7 +1023,7 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
             if (!ext.empty()) cj << ",\"external_source_id\":\"" << json_escape(ext) << "\"";
             cj << ",\"extractor_id\":\"" << json_escape(ex) << "\",\"extractor_version\":\"" << json_escape(ev)
                << "\",\"schema_version\":\"" << json_escape(sch) << "\",\"committed_at\":\""
-               << iso_from_millis(cat) << "\",\"evidence_status\":\"ok\"}";
+               << iso_from_millis(cat) << "\",\"evidence_status\":\"not_provided\"}";
             ++cn;
         }
         cj << "]";
@@ -961,7 +1032,7 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         bson_destroy(&pq);
         bson_destroy(&popts);
         if (cn > 0) {
-            cite_status = "ok";
+            cite_status = "available";
             cites = cj.str();
         }
         o << "{\"node_id\":\"" << json_escape(hits[i].node_id) << "\",\"stable_id\":\""
@@ -975,7 +1046,8 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
           << ",\"semantic_rrf\":" << hits[i].semantic_rrf << ",\"fusion_rrf\":" << hits[i].fusion_rrf
           << ",\"trust\":" << hits[i].trust << ",\"confidence\":" << hits[i].confidence
           << ",\"current_schema\":" << hits[i].schema_bonus << ",\"freshness\":" << hits[i].freshness
-          << ",\"diversity\":0,\"total\":" << hits[i].total << "},\"citations\":" << cites
+          << ",\"diversity\":" << hits[i].diversity << ",\"total\":" << hits[i].total
+          << "},\"citations\":" << cites
           << ",\"citation_status\":\"" << cite_status << "\"}";
     }
     o << "],\"context_bytes_used\":" << used << ",\"untrusted_data_notice\":\"" << json_escape(kNotice)

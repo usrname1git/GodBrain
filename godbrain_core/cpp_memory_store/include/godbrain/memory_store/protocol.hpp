@@ -21,6 +21,7 @@ constexpr const char* kSkillRunPassed = "passed";
 constexpr const char* kSkillRunFailed = "failed";
 constexpr int kMinJudgmentReason = 4;
 constexpr int kMaxJudgmentReason = 2048;
+constexpr int kMaxExtractedSkills = 8;
 
 enum class CommandKind {
     Ingest,
@@ -50,6 +51,18 @@ struct Claim {
     std::vector<std::string> evidence_spans;
 };
 
+struct SkillExtracted {
+    std::string name;
+    std::string content;
+    std::string task_kind;
+    std::string framework;
+    std::string verification_profile;
+    std::vector<std::string> required_inputs;
+    std::vector<std::string> procedure;
+    double confidence = 0;
+    std::vector<std::string> evidence_spans;
+};
+
 struct DistillationPayload {
     std::string extractor_id;
     std::string extractor_version;
@@ -61,9 +74,14 @@ struct DistillationPayload {
     std::vector<Claim> claims;
     std::vector<std::string> core_concepts;
     std::vector<std::string> opsec_candidates;
+    std::vector<SkillExtracted> skills_extracted;
     bool has_document = false;
 };
 
+std::string json_escape(const std::string& s);
+std::string skill_procedure_text(const SkillExtracted& skill);
+std::string skill_stable_id(const std::string& name, const std::string& content);
+bool validate_skill_extracted(const SkillExtracted& skill, std::string* err);
 std::string normalize_ws(const std::string& s);
 std::string claim_stable_id(const Claim& claim);
 std::string kind_stable_id(const std::string& prefix, const std::string& content);

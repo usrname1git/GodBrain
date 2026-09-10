@@ -24,15 +24,7 @@
 namespace godbrain::memory {
 namespace {
 
-std::string json_escape_local(const std::string& s) {
-    std::string o;
-    for (unsigned char c : s) {
-        if (c == '"') o += "\\\"";
-        else if (c == '\\') o += "\\\\";
-        else o.push_back(static_cast<char>(c));
-    }
-    return o;
-}
+
 
 std::string utc_now() {
     std::time_t t = std::time(nullptr);
@@ -85,64 +77,64 @@ Claim merge_claim(Claim existing, const Claim& incoming) {
 
 std::string store_receipt_json(const StoreReceipt& r) {
     std::ostringstream o;
-    o << "{\"run_id\":\"" << json_escape_local(r.run_id) << "\""
-      << ",\"record_id\":\"" << json_escape_local(r.record_id) << "\""
-      << ",\"version\":\"" << json_escape_local(r.version) << "\""
-      << ",\"schema_version\":\"" << json_escape_local(r.schema_version) << "\""
-      << ",\"status\":\"" << json_escape_local(r.status) << "\""
+    o << "{\"run_id\":\"" << json_escape(r.run_id) << "\""
+      << ",\"record_id\":\"" << json_escape(r.record_id) << "\""
+      << ",\"version\":\"" << json_escape(r.version) << "\""
+      << ",\"schema_version\":\"" << json_escape(r.schema_version) << "\""
+      << ",\"status\":\"" << json_escape(r.status) << "\""
       << ",\"insert_count\":" << r.insert_count
       << ",\"update_count\":" << r.update_count
-      << ",\"timestamp\":\"" << json_escape_local(r.timestamp) << "\"}\n";
+      << ",\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
     return o.str();
 }
 
 std::string judgment_receipt_json(const JudgmentReceiptOut& r) {
     std::ostringstream o;
-    o << "{\"node_id\":\"" << json_escape_local(r.node_id) << "\""
-      << ",\"stable_id\":\"" << json_escape_local(r.stable_id) << "\""
-      << ",\"from\":\"" << json_escape_local(r.from) << "\""
-      << ",\"to\":\"" << json_escape_local(r.to) << "\""
-      << ",\"status\":\"" << json_escape_local(r.status) << "\""
-      << ",\"timestamp\":\"" << json_escape_local(r.timestamp) << "\"}\n";
+    o << "{\"node_id\":\"" << json_escape(r.node_id) << "\""
+      << ",\"stable_id\":\"" << json_escape(r.stable_id) << "\""
+      << ",\"from\":\"" << json_escape(r.from) << "\""
+      << ",\"to\":\"" << json_escape(r.to) << "\""
+      << ",\"status\":\"" << json_escape(r.status) << "\""
+      << ",\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
     return o.str();
 }
 
 std::string skill_run_receipt_json(const SkillRunReceiptOut& r) {
     std::ostringstream o;
-    o << "{\"run_id\":\"" << json_escape_local(r.run_id) << "\""
-      << ",\"skill_name\":\"" << json_escape_local(r.skill_name) << "\""
-      << ",\"origin_node_id\":\"" << json_escape_local(r.origin_node_id) << "\""
-      << ",\"result\":\"" << json_escape_local(r.result) << "\""
-      << ",\"status\":\"" << json_escape_local(r.status) << "\""
-      << ",\"timestamp\":\"" << json_escape_local(r.timestamp) << "\"}\n";
+    o << "{\"run_id\":\"" << json_escape(r.run_id) << "\""
+      << ",\"skill_name\":\"" << json_escape(r.skill_name) << "\""
+      << ",\"origin_node_id\":\"" << json_escape(r.origin_node_id) << "\""
+      << ",\"result\":\"" << json_escape(r.result) << "\""
+      << ",\"status\":\"" << json_escape(r.status) << "\""
+      << ",\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
     return o.str();
 }
 
 std::string promote_skill_receipt_json(const PromoteSkillReceiptOut& r) {
     std::ostringstream o;
-    o << "{\"skill_id\":\"" << json_escape_local(r.skill_id) << "\""
-      << ",\"name\":\"" << json_escape_local(r.name) << "\""
-      << ",\"origin_node_id\":\"" << json_escape_local(r.origin_node_id) << "\""
-      << ",\"status\":\"" << json_escape_local(r.status) << "\""
-      << ",\"timestamp\":\"" << json_escape_local(r.timestamp) << "\"}\n";
+    o << "{\"skill_id\":\"" << json_escape(r.skill_id) << "\""
+      << ",\"name\":\"" << json_escape(r.name) << "\""
+      << ",\"origin_node_id\":\"" << json_escape(r.origin_node_id) << "\""
+      << ",\"status\":\"" << json_escape(r.status) << "\""
+      << ",\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
     return o.str();
 }
 
 std::string query_skills_receipt_json(const QuerySkillsReceiptOut& r) {
     std::ostringstream o;
-    o << "{\"status\":\"" << json_escape_local(r.status) << "\",\"count\":" << r.count << ",\"skills\":[";
+    o << "{\"status\":\"" << json_escape(r.status) << "\",\"count\":" << r.count << ",\"skills\":[";
     for (size_t i = 0; i < r.skills.size(); ++i) {
         if (i) o << ",";
-        o << "{\"name\":\"" << json_escape_local(r.skills[i].name) << "\""
-          << ",\"content\":\"" << json_escape_local(r.skills[i].content) << "\""
-          << ",\"origin_node_id\":\"" << json_escape_local(r.skills[i].origin_node_id) << "\""
-          << ",\"origin_hash\":\"" << json_escape_local(r.skills[i].origin_hash) << "\"";
+        o << "{\"name\":\"" << json_escape(r.skills[i].name) << "\""
+          << ",\"content\":\"" << json_escape(r.skills[i].content) << "\""
+          << ",\"origin_node_id\":\"" << json_escape(r.skills[i].origin_node_id) << "\""
+          << ",\"origin_hash\":\"" << json_escape(r.skills[i].origin_hash) << "\"";
         if (!r.skills[i].verification_profile.empty()) {
-            o << ",\"verification_profile\":\"" << json_escape_local(r.skills[i].verification_profile) << "\"";
+            o << ",\"verification_profile\":\"" << json_escape(r.skills[i].verification_profile) << "\"";
         }
         o << "}";
     }
-    o << "],\"timestamp\":\"" << json_escape_local(r.timestamp) << "\"}\n";
+    o << "],\"timestamp\":\"" << json_escape(r.timestamp) << "\"}\n";
     return o.str();
 }
 
@@ -846,6 +838,49 @@ bool store_ingest(
                 return bson_ok(false, error, err, "stage opsec");
             }
         }
+        for (const SkillExtracted& skill : payload.skills_extracted) {
+            const std::string content = skill_procedure_text(skill);
+            const std::string stable = skill_stable_id(skill.name, content);
+            std::string sector = skill.task_kind.empty() ? "skill" : skill.task_kind;
+            bson_t doc = BSON_INITIALIZER;
+            BSON_APPEND_UTF8(&doc, "stable_id", stable.c_str());
+            BSON_APPEND_UTF8(&doc, "version", "v1");
+            BSON_APPEND_UTF8(&doc, "kind", "skill");
+            BSON_APPEND_UTF8(&doc, "sector", sector.c_str());
+            BSON_APPEND_UTF8(&doc, "content", content.c_str());
+            BSON_APPEND_UTF8(&doc, "skill_name", skill.name.c_str());
+            BSON_APPEND_UTF8(&doc, "verification_profile", skill.verification_profile.c_str());
+            BSON_APPEND_UTF8(&doc, "framework", skill.framework.c_str());
+            bson_t inputs = BSON_INITIALIZER;
+            for (std::size_t i = 0; i < skill.required_inputs.size(); ++i) {
+                char idx[16];
+                std::snprintf(idx, sizeof idx, "%zu", i);
+                BSON_APPEND_UTF8(&inputs, idx, skill.required_inputs[i].c_str());
+            }
+            BSON_APPEND_ARRAY(&doc, "required_inputs", &inputs);
+            BSON_APPEND_UTF8(&doc, "schema_version", payload.schema_version.c_str());
+            BSON_APPEND_UTF8(&doc, "status", payload.trust_tier.c_str());
+            BSON_APPEND_DOUBLE(&doc, "confidence", skill.confidence);
+            bson_t spans = BSON_INITIALIZER;
+            for (std::size_t i = 0; i < skill.evidence_spans.size(); ++i) {
+                char idx[16];
+                std::snprintf(idx, sizeof idx, "%zu", i);
+                BSON_APPEND_UTF8(&spans, idx, skill.evidence_spans[i].c_str());
+            }
+            BSON_APPEND_ARRAY(&doc, "evidence_spans", &spans);
+            BSON_APPEND_DATE_TIME(&doc, "created_at", now);
+            bool uok = upsert_node(stable, &doc);
+            bson_destroy(&inputs);
+            bson_destroy(&spans);
+            bson_destroy(&doc);
+            if (!uok) {
+                mongoc_collection_destroy(nodes);
+                mongoc_collection_destroy(links);
+                fail_created_run(h, run_id, used_lease, "stage skill");
+                return bson_ok(false, error, err, "stage skill");
+            }
+            if (!skill.evidence_spans.empty()) spans_by_stable[stable] = skill.evidence_spans;
+        }
 
         for (const auto& kv : node_oids) {
             bson_t lq = BSON_INITIALIZER;
@@ -1380,8 +1415,8 @@ bool store_query_skills(
     } else {
         std::string pattern = regex_quote_store(query);
         std::ostringstream fj;
-        fj << "{\"$or\":[{\"name\":{\"$regex\":\"" << json_escape_local(pattern)
-           << "\",\"$options\":\"i\"}},{\"content\":{\"$regex\":\"" << json_escape_local(pattern)
+        fj << "{\"$or\":[{\"name\":{\"$regex\":\"" << json_escape(pattern)
+           << "\",\"$options\":\"i\"}},{\"content\":{\"$regex\":\"" << json_escape(pattern)
            << "\",\"$options\":\"i\"}}]}";
         bson_error_t error{};
         filter = bson_new_from_json(

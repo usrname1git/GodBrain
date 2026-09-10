@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -22,6 +23,6 @@ struct HttpResponse {
 using HttpHandler = std::function<HttpResponse(const HttpRequest&)>;
 
 // Bind 127.0.0.1 only. Returns 0 on clean stop, 1 on bind/listen failure.
-int http_serve_loopback(uint16_t port, const HttpHandler& handler, volatile bool* stop);
+int http_serve_loopback(uint16_t port, const HttpHandler& handler, std::atomic<bool>* stop);
 
 }  // namespace godbrain::memory

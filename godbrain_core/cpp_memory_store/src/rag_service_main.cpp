@@ -5,6 +5,7 @@
 
 #include <mongoc/mongoc.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -17,11 +18,11 @@
 #endif
 
 namespace {
-volatile bool g_stop = false;
+std::atomic<bool> g_stop{false};
 
 #if defined(_WIN32)
 BOOL WINAPI console_ctrl(DWORD) {
-    g_stop = true;
+    g_stop.store(true);
     return TRUE;
 }
 #endif
