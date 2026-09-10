@@ -10,6 +10,7 @@ namespace godbrain::memory {
 constexpr std::size_t kMaxInputBytes = 15u * 1024u * 1024u;
 constexpr const char* kDefaultExtractorID = "Librarian-CPP";
 constexpr const char* kJudgmentCommand = "set_status";
+constexpr const char* kStalePinsCommand = "stale_pins";
 constexpr const char* kRecordSkillRunCommand = "record_skill_run";
 constexpr const char* kPromoteSkillCommand = "promote_skill";
 constexpr const char* kQuerySkillsCommand = "query_skills";
@@ -95,6 +96,13 @@ struct StatusJudgment {
     std::string reasoning;
 };
 
+struct StalePinsRequest {
+    std::string command;
+    std::string sector;
+    std::string pin;
+    std::string reasoning;
+};
+
 struct RecordSkillRunRequest {
     std::string command;
     std::string skill_name;
@@ -138,6 +146,7 @@ struct Route {
     CommandKind kind = CommandKind::Ingest;
     DistillationPayload ingest;
     StatusJudgment judgment;
+    StalePinsRequest stale_pins;
     RecordSkillRunRequest skill_run;
     PromoteSkillRequest promote;
     QuerySkillsRequest query_skills;
@@ -152,6 +161,9 @@ bool read_capped(const std::string& raw, std::string* out, std::string* err);
 bool classify_and_parse(const std::string& json_text, Route* route, std::string* err);
 bool validate_pre_ingestion(const DistillationPayload& p, std::string* err);
 bool validate_status_judgment(const StatusJudgment& j, std::string* err);
+bool validate_stale_pins(const StalePinsRequest& r, std::string* err);
+bool valid_os_pin(const std::string& pin);
+bool has_mismatched_os_pin(const std::string& content, const std::string& pin);
 bool validate_record_skill_run(const RecordSkillRunRequest& r, std::string* err);
 bool validate_promote_skill(const PromoteSkillRequest& r, std::string* err);
 bool validate_query_skills(const QuerySkillsRequest& r, std::string* err);

@@ -57,6 +57,16 @@ int main(int argc, char** argv) {
         } else {
             std::cout << godbrain::memory::error_envelope_json("StartIngestion failed", err);
         }
+    } else if (route.kind == godbrain::memory::CommandKind::StalePins) {
+        godbrain::memory::StalePinsReceiptOut receipt;
+        if (godbrain::memory::store_stale_pins(store, route.stale_pins, &receipt, &err)) {
+            std::cout << godbrain::memory::stale_pins_receipt_json(receipt);
+            rc = 0;
+        } else if (err.find("RAG status") != std::string::npos) {
+            std::cout << godbrain::memory::error_envelope_json("RAG status sync failed", err);
+        } else {
+            std::cout << godbrain::memory::error_envelope_json("StaleMismatchedPins failed", err);
+        }
     } else if (route.kind == godbrain::memory::CommandKind::SetStatus) {
         godbrain::memory::JudgmentReceiptOut receipt;
         if (godbrain::memory::store_set_status(store, route.judgment, &receipt, &err)) {
