@@ -476,6 +476,26 @@ def build_payload(document: ExtractedDocument, source_label: str = "local") -> d
     return payload
 
 
+def resolve_memory_store_exe(
+    repo_root: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    environ = os.environ if env is None else env
+    override = environ.get("MONGO_STORE_PATH", "").strip()
+    if override:
+        return override
+    root = Path(__file__).resolve().parents[2] if repo_root is None else repo_root
+    candidates = (
+        root / "build" / "cpp_memory_store" / "Release" / "memory-store.exe",
+        root / "godbrain_core" / "cpp_memory_store" / "memory-store.exe",
+        root / "godbrain_core" / "memory_store" / "memory-store.exe",
+    )
+    for path in candidates:
+        if path.is_file():
+            return str(path)
+    return str(candidates[-1])
+
+
 def invoke_memory_store(
     payload: dict[str, Any],
     executable: str | os.PathLike[str],

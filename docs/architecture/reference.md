@@ -35,8 +35,9 @@ never changes; only status does.
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and mouth invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
-| Go Memory Store | Implemented write path | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Validate and persist provenance-aware Golden Records with append-only run links |
-| Golden Record RAG service | Implemented retrieval path | `godbrain_core/memory_store/cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search, graph, and document reads with source-resolved citations |
+| C++ Memory Store | Implemented, desk write/retrieval | `godbrain_core/cpp_memory_store/` (`build/cpp_memory_store/Release`) | JSON on stdin + HTTP `:8084` | Same doors as Go: ingest, judge, skills, search/graph/document. Start/Heal prefer this tree. |
+| Go Memory Store | Implemented rollback | `godbrain_core/memory_store/` | JSON on stdin, MongoDB driver outbound | Same protocol; do not delete. |
+| Golden Record RAG service | Implemented retrieval path | C++ Release, else Go `cmd/rag-service/` | HTTP on `127.0.0.1:8084` | Bounded committed-only search, graph, and document reads with source-resolved citations |
 | Native Librarian | Implemented | `godbrain_core/cpp_tools/librarian.cpp` | CLI, `scripts/Invoke-Librarian.ps1`, Heal inbox, `POST /api/librarian` | Derive a bounded Golden Record from a transcript and invoke the Memory Store. Uses the live `:8000` mouth; does not hold VRAM. |
 | Galaxy UI | Implemented | `godbrain_core/frontend/galaxy.html` | Browser UI served by the C++ Kernel | Graph browsing, chat, This host vs Pending, SRE glance |
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |

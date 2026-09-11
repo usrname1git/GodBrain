@@ -19,6 +19,7 @@ from godbrain_core.local_ingestion.ingestion import (
     legacy_keccak256,
     scan_sensitive_content,
     invoke_memory_store,
+    resolve_memory_store_exe,
 )
 
 
@@ -231,6 +232,23 @@ class LocalIngestionTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(IngestionError, "unexpected receipt"):
                 invoke_memory_store({"bounded": True}, "memory-store.exe")
+
+    def test_resolve_memory_store_prefers_cpp_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            go = root / "godbrain_core" / "memory_store" / "memory-store.exe"
+            cpp = root / "build" / "cpp_memory_store" / "Release" / "memory-store.exe"
+            go.parent.mkdir(parents=True)
+            cpp.parent.mkdir(parents=True)
+            go.write_bytes(b"go")
+            cpp.write_bytes(b"cpp")
+            self.assertEqual(resolve_memory_store_exe(repo_root=root, env={}), str(cpp))
+            self.assertEqual(
+                resolve_memory_store_exe(repo_root=root, env={"MONGO_STORE_PATH": "C:\\override.exe"}),
+                "C:\\override.exe",
+            )
+            cpp.unlink()
+            self.assertEqual(resolve_memory_store_exe(repo_root=root, env={}), str(go))
 
 
 if __name__ == "__main__":

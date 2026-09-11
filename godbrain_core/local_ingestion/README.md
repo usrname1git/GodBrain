@@ -1,15 +1,14 @@
 # Secure local document ingestion
 
 This adapter extracts explicitly supplied local files, rejects likely credential
-material, and sends one strict JSON document per file to the Go Memory Store. It
-does not run inside the privileged kernel and never writes MongoDB directly.
+material, and sends one strict JSON document per file to `memory-store.exe`
+(desk C++ Release, else Go rollback). It does not run inside the privileged
+kernel and never writes MongoDB directly.
 
 Build the Memory Store first, set `MONGODB_URI`, then ingest UTF-8 text:
 
 ```powershell
-Push-Location godbrain_core\memory_store
-go build -o memory-store.exe .\cmd\memory-store
-Pop-Location
+.\scripts\build_pipeline.ps1
 python -m godbrain_core.local_ingestion --source-label research .\notes.md
 ```
 

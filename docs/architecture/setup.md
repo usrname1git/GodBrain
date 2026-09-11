@@ -12,7 +12,8 @@ Agent build commands also live in [`AGENTS.md`](../../AGENTS.md).
 
 - Windows, PowerShell (`pwsh` preferred).
 - Visual Studio x64 C++ tools (kernel, Librarian, `run_hidden`).
-- Go version from `godbrain_core/memory_store/go.mod`.
+- CMake 3.25+ and mongo-c-driver at `C:\Tools\mongo-c-driver` (C++ Alexandria).
+- Go version from `godbrain_core/memory_store/go.mod` (rollback tree).
 - MongoDB Community as a **Windows service named `MongoDB`**, listening on
   `127.0.0.1:27017`.
 - One GPU mouth: either `llama-server` with a GGUF, or Colibri 1.10.0
@@ -78,26 +79,28 @@ From the repo root:
 .\godbrain_core\cpp_tools\librarian.exe --self-test
 ```
 
-That builds `memory-store.exe`, `rag-service.exe`, `rag-rebuild.exe`,
-`rag-eval.exe`, and `librarian.exe`. The Librarian self-test is offline.
+That builds C++ Release first (`build\cpp_memory_store\Release`), then Go
+rollback copies under `godbrain_core\memory_store`, then `librarian.exe`.
+The Librarian self-test is offline.
 
 Once Mongo is up, project any committed records written before this retrieval
-layer:
+layer (desk path; Go `memory_store\rag-rebuild.exe` is rollback):
 
 ```powershell
-.\godbrain_core\memory_store\rag-rebuild.exe
+.\build\cpp_memory_store\Release\rag-rebuild.exe
 ```
 
-Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`.
+Then let Start or Heal launch `rag-service.exe` on `127.0.0.1:8084`
+(prefer C++ Release).
 
-Optional live desk eval (from `godbrain_core\memory_store`, RAG must be ready).
-Verified-only plus each query's sector. A miss means no configured needle
-appeared in the returned top-K, or the query failed. It does not prove the
-claim is absent from the verified corpus. `-strict` fails on any such miss:
+Optional live desk eval (RAG must be ready). Verified-only plus each query's
+sector. A miss means no configured needle appeared in the returned top-K, or
+the query failed. It does not prove the claim is absent from the verified
+corpus. `-strict` fails on any such miss:
 
 ```powershell
-.\rag-eval.exe -live
-.\rag-eval.exe -live -strict
+.\build\cpp_memory_store\Release\rag-eval.exe -live
+.\build\cpp_memory_store\Release\rag-eval.exe -live -strict
 ```
 
 ## 4. Build the kernel
