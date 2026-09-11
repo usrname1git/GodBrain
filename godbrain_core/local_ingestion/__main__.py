@@ -5,7 +5,13 @@ import os
 import sys
 from pathlib import Path
 
-from .ingestion import IngestionError, build_payload, extract_file, invoke_memory_store
+from .ingestion import (
+    IngestionError,
+    build_payload,
+    extract_file,
+    invoke_memory_store,
+    resolve_memory_store_exe,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -15,8 +21,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("files", nargs="+", help="regular files to ingest (directories and links are rejected)")
     parser.add_argument(
         "--memory-store",
-        default=os.environ.get("MONGO_STORE_PATH", "godbrain_core/memory_store/memory-store.exe"),
-        help="path to the Go memory-store executable (default: MONGO_STORE_PATH or repository build path)",
+        default=None,
+        help="path to memory-store.exe (default: MONGO_STORE_PATH, else C++ Release, else Go rollback)",
     )
     parser.add_argument("--source-label", default="local", help="safe durable label; absolute paths are never stored")
     parser.add_argument(
@@ -76,8 +82,9 @@ def main(argv: list[str] | None = None) -> int:
                     f"sha256={payload['document']['content_sha256']} chunks={len(payload['chunks'])}"
                 )
             return 0
+        store = args.memory_store or resolve_memory_store_exe()
         for display_name, payload in prepared:
-            receipt = invoke_memory_store(payload, args.memory_store)
+            receipt = invoke_memory_store(payload, store)
             print(f"ingested {display_name}: status={receipt['status']} run_id={receipt['run_id']}")
         return 0
     except IngestionError as exc:
