@@ -1,4 +1,8 @@
-# Alexandria Memory Store and Golden Record retrieval
+# Alexandria Memory Store and Golden Record retrieval (Go rollback)
+
+Desk Start/Heal prefer C++ `godbrain_core/cpp_memory_store/`
+(`build/cpp_memory_store/Release`). This Go tree stays as rollback with the
+same stdin/HTTP doors. Do not delete it.
 
 This Go module contains two boundaries:
 

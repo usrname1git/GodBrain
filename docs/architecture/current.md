@@ -74,6 +74,8 @@ present, not a Playbook).
 
 Mongo is the vault. Raw sources are immutable. Chat and Galaxy read committed
 Golden Records through `rag-service`, never by querying `nodes` from C++.
+Start/Heal prefer `build\cpp_memory_store\Release\rag-service.exe`; Go
+`godbrain_core\memory_store` is rollback.
 
 Librarian extracts **claims**, not a recap, and writes only
 `trust_tier=candidate` through `memory-store.exe`. Contradictions and open

@@ -447,10 +447,10 @@ fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
 `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
 `C:\Temp\GitHub` (Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
-`write_local_file` (append), `create_local_dir`, `move_local_file`,
+`write_local_file` (append; dest unread fail-closed), `create_local_dir`, `move_local_file`,
 `get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `host_snap`
 (persistent FS+process feed), `search_local` (name or `content:`), `edit_local_file`
-(`replace_all`), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
+(`replace_all`; tmp+MoveFileEx, Keccak before/after — dest untouched on fail), `run_strings`, `run_sqlite3`, `run_pwsh`, `run_python`,
 `run_node`. Excel/PDF/DOCX go through host Python libs, not C++ parsers.
 Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
 `start_process`, `create_directory`, `move_file`, `list_processes`) map
@@ -636,24 +636,23 @@ changes directory explicitly.
 
 ### Alexandria pipeline
 
+Desk default is C++ (`build\cpp_memory_store\Release`). Go under
+`godbrain_core\memory_store` is rollback.
+
 ```powershell
 .\scripts\build_pipeline.ps1
 .\godbrain_core\cpp_tools\librarian.exe --self-test
-
-Push-Location godbrain_core\memory_store
-go test ./...
-go build -o memory-store.exe ./cmd/memory-store
-go build -ldflags "-H windowsgui" -o rag-service.exe ./cmd/rag-service
-go build -o rag-rebuild.exe ./cmd/rag-rebuild
-Pop-Location
+ctest --test-dir build\cpp_memory_store -C Release --output-on-failure
 ```
 
-`scripts\build_pipeline.ps1` builds `memory-store.exe`, `rag-service.exe`,
-`rag-rebuild.exe`, `rag-eval.exe`, and `librarian.exe`. The Librarian self-test is offline and
-uses its in-memory store. To exercise MongoDB integration tests, set
-`MONGODB_TEST_URI` to a disposable instance; tests use isolated temporary
-databases for RAG coverage, while the existing Memory Store suite uses and
-clears `godbrain_test`.
+`scripts\build_pipeline.ps1` builds C++ Release first (`memory-store`,
+`rag-service`, `rag-rebuild`, `rag-eval`), then the Go rollback copies, then
+`librarian.exe`. The Librarian self-test is offline and uses its in-memory
+store. Go `go test ./...` in `godbrain_core\memory_store` remains the rollback
+suite. To exercise MongoDB integration tests, set `MONGODB_TEST_URI` to a
+disposable instance; tests use isolated temporary databases for RAG coverage,
+while the existing Memory Store suite uses and clears `godbrain_test`. Never
+write live `godbrain` from C++ ctest (`godbrain_cpp_store_test` only).
 
 ### C++ kernel
 

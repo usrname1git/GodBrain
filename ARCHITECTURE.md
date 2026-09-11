@@ -51,8 +51,8 @@ flowchart LR
     Kernel[C++ Kernel API :8083]
     Mongo[(MongoDB :27017)]
     Librarian[Native Librarian]
-    Memory[Go Memory Store]
-    RAG[Golden Record RAG :8084]
+    Memory[memory-store.exe]
+    RAG[rag-service :8084]
     Mouth[llama-server or coli :8000]
 
     Operator --> UI

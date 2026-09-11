@@ -144,7 +144,8 @@ A successful process exit is not sufficient evidence of a successful job
 
 - `godbrain_core/cpp_kernel` remains the authenticated privileged
   execution boundary (`127.0.0.1`, bearer on `command_type`).
-- `godbrain_core/memory_store` remains the validated Mongo write path.
+- `godbrain_core/cpp_memory_store` is the desk Mongo write path; Go
+  `memory_store` is rollback.
 - Experimental Go/Rust routers on `:8082` are not authorization.
 - `LLM/colibri_LLM` is an interchangeable mouth, not a protocol
   authority.

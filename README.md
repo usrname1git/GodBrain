@@ -37,7 +37,7 @@ commercial API, and `.vscode/mcp.json` is empty on purpose.
 
 - **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Galaxy chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
-- **[`godbrain_core/memory_store`](godbrain_core/memory_store)** (Go) writes distilled "Golden Records" into the local MongoDB database and serves committed records through the canonical loopback RAG API.
+- **[`godbrain_core/cpp_memory_store`](godbrain_core/cpp_memory_store)** is the desk Alexandria write/retrieval path (`memory-store.exe` / `rag-service.exe` on `:8084`). Go [`godbrain_core/memory_store`](godbrain_core/memory_store) stays as rollback with the same doors.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
 
 ### Repository map
@@ -48,8 +48,8 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | Surface | Maturity | Notes |
 |---|---|---|
 | C++ kernel + Galaxy (`godbrain_core/cpp_kernel`, `godbrain_core/frontend`) | daily-driver on this host | `:8083`, `/edit`, privileged `command_type` |
-| [Memory Store / rag-service](godbrain_core/memory_store/README.md) | daily-driver | `:8084` Golden Records; lexical default |
-| [C++ Memory Store](godbrain_core/cpp_memory_store/README.md) | desk launch (prefer Release) | Same stdin/HTTP exe names as Go; Go tree stays as rollback |
+| [C++ Memory Store](godbrain_core/cpp_memory_store/README.md) | daily-driver | `:8084` Golden Records; Start/Heal prefer `build/cpp_memory_store/Release` |
+| [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
 | [Skill Lab](godbrain_core/skill_lab/README.md) | source + one fixture gate | promotion needs a second independent fixture before it is usable policy |
@@ -191,11 +191,12 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 |---|---|---|---|
 | Heal/Watch listener loop | yes | Start/Heal scripts | yes |
 | `/verify` `/reject` judge | yes | — | yes |
-| Librarian candidates + rag-service retrieve | yes | `go test` memory_store | yes (lexical) |
+| Librarian candidates + rag-service retrieve | yes | C++ ctest + Librarian `--self-test` | yes (lexical; C++ `:8084`) |
 | `/recall <query>` verified search via `:8084` | yes | — | yes |
 | Bounded `/edit` + privileged `pwsh` | yes | `Verify-LocalEdit` | yes, allowlist still grows |
-| WMI child env: DB name + embedding identity | yes | `Start-GodBrain.ps1 -SelfTestEnv` | yes after this branch |
-| Durable task ledger / chain continue | AGENTS remaining | — | no |
+| Tool `edit_local_file` / `write_local_file` hash-bound replace | yes | `local_tools_test` | yes (tmp+MoveFileEx; append fail-closed if dest unread) |
+| WMI child env: DB name + embedding identity | yes | `Start-GodBrain.ps1 -SelfTestEnv` | yes |
+| Durable task ledger / chain continue | yes | `/chain` `/cancel` `/continue` | yes (one file, not `tasks/todo.md`) |
 | Skill Lab second independent fixture | one fixture exists | Skill Lab README | no — policy not usable yet |
 | Mouth ships web-dev class UI work | destination | — | no |
 | Autonomous CVE / cross-fleet / self-DISM | **no** (standing nos) | — | no |
