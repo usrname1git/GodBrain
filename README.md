@@ -52,9 +52,9 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
-| [Skill Lab](godbrain_core/skill_lab/README.md) | source + one fixture gate | promotion needs a second independent fixture before it is usable policy |
+| [Frontend University](godbrain_core/skill_lab/README.md) | self-expanding degree + browser examiner + Creation Gallery | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; later tracks are a named GO |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
-| Go / Rust routers | experimental | not the operator UI |
+| [Go router](godbrain_core/go_router/README.md) / [Rust router](godbrain_core/rust_router/) | experimental, parked | `:8082`; not Heal; not this quarter |
 | [polymarket_paper](godbrain_core/polymarket_paper/README.md), [polygon_*](godbrain_core/polygon_observer/README.md) | paper / read-only | no live orders, no wallet |
 | [smart_contracts](godbrain_core/smart_contracts/README.md) | Foundry tree | `forge` validate; not desk runtime |
 | `LLM/colibri_LLM` | vendored mouth | interchangeable generate engine |
@@ -89,8 +89,8 @@ Golden Records are the **manual**: crowned facts the mouth RTFMs instead of
 scouring the internet. Retrieval ranking among verified cards is "which page,"
 not "what most pages said." Candidates and raw web text are not Oracle truth.
 
-Layer 3 is implemented. The production C++ kernel and the experimental Go and
-Rust routers retrieve prompt context only through
+Layer 3 is implemented. The production C++ kernel and the parked Go/Rust
+routers retrieve prompt context only through
 `http://127.0.0.1:8084/v1/search`. They validate the generation and
 `hybrid-v1` contract, preserve bounded citations and trust labels, and wrap
 retrieved text as explicitly untrusted reference data. If the service is
@@ -167,6 +167,7 @@ Shipped on this desk, not slideware:
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
+- **Autonomous frontend practice** — `scripts\Invoke-FrontendGym.ps1 -Continuous` runs local learner/tutor attempts against a protected browser evaluator. Failures feed repairs; passing source and evidence become reusable gym examples without operator code review. This is not authority to modify Windows.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
 
@@ -174,16 +175,16 @@ The verifier is still the bottleneck. Privileged doors existing is not "the hard
 
 Wanted on this product (still gated):
 
-- A mouth that ships real UI and host work the way a web dev would — kernel allowlist, then you judge. Copilot/gemini-cli are not part of that loop.
+- A mouth that ships real UI with automated browser evidence; important host work still follows the kernel allowlist and operator judgment. Copilot/gemini-cli are not part of that loop.
 - Own the generate engine if the stock llama-server door is sunset or gimped. Fork later; do not vendor Copilot MCP to get there.
-- Models that keep inheriting each other's **verified** teachings. `/recall <query>` already searches `:8084`. Writes stay candidate until `/verify`. Extra sector/kind filters are optional, not a new vault.
+- Models that inherit each other's tested experience. The frontend gym already shares scoped, machine-tested examples across learner models and supports serial tutor feedback. Global host knowledge still uses `/recall <query>` through `:8084` and drops `sector=personal`; its judgment gates are unchanged. The Rainman shelf remains `/hylla` (write) and `/rainman` (list/search).
 
 Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
 
 - Candidate-vs-verified conflict queue — later, and only if `/pending` is actually overloaded. `/verify` / `/reject` is enough now.
 - Autonomous CVE ingest and auto-patch across Devuan / macOS / Windows.
 - Self-directed DISM or registry repair. Named GO, one tool, never a standing allow.
-- Closed-loop patch with zero hand-holding. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated.
+- Unattended host repair beyond Heal's existing allowlist. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated. This restriction is not a demand for human review of routine frontend gym attempts.
 
 ### Capability (evidence, not folder names)
 
@@ -192,12 +193,15 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 | Heal/Watch listener loop | yes | Start/Heal scripts | yes |
 | `/verify` `/reject` judge | yes | — | yes |
 | Librarian candidates + rag-service retrieve | yes | C++ ctest + Librarian `--self-test` | yes (lexical; C++ `:8084`) |
-| `/recall <query>` verified search via `:8084` | yes | — | yes |
+| `/mouth off` / `/mouth on` | yes | — | yes (pause llama; Watch/Heal skip start) |
+| `/recall <query>` verified search via `:8084` | yes | — | yes (tech only; personal dropped) |
+| `/hylla` `/rainman` personal shelf | yes | — | yes (candidate until `/verify`; never tech RAG) |
+| `/mouth off` `/mouth on` | yes | — | yes (pause llama; Watch/Heal skip start) |
 | Bounded `/edit` + privileged `pwsh` | yes | `Verify-LocalEdit` | yes, allowlist still grows |
 | Tool `edit_local_file` / `write_local_file` hash-bound replace | yes | `local_tools_test` | yes (tmp+MoveFileEx; append fail-closed if dest unread) |
 | WMI child env: DB name + embedding identity | yes | `Start-GodBrain.ps1 -SelfTestEnv` | yes |
 | Durable task ledger / chain continue | yes | `/chain` `/cancel` `/continue` | yes (one file, not `tasks/todo.md`) |
-| Skill Lab second independent fixture | one fixture exists | Skill Lab README | no — policy not usable yet |
+| Frontend University | learner/tutor + degree graph + browser examiner | `npm test --prefix .\godbrain_core\skill_lab` | opt-in `scripts\Invoke-FrontendGym.ps1 -Continuous`; scoped local evidence, not host authority |
 | Mouth ships web-dev class UI work | destination | — | no |
 | Autonomous CVE / cross-fleet / self-DISM | **no** (standing nos) | — | no |
 

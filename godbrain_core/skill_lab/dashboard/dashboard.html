@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GodBrain Frontend Gym</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">GODBRAIN / AUTONOMOUS FRONTEND GYM</p>
+      <h1>Creation Lab</h1>
+      <p class="sub">Watch Qwen practice, repair, transfer, and retain browser-qualified interfaces.</p>
+    </div>
+    <div class="header-actions">
+      <button id="trainingToggle" type="button">PAUSE &amp; SAVE TRAINING</button>
+      <button id="trainingStopQwen" type="button">PAUSE, SAVE &amp; STOP QWEN</button>
+      <button id="autoplayToggle" type="button">AUTOPLAY ON</button>
+      <div class="live"><span id="liveDot"></span><strong id="status">Connecting</strong><small id="updated"></small></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="metrics" id="metrics"></section>
+
+    <section class="panel">
+      <div class="panel-title"><div><p class="eyebrow">SELF-EXPANDING COURSE GRAPH</p><h2>Frontend University</h2></div><span id="universityStatus"></span></div>
+      <div id="universityMetrics" class="active"></div>
+      <div id="universityCourses" class="university-courses"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <div class="panel-title"><h2>Live loop</h2><span id="phase"></span></div>
+        <div id="active" class="active"></div>
+        <div class="repair-grid">
+          <div><h3>Verifier feedback</h3><pre id="feedback">No active failure.</pre></div>
+          <div><h3>Tutor hypothesis</h3><pre id="advice">No tutor pass active.</pre></div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title"><h2>New training objective</h2><span>Explore or Qualify</span></div>
+        <form id="objectiveForm">
+          <label>Mode
+            <select id="mode"><option value="explore">Explore</option><option value="qualify">Qualify</option></select>
+          </label>
+          <label>Title<input id="title" required maxlength="120" placeholder="Architecture graph workspace"></label>
+          <label class="wide">What should Qwen create?
+            <textarea id="prompt" required maxlength="1200" placeholder="Build an AppGraph-style dark architecture workspace with a graph canvas, inspector, search, analytics, and responsive drawers."></textarea>
+          </label>
+          <label class="wide">Style reference<input id="styleReference" maxlength="1200" placeholder="https://github.com/hi77x/appgraph"></label>
+          <label id="contractWrap">Trusted verifier contract<select id="contract"></select></label>
+          <button type="submit">QUEUE OBJECTIVE</button>
+          <p id="formResult"></p>
+        </form>
+      </article>
+    </section>
+
+    <section class="panel coach-panel">
+      <div class="panel-title">
+        <div><p class="eyebrow">CLIENT BRIEF → TRAINING CAMPAIGN → SITE</p><h2>Frontend Coach</h2></div>
+        <span>Coach chooses trusted exercises; Qwen practices and assembles</span>
+      </div>
+      <form id="coachForm" class="coach-form">
+        <label>Project name<input id="clientName" required maxlength="120" placeholder="Northstar Commerce"></label>
+        <label>Site type
+          <select id="siteType">
+            <option value="business">Business</option><option value="storefront">Storefront</option>
+            <option value="portfolio">Portfolio</option><option value="documentation">Documentation</option>
+            <option value="saas-dashboard">SaaS dashboard</option><option value="booking">Booking</option>
+            <option value="community">Community</option><option value="custom">Custom</option>
+          </select>
+        </label>
+        <label class="wide">Pages / sections<textarea id="pages" maxlength="1000" placeholder="Home&#10;Platform&#10;Features&#10;Pricing&#10;Contact"></textarea></label>
+        <label class="wide">Client request<textarea id="clientBrief" required maxlength="3000" placeholder="Build a premium storefront for an independent audio equipment brand. Fast product discovery, clear specifications, and a dark editorial look."></textarea></label>
+        <label class="wide">Brand direction<textarea id="brandNotes" maxlength="1600" placeholder="Charcoal, warm copper, technical typography, large product photography."></textarea></label>
+        <label class="wide">Style reference<textarea id="coachStyleReference" maxlength="1200" placeholder="https://example.com&#10;Premium Scandinavian B2B SaaS, spacious editorial layout, restrained motion."></textarea></label>
+        <fieldset class="wide"><legend>Required capabilities</legend><div id="featureChecks" class="checks"></div></fieldset>
+        <button id="startCampaign" type="button">START TRAINING CAMPAIGN</button><p id="coachResult"></p>
+      </form>
+      <div id="campaigns" class="campaigns"></div>
+      <details id="campaignHistoryWrap" class="campaign-history" hidden>
+        <summary id="campaignHistorySummary">Completed / archived campaigns</summary>
+        <div id="campaignHistory" class="campaigns"></div>
+      </details>
+    </section>
+
+    <section class="grid three">
+      <article class="panel"><h2>Task mastery</h2><div id="tasks"></div></article>
+      <article class="panel"><h2>Failure intelligence</h2><div id="failures"></div></article>
+      <article class="panel"><h2>This session's generated sources</h2><div id="novelty"></div><h3>Active objective queue</h3><div id="objectives"></div></article>
+    </section>
+
+    <section class="panel gallery-panel">
+      <div class="panel-title"><div><p class="eyebrow">QUALIFIED SHOWCASE</p><h2>Creation Gallery</h2></div><span>Latest passing high-quality creation per named skill</span></div>
+      <div id="gallery" class="gallery"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><div><p class="eyebrow">CLIENT CONCEPT SET</p><h2>Alternative concepts</h2></div><span>Distinct staged builds under the same trusted contract</span></div>
+      <div id="alternatives" class="alternatives"></div>
+    </section>
+
+    <section class="panel"><h2>Recent event stream</h2><div id="events" class="events"></div></section>
+  </main>
+
+  <dialog id="previewDialog">
+    <div class="dialog-head"><strong id="previewTitle">Isolated preview</strong>
+      <a id="openPreviewTab" href="#" target="_blank" rel="noopener">OPEN IN NEW TAB</a>
+      <button id="closePreview">CLOSE</button></div>
+    <iframe id="previewFrame" sandbox="allow-scripts" title="Isolated generated frontend preview"></iframe>
+  </dialog>
+  <script src="/dashboard.js"></script>
+</body>
+</html>

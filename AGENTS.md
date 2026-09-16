@@ -4,6 +4,9 @@
 
 - This repository is Windows-first and multi-language. There is no single build or
   test command for every component; use the command for the subtree you change.
+  This quarter: C++ kernel / Alexandria and the gym. Experimental Go/Rust
+  routers on `:8082` are parked (`godbrain_core/go_router`,
+  `godbrain_core/rust_router`). Do not spend the quarter staffing them.
 - Read the nearest README, manifest, and tests before editing a nested project.
   Keep changes scoped: the routers, Alexandria pipeline, market research tools,
   smart contracts, and vendored Colibri tree have different trust boundaries.
@@ -93,6 +96,22 @@ to count how many nodes the problem actually has. Usually one.
   (Oracle-DB CONTINUE, heading loops, 32 GB RAM death). Re-plan the check.
 - Do not add `tasks/todo.md`, `tasks/lessons.md`, or an agent framework to
   implement this. The loop is Heal + judge + this file.
+
+### Autonomous frontend gym
+
+`scripts\Invoke-FrontendGym.ps1` runs the local `godbrain_core\skill_lab` practice
+loop. `-WithMouth` resumes the desk llama for the run and pauses it after
+(`Stop-LlamaServer.ps1`); the gym still does not leave Gemma parked. Frontend trial and error is expected: do not ask the operator to review web
+code or `/verify` each exercise. The protected browser evaluator qualifies
+exact source artifacts on two input variants and the loop reuses those local
+lessons automatically. Learner/tutor requests are serial; tutor opinions are not
+verdicts. This is shared tested experience, not automatic weight training.
+
+The learner may change only its React/CSS exercise, never its evaluator or host
+configuration. This does not authorize AppX, Winsock/netsh, registry edits or
+other host repairs, and does not bypass Alexandria's global promotion gates.
+The gym has separate local evidence; do not turn its failures into operator
+approval chores or broaden its passes into verified host-policy claims.
 
 ## Foster, don't token-chase
 
@@ -350,7 +369,7 @@ reads the active RAG graph. Oracle search is verified-only.
 Ordinary Galaxy chat exposes `/observe`, `/host-snap` (kernel FS+process
 feed, no GPU), `/vram` (one GPU slot + next
 worker size), `/remember`, `/idea`, `/ideas`, `/verify`, `/reject`,
-`/recall` (empty = newest graph; `/recall <query>` = verified RAG search), `/status`, `/last`, `/brief`, `/chain` (durable ledger, no GPU), `/cancel`, and `/pending`.
+`/recall` (empty = newest **tech** graph; `/recall <query>` = verified tech RAG; `sector=personal` is dropped), `/hylla <note>` (personal candidate, not tech RAG), `/rainman` (list/search the personal shelf only), `/status`, `/last`, `/brief`, `/chain` (durable ledger, no GPU), `/cancel`, and `/pending`.
 Whole-message `enable_thinking: false` / `enable_thinking: true` is a
 no-GPU desk command (writes `logs/thinking.txt`). Next llama generate
 sends `chat_template_kwargs.enable_thinking`. It is not `/edit` and not
@@ -386,9 +405,13 @@ the prefix. A tags-only dump still recycles and asks again.
   `GET /api/status` includes `pending_items` so the overlay does not need
   a second fetch.
 
-If `logs/mouth.txt` says llama and `:8000` is down, `/api/status` and
+`/mouth off` (and `scripts\Stop-LlamaServer.ps1`) persist `logs/mouth-pause.txt=on`
+and stop `llama-server`. Watch/Heal/kernel skip Start-LlamaServer until
+`/mouth on` or `Start-LlamaServer.ps1 -Resume`. Heal still never kills.
+If `logs/mouth.txt` says llama and `:8000` is down **and the mouth is not paused**, `/api/status` and
 `/brief` kick `scripts\Start-LlamaServer.ps1` via `run_hidden` (skip CS2, skip a
-loading `llama-server.exe`, 5 min cooldown) and report `llama=starting`
+loading `llama-server.exe`, 5 min cooldown) and report `llama=starting`. Paused
+brief is `llama=paused`.
 so Galaxy does not wait on the 5 min Watch tick. That starter honors
 `logs/mtp.txt` (`on`/`off`). `-NoDraft` persists off; `-UseDraft` persists
 on. Watch/kernel must not restore MTP after a CUDA IMA fail-closed start.
@@ -551,11 +574,13 @@ second generate).
 
 ### Other trees
 
-Root `main.go` and `godbrain_core/rust_router/` are experimental,
+`godbrain_core/go_router/` and `godbrain_core/rust_router/` are experimental,
 non-privileged RAG router alternatives on loopback port 8082. They cannot
 run together because they use the same port. Both use the canonical
 loopback RAG service and neither exposes the C++ kernel's `command_type`
-dispatcher.
+dispatcher. This quarter does not staff them; desk work is C++ and the gym.
+Go Alexandria rollback stays in `godbrain_core/memory_store/` (not this
+router).
 
 `godbrain_core/cpp_tools/librarian.cpp` distills a transcript through the
 live `:8000` mouth (llama-server or `coli serve` — same OpenAI chat door),
@@ -580,7 +605,11 @@ quote evidence (keccak receipt, candidate until `/verify`). Title+URL
 without a highlight is metadata only. Command/tool/`/yolo` routing uses
 the operator `message`, never the quote. Loopback ask without
 Galaxy: `scripts\Ask-GodBrain.ps1` POSTs `/api/chat`. Chat generate stays
-loopback-only. `/idea` and `/ideas` are the idea category.
+loopback-only. `/idea` and `/ideas` are the idea category. `/hylla` /
+`/rainman` are `sector=personal` (Rainman shelf): never mixed into ordinary
+chat RAG or `/recall`. POST `/api/remember` `{text, sector:"personal"}` files
+the same shelf. `/verify` a personal card to keep it; it still does not enter
+tech RTFM.
 
 `godbrain_core/cpp_memory_store/` is the desk Alexandria write/retrieval
 boundary (Start/Heal prefer `build/cpp_memory_store/Release`). Go
@@ -678,9 +707,13 @@ a routine documentation-only validation.
 
 ### Alternative routers
 
+Parked this quarter. Same port `:8082`; pick one.
+
 ```powershell
+Push-Location godbrain_core\go_router
 go test ./...
 go build .
+Pop-Location
 
 Push-Location godbrain_core\rust_router
 cargo test --locked
@@ -688,7 +721,7 @@ cargo build --locked
 Pop-Location
 ```
 
-The root Go module and Rust router require the canonical RAG service at
+These routers require the canonical RAG service at
 `http://127.0.0.1:8084/v1/search` when handling chat. Their build/test commands
 do not require starting MongoDB or the RAG server.
 

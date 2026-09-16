@@ -1,8 +1,12 @@
 # dashboard-shell-v1
 
 Gym product: a small dark operations dashboard with live-looking status
-cards (mouth, RAG, inbox) and a mobile layout. **Not Galaxy.** Not a
-customer deliverable until a human glances.
+cards (mouth, RAG, inbox) and a mobile layout. **Not Galaxy.** This is the
+legacy build fixture, not evidence of complete browser behavior.
+
+Autonomous practice now uses `scripts\Invoke-FrontendGym.ps1` and the protected
+browser curriculum in the [parent gym](../../README.md). Routine exercises
+do not require the operator to inspect code or approve each attempt.
 
 ## Brief
 
@@ -33,5 +37,6 @@ Or from repo root:
 ## Check
 
 Harness profile `frontend-spa-v1` must pass `npm run build` **and** this
-README must exist. Apply-only `/edit` cannot promote. A passing run may
-be recorded with `-Record -OriginNodeID <candidate>` after `/verify`.
+README must exist. Apply-only `/edit` cannot promote. `-Record` writes a legacy
+global skill-run record; global promotion retains its verified-origin gate.
+The autonomous gym's local lessons do not use this legacy recording workflow.

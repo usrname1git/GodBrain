@@ -1,0 +1,21 @@
+{
+  "name": "godbrain-frontend-gym",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "practice": "node gym.mjs run",
+    "status": "node gym.mjs status",
+    "stop": "node gym.mjs stop"
+  },
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "1.63.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  }
+}

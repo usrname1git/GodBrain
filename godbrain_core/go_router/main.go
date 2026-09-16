@@ -93,8 +93,10 @@ func resolveColibriPath() string {
 	dir := exeDir()
 	return firstExistingPath("colibri.exe",
 		filepath.Join("LLM", "colibri_LLM", "c", "colibri.exe"),
+		filepath.Join("..", "..", "LLM", "colibri_LLM", "c", "colibri.exe"),
 		filepath.Join(dir, "LLM", "colibri_LLM", "c", "colibri.exe"),
 		filepath.Join(dir, "..", "LLM", "colibri_LLM", "c", "colibri.exe"),
+		filepath.Join(dir, "..", "..", "LLM", "colibri_LLM", "c", "colibri.exe"),
 	)
 }
 
@@ -107,9 +109,10 @@ func resolveFrontendDir() string {
 	dir := exeDir()
 	return firstExistingPath("frontend directory",
 		filepath.Join("godbrain_core", "frontend"),
+		filepath.Join("..", "frontend"),
 		filepath.Join(dir, "godbrain_core", "frontend"),
 		filepath.Join(dir, "..", "frontend"),
-		"../frontend",
+		filepath.Join(dir, "..", "..", "godbrain_core", "frontend"),
 	)
 }
 

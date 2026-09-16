@@ -1,4 +1,4 @@
-module godbrain
+module godbrain_core/go_router
 
 go 1.26.5
 

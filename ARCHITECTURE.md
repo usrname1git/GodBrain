@@ -69,8 +69,9 @@ flowchart LR
 Nothing privileged talks to Mongo except the Memory Store and the RAG service.
 Chat generate stays on loopback. Every Tailscale route requires
 `Authorization: Bearer`, including GET glances. That door does not host
-`/api/chat`. Experimental Go/Rust routers on `:8082` are alternatives, not a
-cluster; this host runs the C++ kernel.
+`/api/chat`. Parked Go/Rust routers on `:8082` (`godbrain_core/go_router`,
+`godbrain_core/rust_router`) are alternatives, not a cluster; this host
+runs the C++ kernel. This quarter does not staff those routers.
 
 ### Goals
 

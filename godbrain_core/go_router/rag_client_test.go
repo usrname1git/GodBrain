@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,18 @@ func (function roundTripFunc) Do(request *http.Request) (*http.Response, error) 
 
 func loadRAGFixture(t *testing.T) fixtureContract {
 	t.Helper()
-	data, err := os.ReadFile("contracts/rag_search_v2_fixture.json")
+	candidates := []string{
+		filepath.Join("contracts", "rag_search_v2_fixture.json"),
+		filepath.Join("..", "..", "contracts", "rag_search_v2_fixture.json"),
+	}
+	var data []byte
+	var err error
+	for _, p := range candidates {
+		data, err = os.ReadFile(p)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		t.Fatalf("read shared RAG fixture: %v", err)
 	}

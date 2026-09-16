@@ -1,8 +1,9 @@
 # Alexandria Memory Store and Golden Record retrieval (Go rollback)
 
-Desk Start/Heal prefer C++ `godbrain_core/cpp_memory_store/`
-(`build/cpp_memory_store/Release`). This Go tree stays as rollback with the
-same stdin/HTTP doors. Do not delete it.
+The folder is named `memory_store` for history. **Desk main is C++**
+`godbrain_core/cpp_memory_store/` (`build/cpp_memory_store/Release`).
+This Go tree stays as rollback with the same stdin/HTTP doors. Do not
+rename it into a zoo. Do not delete it.
 
 This Go module contains two boundaries:
 
@@ -15,7 +16,7 @@ This Go module contains two boundaries:
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.
 
-Layer 3 connects the C++ Kernel and the experimental Go router to
+Layer 3 connects the C++ Kernel and the parked Go/Rust routers to
 `http://127.0.0.1:8084/v1/search` for chat and to `/v1/graph` plus `/v1/document`
 for Galaxy. Search requires a ready, schema-valid response, preserves bounded
 citations and trust labels, quotes retrieved content as untrusted reference
@@ -137,7 +138,7 @@ $env:MONGODB_DB_NAME = "godbrain" # default
 
 `GODBRAIN_RAG_PORT` changes the numeric port only; the service always binds to
 `127.0.0.1` and defaults to `8084`.
-The C++ kernel and the experimental Go/Rust routers are pinned to
+The C++ kernel and the parked Go/Rust routers are pinned to
 `127.0.0.1:8084/v1/search`. Changing the service port makes retrieval fail
 closed. Start-GodBrain does **not** copy `GODBRAIN_RAG_PORT` into WMI children
 (kernel stays on `:8084`). It **does** forward `MONGODB_DB_NAME`,
