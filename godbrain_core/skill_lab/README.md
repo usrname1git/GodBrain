@@ -1,6 +1,6 @@
-# Frontend University (browser-qualified; not Galaxy, not host surgery)
+# Frontend University (browser-qualified)
 
-This is not a källargym of isolated drills. It is a **self-expanding
+This is not your home basement gym with some random drills. It is a **self-expanding
 university**: a durable prerequisite graph, a protected browser examiner, a
 Creation Gallery of qualified showcases, and one autonomous practice loop.
 GPT and Grok staffed the degree path; Qwen (`qwen3.8-27b-exl3-3.5bpw` on
