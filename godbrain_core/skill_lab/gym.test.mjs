@@ -240,6 +240,11 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(eventType, /native <select>/);
   assert.doesNotMatch(eventType, /htmlFor is required/);
+  const workEmail = cannedTutorAdvice({
+    feedback: "demo-form-validates-before-success: Missing locator('form').getByRole('textbox', { name: /work email/i })",
+  });
+  assert.match(workEmail, /Email is accepted/);
+  assert.doesNotMatch(workEmail, /htmlFor is required/);
   const searchBox = cannedTutorAdvice({
     feedback: 'feature-search-filters-seeded-content: Missing getByRole(\'textbox\', { name: /search features/i })',
   });

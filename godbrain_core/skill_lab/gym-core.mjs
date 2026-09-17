@@ -692,6 +692,13 @@ export function cannedTutorAdvice(active = {}) {
         '2. Do not replace the select with buttons, radios, or a text input.',
       ].join('\n');
     }
+    if (/work email|e-?mail/i.test(feedback)) {
+      return [
+        'CAUSE: The form email field is missing an accessible name matching Work email. Email is accepted; a missing field is not.',
+        '1. Keep <label>Work email<input/></label> or any wrapping label containing email.',
+        '2. Keep error text outside the label so the accessible name stays Email / Work email.',
+      ].join('\n');
+    }
     return [
       'CAUSE: The form submit or Name field is not what the examiner resolves after an invalid click. Wrapping <label>Name<input/></label> is valid; htmlFor is not required.',
       '1. Form submit button text must include Book a demo. Do not use only {primaryCta} if that string has a seed suffix.',

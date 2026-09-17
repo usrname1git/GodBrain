@@ -747,6 +747,17 @@ async function formCombobox(page) {
   throw new Error('Missing a native <select> inside the demo form.');
 }
 
+async function formEmail(page) {
+  const form = page.locator('form');
+  for (const name of [/work email/i, /e-?mail/i]) {
+    const named = form.getByRole('textbox', { name });
+    if (await named.count()) return named.first();
+  }
+  const typed = form.locator('input[type="email"]');
+  if (await typed.count()) return typed.first();
+  throw new Error('Missing an email textbox inside the demo form.');
+}
+
 async function checkMarketingQuality(page, props, checks, errors, draftOnly = false, files = {}) {
   await addCheck(checks, errors, 'semantic-marketing-structure', async () => {
     await page.locator('header').first().waitFor({ state: 'visible' });
@@ -898,7 +909,7 @@ async function checkPricingDemo(page, props, checks, errors) {
   });
   await addCheck(checks, errors, 'demo-form-validates-before-success', async () => {
     const name = page.locator('form').getByRole('textbox', { name: /name/i });
-    const email = page.locator('form').getByRole('textbox', { name: /work email/i });
+    const email = await formEmail(page);
     const eventType = await formCombobox(page);
     const submit = page.locator('form').getByRole('button', { name: /book a demo/i });
     await submit.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
