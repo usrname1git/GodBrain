@@ -98,6 +98,50 @@ test('definition bump retargets the four-suite composition course', async t => {
   assert.ok(course.retargetedAt);
 });
 
+test('definition bump retargets capstone studios without crowning old mastery', async t => {
+  const workDir = await workspace(t);
+  await writeJson(path.join(workDir, 'university.json'), {
+    version: 1, capstoneSequence: 1, archivedCapstones: 0, courses: [{
+      id: 'university-product-site-capstone-v2',
+      competencyId: 'product-site-capstone',
+      discipline: 'Capstone',
+      level: 4,
+      iteration: 2,
+      title: 'Deliver an integrated typed product-site capstone · studio 2',
+      prerequisites: ['interaction-composition', 'lifecycle-form-composition', 'responsive-product-system'],
+      docs: [{ title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' }],
+      focus: 'For this studio, design a privacy-first analytics platform using editorial minimalism.',
+      verifierSpec: {
+        version: 1,
+        contractTaskId: 'event-platform-showcase-v1',
+        fileMode: 'app',
+        appFile: 'App.tsx',
+        evaluationProfile: 'full',
+        sourceRules: ['typescript-component', 'react-state', 'semantic-layout', 'form-validation'],
+        maxTokens: 4096,
+      },
+      status: 'active',
+      createdAt: '2026-09-16T00:00:00.000Z',
+      validatedAt: '2026-09-16T00:00:00.000Z',
+      masteredAt: null,
+      validationProfile: 'trusted-contract-extension-v1',
+      definitionVersion: 8,
+    }],
+  });
+  const university = await advanceUniversity(workDir, [{
+    id: 'university-product-site-capstone-v2',
+    mastery: 'mastered',
+    recentAttempts: 20,
+    recentPassRate: 1,
+  }], trustedTasks);
+  const studio = university.courses.find(item => item.id === 'university-product-site-capstone-v2');
+  assert.equal(studio.definitionVersion, COURSE_DEFINITION_VERSION);
+  assert.ok(studio.retargetedAt);
+  assert.equal(studio.status, 'active');
+  assert.match(studio.title, /studio 2/);
+  assert.match(studio.focus, /privacy-first/);
+});
+
 test('L3 composition is nav+form and explorer+form, not the four-suite showcase', () => {
   const composition = COMPETENCIES.find(item => item.id === 'interaction-composition');
   assert.equal(composition.contractTaskId, 'responsive-site-navigation-v1');

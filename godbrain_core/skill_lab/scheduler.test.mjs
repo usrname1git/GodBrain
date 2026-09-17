@@ -116,6 +116,23 @@ test('active university study outranks a weaker legacy quality course', () => {
   assert.equal(choice.selected.id, 'university-a');
 });
 
+test('retargeted university courses ignore attempts from the previous exam', () => {
+  const epoch = '2026-09-16T19:44:00.000Z';
+  const tasksWithEpoch = tasks.map(task => task.id === 'university-a'
+    ? { ...task, university: { ...task.university, retargetedAt: epoch, status: 'active' } }
+    : task);
+  const events = [
+    { type: 'attempt_failed', taskId: 'university-a', at: '2026-09-16T08:00:00.000Z' },
+    { type: 'attempt_failed', taskId: 'university-a', at: '2026-09-16T09:00:00.000Z' },
+    { type: 'exercise_passed', taskId: 'university-a', at: '2026-09-16T20:00:00.000Z', sourceHash: 'a' },
+    { type: 'attempt_failed', taskId: 'university-a', at: '2026-09-16T20:10:00.000Z' },
+  ];
+  const row = classifyMastery(events, state(), tasksWithEpoch).find(item => item.id === 'university-a');
+  assert.equal(row.recentAttempts, 2);
+  assert.equal(row.recentPassed, 1);
+  assert.equal(row.recentFailed, 1);
+});
+
 test('parse failures count against quality mastery and a death spiral is parked', () => {
   const events = [
     ...passingEvents('university-a', 20, 2),
@@ -131,6 +148,21 @@ test('parse failures count against quality mastery and a death spiral is parked'
   const choice = chooseTask(rows, { selectionCount: 4 });
   assert.notEqual(choice.selected.id, 'quality-a');
   assert.equal(choice.selected.id, 'quality-b');
+});
+
+test('zero-pass university exam is persisted on parkedTaskIds', async t => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), 'work', 'tests');
+  await fs.mkdir(root, { recursive: true });
+  const workDir = await fs.mkdtemp(path.join(root, 'scheduler-'));
+  t.after(() => fs.rm(workDir, { recursive: true, force: true }));
+  await fs.writeFile(
+    path.join(workDir, 'events.jsonl'),
+    Array.from({ length: 20 }, () => JSON.stringify({ type: 'attempt_failed', taskId: 'university-a' })).join('\n'),
+  );
+  const current = state();
+  current.scheduler = { selectionCount: 1, parkedTaskIds: [] };
+  await selectCurriculumTask(workDir, current, tasks);
+  assert.ok(current.scheduler.parkedTaskIds.includes('university-a'));
 });
 
 test('zero-pass university growth is parked after a long fail streak', () => {

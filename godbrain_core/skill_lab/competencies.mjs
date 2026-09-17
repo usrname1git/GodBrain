@@ -173,7 +173,7 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' },
       { title: 'TypeScript JSX', url: 'https://www.typescriptlang.org/docs/handbook/jsx.html' },
     ],
-    focus: 'Deliver a complete typed frontend that integrates information architecture, interaction, forms, accessibility and visual quality.',
+    focus: 'Start from the complete typed showcase scaffold. Keep Menu nav, lifecycle explorer, packages and the Book a demo form with aria-invalid. Change copy and composition; do not delete header, main, footer or the form.',
   },
 ]);
 

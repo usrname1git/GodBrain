@@ -89,7 +89,30 @@ function Get-QwenListenerProcess {
     return $null
 }
 
+function Set-QwenReceipt($process) {
+    $started = (Get-Date).ToUniversalTime().ToString("o")
+    if (Test-Path -LiteralPath $qwenReceipt) {
+        try {
+            $previous = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
+            if ([int]$previous.pid -eq [int]$process.ProcessId -and $previous.started_at) {
+                $started = [string]$previous.started_at
+            }
+        } catch {}
+    }
+    @{
+        pid = $process.ProcessId
+        port = 8888
+        model = $qwenModel
+        started_at = $started
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $qwenReceipt
+}
+
 function Get-QwenProcess {
+    $listener = Get-QwenListenerProcess
+    if ($listener) {
+        Set-QwenReceipt $listener
+        return $listener
+    }
     if (-not (Test-Path -LiteralPath $qwenReceipt)) { return $null }
     try {
         $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
@@ -97,7 +120,7 @@ function Get-QwenProcess {
         if ($process -and
             $process.Name -eq "python.exe" -and
             $process.CommandLine -like "*tools\serve_openai.py*" -and
-            $process.CommandLine -like "*$qwenModel*" -and
+            $process.CommandLine -like "*Qwen3.8-27B-EXL3-3.5bpw*" -and
             $process.CommandLine -like "*--port 8888*") {
             return $process
         }
@@ -151,12 +174,7 @@ function Start-Qwen {
         }
     }
     if (-not $process) { throw "Qwen did not become ready on :8888 within four minutes." }
-    @{
-        pid = $process.ProcessId
-        port = 8888
-        model = $qwenModel
-        started_at = (Get-Date).ToUniversalTime().ToString("o")
-    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $qwenReceipt
+    Set-QwenReceipt $process
     Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) at 10K with MTP off."
 }
 

@@ -6,7 +6,7 @@ import { validateVerifierSpec } from './verifier-dsl.mjs';
 
 const VERSION = 1;
 const MAX_COURSES = 120;
-export const COURSE_DEFINITION_VERSION = 8;
+export const COURSE_DEFINITION_VERSION = 9;
 
 function courseId(competencyId, iteration = 1) {
   return `university-${competencyId}-v${iteration}`;
@@ -85,6 +85,7 @@ function asTask(course, trustedTasks) {
       iteration: course.iteration,
       definitionVersion: course.definitionVersion,
       status: course.status,
+      retargetedAt: course.retargetedAt ?? null,
     },
   };
 }
@@ -120,25 +121,23 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
   let changed = false;
   const masteryById = new Map(masteryRows.map(row => [row.id, row]));
   for (const course of university.courses) {
-    const blueprint = course.iteration === 1
-      ? COMPETENCIES.find(item => item.id === course.competencyId)
-      : null;
-    if (blueprint && course.definitionVersion !== COURSE_DEFINITION_VERSION) {
-      const previousContract = course.verifierSpec?.contractTaskId;
-      course.title = blueprint.title;
+    const blueprint = COMPETENCIES.find(item => item.id === course.competencyId) ?? null;
+    const retargeting = Boolean(blueprint) && course.definitionVersion !== COURSE_DEFINITION_VERSION;
+    if (retargeting) {
       course.discipline = blueprint.discipline;
       course.level = blueprint.level;
       course.prerequisites = [...blueprint.prerequisites];
       course.docs = blueprint.docs;
-      course.focus = blueprint.focus;
       course.verifierSpec = validateBlueprint(blueprint, trustedTasks);
-      course.definitionVersion = COURSE_DEFINITION_VERSION;
-      if (previousContract && previousContract !== blueprint.contractTaskId) {
-        course.retargetedAt = new Date().toISOString();
+      if (course.iteration === 1) {
+        course.title = blueprint.title;
+        course.focus = blueprint.focus;
       }
+      course.definitionVersion = COURSE_DEFINITION_VERSION;
+      course.retargetedAt = new Date().toISOString();
       changed = true;
     }
-    if (course.status === 'active' && masteryById.get(course.id)?.mastery === 'mastered') {
+    if (!retargeting && course.status === 'active' && masteryById.get(course.id)?.mastery === 'mastered') {
       course.status = 'mastered';
       course.masteredAt = new Date().toISOString();
       changed = true;
@@ -187,6 +186,8 @@ export function universitySummary(university, masteryRows = []) {
     status: course.status,
     mastery: masteryById.get(course.id)?.mastery ?? 'queued',
     recentAttempts: masteryById.get(course.id)?.recentAttempts ?? 0,
+    recentPassed: masteryById.get(course.id)?.recentPassed ?? 0,
+    recentFailed: masteryById.get(course.id)?.recentFailed ?? 0,
     recentPassRate: masteryById.get(course.id)?.recentPassRate ?? 0,
   }));
   return {

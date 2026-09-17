@@ -3,16 +3,38 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
+import { REFERENCES } from './references.mjs';
 
 const SOURCE_LIMIT = 48_000;
 const RESPONSE_LIMIT = 256_000;
+const APP_PROMPT_CHARS = 8_000;
 const LEGACY_FILE_NAMES = ['App.jsx', 'styles.css'];
 
 export class CandidateError extends Error {}
 export class BackendError extends Error {}
 export class StopRequested extends Error {}
 
-export function universityAppScaffold(appFile = 'App.tsx') {
+export function universityAppScaffold(appFile = 'App.tsx', contractTaskId = '') {
+  if (appFile === 'App.tsx' && contractTaskId === 'event-platform-showcase-v1') {
+    return REFERENCES['event-platform-showcase-v1']['App.jsx']
+      .replace("import {useMemo,useState} from 'react';", 'import { useMemo, useState } from "react";')
+      .replace('export default function App(props) {', `interface Section { id: string; label: string }
+interface Stage { stage: string; summary: string; features: string[] }
+interface Plan { name: string; description: string; features: string[] }
+interface Props {
+  brand: string;
+  product: string;
+  tagline: string;
+  sections: Section[];
+  primaryCta: string;
+  secondaryCta: string;
+  proofPoints: string[];
+  lifecycle: Stage[];
+  plans: Plan[];
+  eventTypes: string[];
+}
+export default function App(props: Props) {`);
+  }
   if (appFile === 'App.tsx') {
     return `import { useState, type FormEvent } from "react";
 
@@ -533,7 +555,7 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'honest-substantial-content': 'Render at least 650 visible characters of meaningful main content and the seeded proofPoints from props. Do not hardcode evaluator examples or invent claims.',
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
-  'feature-search-filters-seeded-content': 'Render a textbox named Search features and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
@@ -563,7 +585,7 @@ function feedbackForResults(results) {
       const hint = GENERIC_CHECK_FEEDBACK[check.name];
       compact.push({
         name: check.name,
-        detail: hint ?? actual,
+        detail: /Missing /i.test(actual) ? actual : (hint ?? actual),
       });
     }
     return {
@@ -645,6 +667,37 @@ export function cannedTutorAdvice(active = {}) {
   const hidesDotNav = /\.nav\s*\{[^}]*display\s*:\s*none/i.test(css);
   const hidesElemNav = /(?:^|[{};])\s*nav\s*\{[^}]*display\s*:\s*none/i.test(css);
   const navClassed = /<nav\b[^>]*className\s*=\s*(?:['"`][^'"`]*\bnav\b|\{[^}]*['"`]nav['"`])/i.test(jsx);
+  const searchFail = /feature-search-filters-seeded-content/i.test(feedback);
+  const eventTypeFail = /demo-form-validates-before-success/i.test(feedback) &&
+    /combobox|event type|selectOption/i.test(feedback);
+  if (searchFail && eventTypeFail) {
+    return [
+      'CAUSE: Studio copy renamed Search features or Event type so the examiner missed working controls.',
+      '1. Keep a wrapping label containing Search on the features textbox.',
+      '2. Keep a native form <select> (Event type, Program type, or Operation type).',
+    ].join('\n');
+  }
+  if (searchFail) {
+    return [
+      'CAUSE: The examiner needs a textbox whose accessible name includes Search. Search capabilities is accepted; a missing field is not.',
+      '1. Keep <label>Search features<input/></label> or any wrapping label containing Search.',
+      '2. Filter lifecycle[].features from every stage, not only the selected stage.',
+    ].join('\n');
+  }
+  if (/demo-form-validates-before-success/i.test(feedback)) {
+    if (eventTypeFail) {
+      return [
+        'CAUSE: The form select is missing an accessible name matching Event type. Operation type is accepted; a missing native select is not.',
+        '1. Keep a native <select> inside <form>. Label may be Event type, Program type, or Operation type.',
+        '2. Do not replace the select with buttons, radios, or a text input.',
+      ].join('\n');
+    }
+    return [
+      'CAUSE: The form submit or Name field is not what the examiner resolves after an invalid click. Wrapping <label>Name<input/></label> is valid; htmlFor is not required.',
+      '1. Form submit button text must include Book a demo. Do not use only {primaryCta} if that string has a seed suffix.',
+      '2. Keep error text outside the label so the accessible name stays Name / Work email.',
+    ].join('\n');
+  }
   if (/overflow|intentional-mobile-composition|responsive-menu-opens-closes/i.test(feedback)) {
     if (hidesDotNav && !hidesElemNav && !navClassed) {
       return [
@@ -673,7 +726,7 @@ export function tutorMessages(task, active) {
   const source = active.parseFailed
     ? `REJECTED MODEL RESPONSE\n${clip(active.lastResponse ?? '', 5000)}`
     : fileMode === 'app'
-      ? `CURRENT ${appFile.toUpperCase()}\n${clip(active.files?.[appFile] ?? '', 6000)}`
+      ? `CURRENT ${appFile.toUpperCase()}\n${clip(active.files?.[appFile] ?? '', APP_PROMPT_CHARS)}`
       : fileMode === 'styles'
         ? `CURRENT STYLES.CSS\n${clip(active.files?.['styles.css'] ?? '', 6000)}`
         : `CURRENT SOURCE\n${clip(JSON.stringify(active.files ?? {}), 7000)}`;
@@ -713,7 +766,7 @@ Use the App props and accessible names in the exercise. Implement real state and
   const appSource = active.files?.[appFile] ?? active.files?.['App.jsx'] ?? active.files?.['App.tsx'] ?? '';
   const cssClasses = cssClassReference(active.files?.['styles.css'] ?? '');
   const appReference = [
-    appSource ? `CURRENT ${appFile.toUpperCase()} TO REPLACE\n${clip(appSource, 4800)}` : '',
+    appSource ? `CURRENT ${appFile.toUpperCase()} TO REPLACE\n${clip(appSource, APP_PROMPT_CHARS)}` : '',
     cssClasses ? `IMMUTABLE STYLES.CSS IS ALREADY SUPPLIED. Available class names: ${cssClasses}` : '',
   ].filter(Boolean).join('\n\n');
   const currentSource = active.files && fileMode === 'styles'

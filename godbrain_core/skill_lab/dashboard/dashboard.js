@@ -121,7 +121,9 @@ function render(data) {
     const isParked=parked.has(course.id);
     const isLive=liveTask===course.id;
     const stamp=isParked?'parked':isLive?'live':course.status;
-    return `<div class="queue"><strong>${esc(course.title)}</strong><div class="meta">Level ${course.level} · ${esc(course.discipline)} · ${esc(stamp)} · ${course.recentAttempts} recent attempts · ${pct(course.recentPassRate)}</div></div>`;
+    const tries=course.recentAttempts||0;
+    const score=`${tries} tries · ${course.recentPassed||0} pass · ${course.recentFailed||0} fail · ${pct(course.recentPassRate)}`;
+    return `<div class="queue"><strong>${esc(course.title)}</strong><div class="meta">Level ${course.level} · ${esc(course.discipline)} · ${esc(stamp)} · ${score}</div></div>`;
   }).join('')||'<p class="meta">The first course will be generated at the next scheduler selection.</p>';
   const objectiveById=new Map((data.objectives||[]).map(objective=>[objective.id,objective]));
   const campaignCard=c=>{
