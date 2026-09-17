@@ -27,6 +27,12 @@ test('university app scaffold satisfies static source-contract rails', () => {
   assert.match(app, /aria-invalid/i);
   assert.match(app, /className="menu"/);
   assert.match(app, /<nav aria-label="Primary"/);
+  const capstone = universityAppScaffold('App.tsx', 'event-platform-showcase-v1');
+  assert.match(capstone, /interface Props/);
+  assert.match(capstone, /lifecycle/);
+  assert.match(capstone, /Book a demo/);
+  assert.match(capstone, /aria-invalid/);
+  assert.match(capstone, /className=\{menu\?'open':''\}/);
 });
 
 test('verifier feedback strips playwright sludge and key-warning noise', () => {

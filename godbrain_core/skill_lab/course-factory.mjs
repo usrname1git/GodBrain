@@ -6,7 +6,7 @@ import { validateVerifierSpec } from './verifier-dsl.mjs';
 
 const VERSION = 1;
 const MAX_COURSES = 120;
-export const COURSE_DEFINITION_VERSION = 8;
+export const COURSE_DEFINITION_VERSION = 9;
 
 function courseId(competencyId, iteration = 1) {
   return `university-${competencyId}-v${iteration}`;
@@ -85,6 +85,7 @@ function asTask(course, trustedTasks) {
       iteration: course.iteration,
       definitionVersion: course.definitionVersion,
       status: course.status,
+      retargetedAt: course.retargetedAt ?? null,
     },
   };
 }
@@ -124,7 +125,6 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
       ? COMPETENCIES.find(item => item.id === course.competencyId)
       : null;
     if (blueprint && course.definitionVersion !== COURSE_DEFINITION_VERSION) {
-      const previousContract = course.verifierSpec?.contractTaskId;
       course.title = blueprint.title;
       course.discipline = blueprint.discipline;
       course.level = blueprint.level;
@@ -133,9 +133,7 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
       course.focus = blueprint.focus;
       course.verifierSpec = validateBlueprint(blueprint, trustedTasks);
       course.definitionVersion = COURSE_DEFINITION_VERSION;
-      if (previousContract && previousContract !== blueprint.contractTaskId) {
-        course.retargetedAt = new Date().toISOString();
-      }
+      course.retargetedAt = new Date().toISOString();
       changed = true;
     }
     if (course.status === 'active' && masteryById.get(course.id)?.mastery === 'mastered') {
@@ -187,6 +185,8 @@ export function universitySummary(university, masteryRows = []) {
     status: course.status,
     mastery: masteryById.get(course.id)?.mastery ?? 'queued',
     recentAttempts: masteryById.get(course.id)?.recentAttempts ?? 0,
+    recentPassed: masteryById.get(course.id)?.recentPassed ?? 0,
+    recentFailed: masteryById.get(course.id)?.recentFailed ?? 0,
     recentPassRate: masteryById.get(course.id)?.recentPassRate ?? 0,
   }));
   return {

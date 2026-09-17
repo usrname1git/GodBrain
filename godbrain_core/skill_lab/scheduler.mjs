@@ -38,13 +38,18 @@ async function recentEvents(workDir) {
 export function classifyMastery(events, state, tasks) {
   return tasks.map(task => {
     const allTaskEvents = events.filter(event => event.taskId === task.id);
-    const latestEvaluatorVersion = [...allTaskEvents].reverse()
+    const epoch = task.university?.retargetedAt;
+    const sinceExam = epoch
+      ? allTaskEvents.filter(event => typeof event.at === 'string' && event.at >= epoch)
+      : allTaskEvents;
+    const latestEvaluatorVersion = [...sinceExam].reverse()
       .find(event => typeof event.evaluatorVersion === 'string' && event.evaluatorVersion)?.evaluatorVersion;
     const currentEvents = latestEvaluatorVersion
-      ? allTaskEvents.filter(event => event.evaluatorVersion === latestEvaluatorVersion)
-      : allTaskEvents;
+      ? sinceExam.filter(event => event.evaluatorVersion === latestEvaluatorVersion)
+      : sinceExam;
     const taskEvents = currentEvents.slice(-WINDOW);
     const passed = taskEvents.filter(event => event.type === 'exercise_passed');
+    const failed = taskEvents.length - passed.length;
     const passRate = taskEvents.length ? passed.length / taskEvents.length : 0;
     const distinctPassingSources = new Set(passed.map(event => event.sourceHash).filter(Boolean)).size;
     const measuredMastery = taskEvents.length >= MIN_MASTERY_SAMPLES &&
@@ -61,6 +66,7 @@ export function classifyMastery(events, state, tasks) {
       failed: state.stats.byTask[task.id]?.failed ?? 0,
       recentAttempts: taskEvents.length,
       recentPassed: passed.length,
+      recentFailed: failed,
       recentPassRate: passRate,
       distinctPassingSources,
       mastery: mastered ? 'mastered' : taskEvents.length < MIN_MASTERY_SAMPLES ? 'learning' : 'improving',
@@ -133,6 +139,13 @@ export async function selectCurriculumTask(workDir, state, tasks) {
     }
   }
   const choice = chooseTask(rows, scheduler);
+  for (const row of rows) {
+    if (row.university && row.mastery !== 'mastered' &&
+        row.recentAttempts >= MIN_MASTERY_SAMPLES && row.recentPassed === 0 &&
+        !scheduler.parkedTaskIds.includes(row.id)) {
+      scheduler.parkedTaskIds.push(row.id);
+    }
+  }
   const repeatedFailedBatch = choice.reason === 'university-growth' &&
     scheduler.lastTaskId === choice.selected.id &&
     state.lastRun?.taskId === choice.selected.id &&

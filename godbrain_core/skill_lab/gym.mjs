@@ -281,7 +281,9 @@ Passing exercises become local gym lessons without /verify; they grant no host a
           return {
             ...selected,
             initialFiles: selected.initialFiles ?? {
-              [appFile]: selected.university ? universityAppScaffold(appFile) : '',
+              [appFile]: selected.university
+                ? universityAppScaffold(appFile, selected.baseTaskId)
+                : '',
               'styles.css': getReference(selected.baseTaskId ?? selected.id)['styles.css'],
             },
           };

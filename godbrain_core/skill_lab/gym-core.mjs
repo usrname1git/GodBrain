@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
+import { REFERENCES } from './references.mjs';
 
 const SOURCE_LIMIT = 48_000;
 const RESPONSE_LIMIT = 256_000;
@@ -12,7 +13,27 @@ export class CandidateError extends Error {}
 export class BackendError extends Error {}
 export class StopRequested extends Error {}
 
-export function universityAppScaffold(appFile = 'App.tsx') {
+export function universityAppScaffold(appFile = 'App.tsx', contractTaskId = '') {
+  if (appFile === 'App.tsx' && contractTaskId === 'event-platform-showcase-v1') {
+    return REFERENCES['event-platform-showcase-v1']['App.jsx']
+      .replace("import {useMemo,useState} from 'react';", 'import { useMemo, useState } from "react";')
+      .replace('export default function App(props) {', `interface Section { id: string; label: string }
+interface Stage { stage: string; summary: string; features: string[] }
+interface Plan { name: string; description: string; features: string[] }
+interface Props {
+  brand: string;
+  product: string;
+  tagline: string;
+  sections: Section[];
+  primaryCta: string;
+  secondaryCta: string;
+  proofPoints: string[];
+  lifecycle: Stage[];
+  plans: Plan[];
+  eventTypes: string[];
+}
+export default function App(props: Props) {`);
+  }
   if (appFile === 'App.tsx') {
     return `import { useState, type FormEvent } from "react";
 
