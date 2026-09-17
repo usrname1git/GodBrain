@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  acquireRunLock, BackendError, cannedTutorAdvice, completeLocal, hashFiles, learnerMessages,
+  acquireRunLock, BackendError, cannedTutorAdvice, completeLocal, hashFiles, isHostNetworkFailure, learnerMessages,
   loadState, localEndpoint, newState, parseCandidate, parseTutorAdvice, readJson, requestStop, runPractice,
   StopRequested, summarizeCheckDetail, tutorMessages, universityAppScaffold, writeJson,
 } from './gym-core.mjs';
@@ -742,6 +742,43 @@ test('model transport uses the local OpenAI route with thinking off and no tool 
   assert.equal(requestBody.cache_prompt, false);
   assert.equal(requestBody.stream, true);
   assert.equal(requestBody.tools, undefined);
+});
+
+test('host socket exhaustion retries without grading the candidate', async t => {
+  const workDir = await workspace(t);
+  const controller = new AbortController();
+  let modelCalls = 0;
+  let browserCalls = 0;
+  const state = await runPractice(options(workDir, {
+    continuous: true, retryMs: 1, externalSignal: controller.signal,
+    onProgress: () => controller.abort(new StopRequested('Test completed one exercise.')),
+  }), {
+    tasks: [task], evaluatorVersion,
+    complete: async () => { modelCalls++; return answer(); },
+    evaluate: async request => {
+      if (++browserCalls === 1) {
+        return {
+          passed: false, seed: request.seed, taskId: request.taskId, evaluatorVersion,
+          checks: [
+            { name: 'app-rendered-visible-content', passed: false, detail: "Missing locator('#root')" },
+            { name: 'no-console-errors', passed: false, detail: 'Failed to load resource: net::ERR_NO_BUFFER_SPACE' },
+          ],
+          errors: [
+            "app-rendered-visible-content: Missing locator('#root')",
+            'no-console-errors: Failed to load resource: net::ERR_NO_BUFFER_SPACE',
+          ],
+          artifacts: [],
+        };
+      }
+      return evaluate(request);
+    },
+  });
+  assert.equal(isHostNetworkFailure('net::ERR_NO_BUFFER_SPACE'), true);
+  assert.equal(modelCalls, 1);
+  assert.equal(browserCalls, 3);
+  assert.equal(state.stats.infrastructureErrors, 1);
+  assert.equal(state.stats.failed, 0);
+  assert.equal(state.stats.passed, 1);
 });
 
 test('a transient browser outage retries the same candidate without grading it as a failure', async t => {

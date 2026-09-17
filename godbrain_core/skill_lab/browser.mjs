@@ -80,6 +80,10 @@ export function missingMobileNavCss(css = '') {
   return 'styles.css has no @media rule that hides the nav element (nav{display:none}). Put that mobile block next to the desktop nav rules, not at the end of the file, or a 6k rewrite drops it and overflows ~100-180px.';
 }
 
+function isHostNetworkFailure(value) {
+  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
+}
+
 function overflowDetail(prefix, files = {}) {
   const mismatch = navSelectorMismatch(files['App.jsx'] || files['App.tsx'] || '', files['styles.css'] || '');
   return mismatch ? `${prefix} ${mismatch}` : prefix;
@@ -1149,6 +1153,7 @@ export async function evaluateCandidate({
       await page.goto(`${server.origin}/`, { waitUntil: 'domcontentloaded', timeout: 9000 });
       checks.push({ name: 'page-loaded', passed: true });
     } catch (error) {
+      if (isHostNetworkFailure(error.message)) throw error;
       checks.push({ name: 'page-loaded', passed: false, detail: clip(error.message, 600) });
       errors.push(`page-loaded: ${clip(error.message, 600)}`);
       return await writeEvidence({
@@ -1157,6 +1162,10 @@ export async function evaluateCandidate({
       });
     }
     await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors);
+    const hostNoise = [...consoleErrors, ...pageErrors, ...errors].join('\n');
+    if (isHostNetworkFailure(hostNoise)) {
+      throw new Error(clip(hostNoise, 400));
+    }
     if (task.objectiveMode !== 'explore') {
       await runTaskChecks(contractTaskId, page, props, checks, errors, task, files);
     }

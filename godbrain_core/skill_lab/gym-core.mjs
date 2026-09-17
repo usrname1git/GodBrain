@@ -14,6 +14,10 @@ export class CandidateError extends Error {}
 export class BackendError extends Error {}
 export class StopRequested extends Error {}
 
+export function isHostNetworkFailure(value) {
+  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
+}
+
 export function universityAppScaffold(appFile = 'App.tsx', contractTaskId = '') {
   if (appFile === 'App.tsx' && contractTaskId === 'event-platform-showcase-v1') {
     return REFERENCES['event-platform-showcase-v1']['App.jsx']
@@ -1056,6 +1060,13 @@ export async function runPractice(options, dependencies) {
                 result = await evaluate({
                   taskId: task.id, files, artifactDir: evidenceDir, seed, browserPath, task,
                 });
+                if (isHostNetworkFailure(JSON.stringify(result))) {
+                  throw new Error(clip(
+                    (result.errors || []).find(item => isHostNetworkFailure(item)) ||
+                    'Browser host network exhausted',
+                    500,
+                  ));
+                }
                 break;
               } catch (error) {
                 if (signal.aborted) throw signal.reason;
