@@ -122,9 +122,7 @@ function render(data) {
     const isLive=liveTask===course.id;
     const stamp=isParked?'parked':isLive?'live':course.status;
     const tries=course.recentAttempts||0;
-    const score=tries
-      ? `${tries} tries · ${course.recentPassed||0} pass · ${course.recentFailed||0} fail · ${pct(course.recentPassRate)}`
-      : '0 tries';
+    const score=`${tries} tries · ${course.recentPassed||0} pass · ${course.recentFailed||0} fail · ${pct(course.recentPassRate)}`;
     return `<div class="queue"><strong>${esc(course.title)}</strong><div class="meta">Level ${course.level} · ${esc(course.discipline)} · ${esc(stamp)} · ${score}</div></div>`;
   }).join('')||'<p class="meta">The first course will be generated at the next scheduler selection.</p>';
   const objectiveById=new Map((data.objectives||[]).map(objective=>[objective.id,objective]));

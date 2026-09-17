@@ -726,6 +726,27 @@ async function actionByName(page, name) {
   throw new Error(`No button, tab, or link named "${name}" is visible.`);
 }
 
+async function roleByNames(scope, role, names) {
+  for (const name of names) {
+    const locator = scope.getByRole(role, { name });
+    if (await locator.count()) return locator.first();
+  }
+  return scope.getByRole(role, { name: names[0] });
+}
+
+async function formCombobox(page) {
+  const form = page.locator('form');
+  for (const name of [/event type/i, /\btype\b/i]) {
+    const named = form.getByRole('combobox', { name });
+    if (await named.count()) return named.first();
+  }
+  const combo = form.getByRole('combobox');
+  if (await combo.count()) return combo.first();
+  const select = form.locator('select');
+  if (await select.count()) return select.first();
+  throw new Error('Missing a native <select> inside the demo form.');
+}
+
 async function checkMarketingQuality(page, props, checks, errors, draftOnly = false, files = {}) {
   await addCheck(checks, errors, 'semantic-marketing-structure', async () => {
     await page.locator('header').first().waitFor({ state: 'visible' });
@@ -857,7 +878,7 @@ async function checkLifecycleExplorer(page, props, checks, errors) {
   await addCheck(checks, errors, 'feature-search-filters-seeded-content', async () => {
     const target = props.lifecycle[0].features[0];
     const unrelated = props.lifecycle[1].features[0];
-    const search = page.getByRole('textbox', { name: /search features/i });
+    const search = await roleByNames(page, 'textbox', [/search features/i, /search/i]);
     await search.fill(target.slice(0, Math.max(3, target.length - 2)));
     await visibleText(page, target);
     const unrelatedLocator = page.getByText(unrelated, { exact: false });
@@ -876,10 +897,10 @@ async function checkPricingDemo(page, props, checks, errors) {
     }
   });
   await addCheck(checks, errors, 'demo-form-validates-before-success', async () => {
-    const name = page.getByRole('textbox', { name: /^name$/i });
-    const email = page.getByRole('textbox', { name: /work email/i });
-    const eventType = page.getByRole('combobox', { name: /event type/i });
-    const submit = page.locator('form').getByRole('button', { name: /^book a demo$/i });
+    const name = page.locator('form').getByRole('textbox', { name: /name/i });
+    const email = page.locator('form').getByRole('textbox', { name: /work email/i });
+    const eventType = await formCombobox(page);
+    const submit = page.locator('form').getByRole('button', { name: /book a demo/i });
     await submit.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     await submit.click();
     if (await page.locator('[aria-invalid="true"]').count() < 2) throw new Error('Invalid submission did not mark required fields.');

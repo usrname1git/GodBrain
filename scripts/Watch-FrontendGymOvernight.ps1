@@ -90,11 +90,20 @@ function Get-QwenListenerProcess {
 }
 
 function Set-QwenReceipt($process) {
+    $started = (Get-Date).ToUniversalTime().ToString("o")
+    if (Test-Path -LiteralPath $qwenReceipt) {
+        try {
+            $previous = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
+            if ([int]$previous.pid -eq [int]$process.ProcessId -and $previous.started_at) {
+                $started = [string]$previous.started_at
+            }
+        } catch {}
+    }
     @{
         pid = $process.ProcessId
         port = 8888
         model = $qwenModel
-        started_at = (Get-Date).ToUniversalTime().ToString("o")
+        started_at = $started
     } | ConvertTo-Json -Compress | Set-Content -LiteralPath $qwenReceipt
 }
 

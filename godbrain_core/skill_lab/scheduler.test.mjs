@@ -150,6 +150,21 @@ test('parse failures count against quality mastery and a death spiral is parked'
   assert.equal(choice.selected.id, 'quality-b');
 });
 
+test('zero-pass university exam is persisted on parkedTaskIds', async t => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), 'work', 'tests');
+  await fs.mkdir(root, { recursive: true });
+  const workDir = await fs.mkdtemp(path.join(root, 'scheduler-'));
+  t.after(() => fs.rm(workDir, { recursive: true, force: true }));
+  await fs.writeFile(
+    path.join(workDir, 'events.jsonl'),
+    Array.from({ length: 20 }, () => JSON.stringify({ type: 'attempt_failed', taskId: 'university-a' })).join('\n'),
+  );
+  const current = state();
+  current.scheduler = { selectionCount: 1, parkedTaskIds: [] };
+  await selectCurriculumTask(workDir, current, tasks);
+  assert.ok(current.scheduler.parkedTaskIds.includes('university-a'));
+});
+
 test('zero-pass university growth is parked after a long fail streak', () => {
   const few = classifyMastery(
     Array.from({ length: 5 }, () => ({ type: 'attempt_failed', taskId: 'university-a' })),

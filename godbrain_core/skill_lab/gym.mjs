@@ -278,8 +278,11 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         if (selected.fileMode === 'app') {
           const appFile = selected.appFile ?? 'App.jsx';
+          const showcase = Boolean(selected.university) &&
+            selected.baseTaskId === 'event-platform-showcase-v1';
           return {
             ...selected,
+            revalidateInitial: showcase || selected.revalidateInitial,
             initialFiles: selected.initialFiles ?? {
               [appFile]: selected.university
                 ? universityAppScaffold(appFile, selected.baseTaskId)

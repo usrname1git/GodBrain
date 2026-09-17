@@ -35,6 +35,20 @@ test('university app scaffold satisfies static source-contract rails', () => {
   assert.match(capstone, /className=\{menu\?'open':''\}/);
 });
 
+test('app-mode learner prompt keeps the full capstone form', () => {
+  const capstone = universityAppScaffold('App.tsx', 'event-platform-showcase-v1');
+  const messages = learnerMessages(
+    { id: 'capstone', family: 'university', title: 'Capstone', brief: 'Keep the form.', fileMode: 'app', appFile: 'App.tsx' },
+    { files: { 'App.tsx': capstone, 'styles.css': '.hero{}' } },
+    '',
+    '',
+  );
+  assert.match(messages[1].content, /Event type/);
+  assert.match(messages[1].content, /Search features/);
+  assert.match(messages[1].content, /Book a demo/);
+  assert.doesNotMatch(messages[1].content, /\[clipped\]/);
+});
+
 test('verifier feedback strips playwright sludge and key-warning noise', () => {
   const timeout = 'locator.waitFor: Timeout 2200ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole(\'button\', { name: /^menu$/i }).first() to be visible\u001b[22m\n';
   assert.equal(
@@ -216,6 +230,21 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(spacing, /section padding is under 48px/);
   assert.doesNotMatch(spacing, /background tones/);
+  const demoForm = cannedTutorAdvice({
+    feedback: 'demo-form-validates-before-success: Missing getByRole(\'textbox\', { name: /^name$/i })',
+  });
+  assert.match(demoForm, /Wrapping <label>Name<input\/>/);
+  assert.doesNotMatch(demoForm, /htmlFor is required/);
+  const eventType = cannedTutorAdvice({
+    feedback: "demo-form-validates-before-success: Missing locator('form').getByRole('combobox', { name: /event type/i })",
+  });
+  assert.match(eventType, /native <select>/);
+  assert.doesNotMatch(eventType, /htmlFor is required/);
+  const searchBox = cannedTutorAdvice({
+    feedback: 'feature-search-filters-seeded-content: Missing getByRole(\'textbox\', { name: /search features/i })',
+  });
+  assert.match(searchBox, /accessible name includes Search/);
+  assert.doesNotMatch(searchBox, /htmlFor/);
   const truncated = cannedTutorAdvice({
     parseFailed: true,
     feedback: 'Response is not valid JSON: Unterminated string in JSON at position 6601',

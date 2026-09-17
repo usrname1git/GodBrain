@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildBundle, evaluateCandidate, EVALUATOR_VERSION, missingMobileNavCss, navSelectorMismatch, outputText, undefinedCssCustomProperties } from './browser.mjs';
 import { getTask, TASKS } from './curriculum.mjs';
+import { universityAppScaffold } from './gym-core.mjs';
 import { getReference, REFERENCES } from './references.mjs';
 
 const labRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -92,6 +93,53 @@ test('navSelectorMismatch names .nav hide against an unclassed nav element', () 
   assert.match(navSelectorMismatch(jsx, miss), /Hide the nav element/);
   assert.equal(navSelectorMismatch(jsx, hit), '');
   assert.equal(navSelectorMismatch('<nav className="nav open">x</nav>', miss), '');
+});
+
+test('demo form still finds Name when invalid errors render inside the wrapping label', async t => {
+  const files = getReference('event-platform-showcase-v1');
+  files['App.jsx'] = files['App.jsx']
+    .replace(
+      '<label>Name<input aria-invalid={Boolean(errors.name)} value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/></label>{errors.name&&<p className="error">{errors.name}</p>}',
+      '<label>Name<input aria-invalid={Boolean(errors.name)} value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/>{errors.name&&<span className="error">{errors.name}</span>}</label>',
+    )
+    .replace(
+      '<label>Work email<input aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/></label>{errors.email&&<p className="error">{errors.email}</p>}',
+      '<label>Work email<input aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/>{errors.email&&<span className="error">{errors.email}</span>}</label>',
+    );
+  const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 27);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('typed capstone scaffold passes browser checks on two seeds', async t => {
+  const files = {
+    'App.tsx': universityAppScaffold('App.tsx', 'event-platform-showcase-v1'),
+    'styles.css': getReference('event-platform-showcase-v1')['styles.css'],
+  };
+  for (const seed of [1, 2]) {
+    const result = await evaluateIn(t, 'event-platform-showcase-v1', files, seed);
+    assert.equal(result.passed, true, `seed ${seed}: ${JSON.stringify(result.errors)}`);
+  }
+});
+
+test('studio copy may rename Search features and Event type without failing the contract', async t => {
+  const files = getReference('event-platform-showcase-v1');
+  files['App.jsx'] = files['App.jsx']
+    .replace('>Search features<input', '>Search capabilities<input')
+    .replace('<label>Event type<select', '<label>Program type<select');
+  assert.match(files['App.jsx'], /Search capabilities/);
+  assert.match(files['App.jsx'], /Program type/);
+  const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 29);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('demo form submit accepts Book a demo with a seeded suffix inside form', async t => {
+  const files = getReference('event-platform-showcase-v1');
+  files['App.jsx'] = files['App.jsx'].replace(
+    '<button className="primary">Book a demo</button>',
+    '<button type="submit" className="primary">{primaryCta}</button>',
+  );
+  const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 26);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
 });
 
 test('task-list CSS without a nav element is not failed for missing mobile nav', async t => {

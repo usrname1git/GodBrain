@@ -121,22 +121,23 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
   let changed = false;
   const masteryById = new Map(masteryRows.map(row => [row.id, row]));
   for (const course of university.courses) {
-    const blueprint = course.iteration === 1
-      ? COMPETENCIES.find(item => item.id === course.competencyId)
-      : null;
-    if (blueprint && course.definitionVersion !== COURSE_DEFINITION_VERSION) {
-      course.title = blueprint.title;
+    const blueprint = COMPETENCIES.find(item => item.id === course.competencyId) ?? null;
+    const retargeting = Boolean(blueprint) && course.definitionVersion !== COURSE_DEFINITION_VERSION;
+    if (retargeting) {
       course.discipline = blueprint.discipline;
       course.level = blueprint.level;
       course.prerequisites = [...blueprint.prerequisites];
       course.docs = blueprint.docs;
-      course.focus = blueprint.focus;
       course.verifierSpec = validateBlueprint(blueprint, trustedTasks);
+      if (course.iteration === 1) {
+        course.title = blueprint.title;
+        course.focus = blueprint.focus;
+      }
       course.definitionVersion = COURSE_DEFINITION_VERSION;
       course.retargetedAt = new Date().toISOString();
       changed = true;
     }
-    if (course.status === 'active' && masteryById.get(course.id)?.mastery === 'mastered') {
+    if (!retargeting && course.status === 'active' && masteryById.get(course.id)?.mastery === 'mastered') {
       course.status = 'mastered';
       course.masteredAt = new Date().toISOString();
       changed = true;
