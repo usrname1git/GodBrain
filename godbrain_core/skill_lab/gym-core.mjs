@@ -662,6 +662,13 @@ export function cannedTutorAdvice(active = {}) {
       '2. If you use var(--tint), keep the :root block. Shorten duplicate media queries, not the palette.',
     ].join('\n');
   }
+  if (/error-boundary-replaces-crashed-child|error-boundary-reset-restores-panel/i.test(feedback)) {
+    return [
+      'CAUSE: After crash, panelTitle must disappear and fallbackTitle must show. Reset must clear the parent armed flag so the child does not throw again.',
+      '1. Do not render panelTitle in the fallback. Show fallbackTitle only.',
+      '2. Recovery button: reset boundary state and set armed/boom false in the parent (key={nonce} remount is fine).',
+    ].join('\n');
+  }
   if (/source-contract/i.test(feedback)) {
     const named = feedback.replace(/^[\s\S]*source-contract:\s*/i, '').split(/[\n\]]/)[0].trim();
     return [

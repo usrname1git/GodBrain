@@ -261,6 +261,11 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(searchBox, /Search or Filter/);
   assert.doesNotMatch(searchBox, /htmlFor/);
+  const boundary = cannedTutorAdvice({
+    feedback: 'error-boundary-replaces-crashed-child: The crashed panel title remained visible after the boundary caught the throw.',
+  });
+  assert.match(boundary, /Do not render panelTitle in the fallback/);
+  assert.doesNotMatch(boundary, /Add \{this.props.panelTitle\}/);
   const truncated = cannedTutorAdvice({
     parseFailed: true,
     feedback: 'Response is not valid JSON: Unterminated string in JSON at position 6601',
