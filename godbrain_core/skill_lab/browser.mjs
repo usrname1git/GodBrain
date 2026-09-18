@@ -281,6 +281,62 @@ function godCycleProps(taskId, seed, random, names) {
   return shared;
 }
 
+function visualGodProps(seed, random, names) {
+  const systems = [
+    {
+      name: 'Harbor editorial',
+      ink: '#1c2430',
+      paper: '#f3eee4',
+      accent: '#c45c26',
+      muted: '#5c564c',
+      displayFont: 'Georgia, "Palatino Linotype", serif',
+      bodyFont: 'Georgia, "Times New Roman", serif',
+      radius: '2px',
+      heroAlign: 'start',
+    },
+    {
+      name: 'Signal terminal',
+      ink: '#d7ffe1',
+      paper: '#0b1210',
+      accent: '#3dff9a',
+      muted: '#7aa388',
+      displayFont: 'Consolas, "Cascadia Mono", monospace',
+      bodyFont: 'Consolas, "Courier New", monospace',
+      radius: '0px',
+      heroAlign: 'start',
+    },
+  ];
+  const visualSystem = systems[Math.abs(seed) % systems.length];
+  const person = pick(random, names);
+  return {
+    brand: `${visualSystem.name.split(' ')[0]} ${seed}`,
+    product: `${person.split(' ')[0]} ${visualSystem.name} desk`,
+    tagline: `${visualSystem.name} canvas for seed ${seed}, not a generic template.`,
+    proof: `${person} keeps ${visualSystem.name.toLowerCase()} notes beside the work, never three identical marketing cards.`,
+    primaryCta: `Open the ${visualSystem.name} brief ${seed}`,
+    visualSystem,
+  };
+}
+
+function parseCssColor(value) {
+  const rgb = String(value ?? '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  const hex = String(value ?? '').match(/^#([0-9a-f]{6})$/i);
+  if (!hex) return null;
+  return [Number.parseInt(hex[1].slice(0, 2), 16), Number.parseInt(hex[1].slice(2, 4), 16), Number.parseInt(hex[1].slice(4, 6), 16)];
+}
+
+function colorsClose(actual, expected, tolerance = 22) {
+  const left = parseCssColor(actual);
+  const right = parseCssColor(expected);
+  if (!left || !right) return false;
+  return Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]) <= tolerance;
+}
+
+function firstFamily(stack) {
+  return String(stack ?? '').split(',')[0].replace(/["']/g, '').trim().toLowerCase();
+}
+
 export function taskProps(taskId, seed) {
   const random = seeded(seed);
   const names = ['Ada Rivers', 'Bryn Vale', 'Cora Finch', 'Dax Stone', 'Eli Moss', 'Faye Nova'];
@@ -361,6 +417,7 @@ export function taskProps(taskId, seed) {
   ].includes(taskId)) {
     return godCycleProps(taskId, seed, random, names);
   }
+  if (taskId === 'visual-god-v1') return visualGodProps(seed, random, names);
   if ([
     'marketing-site-architecture-v1',
     'responsive-site-navigation-v1',
@@ -886,6 +943,77 @@ async function checkLargeList(page, props, checks, errors, files = {}) {
   });
 }
 
+async function checkVisualGod(page, props, checks, errors) {
+  const system = props.visualSystem;
+  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
+    await visibleText(page, props.brand);
+    await visibleText(page, props.product);
+    await visibleText(page, props.tagline);
+    await visibleText(page, props.proof);
+    const cta = page.getByRole('link', { name: namePattern(props.primaryCta) }).or(page.getByRole('button', { name: namePattern(props.primaryCta) }));
+    await cta.first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    const computed = await page.evaluate(() => {
+      const stage = document.querySelector('[data-visual]') || document.body;
+      const heading = document.querySelector('h1');
+      const action = document.querySelector('.cta, [data-cta], a.primary, button.primary');
+      return {
+        paper: getComputedStyle(stage).backgroundColor,
+        ink: getComputedStyle(stage).color,
+        bodyFont: getComputedStyle(stage).fontFamily,
+        displayFont: heading ? getComputedStyle(heading).fontFamily : '',
+        headingAlign: heading ? getComputedStyle(heading).textAlign : '',
+        accent: action ? getComputedStyle(action).backgroundColor : '',
+      };
+    });
+    if (!colorsClose(computed.paper, system.paper)) {
+      throw new Error(`Stage/body paper ${computed.paper} does not match seeded ${system.paper}.`);
+    }
+    if (!colorsClose(computed.ink, system.ink)) {
+      throw new Error(`Stage/body ink ${computed.ink} does not match seeded ${system.ink}.`);
+    }
+    if (!colorsClose(computed.accent, system.accent)) {
+      throw new Error(`Primary CTA accent ${computed.accent} does not match seeded ${system.accent}.`);
+    }
+    const display = firstFamily(system.displayFont);
+    if (!computed.displayFont.toLowerCase().includes(display)) {
+      throw new Error(`h1 font ${computed.displayFont} does not use seeded displayFont ${system.displayFont}.`);
+    }
+    if (!computed.bodyFont.toLowerCase().includes(firstFamily(system.bodyFont))) {
+      throw new Error(`Body font ${computed.bodyFont} does not use seeded bodyFont ${system.bodyFont}.`);
+    }
+  });
+  await addCheck(checks, errors, 'visual-hero-is-not-centered-template', async () => {
+    const align = await page.locator('h1').evaluate(element => getComputedStyle(element).textAlign);
+    if (!/^(left|start)$/i.test(align)) {
+      throw new Error(`h1 text-align ${align} is a centered template; seeded heroAlign is ${system.heroAlign}.`);
+    }
+  });
+  await addCheck(checks, errors, 'visual-anti-generic-chrome', async () => {
+    const family = await page.locator('h1').evaluate(element => getComputedStyle(element).fontFamily);
+    if (/segoe ui|system-ui|inter|roboto|arial/i.test(family) && !/georgia|palatino|consolas|cascadia|cambria|candara/i.test(family)) {
+      throw new Error(`h1 uses generic UI chrome (${family}) instead of the seeded display stack.`);
+    }
+    const accent = await page.evaluate(() => {
+      const action = document.querySelector('.cta, [data-cta], a.primary, button.primary');
+      return action ? getComputedStyle(action).backgroundColor : '';
+    });
+    const banned = ['#2447c6', '#6366f1', '#7c3aed', '#667eea', '#3b82f6'];
+    if (banned.some(hex => colorsClose(accent, hex, 12)) && !colorsClose(accent, system.accent, 12)) {
+      throw new Error('Primary CTA uses a stock Tailwind/gym purple-blue instead of the seeded accent.');
+    }
+  });
+  await addCheck(checks, errors, 'visual-anti-generic-three-up', async () => {
+    const widths = await page.evaluate(() => [...document.querySelectorAll('main article, main .card')].map(element => {
+      const rect = element.getBoundingClientRect();
+      return Math.round(rect.width);
+    }).filter(width => width > 80));
+    if (widths.length === 3) {
+      const delta = Math.max(...widths) - Math.min(...widths);
+      if (delta <= 12) throw new Error('A three-equal-card row is the Squarespace default; use an authored split layout.');
+    }
+  });
+}
+
 async function actionByName(page, name) {
   const pattern = namePattern(name);
   const button = page.getByRole('button', { name: pattern });
@@ -1141,6 +1269,7 @@ async function runTaskChecks(taskId, page, props, checks, errors, task, files = 
     await checkLargeList(page, props, checks, errors, files);
     return checkErrorBoundary(page, props, checks, errors);
   }
+  if (taskId === 'visual-god-v1') return checkVisualGod(page, props, checks, errors);
   throw new Error(`No browser assertions for task ${taskId}.`);
 }
 

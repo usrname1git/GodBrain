@@ -377,6 +377,60 @@ export default function App({workspace, routes, records, errorMessage, emptyLabe
 }`,
     'styles.css': baseCss,
   },
+  'visual-god-v1': {
+    'App.jsx': `import './styles.css';
+export default function App({brand, product, tagline, proof, primaryCta, visualSystem}) {
+  const theme = {
+    '--ink': visualSystem.ink,
+    '--paper': visualSystem.paper,
+    '--accent': visualSystem.accent,
+    '--muted': visualSystem.muted,
+    '--display': visualSystem.displayFont,
+    '--body': visualSystem.bodyFont,
+    '--radius': visualSystem.radius,
+  };
+  return <div data-visual="stage" style={theme}>
+    <header><a href="#top">{brand}</a></header>
+    <main id="top">
+      <section className="hero">
+        <p className="eyebrow">{visualSystem.name}</p>
+        <h1>{product}</h1>
+        <p className="lede">{tagline}</p>
+        <a className="cta" href="#note">{primaryCta}</a>
+      </section>
+      <section className="split" id="note">
+        <article>
+          <h2>Field notes</h2>
+          <p>{proof}</p>
+        </article>
+        <aside>
+          <h2>Canvas</h2>
+          <p>{visualSystem.name}</p>
+        </aside>
+      </section>
+    </main>
+    <footer>{brand}</footer>
+  </div>;
+}`,
+    'styles.css': `
+:root { --ink: #111111; --paper: #ffffff; --accent: #888888; --muted: #666666; --display: Georgia, serif; --body: Georgia, serif; --radius: 0px; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[data-visual] { min-height: 100vh; background: var(--paper); color: var(--ink); font-family: var(--body); }
+header, footer { padding: 20px 7vw; }
+header a { color: inherit; font-weight: 800; text-decoration: none; }
+main { padding: 0; }
+.hero { padding: 72px 7vw 56px; text-align: start; max-width: 52rem; }
+.eyebrow { margin: 0 0 12px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; font-size: 12px; font-weight: 800; }
+h1 { margin: 0 0 16px; font-family: var(--display); font-size: 56px; line-height: 1.05; text-align: start; letter-spacing: -.03em; }
+.lede { margin: 0 0 28px; font-size: 20px; color: var(--muted); max-width: 40rem; }
+.cta { display: inline-block; background: var(--accent); color: var(--paper); text-decoration: none; font-weight: 800; padding: 12px 18px; border-radius: var(--radius); }
+.split { display: grid; grid-template-columns: 1.6fr .8fr; gap: 28px; padding: 48px 7vw 80px; }
+article, aside { padding: 24px; border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: var(--radius); }
+h2 { margin: 0 0 12px; font-family: var(--display); font-size: 22px; }
+@media (max-width: 700px) { h1 { font-size: 40px; } .split { grid-template-columns: 1fr; padding: 32px 20px 56px; } .hero { padding: 48px 20px; } }
+`,
+  },
 });
 
 export function getReference(taskId) {

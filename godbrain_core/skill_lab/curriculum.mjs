@@ -154,6 +154,17 @@ export const TASKS = Object.freeze([
     ],
     brief: `Inputs combine the God-cycle contracts: workspace, routes[{id,label,title,body}] (Inbox, Catalog, Lab), records, errorMessage, emptyLabel, items[{id,name,group}], panelTitle, crashLabel, fallbackTitle, recoveryLabel. Build one client-routed workbench that still passes client routing (hash links, Not found, back), Resource status loading/error/empty/ready on Inbox, Search items over the large keyed catalog list, and the Lab error boundary crash/recovery. Default hash is the Inbox route. Do not call the network. Do not hardcode seeded labels. This is the God exam: all four systems in one app, not a marketing site reskin.`,
   },
+  {
+    id: 'visual-god-v1',
+    family: 'visual-systems',
+    title: 'Author a distinctive visual system from a seeded canvas',
+    qualityProfile: 'visual-god-v1',
+    docs: [
+      { title: 'CSS custom properties', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties' },
+      { title: 'font-family', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/font-family' },
+    ],
+    brief: `Inputs: <App {...props}> receives {brand, product, tagline, proof, primaryCta, visualSystem:{name,ink,paper,accent,muted,displayFont,bodyFont,radius,heroAlign}}. The visualSystem is the painted canvas — do not invent Inter, system-ui, Tailwind purple, or a centered 80vh hero. Apply ink/paper/accent/muted as CSS custom properties (or equivalent inline theme) so computed styles on body/stage, a primary CTA, and the h1 match those hex values. h1 must use displayFont (Georgia or Consolas stacks on this host; no network fonts) and text-align start/left. Body copy uses bodyFont. Do not ship a three-equal-card feature row as the only composition. Do not load Google Fonts. Practice and transfer seed different palettes and type; hardcoding one look fails transfer. This is the visual God exam: taste against a seeded duk, not a Squarespace template.`,
+  },
 ]);
 
 export function getTask(id) {

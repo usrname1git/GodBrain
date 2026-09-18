@@ -34,7 +34,7 @@ async function evidence(result) {
 }
 
 test('curriculum has compact product and marketing-site tasks with strict lookup', () => {
-  assert.equal(TASKS.length, 15);
+  assert.equal(TASKS.length, 16);
   for (const task of TASKS) {
     assert.equal(getTask(task.id), task);
     assert.ok(task.id && task.family && task.title);
@@ -63,6 +63,26 @@ test('all reference implementations pass real browser checks on two meaningful s
     }
     assert.equal(digests.size, 2, `${task.id} seeds should produce different inputs`);
   }
+});
+
+test('visual-god reference implements the seeded canvas and rejects a generic template', async t => {
+  for (const seed of [1, 2]) {
+    const result = await evaluateIn(t, 'visual-god-v1', getReference('visual-god-v1'), seed);
+    assert.equal(result.passed, true, `seed ${seed}: ${JSON.stringify(result.errors)}`);
+  }
+  const generic = {
+    'App.jsx': `export default function App() {
+  return <main style={{ fontFamily: 'Segoe UI, system-ui, sans-serif', background: '#fff', color: '#111' }}>
+    <h1 style={{ textAlign: 'center', fontSize: 48 }}>Launch your workspace</h1>
+    <a className="cta" href="#x" style={{ background: '#6366f1', color: '#fff' }}>Get started</a>
+    <section>{[1, 2, 3].map(index => <article className="card" key={index} style={{ width: 280, display: 'inline-block' }}>Card {index}</article>)}</section>
+  </main>;
+}`,
+    'styles.css': 'body{margin:0}',
+  };
+  const failed = await evaluateIn(t, 'visual-god-v1', generic, 1);
+  assert.equal(failed.passed, false);
+  assert.ok((failed.errors || []).some(item => /visual-system-tokens-applied|visual-hero|visual-anti-generic/i.test(item)), JSON.stringify(failed.errors));
 });
 
 test('god-cycle reference implementations pass two seeds', async t => {

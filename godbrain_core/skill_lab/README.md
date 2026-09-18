@@ -6,8 +6,10 @@ is the product-site path (capstone once). Cycle 2 is application craft
 (settings, lists, catalog, registration, keyboard dialogs). Cycle 3 is the
 **God exam**: client routing, loading/error/empty/ready data, error-boundary
 recovery, a large keyed list, then one workbench that must pass all four.
-Marketing-site reskins do not pass God. A C/C++ Carmack track is a later gym
-with its own verifiers. GPT and Grok staffed the path; Qwen
+Cycle 4 is the **visual God exam**: a seeded visualSystem (the painted canvas)
+must show up in computed styles; Inter/system-ui/Tailwind purple and a
+three-equal-card row fail. Marketing-site reskins do not pass God. A C/C++
+Carmack track is a later gym with its own verifiers. GPT and Grok staffed the path; Qwen
 (`qwen3.8-27b-exl3-3.5bpw` on `:8888`) is the learner. A failed attempt is
 normal coursework, not an approval prompt.
 **The operator does not review web code or `/verify` individual attempts.**

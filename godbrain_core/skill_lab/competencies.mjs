@@ -377,6 +377,24 @@ export const COMPETENCIES = Object.freeze([
     stage: 5,
     focus: 'One app: hash routes, data states, keyed catalog, crash recovery. Marketing showcases do not pass this exam.',
   },
+  {
+    id: 'visual-god',
+    discipline: 'Visual systems',
+    level: 8,
+    title: 'Author a distinctive visual system from a seeded canvas',
+    prerequisites: ['react-god-workbench'],
+    contractTaskId: 'visual-god-v1',
+    fileMode: 'app',
+    appFile: 'App.jsx',
+    sourceRules: [],
+    docs: [
+      { title: 'CSS custom properties', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties' },
+      { title: 'font-family', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/font-family' },
+    ],
+    cycle: 4,
+    stage: 1,
+    focus: 'The seeded visualSystem is the painted canvas. Inter, system-ui, Tailwind purple and a three-up card row fail. You judge finished frames; the examiner enforces the duk.',
+  },
 ]);
 
 export const PROGRAM = Object.freeze({

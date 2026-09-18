@@ -560,6 +560,10 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
   'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search or Filter and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'visual-system-tokens-applied': 'Apply props.visualSystem ink, paper, accent and displayFont to computed styles. Do not hardcode one palette.',
+  'visual-hero-is-not-centered-template': 'h1 must be text-align start/left. A centered 80vh hero is a generic template.',
+  'visual-anti-generic-chrome': 'Do not use Segoe UI / system-ui / Inter as the display face, or Tailwind purple as the CTA, when the seed gave Georgia or Consolas and a named accent.',
+  'visual-anti-generic-three-up': 'Do not use three equal-width cards as the only composition.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
