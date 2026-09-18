@@ -157,12 +157,10 @@ function Start-Qwen {
     }
     $launcher = Start-Process -FilePath $pwsh `
         -ArgumentList @(
-            "-NoLogo", "-NoProfile", "-NonInteractive", "-File", $qwenStart
+            "-NoLogo", "-NoProfile", "-File", $qwenStart
         ) `
         -WorkingDirectory (Split-Path (Split-Path $qwenStart -Parent) -Parent) `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $qwenOut `
-        -RedirectStandardError $qwenErr `
+        -WindowStyle Normal `
         -PassThru
     $deadline = (Get-Date).AddMinutes(4)
     $process = $null
