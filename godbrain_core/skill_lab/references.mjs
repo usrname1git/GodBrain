@@ -215,6 +215,168 @@ export default function App({tabs, dialogTitle, dialogBody, actionLabel}) {
   'feature-lifecycle-explorer-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
   'pricing-demo-conversion-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
   'event-platform-showcase-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
+  'client-routing-v1': {
+    'App.jsx': `import {useEffect,useState} from 'react';
+import './styles.css';
+export default function App({workspace, routes}) {
+  const read = () => (location.hash.replace(/^#\\/?/, '') || routes[0].id);
+  const [id, setId] = useState(read);
+  useEffect(() => {
+    const onHash = () => setId(read());
+    if (!location.hash) location.hash = '#/' + routes[0].id;
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [routes]);
+  const route = routes.find(item => item.id === id);
+  return <main>
+    <h1>{workspace}</h1>
+    <nav aria-label="Workbench">{routes.map(item => <a key={item.id} href={'#/' + item.id}>{item.label}</a>)}</nav>
+    {route ? <section><h2>{route.title}</h2><p>{route.body}</p></section> : <p role="status">Not found</p>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'async-data-states-v1': {
+    'App.jsx': `import {useState} from 'react';
+import './styles.css';
+export default function App({records, errorMessage, emptyLabel}) {
+  const [status, setStatus] = useState('ready');
+  return <main>
+    <h1>Records</h1>
+    <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+      <option value="loading">Loading</option>
+      <option value="error">Error</option>
+      <option value="empty">Empty</option>
+      <option value="ready">Ready</option>
+    </select></label>
+    {status === 'loading' && <p role="status">Loading</p>}
+    {status === 'error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('ready')}>Retry</button></>}
+    {status === 'empty' && <p>{emptyLabel}</p>}
+    {status === 'ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'error-boundary-recovery-v1': {
+    'App.jsx': `import {Component,useState} from 'react';
+import './styles.css';
+class Boundary extends Component {
+  constructor(props) { super(props); this.state = {failed: false}; }
+  static getDerivedStateFromError() { return {failed: true}; }
+  render() {
+    if (this.state.failed) {
+      return <>
+        <h2>{this.props.fallbackTitle}</h2>
+        <button onClick={() => { this.setState({failed: false}); this.props.onReset(); }}>{this.props.recoveryLabel}</button>
+      </>;
+    }
+    return this.props.children;
+  }
+}
+function Panel({armed, panelTitle}) {
+  if (armed) throw new Error('god-crash');
+  return <p>{panelTitle}</p>;
+}
+export default function App({panelTitle, crashLabel, fallbackTitle, recoveryLabel}) {
+  const [armed, setArmed] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  return <main>
+    <h1>Lab</h1>
+    <Boundary key={nonce} fallbackTitle={fallbackTitle} recoveryLabel={recoveryLabel} onReset={() => { setArmed(false); setNonce(value => value + 1); }}>
+      <Panel armed={armed} panelTitle={panelTitle} />
+    </Boundary>
+    <button onClick={() => setArmed(true)}>{crashLabel}</button>
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'large-list-performance-v1': {
+    'App.jsx': `import {useMemo,useState} from 'react';
+import './styles.css';
+export default function App({items}) {
+  const [query, setQuery] = useState('');
+  const shown = useMemo(() => items.filter(item => item.name.toLowerCase().includes(query.toLowerCase())), [items, query]);
+  return <main>
+    <h1>Index</h1>
+    <label>Search items<input value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <p>{shown.length} matches</p>
+    <ul aria-label="Items">{shown.map(item => <li key={item.id}>{item.name}<span>{item.group}</span></li>)}</ul>
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'react-god-workbench-v1': {
+    'App.jsx': `import {Component,useEffect,useMemo,useState} from 'react';
+import './styles.css';
+class Boundary extends Component {
+  constructor(props) { super(props); this.state = {failed: false}; }
+  static getDerivedStateFromError() { return {failed: true}; }
+  render() {
+    if (this.state.failed) {
+      return <>
+        <h2>{this.props.fallbackTitle}</h2>
+        <button onClick={() => { this.setState({failed: false}); this.props.onReset(); }}>{this.props.recoveryLabel}</button>
+      </>;
+    }
+    return this.props.children;
+  }
+}
+function Panel({armed, panelTitle}) {
+  if (armed) throw new Error('god-crash');
+  return <p>{panelTitle}</p>;
+}
+export default function App({workspace, routes, records, errorMessage, emptyLabel, items, panelTitle, crashLabel, fallbackTitle, recoveryLabel}) {
+  const read = () => (location.hash.replace(/^#\\/?/, '') || routes[0].id);
+  const [id, setId] = useState(read);
+  const [status, setStatus] = useState('ready');
+  const [query, setQuery] = useState('');
+  const [armed, setArmed] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    const onHash = () => setId(read());
+    if (!location.hash) location.hash = '#/' + routes[0].id;
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [routes]);
+  const shown = useMemo(() => items.filter(item => item.name.toLowerCase().includes(query.toLowerCase())), [items, query]);
+  const route = routes.find(item => item.id === id);
+  const inbox = routes[0];
+  const catalog = routes[1];
+  const lab = routes[2];
+  return <main>
+    <h1>{workspace}</h1>
+    <nav aria-label="Workbench">{routes.map(item => <a key={item.id} href={'#/' + item.id}>{item.label}</a>)}</nav>
+    {!route && <p role="status">Not found</p>}
+    {route && id === inbox.id && <>
+      <h2>{inbox.title}</h2><p>{inbox.body}</p>
+      <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+        <option value="loading">Loading</option>
+        <option value="error">Error</option>
+        <option value="empty">Empty</option>
+        <option value="ready">Ready</option>
+      </select></label>
+      {status === 'loading' && <p role="status">Loading</p>}
+      {status === 'error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('ready')}>Retry</button></>}
+      {status === 'empty' && <p>{emptyLabel}</p>}
+      {status === 'ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+    </>}
+    {route && id === catalog.id && <>
+      <h2>{catalog.title}</h2><p>{catalog.body}</p>
+      <label>Search items<input value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <p>{shown.length} matches</p>
+      <ul aria-label="Items">{shown.map(item => <li key={item.id}>{item.name}<span>{item.group}</span></li>)}</ul>
+    </>}
+    {route && id === lab.id && <>
+      <h2>{lab.title}</h2><p>{lab.body}</p>
+      <Boundary key={nonce} fallbackTitle={fallbackTitle} recoveryLabel={recoveryLabel} onReset={() => { setArmed(false); setNonce(value => value + 1); }}>
+        <Panel armed={armed} panelTitle={panelTitle} />
+      </Boundary>
+      <button onClick={() => setArmed(true)}>{crashLabel}</button>
+    </>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
 });
 
 export function getReference(taskId) {

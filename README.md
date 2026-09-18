@@ -52,7 +52,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
-| [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder (prereqs then next exam) + browser examiner + Creation Gallery | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; Cycle 2 is app craft, not capstone reskins; C++ Carmack is a later GO |
+| [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder + God exam (routing, data states, error boundary, large list) | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; C++ Carmack is a later GO |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
 | [Go router](godbrain_core/go_router/README.md) / [Rust router](godbrain_core/rust_router/) | experimental, parked | `:8082`; not Heal; not this quarter |
 | [polymarket_paper](godbrain_core/polymarket_paper/README.md), [polygon_*](godbrain_core/polygon_observer/README.md) | paper / read-only | no live orders, no wallet |

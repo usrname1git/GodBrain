@@ -34,7 +34,7 @@ async function evidence(result) {
 }
 
 test('curriculum has compact product and marketing-site tasks with strict lookup', () => {
-  assert.equal(TASKS.length, 10);
+  assert.equal(TASKS.length, 15);
   for (const task of TASKS) {
     assert.equal(getTask(task.id), task);
     assert.ok(task.id && task.family && task.title);
@@ -62,6 +62,22 @@ test('all reference implementations pass real browser checks on two meaningful s
       digests.add(record.propsDigest);
     }
     assert.equal(digests.size, 2, `${task.id} seeds should produce different inputs`);
+  }
+});
+
+test('god-cycle reference implementations pass two seeds', async t => {
+  const ids = [
+    'client-routing-v1',
+    'async-data-states-v1',
+    'error-boundary-recovery-v1',
+    'large-list-performance-v1',
+    'react-god-workbench-v1',
+  ];
+  for (const taskId of ids) {
+    for (const seed of [1, 2]) {
+      const result = await evaluateIn(t, taskId, getReference(taskId), seed);
+      assert.equal(result.passed, true, `${taskId} seed ${seed}: ${JSON.stringify(result.errors)}`);
+    }
   }
 });
 

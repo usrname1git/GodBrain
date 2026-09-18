@@ -234,6 +234,53 @@ function pick(random, values) {
   return values[Math.floor(random() * values.length) % values.length];
 }
 
+function godCycleProps(taskId, seed, random, names) {
+  const routes = [
+    { id: `inbox-${seed}`, label: `Inbox ${seed}`, title: `Inbox title ${seed}`, body: `${pick(random, names)} queued item ${seed}.` },
+    { id: `catalog-${seed}`, label: `Catalog ${seed}`, title: `Catalog title ${seed}`, body: `Browse the seeded index for ${seed}.` },
+    { id: `lab-${seed}`, label: `Lab ${seed}`, title: `Lab title ${seed}`, body: `Crash recovery lab ${seed}.` },
+  ];
+  const records = Array.from({ length: 3 }, (_, index) => ({
+    id: `rec-${seed}-${index}`,
+    title: `${pick(random, names)} record ${seed}-${index}`,
+    detail: `Detail ${seed} row ${index + 1}.`,
+  }));
+  const adjectives = ['Copper', 'Velvet', 'Quartz', 'Nimbus', 'Olive', 'Solar', 'Harbor', 'Juniper'];
+  const nouns = ['Lamp', 'Desk', 'Mug', 'Chair', 'Planter', 'Backpack', 'Speaker', 'Notebook'];
+  const groups = ['Alpha', 'Bravo', 'Charlie'];
+  const items = Array.from({ length: 96 }, (_, index) => ({
+    id: `item-${seed}-${index}`,
+    name: `${adjectives[index % adjectives.length]} ${nouns[index % nouns.length]} ${seed}-${index}`,
+    group: groups[index % groups.length],
+  }));
+  const shared = {
+    workspace: `Workbench ${seed}`,
+    routes,
+    records,
+    errorMessage: `Load failed ${seed}`,
+    emptyLabel: `No records ${seed}`,
+    items,
+    panelTitle: `Live panel ${seed}`,
+    crashLabel: `Crash panel ${seed}`,
+    fallbackTitle: `Recovered fallback ${seed}`,
+    recoveryLabel: `Reset lab ${seed}`,
+  };
+  if (taskId === 'client-routing-v1') return { workspace: shared.workspace, routes };
+  if (taskId === 'async-data-states-v1') {
+    return { records, errorMessage: shared.errorMessage, emptyLabel: shared.emptyLabel };
+  }
+  if (taskId === 'error-boundary-recovery-v1') {
+    return {
+      panelTitle: shared.panelTitle,
+      crashLabel: shared.crashLabel,
+      fallbackTitle: shared.fallbackTitle,
+      recoveryLabel: shared.recoveryLabel,
+    };
+  }
+  if (taskId === 'large-list-performance-v1') return { items };
+  return shared;
+}
+
 export function taskProps(taskId, seed) {
   const random = seeded(seed);
   const names = ['Ada Rivers', 'Bryn Vale', 'Cora Finch', 'Dax Stone', 'Eli Moss', 'Faye Nova'];
@@ -304,6 +351,15 @@ export function taskProps(taskId, seed) {
       dialogBody: `Seed ${seed} dialog body ${pick(random, ['alpha', 'bravo', 'charlie', 'delta'])}.`,
       actionLabel: `Open details ${seed}`,
     };
+  }
+  if ([
+    'client-routing-v1',
+    'async-data-states-v1',
+    'error-boundary-recovery-v1',
+    'large-list-performance-v1',
+    'react-god-workbench-v1',
+  ].includes(taskId)) {
+    return godCycleProps(taskId, seed, random, names);
   }
   if ([
     'marketing-site-architecture-v1',
@@ -719,6 +775,117 @@ async function checkTabsDialog(page, props, checks, errors) {
   });
 }
 
+async function openLabeledRoute(page, label) {
+  if (!label) return;
+  const link = page.getByRole('link', { name: namePattern(label) });
+  if (await link.count()) await link.first().click();
+}
+
+async function checkClientRouting(page, props, checks, errors) {
+  await addCheck(checks, errors, 'client-routes-update-hash-and-content', async () => {
+    await visibleText(page, props.workspace);
+    const second = props.routes[1];
+    await page.getByRole('link', { name: namePattern(second.label) }).first().click();
+    await visibleText(page, second.title);
+    await visibleText(page, second.body);
+    const hash = await page.evaluate(() => location.hash);
+    if (!hash.includes(second.id)) throw new Error(`location.hash ${hash} did not contain route id ${second.id}.`);
+  });
+  await addCheck(checks, errors, 'unknown-hash-shows-not-found', async () => {
+    await page.evaluate(id => { location.hash = '#/' + id; }, `missing-${props.workspace}`);
+    await visibleText(page, 'Not found');
+    const stray = page.getByText(props.routes[1].body, { exact: false });
+    if (await stray.count() && await stray.first().isVisible()) {
+      throw new Error('Unknown hash still showed a real route body.');
+    }
+  });
+  await addCheck(checks, errors, 'browser-back-restores-previous-route', async () => {
+    const first = props.routes[0];
+    const second = props.routes[1];
+    await page.getByRole('link', { name: namePattern(first.label) }).first().click();
+    await visibleText(page, first.title);
+    await page.getByRole('link', { name: namePattern(second.label) }).first().click();
+    await visibleText(page, second.title);
+    await page.goBack({ timeout: ACTION_TIMEOUT_MS });
+    await visibleText(page, first.title);
+  });
+}
+
+async function checkAsyncData(page, props, checks, errors) {
+  await addCheck(checks, errors, 'resource-status-loading-hides-records', async () => {
+    await openLabeledRoute(page, props.routes?.[0]?.label);
+    const status = page.getByRole('combobox', { name: /resource status/i });
+    await status.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    await status.selectOption('loading');
+    await page.getByRole('status').filter({ hasText: /^Loading$/ }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    const title = page.getByText(props.records[0].title, { exact: false });
+    if (await title.count() && await title.first().isVisible()) {
+      throw new Error('Loading state still listed a seeded record title.');
+    }
+  });
+  await addCheck(checks, errors, 'resource-status-error-retry-and-empty', async () => {
+    const status = page.getByRole('combobox', { name: /resource status/i });
+    await status.selectOption('error');
+    await page.getByRole('alert').filter({ hasText: props.errorMessage }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    await (await buttonByName(page, 'Retry')).click();
+    await visibleText(page, props.records[0].title);
+    await status.selectOption('empty');
+    await visibleText(page, props.emptyLabel);
+    const title = page.getByText(props.records[1].title, { exact: false });
+    if (await title.count() && await title.first().isVisible()) {
+      throw new Error('Empty state still listed a seeded record title.');
+    }
+  });
+  await addCheck(checks, errors, 'resource-status-ready-lists-seeded-records', async () => {
+    await page.getByRole('combobox', { name: /resource status/i }).selectOption('ready');
+    for (const record of props.records) {
+      await visibleText(page, record.title);
+      await visibleText(page, record.detail);
+    }
+  });
+}
+
+async function checkErrorBoundary(page, props, checks, errors) {
+  await addCheck(checks, errors, 'error-boundary-replaces-crashed-child', async () => {
+    await openLabeledRoute(page, props.routes?.[2]?.label);
+    await visibleText(page, props.panelTitle);
+    await (await buttonByName(page, props.crashLabel)).click();
+    await visibleText(page, props.fallbackTitle);
+    const live = page.getByText(props.panelTitle, { exact: false });
+    if (await live.count() && await live.first().isVisible()) {
+      throw new Error('The crashed panel title remained visible after the boundary caught the throw.');
+    }
+  });
+  await addCheck(checks, errors, 'error-boundary-reset-restores-panel', async () => {
+    await (await buttonByName(page, props.recoveryLabel)).click();
+    await visibleText(page, props.panelTitle);
+  });
+}
+
+async function checkLargeList(page, props, checks, errors, files = {}) {
+  await addCheck(checks, errors, 'large-list-renders-seeded-rows-with-keys', async () => {
+    await openLabeledRoute(page, props.routes?.[1]?.label);
+    const source = `${files['App.jsx'] ?? ''}\n${files['App.tsx'] ?? ''}`;
+    if (!/key\s*=\s*\{/.test(source)) throw new Error('The large list source must map with a stable key={...}.');
+    await visibleText(page, props.items[0].name);
+    await visibleText(page, props.items.at(-1).name);
+  });
+  await addCheck(checks, errors, 'large-list-filters-a-unique-row-quickly', async () => {
+    const target = props.items[70];
+    const unrelated = props.items[3];
+    const search = page.getByRole('textbox', { name: /search items/i });
+    const started = Date.now();
+    await search.fill(target.name);
+    await visibleText(page, target.name);
+    const elapsed = Date.now() - started;
+    if (elapsed > 1500) throw new Error(`Filtering ${props.items.length} rows took ${elapsed}ms.`);
+    const leftover = page.getByText(unrelated.name, { exact: true });
+    if (await leftover.count() && await leftover.first().isVisible()) {
+      throw new Error('Search left an unrelated seeded row visible.');
+    }
+  });
+}
+
 async function actionByName(page, name) {
   const pattern = namePattern(name);
   const button = page.getByRole('button', { name: pattern });
@@ -964,23 +1131,39 @@ async function runTaskChecks(taskId, page, props, checks, errors, task, files = 
     await checkLifecycleExplorer(page, props, checks, errors);
     return checkPricingDemo(page, props, checks, errors);
   }
+  if (taskId === 'client-routing-v1') return checkClientRouting(page, props, checks, errors);
+  if (taskId === 'async-data-states-v1') return checkAsyncData(page, props, checks, errors);
+  if (taskId === 'error-boundary-recovery-v1') return checkErrorBoundary(page, props, checks, errors);
+  if (taskId === 'large-list-performance-v1') return checkLargeList(page, props, checks, errors, files);
+  if (taskId === 'react-god-workbench-v1') {
+    await checkClientRouting(page, props, checks, errors);
+    await checkAsyncData(page, props, checks, errors);
+    await checkLargeList(page, props, checks, errors, files);
+    return checkErrorBoundary(page, props, checks, errors);
+  }
   throw new Error(`No browser assertions for task ${taskId}.`);
 }
 
-async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors) {
+function expectedBoundaryLog(text) {
+  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary/i.test(String(text ?? ''));
+}
+
+async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs = false } = {}) {
+  const runtime = ignoreBoundaryLogs ? pageErrors.filter(item => !expectedBoundaryLog(item)) : pageErrors;
+  const consoles = ignoreBoundaryLogs ? consoleErrors.filter(item => !expectedBoundaryLog(item)) : consoleErrors;
   await addCheck(checks, errors, 'app-rendered-visible-content', async () => {
     await page.locator('#root').waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const text = (await page.locator('#root').innerText({ timeout: ACTION_TIMEOUT_MS })).trim();
     if (text.length < 3) throw new Error('The React root rendered no meaningful visible content.');
   });
   await addCheck(checks, errors, 'no-runtime-errors', async () => {
-    if (pageErrors.length) throw new Error(pageErrors.map(item => clip(item, 160)).join(' | '));
+    if (runtime.length) throw new Error(runtime.map(item => clip(item, 160)).join(' | '));
   });
   await addCheck(checks, errors, 'no-blocked-network-or-popups', async () => {
     if (blockedRequests.length) throw new Error(JSON.stringify(blockedRequests.slice(0, 4)));
   });
   await addCheck(checks, errors, 'no-console-errors', async () => {
-    if (consoleErrors.length) throw new Error(consoleErrors.slice(0, 4).join(' | '));
+    if (consoles.length) throw new Error(consoles.slice(0, 4).join(' | '));
   });
 }
 
@@ -1040,7 +1223,8 @@ export async function evaluateCandidate({
     validateGeneratedSource(task, files) ??
     (navSelectorMismatch(files?.[appFile] ?? '', files?.['styles.css'] ?? '') || null) ??
     (undefinedCssCustomProperties(files?.['styles.css'] ?? '') || null) ??
-    (/<nav[\s>]/i.test(files?.[appFile] ?? '')
+    (['marketing-site-architecture-v1', 'responsive-site-navigation-v1', 'feature-lifecycle-explorer-v1', 'pricing-demo-conversion-v1', 'event-platform-showcase-v1'].includes(contractTaskId) &&
+      /<nav[\s>]/i.test(files?.[appFile] ?? '')
       ? (missingMobileNavCss(files?.['styles.css'] ?? '') || null)
       : null);
   if (inputError) {
@@ -1172,7 +1356,8 @@ export async function evaluateCandidate({
         extra: { propsDigest, blockedRequests: blockedRequests.slice(0, 8), pageErrors: pageErrors.slice(0, 8) },
       });
     }
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors);
+    const ignoreBoundaryLogs = ['error-boundary-recovery-v1', 'react-god-workbench-v1'].includes(contractTaskId);
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
     const hostNoise = [...consoleErrors, ...pageErrors, ...errors].join('\n');
     if (isHostNetworkFailure(hostNoise)) {
       throw new Error(clip(hostNoise, 400));
@@ -1180,7 +1365,7 @@ export async function evaluateCandidate({
     if (task.objectiveMode !== 'explore') {
       await runTaskChecks(contractTaskId, page, props, checks, errors, task, files);
     }
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors);
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
     await captureArtifacts(page, artifactDir, checks, errors, artifacts, files);
     const visualFingerprint = task.qualityProfile ? await designFingerprint(page) : null;
     if (expired) {

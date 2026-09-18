@@ -3,9 +3,11 @@
 This is not your home basement gym with some random drills. It is a **mastery
 ladder**: prerequisites unlock the next exam, not a Swedish calendar. Cycle 1
 is the product-site path (capstone once). Cycle 2 is application craft
-(settings, lists, catalog, registration, keyboard dialogs) — new contracts, not
-Eventbrite reskins. A React-God exam and a C/C++ Carmack track need new
-verifiers before they exist. GPT and Grok staffed the path; Qwen
+(settings, lists, catalog, registration, keyboard dialogs). Cycle 3 is the
+**God exam**: client routing, loading/error/empty/ready data, error-boundary
+recovery, a large keyed list, then one workbench that must pass all four.
+Marketing-site reskins do not pass God. A C/C++ Carmack track is a later gym
+with its own verifiers. GPT and Grok staffed the path; Qwen
 (`qwen3.8-27b-exl3-3.5bpw` on `:8888`) is the learner. A failed attempt is
 normal coursework, not an approval prompt.
 **The operator does not review web code or `/verify` individual attempts.**
