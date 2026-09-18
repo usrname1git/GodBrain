@@ -197,9 +197,7 @@ function Start-Dashboard {
             "-Command", "dashboard"
         ) `
         -WorkingDirectory $RepoRoot `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $dashOut `
-        -RedirectStandardError $dashErr | Out-Null
+        -WindowStyle Normal | Out-Null
     Write-WatchEvent "dashboard_start" "Started Creation Lab dashboard on :4177."
 }
 
@@ -226,9 +224,7 @@ function Start-Gym {
             "-MaxAttempts", "4"
         ) `
         -WorkingDirectory $RepoRoot `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $gymOut `
-        -RedirectStandardError $gymErr | Out-Null
+        -WindowStyle Normal | Out-Null
     Write-WatchEvent "gym_start" "Started the persistent frontend gym worker."
 }
 
