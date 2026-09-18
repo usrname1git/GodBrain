@@ -203,10 +203,11 @@ Passing exercises become local gym lessons without /verify; they grant no host a
   }
   const { TASKS } = await import('./curriculum.mjs');
   if (command === 'dashboard') {
+    process.stdin.resume();
     const dashboard = await startDashboard({
       workDir, trustedTasks: TASKS, port: Number(values['dashboard-port']),
     });
-    console.log(`Dashboard: ${dashboard.origin}`);
+    console.log(`Dashboard: ${dashboard.origin} pid=${process.pid}`);
     await new Promise(() => {});
     return 0;
   }
