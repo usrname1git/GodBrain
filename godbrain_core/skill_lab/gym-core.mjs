@@ -175,6 +175,19 @@ function repairCandidateJson(raw, expectedNames = []) {
   if (!raw.includes('"files"')) return null;
   const complete = firstJsonObject(raw);
   if (complete) return complete;
+  const appName = expectedNames.find(name => /^App\.(jsx|tsx)$/.test(name));
+  if (appName) {
+    let candidate = raw.trimEnd();
+    if ((candidate.match(/\\+$/) || [''])[0].length % 2 === 1) candidate = candidate.slice(0, -1);
+    for (const suffix of ['"}}', '"}\n}', '"} }']) {
+      try {
+        const value = JSON.parse(candidate + suffix);
+        if (typeof value?.files?.[appName] === 'string' && value.files[appName].length >= 40) return value;
+      } catch {
+        // Keep trying a closed app envelope.
+      }
+    }
+  }
   if (expectedNames.join() === 'styles.css') {
     const lastBrace = raw.lastIndexOf('}');
     const key = raw.search(/"styles\.css"\s*:\s*"/);

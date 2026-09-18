@@ -108,6 +108,9 @@ test('candidate schema rejects paths, package scripts, extra fields and malforme
     'Here is some code: <button>Saved!</button>', 'null',
   ]) assert.throws(() => parseCandidate(text));
   assert.throws(() => parseCandidate(JSON.stringify({ files: { ...working, 'styles.css': '\0' } })));
+  const truncatedApp = '{"files":{"App.jsx":"export default function App(){\\n  return <main>Hi</main>;\\n';
+  const repairedApp = parseCandidate(truncatedApp, { fileMode: 'app', initialFiles: { 'App.jsx': '', 'styles.css': 'body{}' } });
+  assert.match(repairedApp['App.jsx'], /return <main>Hi/);
   const css = ':root{--paper:#f7f4ee}.tinted{background:#e6f1ef}.dark{background:#061827}main section{padding:72px 24px}';
   const truncated = `{"files":{"styles.css":"${css} .hero{background:`;
   const repaired = parseCandidate(truncated, { fileMode: 'styles', initialFiles: working });
