@@ -50,7 +50,20 @@ function Get-FrontendPause {
     }
     $cs2Sleep = $false
     try {
-        $cs2Sleep = [bool](Test-GodBrainColiShouldSleep -RepoRoot $RepoRoot)
+        $cs2Sleep = $null -ne (Get-Process -Name "CS2" -ErrorAction SilentlyContinue)
+        if (-not $cs2Sleep) {
+            $cs2File = Join-Path $RepoRoot "logs\cs2-pause.json"
+            if (Test-Path -LiteralPath $cs2File) {
+                $cs2State = Get-Content -LiteralPath $cs2File -Raw | ConvertFrom-Json
+                if ($cs2State.paused -eq $true -and $cs2State.last_action -ne "resume-now") {
+                    $seen = [datetime]::MinValue
+                    [void][datetime]::TryParse($cs2State.last_seen, [ref]$seen)
+                    if ($seen -gt [datetime]::MinValue -and ((Get-Date).ToUniversalTime() - $seen.ToUniversalTime()).TotalMinutes -lt 10) {
+                        $cs2Sleep = $true
+                    }
+                }
+            }
+        }
     } catch {
         Write-WatchEvent "cs2_probe" $_.Exception.Message
     }
@@ -72,20 +85,19 @@ function Write-WatchBanner {
 }
 
 function Test-Port([int]$port) {
-    return $null -ne (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    return Test-LoopbackPort $port
 }
 
 function Get-QwenListenerProcess {
-    $listener = Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if (-not $listener) { return $null }
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
-    if ($process -and
-        $process.Name -eq "python.exe" -and
-        $process.CommandLine -like "*tools\serve_openai.py*" -and
-        $process.CommandLine -like "*Qwen3.8-27B-EXL3-3.5bpw*") {
-        return $process
-    }
+    if (-not (Test-LoopbackPort 8888)) { return $null }
+    if (-not (Test-Path -LiteralPath $qwenReceipt)) { return $null }
+    try {
+        $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
+        $proc = Get-Process -Id ([int]$receipt.pid) -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -match 'python') {
+            return [pscustomobject]@{ ProcessId = $proc.Id; Name = "python.exe"; CommandLine = "serve_openai.py" }
+        }
+    } catch {}
     return $null
 }
 
@@ -116,13 +128,9 @@ function Get-QwenProcess {
     if (-not (Test-Path -LiteralPath $qwenReceipt)) { return $null }
     try {
         $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$receipt.pid)" -ErrorAction SilentlyContinue
-        if ($process -and
-            $process.Name -eq "python.exe" -and
-            $process.CommandLine -like "*tools\serve_openai.py*" -and
-            $process.CommandLine -like "*Qwen3.8-27B-EXL3-3.5bpw*" -and
-            $process.CommandLine -like "*--port 8888*") {
-            return $process
+        $proc = Get-Process -Id ([int]$receipt.pid) -ErrorAction SilentlyContinue
+        if ($proc -and $proc.ProcessName -match 'python' -and (Test-LoopbackPort 8888)) {
+            return [pscustomobject]@{ ProcessId = $proc.Id; Name = "python.exe"; CommandLine = "serve_openai.py" }
         }
     } catch {}
     return $null
