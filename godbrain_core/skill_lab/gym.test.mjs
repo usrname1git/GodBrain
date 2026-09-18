@@ -11,7 +11,7 @@ import {
 } from './gym-core.mjs';
 import { articleText, createDocumentationReader, documentationUrl } from './docs.mjs';
 import { getTask } from './curriculum.mjs';
-import { parseOptions, selectRetainedLesson } from './gym.mjs';
+import { parseOptions, selectRetainedLesson, universityLessonPlan } from './gym.mjs';
 
 const task = { id: 'settings', family: 'forms', title: 'Save preferences', brief: 'Save name and restore it after reload.', docs: [] };
 const working = { 'App.jsx': 'export default function App(){ return <p>working</p> }', 'styles.css': '' };
@@ -803,6 +803,37 @@ test('a transient browser outage retries the same candidate without grading it a
   assert.equal(state.stats.failed, 0);
   assert.equal(state.stats.passed, 1);
   assert.equal(state.status, 'stopped');
+});
+
+test('university lesson plan harvests only after two current-evaluator sources', () => {
+  const lessons = [
+    { taskId: 'cap-v28', runId: 'a', sourceHash: '1', evaluatorVersion: 'old', stale: false },
+    { taskId: 'cap-v28', runId: 'b', sourceHash: '2', evaluatorVersion: 'now', stale: false },
+  ];
+  const bump = universityLessonPlan({
+    lessons, taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: false,
+  });
+  assert.equal(bump.revalidate, false);
+  assert.equal(bump.landScaffold, false);
+  const firstNight = universityLessonPlan({
+    lessons: lessons.filter(item => item.evaluatorVersion === 'old'),
+    taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: false,
+  });
+  assert.equal(firstNight.revalidate, true);
+  assert.equal(firstNight.lesson.evaluatorVersion, 'old');
+  const harvest = universityLessonPlan({
+    lessons: [
+      ...lessons,
+      { taskId: 'cap-v28', runId: 'c', sourceHash: '3', evaluatorVersion: 'now', stale: false },
+    ],
+    taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: true,
+  });
+  assert.equal(harvest.revalidate, true);
+  const freshStudio = universityLessonPlan({
+    lessons: [], taskId: 'cap-v29', evaluatorVersion: 'now',
+  });
+  assert.equal(freshStudio.landScaffold, true);
+  assert.equal(freshStudio.revalidate, false);
 });
 
 test('CLI rejects malformed numeric controls and model prompts stay bounded', () => {

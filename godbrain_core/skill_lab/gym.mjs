@@ -64,6 +64,23 @@ export function selectRetainedLesson(lessons, taskId, evaluatorVersion, selectio
   return eligible.length ? eligible[selectionCount % eligible.length] : null;
 }
 
+export function universityLessonPlan({
+  lessons = [], taskId, evaluatorVersion, selectionCount = 0, revalidateLesson = false,
+} = {}) {
+  const current = lessons.filter(item =>
+    !item.stale &&
+    item.taskId === taskId &&
+    item.evaluatorVersion === evaluatorVersion);
+  const lesson = selectRetainedLesson(lessons, taskId, evaluatorVersion, selectionCount, current.length === 0);
+  const bump = Boolean(lesson) && lesson.evaluatorVersion !== evaluatorVersion && current.length === 0;
+  return {
+    lesson,
+    currentCount: current.length,
+    revalidate: Boolean(lesson) && (revalidateLesson || bump),
+    landScaffold: current.length === 0 && !lesson,
+  };
+}
+
 async function selectEndpoint(explicit) {
   if (explicit) return localEndpoint(explicit);
   for (const port of [8888, 8000]) {
@@ -254,19 +271,23 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         const selected = await selectCurriculumTask(workDir, state, combined);
         if (selected.university) {
-          const lesson = selectRetainedLesson(
-            state.lessons, selected.id, evidenceVersion,
-            state.scheduler?.selectionCount ?? 0, true);
-          if (lesson && (selected.revalidateLesson || lesson.evaluatorVersion !== evidenceVersion)) {
-            const source = await readJson(path.join(workDir, 'runs', lesson.runId, 'source.json'), null);
-            if (!source || hashFiles(source) !== lesson.sourceHash) {
-              throw new Error(`Retained lesson ${lesson.runId} failed its source-hash check.`);
+          const plan = universityLessonPlan({
+            lessons: state.lessons,
+            taskId: selected.id,
+            evaluatorVersion: evidenceVersion,
+            selectionCount: state.scheduler?.selectionCount ?? 0,
+            revalidateLesson: selected.revalidateLesson === true,
+          });
+          if (plan.revalidate && plan.lesson) {
+            const source = await readJson(path.join(workDir, 'runs', plan.lesson.runId, 'source.json'), null);
+            if (!source || hashFiles(source) !== plan.lesson.sourceHash) {
+              throw new Error(`Retained lesson ${plan.lesson.runId} failed its source-hash check.`);
             }
             return {
               ...selected,
               initialFiles: source,
               revalidateInitial: true,
-              retainedLessonRunId: lesson.runId,
+              retainedLessonRunId: plan.lesson.runId,
             };
           }
         }
@@ -280,9 +301,14 @@ Passing exercises become local gym lessons without /verify; they grant no host a
           const appFile = selected.appFile ?? 'App.jsx';
           const showcase = Boolean(selected.university) &&
             selected.baseTaskId === 'event-platform-showcase-v1';
+          const plan = universityLessonPlan({
+            lessons: state.lessons,
+            taskId: selected.id,
+            evaluatorVersion: evidenceVersion,
+          });
           return {
             ...selected,
-            revalidateInitial: showcase || selected.revalidateInitial,
+            revalidateInitial: (showcase && plan.landScaffold) || selected.revalidateInitial,
             initialFiles: selected.initialFiles ?? {
               [appFile]: selected.university
                 ? universityAppScaffold(appFile, selected.baseTaskId)
