@@ -111,11 +111,14 @@ function render(data) {
   const parked=new Set(data.scheduler?.parkedTaskIds||[]);
   const liveTask=data.active?.taskId||data.task||'';
   const studying=university.active&&!parked.has(university.active.id)?university.active:null;
-  $('universityStatus').textContent=studying?`Studying ${studying.title}`:(parked.size?`Parked ${[...parked][0]} · live ${liveTask||'—'}`:'Preparing the next course');
+  const graduated=university.programStatus==='graduated';
+  $('universityStatus').textContent=graduated
+    ?`Graduated · ${university.programTitle||'Frontend högskoleingenjör'}`
+    :(studying?`Year ${studying.year} · Term ${studying.term} · ${studying.title}`:(parked.size?`Parked ${[...parked][0]} · live ${liveTask||'—'}`:'Preparing the next course'));
   $('universityMetrics').innerHTML=[
-    ['Degree courses',university.blueprintCount||0],
-    ['Generated',university.generatedCount||0],
-    ['Mastered',university.masteredCount||0],
+    ['Program',graduated?'Graduated':(university.currentYear?`Y${university.currentYear} T${university.currentTerm}`:'Enrolled')],
+    ['Degree courses',`${university.masteredCount||0}/${university.blueprintCount||0}`],
+    ['Terms',`${university.terms||6}`],
   ].map(([a,b])=>`<div class="pill"><small class="meta">${a}</small><strong>${b}</strong></div>`).join('');
   $('universityCourses').innerHTML=(university.courses||[]).map(course=>{
     const isParked=parked.has(course.id);
@@ -123,7 +126,8 @@ function render(data) {
     const stamp=isParked?'parked':isLive?'live':course.status;
     const tries=course.recentAttempts||0;
     const score=`${tries} tries · ${course.recentPassed||0} pass · ${course.recentFailed||0} fail · ${pct(course.recentPassRate)}`;
-    return `<div class="queue"><strong>${esc(course.title)}</strong><div class="meta">Level ${course.level} · ${esc(course.discipline)} · ${esc(stamp)} · ${score}</div></div>`;
+    const when=course.year&&course.term?`Y${course.year} T${course.term}`:`Level ${course.level}`;
+    return `<div class="queue"><strong>${esc(course.title)}</strong><div class="meta">${when} · ${esc(course.discipline)} · ${esc(stamp)} · ${score}</div></div>`;
   }).join('')||'<p class="meta">The first course will be generated at the next scheduler selection.</p>';
   const objectiveById=new Map((data.objectives||[]).map(objective=>[objective.id,objective]));
   const campaignCard=c=>{

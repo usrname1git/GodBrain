@@ -1,12 +1,11 @@
 import path from 'node:path';
-import { COMPETENCIES, CAPSTONE_CONTEXTS, CAPSTONE_DIRECTIONS } from './competencies.mjs';
+import { COMPETENCIES, PROGRAM } from './competencies.mjs';
 import { documentationUrl } from './docs.mjs';
 import { readJson, writeJson } from './gym-core.mjs';
 import { validateVerifierSpec } from './verifier-dsl.mjs';
 
 const VERSION = 1;
-const MAX_COURSES = 120;
-export const COURSE_DEFINITION_VERSION = 9;
+export const COURSE_DEFINITION_VERSION = 10;
 
 function courseId(competencyId, iteration = 1) {
   return `university-${competencyId}-v${iteration}`;
@@ -27,6 +26,8 @@ function verifierFor(blueprint) {
 function validateBlueprint(blueprint, trustedTasks) {
   if (!/^[a-z0-9-]{3,80}$/.test(blueprint.id) ||
       !Number.isSafeInteger(blueprint.level) || blueprint.level < 1 || blueprint.level > 9 ||
+      !Number.isSafeInteger(blueprint.year) || blueprint.year < 1 || blueprint.year > PROGRAM.years ||
+      !Number.isSafeInteger(blueprint.term) || blueprint.term < 1 || blueprint.term > PROGRAM.terms ||
       !Array.isArray(blueprint.prerequisites) || !Array.isArray(blueprint.docs) ||
       blueprint.docs.length < 1 || blueprint.docs.length > 2) {
     throw new Error(`Invalid university competency ${blueprint.id}.`);
@@ -43,6 +44,8 @@ function makeCourse(blueprint, trustedTasks, iteration = 1, extraFocus = '') {
     competencyId: blueprint.id,
     discipline: blueprint.discipline,
     level: blueprint.level,
+    year: blueprint.year,
+    term: blueprint.term,
     iteration,
     title: iteration === 1 ? blueprint.title : `${blueprint.title} · studio ${iteration}`,
     prerequisites: [...blueprint.prerequisites],
@@ -82,6 +85,8 @@ function asTask(course, trustedTasks) {
     university: {
       competencyId: course.competencyId,
       level: course.level,
+      year: course.year ?? null,
+      term: course.term ?? null,
       iteration: course.iteration,
       definitionVersion: course.definitionVersion,
       status: course.status,
@@ -93,14 +98,19 @@ function asTask(course, trustedTasks) {
 export async function readUniversity(workDir) {
   const value = await readJson(path.join(workDir, 'university.json'), {
     version: VERSION,
+    programId: PROGRAM.id,
+    programStatus: 'enrolled',
     capstoneSequence: 0,
     archivedCapstones: 0,
     courses: [],
   });
   value.archivedCapstones ??= 0;
+  value.programId ??= PROGRAM.id;
+  value.programStatus ??= 'enrolled';
   if (value.version !== VERSION || !Array.isArray(value.courses) ||
       !Number.isSafeInteger(value.capstoneSequence) || value.capstoneSequence < 0 ||
-      !Number.isSafeInteger(value.archivedCapstones) || value.archivedCapstones < 0) {
+      !Number.isSafeInteger(value.archivedCapstones) || value.archivedCapstones < 0 ||
+      !['enrolled', 'graduated'].includes(value.programStatus)) {
     throw new Error('Frontend university state is damaged.');
   }
   return value;
@@ -108,7 +118,17 @@ export async function readUniversity(workDir) {
 
 export async function listUniversityTasks(workDir, trustedTasks) {
   const university = await readUniversity(workDir);
-  return university.courses.map(course => asTask(course, trustedTasks));
+  return university.courses
+    .filter(course => course.status !== 'retired')
+    .map(course => asTask(course, trustedTasks));
+}
+
+function degreeMastered(courses) {
+  return COMPETENCIES.every(blueprint =>
+    courses.some(course =>
+      course.competencyId === blueprint.id &&
+      course.iteration === 1 &&
+      course.status === 'mastered'));
 }
 
 function prerequisitesMet(blueprint, courses) {
@@ -126,6 +146,8 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
     if (retargeting) {
       course.discipline = blueprint.discipline;
       course.level = blueprint.level;
+      course.year = blueprint.year;
+      course.term = blueprint.term;
       course.prerequisites = [...blueprint.prerequisites];
       course.docs = blueprint.docs;
       course.verifierSpec = validateBlueprint(blueprint, trustedTasks);
@@ -145,29 +167,25 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
   }
   if (!university.courses.some(course => course.status === 'active')) {
     const next = COMPETENCIES.find(blueprint =>
-      !university.courses.some(course => course.competencyId === blueprint.id) &&
+      !university.courses.some(course => course.competencyId === blueprint.id && course.iteration === 1) &&
       prerequisitesMet(blueprint, university.courses));
     if (next) {
       university.courses.push(makeCourse(next, trustedTasks));
+      university.programStatus = 'enrolled';
       changed = true;
-    } else if (COMPETENCIES.every(blueprint =>
-      university.courses.some(course => course.competencyId === blueprint.id && course.status === 'mastered'))) {
-      if (university.courses.length >= MAX_COURSES) {
-        const archived = university.courses.findIndex(course =>
-          course.competencyId === 'product-site-capstone' &&
-          course.iteration > 1 &&
-          course.status === 'mastered');
-        if (archived < 0) throw new Error(`Frontend university course capacity (${MAX_COURSES}) reached.`);
-        university.courses.splice(archived, 1);
-        university.archivedCapstones++;
+    }
+  }
+  if (degreeMastered(university.courses)) {
+    for (const course of university.courses) {
+      if (course.competencyId === 'product-site-capstone' && course.iteration > 1 && course.status === 'active') {
+        course.status = 'retired';
+        changed = true;
       }
-      university.capstoneSequence++;
-      const iteration = university.capstoneSequence + 1;
-      const context = CAPSTONE_CONTEXTS[(iteration - 2) % CAPSTONE_CONTEXTS.length];
-      const direction = CAPSTONE_DIRECTIONS[(iteration - 2) % CAPSTONE_DIRECTIONS.length];
-      const blueprint = COMPETENCIES.find(item => item.id === 'product-site-capstone');
-      university.courses.push(makeCourse(blueprint, trustedTasks, iteration,
-        `For this studio, design ${context} using ${direction}. Do not reuse a prior composition.`));
+    }
+    if (!university.courses.some(course => course.status === 'active') &&
+        university.programStatus !== 'graduated') {
+      university.programStatus = 'graduated';
+      university.graduatedAt = new Date().toISOString();
       changed = true;
     }
   }
@@ -177,25 +195,40 @@ export async function advanceUniversity(workDir, masteryRows, trustedTasks) {
 
 export function universitySummary(university, masteryRows = []) {
   const masteryById = new Map(masteryRows.map(row => [row.id, row]));
-  const courses = university.courses.map(course => ({
-    id: course.id,
-    title: course.title,
-    discipline: course.discipline,
-    level: course.level,
-    iteration: course.iteration,
-    status: course.status,
-    mastery: masteryById.get(course.id)?.mastery ?? 'queued',
-    recentAttempts: masteryById.get(course.id)?.recentAttempts ?? 0,
-    recentPassed: masteryById.get(course.id)?.recentPassed ?? 0,
-    recentFailed: masteryById.get(course.id)?.recentFailed ?? 0,
-    recentPassRate: masteryById.get(course.id)?.recentPassRate ?? 0,
-  }));
+  const degree = university.courses
+    .filter(course => course.iteration === 1)
+    .map(course => ({
+      id: course.id,
+      title: course.title,
+      discipline: course.discipline,
+      level: course.level,
+      year: course.year ?? null,
+      term: course.term ?? null,
+      iteration: course.iteration,
+      status: course.status,
+      mastery: masteryById.get(course.id)?.mastery ?? 'queued',
+      recentAttempts: masteryById.get(course.id)?.recentAttempts ?? 0,
+      recentPassed: masteryById.get(course.id)?.recentPassed ?? 0,
+      recentFailed: masteryById.get(course.id)?.recentFailed ?? 0,
+      recentPassRate: masteryById.get(course.id)?.recentPassRate ?? 0,
+    }))
+    .sort((a, b) => (a.term ?? 99) - (b.term ?? 99) || a.title.localeCompare(b.title));
+  const active = university.courses.find(course => course.status === 'active') ?? null;
+  const studying = active && active.iteration === 1 ? degree.find(course => course.id === active.id) : null;
   return {
+    programId: PROGRAM.id,
+    programTitle: PROGRAM.title,
+    programStatus: university.programStatus ?? 'enrolled',
+    years: PROGRAM.years,
+    terms: PROGRAM.terms,
     blueprintCount: COMPETENCIES.length,
-    generatedCount: courses.length + university.archivedCapstones,
+    generatedCount: degree.length,
     archivedCapstones: university.archivedCapstones,
-    masteredCount: courses.filter(course => course.status === 'mastered').length,
-    active: courses.find(course => course.status === 'active') ?? null,
-    courses: courses.slice().reverse().slice(0, 12),
+    masteredCount: degree.filter(course => course.status === 'mastered').length,
+    currentYear: studying?.year ?? (university.programStatus === 'graduated' ? PROGRAM.years : null),
+    currentTerm: studying?.term ?? (university.programStatus === 'graduated' ? PROGRAM.terms : null),
+    graduatedAt: university.graduatedAt ?? null,
+    active: studying ?? null,
+    courses: degree,
   };
 }

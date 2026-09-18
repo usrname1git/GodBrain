@@ -13,6 +13,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Passing props to a component', url: 'https://react.dev/learn/passing-props-to-a-component' },
       { title: 'TypeScript JSX', url: 'https://www.typescriptlang.org/docs/handbook/jsx.html' },
     ],
+    year: 1,
+    term: 1,
     focus: 'Use typed props and reusable section components rather than one monolithic component.',
   },
   {
@@ -29,6 +31,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Responsive design', url: 'https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/CSS_layout/Responsive_Design' },
       { title: 'CSS grid layout', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout' },
     ],
+    year: 1,
+    term: 1,
     focus: 'Create a coherent spacing, typography, grid, breakpoint and component-geometry system.',
   },
   {
@@ -45,6 +49,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'ARIA expanded', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-expanded' },
       { title: 'React state', url: 'https://react.dev/learn/state-a-components-memory' },
     ],
+    year: 1,
+    term: 2,
     focus: 'Implement responsive navigation whose state, keyboard behavior and landmarks remain usable across viewports.',
   },
   {
@@ -61,6 +67,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Choosing state structure', url: 'https://react.dev/learn/choosing-the-state-structure' },
       { title: 'You might not need an effect', url: 'https://react.dev/learn/you-might-not-need-an-effect' },
     ],
+    year: 2,
+    term: 3,
     focus: 'Keep canonical state minimal and derive filtered lifecycle content without synchronization effects.',
   },
   {
@@ -77,6 +85,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'React input', url: 'https://react.dev/reference/react-dom/components/input' },
       { title: 'ARIA invalid', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-invalid' },
     ],
+    year: 2,
+    term: 3,
     focus: 'Use typed form state, visible validation, accessible invalid states and an honest success transition.',
   },
   {
@@ -93,6 +103,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Using custom properties', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties' },
       { title: 'CSS values and units', url: 'https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Styling_basics/Values_and_units' },
     ],
+    year: 1,
+    term: 2,
     focus: 'Express color, type, spacing, radii and responsive rhythm through reusable CSS custom properties.',
   },
   {
@@ -109,6 +121,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'HTML sections and outlines', url: 'https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/Heading_Elements' },
       { title: 'Landmark regions', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Roles/landmark_role' },
     ],
+    year: 2,
+    term: 4,
     focus: 'Organize dense product content into a clear narrative, hierarchy, navigation and conversion path.',
   },
   {
@@ -125,6 +139,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' },
       { title: 'Web accessibility', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility' },
     ],
+    year: 2,
+    term: 4,
     focus: 'Keep the mastered Menu navigation working and add a real form with aria-invalid. Do not rebuild the whole event-platform showcase in one generate.',
   },
   {
@@ -141,6 +157,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' },
       { title: 'React input', url: 'https://react.dev/reference/react-dom/components/input' },
     ],
+    year: 3,
+    term: 5,
     focus: 'Keep searchable lifecycle stages working and add a real form with aria-invalid. The four-suite showcase is the capstone, not this course.',
   },
   {
@@ -157,6 +175,8 @@ export const COMPETENCIES = Object.freeze([
       { title: 'CSS container queries', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_containment/Container_queries' },
       { title: 'Responsive design', url: 'https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/CSS_layout/Responsive_Design' },
     ],
+    year: 3,
+    term: 5,
     focus: 'Polish the complete trusted interaction scaffold into a distinctive, production-quality responsive visual system.',
   },
   {
@@ -173,23 +193,15 @@ export const COMPETENCIES = Object.freeze([
       { title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' },
       { title: 'TypeScript JSX', url: 'https://www.typescriptlang.org/docs/handbook/jsx.html' },
     ],
+    year: 3,
+    term: 6,
     focus: 'Start from the complete typed showcase scaffold. Keep Menu nav, lifecycle explorer, packages and the Book a demo form with aria-invalid. Change copy and composition; do not delete header, main, footer or the form.',
   },
 ]);
 
-export const CAPSTONE_CONTEXTS = Object.freeze([
-  'a privacy-first analytics platform',
-  'an industrial maintenance operations suite',
-  'a premium developer tooling company',
-  'a regional healthcare scheduling platform',
-  'a sustainable logistics management product',
-  'an independent creative-services marketplace',
-]);
-
-export const CAPSTONE_DIRECTIONS = Object.freeze([
-  'editorial minimalism with strong typographic rhythm',
-  'interface-led product storytelling with restrained motion',
-  'calm enterprise clarity with evidence-first content',
-  'warm human-centered design with confident conversion paths',
-  'dense technical information made progressively discoverable',
-]);
+export const PROGRAM = Object.freeze({
+  id: 'frontend-hogskoleingenjor-v1',
+  title: 'Frontend högskoleingenjör',
+  years: 3,
+  terms: 6,
+});
