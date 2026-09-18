@@ -119,6 +119,13 @@ test('visual-god reads accent from the named CTA without requiring a .cta class'
   assert.equal(result.passed, true, JSON.stringify(result.errors));
 });
 
+test('error-boundary console filter accepts a learner throw message, not only god-crash', async t => {
+  const files = getReference('error-boundary-recovery-v1');
+  files['App.jsx'] = files['App.jsx'].replace("throw new Error('god-crash')", "throw new Error('render-fault')");
+  const result = await evaluateIn(t, 'error-boundary-recovery-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
 test('god-cycle reference implementations pass two seeds', async t => {
   const ids = [
     'client-routing-v1',

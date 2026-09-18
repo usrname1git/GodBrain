@@ -1298,7 +1298,8 @@ async function runTaskChecks(taskId, page, props, checks, errors, task, files = 
 }
 
 function expectedBoundaryLog(text) {
-  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary/i.test(String(text ?? ''));
+  const value = String(text ?? '');
+  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary|Error:[\s\S]{0,240}?\s+at\s+\w+/i.test(value);
 }
 
 async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs = false } = {}) {
@@ -1493,9 +1494,9 @@ export async function evaluateCandidate({
       recordBounded(blockedRequests, { method: 'DIALOG', resourceType: dialog.type() });
       dialog.dismiss().catch(error => recordBounded(pageErrors, `Dialog dismissal failed: ${error.message}`));
     });
-    page.on('pageerror', error => recordBounded(pageErrors, clip(error.message, 500)));
+    page.on('pageerror', error => recordBounded(pageErrors, error.message));
     page.on('console', message => {
-      if (['error', 'warning'].includes(message.type())) recordBounded(consoleErrors, clip(message.text(), 300));
+      if (['error', 'warning'].includes(message.type())) recordBounded(consoleErrors, message.text());
     });
     try {
       await page.goto(`${server.origin}/`, { waitUntil: 'domcontentloaded', timeout: 9000 });
