@@ -97,19 +97,27 @@ async function selectEndpoint(explicit) {
   return 'http://127.0.0.1:8888/v1';
 }
 
+async function cs2ShouldSleep() {
+  if (process.platform !== 'win32') return false;
+  try {
+    const { stdout } = await execute('tasklist.exe', ['/FI', 'IMAGENAME eq CS2.exe', '/NH'], {
+      timeout: 4000, windowsHide: true, maxBuffer: 8000,
+    });
+    if (/\bCS2\.exe\b/i.test(stdout)) return true;
+  } catch {
+    // A dead tasklist must not pause training.
+  }
+  const state = await readJson(path.join(repoRoot, 'logs', 'cs2-pause.json'), null);
+  if (!state || state.paused !== true || state.last_action === 'resume-now') return false;
+  const seen = Date.parse(state.last_seen || state.at || '');
+  if (!Number.isFinite(seen)) return false;
+  return (Date.now() - seen) < 10 * 60 * 1000;
+}
+
 async function hostPauseReason(endpoint, workDir) {
   const trainingControl = await readJson(path.join(workDir, 'training-pause.json'), { paused: false });
   if (trainingControl.paused === true) return 'Frontend training is explicitly paused and saved.';
-  if (process.platform !== 'win32') return null;
-  const executable = path.join(process.env.SystemRoot ?? 'C:\\Windows',
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const { stdout } = await execute(executable, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-    path.join(repoRoot, 'scripts', 'Get-FrontendGymPause.ps1'),
-  ], { timeout: 10_000, windowsHide: true, maxBuffer: 16_000 });
-  const result = JSON.parse(stdout.trim());
-  if (typeof result.cs2_sleep !== 'boolean') throw new Error('Host pause probe returned an invalid response.');
-  if (result.cs2_sleep) return 'CS2 is active or inside its configured resume delay.';
+  if (await cs2ShouldSleep()) return 'CS2 is active or inside its configured resume delay.';
   if (new URL(endpoint).port === '8000') {
     const file = path.join(repoRoot, 'logs', 'mouth-pause.txt');
     let paused;
