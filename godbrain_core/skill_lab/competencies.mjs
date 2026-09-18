@@ -206,7 +206,7 @@ export const COMPETENCIES = Object.freeze([
     contractTaskId: 'settings-persistence-v1',
     fileMode: 'app',
     appFile: 'App.jsx',
-    sourceRules: ['react-state', 'form-validation'],
+    sourceRules: ['react-state'],
     docs: [
       { title: 'React forms', url: 'https://react.dev/reference/react-dom/components/input' },
       { title: 'localStorage', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage' },

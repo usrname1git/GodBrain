@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
-import { hashFiles, localEndpoint, loadState, readJson, requestStop, runPractice, StopRequested, universityAppScaffold } from './gym-core.mjs';
+import { hashFiles, localEndpoint, loadState, MARKETING_CONTRACTS, readJson, requestStop, runPractice, StopRequested, universityAppScaffold } from './gym-core.mjs';
 import { createDocumentationReader } from './docs.mjs';
 import { startDashboard } from './dashboard.mjs';
 import {
@@ -309,7 +309,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
           const overlay = universityAppScaffold(appFile, contractId);
           const fromReference = reference[appFile] || reference['App.jsx'] || '';
           const seed = selected.university
-            ? (overlay.includes('lifecycle') ? overlay : (fromReference || overlay))
+            ? (MARKETING_CONTRACTS.has(contractId) ? overlay : (fromReference || overlay))
             : '';
           return {
             ...selected,

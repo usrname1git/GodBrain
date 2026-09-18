@@ -85,6 +85,40 @@ test('visual-god reference implements the seeded canvas and rejects a generic te
   assert.ok((failed.errors || []).some(item => /visual-system-tokens-applied|visual-hero|visual-anti-generic/i.test(item)), JSON.stringify(failed.errors));
 });
 
+test('async-data Resource status accepts Title Case option labels without lowercase values', async t => {
+  const files = getReference('async-data-states-v1');
+  files['App.jsx'] = `import {useState} from 'react';
+import './styles.css';
+export default function App({records, errorMessage, emptyLabel}) {
+  const [status, setStatus] = useState('Ready');
+  return <main>
+    <h1>Records</h1>
+    <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+      <option>Loading</option>
+      <option>Error</option>
+      <option>Empty</option>
+      <option>Ready</option>
+    </select></label>
+    {status === 'Loading' && <p role="status">Loading</p>}
+    {status === 'Error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('Ready')}>Retry</button></>}
+    {status === 'Empty' && <p>{emptyLabel}</p>}
+    {status === 'Ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+  </main>;
+}`;
+  const result = await evaluateIn(t, 'async-data-states-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('visual-god reads accent from the named CTA without requiring a .cta class', async t => {
+  const files = getReference('visual-god-v1');
+  files['App.jsx'] = files['App.jsx'].replace(
+    '<a className="cta" href="#note">{primaryCta}</a>',
+    '<a href="#note" style={{ background: visualSystem.accent, color: visualSystem.paper, fontWeight: 800, padding: 12 }}>{primaryCta}</a>',
+  );
+  const result = await evaluateIn(t, 'visual-god-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
 test('god-cycle reference implementations pass two seeds', async t => {
   const ids = [
     'client-routing-v1',
@@ -167,6 +201,16 @@ test('studio copy may rename Search features and Event type without failing the 
   assert.match(files['App.jsx'], /Program type/);
   assert.match(files['App.jsx'], /<label>Email<input/);
   const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 29);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('demo form email accepts a visible type=email without Email in the label', async t => {
+  const files = getReference('event-platform-showcase-v1');
+  files['App.jsx'] = files['App.jsx'].replace(
+    '<label>Work email<input aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/></label>',
+    '<label>Office<input type="email" aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/></label><input type="email" hidden name="honeypot" />',
+  );
+  const result = await evaluateIn(t, 'pricing-demo-conversion-v1', files, 29);
   assert.equal(result.passed, true, JSON.stringify(result.errors));
 });
 

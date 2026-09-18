@@ -873,7 +873,7 @@ async function checkAsyncData(page, props, checks, errors) {
     await openLabeledRoute(page, props.routes?.[0]?.label);
     const status = page.getByRole('combobox', { name: /resource status/i });
     await status.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
-    await status.selectOption('loading');
+    await status.selectOption({ label: 'Loading' });
     await page.getByRole('status').filter({ hasText: /^Loading$/ }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const title = page.getByText(props.records[0].title, { exact: false });
     if (await title.count() && await title.first().isVisible()) {
@@ -882,11 +882,11 @@ async function checkAsyncData(page, props, checks, errors) {
   });
   await addCheck(checks, errors, 'resource-status-error-retry-and-empty', async () => {
     const status = page.getByRole('combobox', { name: /resource status/i });
-    await status.selectOption('error');
+    await status.selectOption({ label: 'Error' });
     await page.getByRole('alert').filter({ hasText: props.errorMessage }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     await (await buttonByName(page, 'Retry')).click();
     await visibleText(page, props.records[0].title);
-    await status.selectOption('empty');
+    await status.selectOption({ label: 'Empty' });
     await visibleText(page, props.emptyLabel);
     const title = page.getByText(props.records[1].title, { exact: false });
     if (await title.count() && await title.first().isVisible()) {
@@ -894,7 +894,7 @@ async function checkAsyncData(page, props, checks, errors) {
     }
   });
   await addCheck(checks, errors, 'resource-status-ready-lists-seeded-records', async () => {
-    await page.getByRole('combobox', { name: /resource status/i }).selectOption('ready');
+    await page.getByRole('combobox', { name: /resource status/i }).selectOption({ label: 'Ready' });
     for (const record of props.records) {
       await visibleText(page, record.title);
       await visibleText(page, record.detail);
@@ -952,19 +952,30 @@ async function checkVisualGod(page, props, checks, errors) {
     await visibleText(page, props.proof);
     const cta = page.getByRole('link', { name: namePattern(props.primaryCta) }).or(page.getByRole('button', { name: namePattern(props.primaryCta) }));
     await cta.first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    const accent = await cta.first().evaluate(element => getComputedStyle(element).backgroundColor);
     const computed = await page.evaluate(() => {
-      const stage = document.querySelector('[data-visual]') || document.body;
+      const candidates = [
+        document.querySelector('[data-visual]'),
+        document.querySelector('.stage'),
+        document.querySelector('main'),
+        document.body,
+      ].filter(Boolean);
+      const stage = candidates.find(element => {
+        const background = getComputedStyle(element).backgroundColor;
+        return background && background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent';
+      }) || document.body;
       const heading = document.querySelector('h1');
-      const action = document.querySelector('.cta, [data-cta], a.primary, button.primary');
+      const copy = document.querySelector('.lede, main p');
       return {
         paper: getComputedStyle(stage).backgroundColor,
         ink: getComputedStyle(stage).color,
+        muted: copy ? getComputedStyle(copy).color : '',
         bodyFont: getComputedStyle(stage).fontFamily,
         displayFont: heading ? getComputedStyle(heading).fontFamily : '',
         headingAlign: heading ? getComputedStyle(heading).textAlign : '',
-        accent: action ? getComputedStyle(action).backgroundColor : '',
       };
     });
+    computed.accent = accent;
     if (!colorsClose(computed.paper, system.paper)) {
       throw new Error(`Stage/body paper ${computed.paper} does not match seeded ${system.paper}.`);
     }
@@ -981,11 +992,15 @@ async function checkVisualGod(page, props, checks, errors) {
     if (!computed.bodyFont.toLowerCase().includes(firstFamily(system.bodyFont))) {
       throw new Error(`Body font ${computed.bodyFont} does not use seeded bodyFont ${system.bodyFont}.`);
     }
+    if (computed.muted && !colorsClose(computed.muted, system.muted, 36)) {
+      throw new Error(`Body copy muted ${computed.muted} does not match seeded ${system.muted}.`);
+    }
   });
   await addCheck(checks, errors, 'visual-hero-is-not-centered-template', async () => {
     const align = await page.locator('h1').evaluate(element => getComputedStyle(element).textAlign);
-    if (!/^(left|start)$/i.test(align)) {
-      throw new Error(`h1 text-align ${align} is a centered template; seeded heroAlign is ${system.heroAlign}.`);
+    const expected = system.heroAlign === 'center' ? /^(center)$/i : /^(left|start)$/i;
+    if (!expected.test(align)) {
+      throw new Error(`h1 text-align ${align} does not match seeded heroAlign ${system.heroAlign}.`);
     }
   });
   await addCheck(checks, errors, 'visual-anti-generic-chrome', async () => {
@@ -993,10 +1008,10 @@ async function checkVisualGod(page, props, checks, errors) {
     if (/segoe ui|system-ui|inter|roboto|arial/i.test(family) && !/georgia|palatino|consolas|cascadia|cambria|candara/i.test(family)) {
       throw new Error(`h1 uses generic UI chrome (${family}) instead of the seeded display stack.`);
     }
-    const accent = await page.evaluate(() => {
-      const action = document.querySelector('.cta, [data-cta], a.primary, button.primary');
-      return action ? getComputedStyle(action).backgroundColor : '';
-    });
+    const accent = await page.getByRole('link', { name: namePattern(props.primaryCta) })
+      .or(page.getByRole('button', { name: namePattern(props.primaryCta) }))
+      .first()
+      .evaluate(element => getComputedStyle(element).backgroundColor);
     const banned = ['#2447c6', '#6366f1', '#7c3aed', '#667eea', '#3b82f6'];
     if (banned.some(hex => colorsClose(accent, hex, 12)) && !colorsClose(accent, system.accent, 12)) {
       throw new Error('Primary CTA uses a stock Tailwind/gym purple-blue instead of the seeded accent.');
@@ -1046,14 +1061,23 @@ async function formCombobox(page) {
   throw new Error('Missing a native <select> inside the demo form.');
 }
 
+async function firstVisible(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index++) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible()) return candidate;
+  }
+  return null;
+}
+
 async function formEmail(page) {
   const form = page.locator('form');
   for (const name of [/work email/i, /e-?mail/i]) {
-    const named = form.getByRole('textbox', { name });
-    if (await named.count()) return named.first();
+    const named = await firstVisible(form.getByRole('textbox', { name }));
+    if (named) return named;
   }
-  const typed = form.locator('input[type="email"]');
-  if (await typed.count()) return typed.first();
+  const typed = await firstVisible(form.locator('input[type="email"]'));
+  if (typed) return typed;
   throw new Error('Missing an email textbox inside the demo form.');
 }
 

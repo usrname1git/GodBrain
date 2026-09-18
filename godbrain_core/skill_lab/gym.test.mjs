@@ -11,6 +11,7 @@ import {
 } from './gym-core.mjs';
 import { articleText, createDocumentationReader, documentationUrl } from './docs.mjs';
 import { getTask } from './curriculum.mjs';
+import { COMPETENCIES } from './competencies.mjs';
 import { parseOptions, selectRetainedLesson, universityLessonPlan } from './gym.mjs';
 
 const task = { id: 'settings', family: 'forms', title: 'Save preferences', brief: 'Save name and restore it after reload.', docs: [] };
@@ -33,6 +34,10 @@ test('university app scaffold satisfies static source-contract rails', () => {
   const architecture = universityAppScaffold('App.tsx', 'marketing-site-architecture-v1');
   assert.match(architecture, /lifecycle/);
   assert.doesNotMatch(architecture, /props.brand \?\? "Studio"/);
+  assert.equal(
+    COMPETENCIES.find(item => item.id === 'persistent-settings').sourceRules.includes('form-validation'),
+    false,
+  );
   assert.match(capstone, /Book a demo/);
   assert.match(capstone, /aria-invalid/);
   assert.match(capstone, /className=\{menu\?'open':''\}/);
@@ -246,7 +251,7 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   const workEmail = cannedTutorAdvice({
     feedback: "demo-form-validates-before-success: Missing locator('form').getByRole('textbox', { name: /work email/i })",
   });
-  assert.match(workEmail, /Email is accepted/);
+  assert.match(workEmail, /visible email field/);
   assert.doesNotMatch(workEmail, /htmlFor is required/);
   const searchBox = cannedTutorAdvice({
     feedback: 'feature-search-filters-seeded-content: Missing getByRole(\'textbox\', { name: /search features/i })',

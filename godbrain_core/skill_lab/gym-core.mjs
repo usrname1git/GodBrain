@@ -18,7 +18,7 @@ export function isHostNetworkFailure(value) {
   return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
 }
 
-const MARKETING_CONTRACTS = new Set([
+export const MARKETING_CONTRACTS = new Set([
   'marketing-site-architecture-v1',
   'responsive-site-navigation-v1',
   'feature-lifecycle-explorer-v1',
@@ -710,8 +710,8 @@ export function cannedTutorAdvice(active = {}) {
     }
     if (/work email|e-?mail/i.test(feedback)) {
       return [
-        'CAUSE: The form email field is missing an accessible name matching Work email. Email is accepted; a missing field is not.',
-        '1. Keep <label>Work email<input/></label> or any wrapping label containing email.',
+        'CAUSE: The form is missing a visible email field. Work email, Email, or a visible input type=email is accepted; a hidden honeypot is not.',
+        '1. Keep a visible <label>Work email<input/></label>, Email, or <input type="email"> inside the form.',
         '2. Keep error text outside the label so the accessible name stays Email / Work email.',
       ].join('\n');
     }
