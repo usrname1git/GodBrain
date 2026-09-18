@@ -45,7 +45,7 @@ export function parseOptions(args) {
       help: { type: 'boolean', default: false },
     },
   });
-  if (positionals.length > 1) throw new Error('Specify only one command: run, status, stop, tasks, lessons, objectives, or university.');
+  if (positionals.length > 1) throw new Error('Specify only one command: run, status, stop, tasks, lessons, objectives, university, or dashboard.');
   for (const name of ['rounds', 'max-attempts', 'keep-runs', 'max-tokens', 'timeout-seconds',
     'interval-seconds', 'retry-seconds', 'tutor-every', 'dashboard-port']) {
     if (!/^\d+$/.test(values[name]) || !Number.isSafeInteger(Number(values[name]))) {
@@ -145,6 +145,7 @@ export async function main(args = process.argv.slice(2)) {
   node gym.mjs lessons                      List hash-bound, machine-tested examples
   node gym.mjs objectives                   List custom Explore and Qualify requests
   node gym.mjs university                   Show the generated degree path and current frontier
+  node gym.mjs dashboard                    Serve Creation Lab on :4177 without the practice worker
 
 Options: --endpoint http://127.0.0.1:8888/v1 --model ID
   --teacher-endpoint URL --teacher-model ID --tutor-every 2 (0 disables tutor)
@@ -201,6 +202,14 @@ Passing exercises become local gym lessons without /verify; they grant no host a
     return;
   }
   const { TASKS } = await import('./curriculum.mjs');
+  if (command === 'dashboard') {
+    const dashboard = await startDashboard({
+      workDir, trustedTasks: TASKS, port: Number(values['dashboard-port']),
+    });
+    console.log(`Dashboard: ${dashboard.origin}`);
+    await new Promise(() => {});
+    return 0;
+  }
   if (command === 'university') {
     const state = await loadState(workDir);
     const generated = await listUniversityTasks(workDir, TASKS);

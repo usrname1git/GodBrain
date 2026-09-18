@@ -178,26 +178,51 @@ function Start-Qwen {
     Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) at 10K with MTP off."
 }
 
+function Test-LoopbackPort([int]$Port) {
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $ok = $client.ConnectAsync("127.0.0.1", $Port).Wait(400)
+        $client.Close()
+        return [bool]$ok
+    } catch {
+        return $false
+    }
+}
+
+function Start-Dashboard {
+    if (Test-LoopbackPort 4177) { return }
+    $dashOut = Join-Path $runtimeDir "dashboard.out.log"
+    $dashErr = Join-Path $runtimeDir "dashboard.err.log"
+    Start-Process -FilePath $pwsh `
+        -ArgumentList @(
+            "-NoLogo", "-NoProfile", "-File", $gymDoor,
+            "-Command", "dashboard"
+        ) `
+        -WorkingDirectory $RepoRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $dashOut `
+        -RedirectStandardError $dashErr | Out-Null
+    Write-WatchEvent "dashboard_start" "Started Creation Lab dashboard on :4177."
+}
+
 function Start-Gym {
     $alive = $false
     if (Test-Path -LiteralPath $gymState) {
         try {
             $state = Get-Content -LiteralPath $gymState -Raw | ConvertFrom-Json
             if ($state.pid) {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$state.pid)" -ErrorAction SilentlyContinue
-                $alive = $process -and
-                    $process.CommandLine -and
-                    ($process.CommandLine -like "*Invoke-FrontendGym.ps1*" -or
-                     $process.CommandLine -like "*skill_lab\gym.mjs*" -or
-                     $process.CommandLine -like "*skill_lab/gym.mjs*")
+                $process = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
+                $alive = $null -ne $process
             }
         } catch {}
     }
     if ($alive) { return }
+    Start-Dashboard
     Start-Process -FilePath $pwsh `
         -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $gymDoor,
             "-Continuous",
+            "-NoDashboard",
             "-Endpoint", "http://127.0.0.1:8888/v1",
             "-Model", "qwen3.8-27b-exl3-3.5bpw",
             "-MaxAttempts", "4"

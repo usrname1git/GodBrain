@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("run", "status", "stop", "tasks", "lessons", "objectives", "university")]
+    [ValidateSet("run", "status", "stop", "tasks", "lessons", "objectives", "university", "dashboard")]
     [string]$Command = "run",
     [string]$RepoRoot = $PSScriptRoot,
     [string]$Endpoint = "",
