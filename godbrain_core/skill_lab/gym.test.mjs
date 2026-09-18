@@ -30,6 +30,9 @@ test('university app scaffold satisfies static source-contract rails', () => {
   const capstone = universityAppScaffold('App.tsx', 'event-platform-showcase-v1');
   assert.match(capstone, /interface Props/);
   assert.match(capstone, /lifecycle/);
+  const architecture = universityAppScaffold('App.tsx', 'marketing-site-architecture-v1');
+  assert.match(architecture, /lifecycle/);
+  assert.doesNotMatch(architecture, /props.brand \?\? "Studio"/);
   assert.match(capstone, /Book a demo/);
   assert.match(capstone, /aria-invalid/);
   assert.match(capstone, /className=\{menu\?'open':''\}/);

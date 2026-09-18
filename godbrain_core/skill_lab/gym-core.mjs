@@ -18,8 +18,16 @@ export function isHostNetworkFailure(value) {
   return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
 }
 
+const MARKETING_CONTRACTS = new Set([
+  'marketing-site-architecture-v1',
+  'responsive-site-navigation-v1',
+  'feature-lifecycle-explorer-v1',
+  'pricing-demo-conversion-v1',
+  'event-platform-showcase-v1',
+]);
+
 export function universityAppScaffold(appFile = 'App.tsx', contractTaskId = '') {
-  if (appFile === 'App.tsx' && contractTaskId === 'event-platform-showcase-v1') {
+  if (appFile === 'App.tsx' && MARKETING_CONTRACTS.has(contractTaskId)) {
     return REFERENCES['event-platform-showcase-v1']['App.jsx']
       .replace("import {useMemo,useState} from 'react';", 'import { useMemo, useState } from "react";')
       .replace('export default function App(props) {', `interface Section { id: string; label: string }

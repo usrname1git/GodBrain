@@ -306,10 +306,10 @@ Passing exercises become local gym lessons without /verify; they grant no host a
             taskId: selected.id,
             evaluatorVersion: evidenceVersion,
           });
+          const overlay = universityAppScaffold(appFile, contractId);
+          const fromReference = reference[appFile] || reference['App.jsx'] || '';
           const seed = selected.university
-            ? (contractId === 'event-platform-showcase-v1'
-              ? universityAppScaffold(appFile, contractId)
-              : (reference[appFile] ?? reference['App.jsx'] ?? universityAppScaffold(appFile, contractId)))
+            ? (overlay.includes('lifecycle') ? overlay : (fromReference || overlay))
             : '';
           return {
             ...selected,
