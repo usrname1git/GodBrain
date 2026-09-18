@@ -248,7 +248,7 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   const searchBox = cannedTutorAdvice({
     feedback: 'feature-search-filters-seeded-content: Missing getByRole(\'textbox\', { name: /search features/i })',
   });
-  assert.match(searchBox, /accessible name includes Search/);
+  assert.match(searchBox, /Search or Filter/);
   assert.doesNotMatch(searchBox, /htmlFor/);
   const truncated = cannedTutorAdvice({
     parseFailed: true,

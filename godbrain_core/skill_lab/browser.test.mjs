@@ -124,10 +124,10 @@ test('typed capstone scaffold passes browser checks on two seeds', async t => {
 test('studio copy may rename Search features and Event type without failing the contract', async t => {
   const files = getReference('event-platform-showcase-v1');
   files['App.jsx'] = files['App.jsx']
-    .replace('>Search features<input', '>Search capabilities<input')
+    .replace('>Search features<input', '>Filter features<input')
     .replace('<label>Event type<select', '<label>Program type<select')
     .replace('<label>Work email<input', '<label>Email<input');
-  assert.match(files['App.jsx'], /Search capabilities/);
+  assert.match(files['App.jsx'], /Filter features/);
   assert.match(files['App.jsx'], /Program type/);
   assert.match(files['App.jsx'], /<label>Email<input/);
   const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 29);

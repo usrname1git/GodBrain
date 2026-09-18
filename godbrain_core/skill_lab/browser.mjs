@@ -762,6 +762,17 @@ async function formEmail(page) {
   throw new Error('Missing an email textbox inside the demo form.');
 }
 
+async function featureSearch(page) {
+  const names = [/search features/i, /search/i, /filter features/i, /filter/i, /find/i];
+  for (const role of ['textbox', 'searchbox']) {
+    for (const name of names) {
+      const named = page.getByRole(role, { name });
+      if (await named.count()) return named.first();
+    }
+  }
+  throw new Error('Missing a Search or Filter features textbox.');
+}
+
 async function checkMarketingQuality(page, props, checks, errors, draftOnly = false, files = {}) {
   await addCheck(checks, errors, 'semantic-marketing-structure', async () => {
     await page.locator('header').first().waitFor({ state: 'visible' });
@@ -893,7 +904,7 @@ async function checkLifecycleExplorer(page, props, checks, errors) {
   await addCheck(checks, errors, 'feature-search-filters-seeded-content', async () => {
     const target = props.lifecycle[0].features[0];
     const unrelated = props.lifecycle[1].features[0];
-    const search = await roleByNames(page, 'textbox', [/search features/i, /search/i]);
+    const search = await featureSearch(page);
     await search.fill(target.slice(0, Math.max(3, target.length - 2)));
     await visibleText(page, target);
     const unrelatedLocator = page.getByText(unrelated, { exact: false });

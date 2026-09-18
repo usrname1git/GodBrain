@@ -559,7 +559,7 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'honest-substantial-content': 'Render at least 650 visible characters of meaningful main content and the seeded proofPoints from props. Do not hardcode evaluator examples or invent claims.',
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
-  'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search or Filter and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
@@ -677,14 +677,14 @@ export function cannedTutorAdvice(active = {}) {
   if (searchFail && eventTypeFail) {
     return [
       'CAUSE: Studio copy renamed Search features or Event type so the examiner missed working controls.',
-      '1. Keep a wrapping label containing Search on the features textbox.',
+      '1. Keep a wrapping label containing Search or Filter on the features textbox.',
       '2. Keep a native form <select> (Event type, Program type, or Operation type).',
     ].join('\n');
   }
   if (searchFail) {
     return [
-      'CAUSE: The examiner needs a textbox whose accessible name includes Search. Search capabilities is accepted; a missing field is not.',
-      '1. Keep <label>Search features<input/></label> or any wrapping label containing Search.',
+      'CAUSE: The examiner needs a textbox whose accessible name includes Search or Filter. Filter features is accepted; a missing field is not.',
+      '1. Keep <label>Search features<input/></label> or any wrapping label containing Search or Filter.',
       '2. Filter lifecycle[].features from every stage, not only the selected stage.',
     ].join('\n');
   }
