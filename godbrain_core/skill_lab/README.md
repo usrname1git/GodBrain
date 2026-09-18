@@ -1,10 +1,11 @@
 # Frontend University (browser-qualified)
 
-This is not your home basement gym with some random drills. It is a **3-year
-högskoleingenjör (6 terms)**: a durable prerequisite graph, a protected browser
-examiner, a Creation Gallery of qualified showcases, and one autonomous
-practice loop. Capstone is the degree exam once. The loop does not reskin the
-same exam as studio 28, 29, 40. GPT and Grok staffed the degree path; Qwen
+This is not your home basement gym with some random drills. It is a **mastery
+ladder**: prerequisites unlock the next exam, not a Swedish calendar. Cycle 1
+is the product-site path (capstone once). Cycle 2 is application craft
+(settings, lists, catalog, registration, keyboard dialogs) — new contracts, not
+Eventbrite reskins. A React-God exam and a C/C++ Carmack track need new
+verifiers before they exist. GPT and Grok staffed the path; Qwen
 (`qwen3.8-27b-exl3-3.5bpw` on `:8888`) is the learner. A failed attempt is
 normal coursework, not an approval prompt.
 **The operator does not review web code or `/verify` individual attempts.**

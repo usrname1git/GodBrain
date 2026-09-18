@@ -299,21 +299,24 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         if (selected.fileMode === 'app') {
           const appFile = selected.appFile ?? 'App.jsx';
-          const showcase = Boolean(selected.university) &&
-            selected.baseTaskId === 'event-platform-showcase-v1';
+          const contractId = selected.baseTaskId ?? selected.id;
+          const reference = getReference(contractId);
           const plan = universityLessonPlan({
             lessons: state.lessons,
             taskId: selected.id,
             evaluatorVersion: evidenceVersion,
           });
+          const seed = selected.university
+            ? (contractId === 'event-platform-showcase-v1'
+              ? universityAppScaffold(appFile, contractId)
+              : (reference[appFile] ?? reference['App.jsx'] ?? universityAppScaffold(appFile, contractId)))
+            : '';
           return {
             ...selected,
-            revalidateInitial: (showcase && plan.landScaffold) || selected.revalidateInitial,
+            revalidateInitial: (Boolean(selected.university) && plan.landScaffold) || selected.revalidateInitial,
             initialFiles: selected.initialFiles ?? {
-              [appFile]: selected.university
-                ? universityAppScaffold(appFile, selected.baseTaskId)
-                : '',
-              'styles.css': getReference(selected.baseTaskId ?? selected.id)['styles.css'],
+              [appFile]: seed,
+              'styles.css': reference['styles.css'] ?? '',
             },
           };
         }

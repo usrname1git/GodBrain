@@ -156,12 +156,13 @@ test('L3 composition is nav+form and explorer+form, not the four-suite showcase'
   ]);
 });
 
-test('university opens prerequisites one course at a time and graduates after the capstone', async t => {
+test('university opens prerequisites one course at a time and then cycle-2 app craft', async t => {
   const workDir = await workspace(t);
   let university = await advanceUniversity(workDir, [], trustedTasks);
   assert.equal(university.courses.length, 1);
   assert.equal(university.courses[0].competencyId, 'component-composition');
-  assert.equal(university.courses[0].term, 1);
+  assert.equal(university.courses[0].cycle, 1);
+  assert.equal(university.courses[0].stage, 1);
   let tasks = await listUniversityTasks(workDir, trustedTasks);
   assert.equal(tasks[0].appFile, 'App.tsx');
   assert.equal(tasks[0].fileMode, 'app');
@@ -183,11 +184,11 @@ test('university opens prerequisites one course at a time and graduates after th
   assert.ok(university.graduatedAt);
   const studio = university.courses.find(course => course.iteration === 2);
   assert.equal(studio, undefined);
+  assert.ok(university.courses.some(course => course.competencyId === 'persistent-settings' && course.status === 'mastered'));
   const summary = universitySummary(university, []);
   assert.equal(summary.blueprintCount, COMPETENCIES.length);
   assert.equal(summary.programStatus, 'graduated');
   assert.equal(summary.active, null);
-  assert.equal(summary.currentTerm, 6);
   assert.equal(summary.courses.length, COMPETENCIES.length);
 
   tasks = await listUniversityTasks(workDir, trustedTasks);
@@ -198,13 +199,13 @@ test('extra capstone studios are retired instead of becoming the next term', asy
   const workDir = await workspace(t);
   await writeJson(path.join(workDir, 'university.json'), {
     version: 1, capstoneSequence: 27, archivedCapstones: 0, programStatus: 'enrolled', courses: [
-      ...COMPETENCIES.map(item => ({
+      ...COMPETENCIES.filter(item => item.cycle === 1).map(item => ({
         id: `university-${item.id}-v1`,
         competencyId: item.id,
         discipline: item.discipline,
         level: item.level,
-        year: item.year,
-        term: item.term,
+        cycle: item.cycle,
+        stage: item.stage,
         iteration: 1,
         title: item.title,
         prerequisites: [...item.prerequisites],
@@ -231,8 +232,8 @@ test('extra capstone studios are retired instead of becoming the next term', asy
         competencyId: 'product-site-capstone',
         discipline: 'Capstone',
         level: 4,
-        year: 3,
-        term: 6,
+        cycle: 1,
+        stage: 6,
         iteration: 29,
         title: 'Deliver an integrated typed product-site capstone · studio 29',
         prerequisites: ['interaction-composition', 'lifecycle-form-composition', 'responsive-product-system'],
@@ -259,7 +260,10 @@ test('extra capstone studios are retired instead of becoming the next term', asy
   const university = await advanceUniversity(workDir, [], trustedTasks);
   const leftover = university.courses.find(course => course.id === 'university-product-site-capstone-v29');
   assert.equal(leftover.status, 'retired');
-  assert.equal(university.programStatus, 'graduated');
+  assert.equal(university.programStatus, 'enrolled');
+  const next = university.courses.find(course => course.status === 'active');
+  assert.equal(next.competencyId, 'persistent-settings');
+  assert.equal(next.cycle, 2);
   const tasks = await listUniversityTasks(workDir, trustedTasks);
   assert.equal(tasks.some(task => task.id === leftover.id), false);
   assert.equal(tasks.every(task => task.university.iteration === 1), true);
