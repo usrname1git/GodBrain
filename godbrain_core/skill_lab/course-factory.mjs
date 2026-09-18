@@ -119,7 +119,7 @@ export async function readUniversity(workDir) {
 export async function listUniversityTasks(workDir, trustedTasks) {
   const university = await readUniversity(workDir);
   return university.courses
-    .filter(course => course.status !== 'retired')
+    .filter(course => course.status !== 'retired' && course.iteration === 1)
     .map(course => asTask(course, trustedTasks));
 }
 

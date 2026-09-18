@@ -262,4 +262,5 @@ test('extra capstone studios are retired instead of becoming the next term', asy
   assert.equal(university.programStatus, 'graduated');
   const tasks = await listUniversityTasks(workDir, trustedTasks);
   assert.equal(tasks.some(task => task.id === leftover.id), false);
+  assert.equal(tasks.every(task => task.university.iteration === 1), true);
 });
