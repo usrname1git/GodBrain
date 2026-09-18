@@ -14,8 +14,20 @@ export class CandidateError extends Error {}
 export class BackendError extends Error {}
 export class StopRequested extends Error {}
 
+export function isHostNetworkFailure(value) {
+  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
+}
+
+export const MARKETING_CONTRACTS = new Set([
+  'marketing-site-architecture-v1',
+  'responsive-site-navigation-v1',
+  'feature-lifecycle-explorer-v1',
+  'pricing-demo-conversion-v1',
+  'event-platform-showcase-v1',
+]);
+
 export function universityAppScaffold(appFile = 'App.tsx', contractTaskId = '') {
-  if (appFile === 'App.tsx' && contractTaskId === 'event-platform-showcase-v1') {
+  if (appFile === 'App.tsx' && MARKETING_CONTRACTS.has(contractTaskId)) {
     return REFERENCES['event-platform-showcase-v1']['App.jsx']
       .replace("import {useMemo,useState} from 'react';", 'import { useMemo, useState } from "react";')
       .replace('export default function App(props) {', `interface Section { id: string; label: string }
@@ -555,7 +567,11 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'honest-substantial-content': 'Render at least 650 visible characters of meaningful main content and the seeded proofPoints from props. Do not hardcode evaluator examples or invent claims.',
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
-  'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search or Filter and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'visual-system-tokens-applied': 'Apply props.visualSystem ink, paper, accent and displayFont to computed styles. Do not hardcode one palette.',
+  'visual-hero-is-not-centered-template': 'h1 must be text-align start/left. A centered 80vh hero is a generic template.',
+  'visual-anti-generic-chrome': 'Do not use Segoe UI / system-ui / Inter as the display face, or Tailwind purple as the CTA, when the seed gave Georgia or Consolas and a named accent.',
+  'visual-anti-generic-three-up': 'Do not use three equal-width cards as the only composition.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
@@ -673,14 +689,14 @@ export function cannedTutorAdvice(active = {}) {
   if (searchFail && eventTypeFail) {
     return [
       'CAUSE: Studio copy renamed Search features or Event type so the examiner missed working controls.',
-      '1. Keep a wrapping label containing Search on the features textbox.',
+      '1. Keep a wrapping label containing Search or Filter on the features textbox.',
       '2. Keep a native form <select> (Event type, Program type, or Operation type).',
     ].join('\n');
   }
   if (searchFail) {
     return [
-      'CAUSE: The examiner needs a textbox whose accessible name includes Search. Search capabilities is accepted; a missing field is not.',
-      '1. Keep <label>Search features<input/></label> or any wrapping label containing Search.',
+      'CAUSE: The examiner needs a textbox whose accessible name includes Search or Filter. Filter features is accepted; a missing field is not.',
+      '1. Keep <label>Search features<input/></label> or any wrapping label containing Search or Filter.',
       '2. Filter lifecycle[].features from every stage, not only the selected stage.',
     ].join('\n');
   }
@@ -690,6 +706,13 @@ export function cannedTutorAdvice(active = {}) {
         'CAUSE: The form select is missing an accessible name matching Event type. Operation type is accepted; a missing native select is not.',
         '1. Keep a native <select> inside <form>. Label may be Event type, Program type, or Operation type.',
         '2. Do not replace the select with buttons, radios, or a text input.',
+      ].join('\n');
+    }
+    if (/work email|e-?mail/i.test(feedback)) {
+      return [
+        'CAUSE: The form is missing a visible email field. Work email, Email, or a visible input type=email is accepted; a hidden honeypot is not.',
+        '1. Keep a visible <label>Work email<input/></label>, Email, or <input type="email"> inside the form.',
+        '2. Keep error text outside the label so the accessible name stays Email / Work email.',
       ].join('\n');
     }
     return [
@@ -1049,6 +1072,13 @@ export async function runPractice(options, dependencies) {
                 result = await evaluate({
                   taskId: task.id, files, artifactDir: evidenceDir, seed, browserPath, task,
                 });
+                if (isHostNetworkFailure(JSON.stringify(result))) {
+                  throw new Error(clip(
+                    (result.errors || []).find(item => isHostNetworkFailure(item)) ||
+                    'Browser host network exhausted',
+                    500,
+                  ));
+                }
                 break;
               } catch (error) {
                 if (signal.aborted) throw signal.reason;

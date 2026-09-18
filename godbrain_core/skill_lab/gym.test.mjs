@@ -5,13 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
-  acquireRunLock, BackendError, cannedTutorAdvice, completeLocal, hashFiles, learnerMessages,
+  acquireRunLock, BackendError, cannedTutorAdvice, completeLocal, hashFiles, isHostNetworkFailure, learnerMessages,
   loadState, localEndpoint, newState, parseCandidate, parseTutorAdvice, readJson, requestStop, runPractice,
   StopRequested, summarizeCheckDetail, tutorMessages, universityAppScaffold, writeJson,
 } from './gym-core.mjs';
 import { articleText, createDocumentationReader, documentationUrl } from './docs.mjs';
 import { getTask } from './curriculum.mjs';
-import { parseOptions, selectRetainedLesson } from './gym.mjs';
+import { COMPETENCIES } from './competencies.mjs';
+import { parseOptions, selectRetainedLesson, universityLessonPlan } from './gym.mjs';
 
 const task = { id: 'settings', family: 'forms', title: 'Save preferences', brief: 'Save name and restore it after reload.', docs: [] };
 const working = { 'App.jsx': 'export default function App(){ return <p>working</p> }', 'styles.css': '' };
@@ -30,6 +31,13 @@ test('university app scaffold satisfies static source-contract rails', () => {
   const capstone = universityAppScaffold('App.tsx', 'event-platform-showcase-v1');
   assert.match(capstone, /interface Props/);
   assert.match(capstone, /lifecycle/);
+  const architecture = universityAppScaffold('App.tsx', 'marketing-site-architecture-v1');
+  assert.match(architecture, /lifecycle/);
+  assert.doesNotMatch(architecture, /props.brand \?\? "Studio"/);
+  assert.equal(
+    COMPETENCIES.find(item => item.id === 'persistent-settings').sourceRules.includes('form-validation'),
+    false,
+  );
   assert.match(capstone, /Book a demo/);
   assert.match(capstone, /aria-invalid/);
   assert.match(capstone, /className=\{menu\?'open':''\}/);
@@ -240,10 +248,15 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(eventType, /native <select>/);
   assert.doesNotMatch(eventType, /htmlFor is required/);
+  const workEmail = cannedTutorAdvice({
+    feedback: "demo-form-validates-before-success: Missing locator('form').getByRole('textbox', { name: /work email/i })",
+  });
+  assert.match(workEmail, /visible email field/);
+  assert.doesNotMatch(workEmail, /htmlFor is required/);
   const searchBox = cannedTutorAdvice({
     feedback: 'feature-search-filters-seeded-content: Missing getByRole(\'textbox\', { name: /search features/i })',
   });
-  assert.match(searchBox, /accessible name includes Search/);
+  assert.match(searchBox, /Search or Filter/);
   assert.doesNotMatch(searchBox, /htmlFor/);
   const truncated = cannedTutorAdvice({
     parseFailed: true,
@@ -739,6 +752,43 @@ test('model transport uses the local OpenAI route with thinking off and no tool 
   assert.equal(requestBody.tools, undefined);
 });
 
+test('host socket exhaustion retries without grading the candidate', async t => {
+  const workDir = await workspace(t);
+  const controller = new AbortController();
+  let modelCalls = 0;
+  let browserCalls = 0;
+  const state = await runPractice(options(workDir, {
+    continuous: true, retryMs: 1, externalSignal: controller.signal,
+    onProgress: () => controller.abort(new StopRequested('Test completed one exercise.')),
+  }), {
+    tasks: [task], evaluatorVersion,
+    complete: async () => { modelCalls++; return answer(); },
+    evaluate: async request => {
+      if (++browserCalls === 1) {
+        return {
+          passed: false, seed: request.seed, taskId: request.taskId, evaluatorVersion,
+          checks: [
+            { name: 'app-rendered-visible-content', passed: false, detail: "Missing locator('#root')" },
+            { name: 'no-console-errors', passed: false, detail: 'Failed to load resource: net::ERR_NO_BUFFER_SPACE' },
+          ],
+          errors: [
+            "app-rendered-visible-content: Missing locator('#root')",
+            'no-console-errors: Failed to load resource: net::ERR_NO_BUFFER_SPACE',
+          ],
+          artifacts: [],
+        };
+      }
+      return evaluate(request);
+    },
+  });
+  assert.equal(isHostNetworkFailure('net::ERR_NO_BUFFER_SPACE'), true);
+  assert.equal(modelCalls, 1);
+  assert.equal(browserCalls, 3);
+  assert.equal(state.stats.infrastructureErrors, 1);
+  assert.equal(state.stats.failed, 0);
+  assert.equal(state.stats.passed, 1);
+});
+
 test('a transient browser outage retries the same candidate without grading it as a failure', async t => {
   const workDir = await workspace(t);
   const controller = new AbortController();
@@ -761,6 +811,37 @@ test('a transient browser outage retries the same candidate without grading it a
   assert.equal(state.stats.failed, 0);
   assert.equal(state.stats.passed, 1);
   assert.equal(state.status, 'stopped');
+});
+
+test('university lesson plan harvests only after two current-evaluator sources', () => {
+  const lessons = [
+    { taskId: 'cap-v28', runId: 'a', sourceHash: '1', evaluatorVersion: 'old', stale: false },
+    { taskId: 'cap-v28', runId: 'b', sourceHash: '2', evaluatorVersion: 'now', stale: false },
+  ];
+  const bump = universityLessonPlan({
+    lessons, taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: false,
+  });
+  assert.equal(bump.revalidate, false);
+  assert.equal(bump.landScaffold, false);
+  const firstNight = universityLessonPlan({
+    lessons: lessons.filter(item => item.evaluatorVersion === 'old'),
+    taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: false,
+  });
+  assert.equal(firstNight.revalidate, true);
+  assert.equal(firstNight.lesson.evaluatorVersion, 'old');
+  const harvest = universityLessonPlan({
+    lessons: [
+      ...lessons,
+      { taskId: 'cap-v28', runId: 'c', sourceHash: '3', evaluatorVersion: 'now', stale: false },
+    ],
+    taskId: 'cap-v28', evaluatorVersion: 'now', revalidateLesson: true,
+  });
+  assert.equal(harvest.revalidate, true);
+  const freshStudio = universityLessonPlan({
+    lessons: [], taskId: 'cap-v29', evaluatorVersion: 'now',
+  });
+  assert.equal(freshStudio.landScaffold, true);
+  assert.equal(freshStudio.revalidate, false);
 });
 
 test('CLI rejects malformed numeric controls and model prompts stay bounded', () => {

@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
-import { hashFiles, localEndpoint, loadState, readJson, requestStop, runPractice, StopRequested, universityAppScaffold } from './gym-core.mjs';
+import { hashFiles, localEndpoint, loadState, MARKETING_CONTRACTS, readJson, requestStop, runPractice, StopRequested, universityAppScaffold } from './gym-core.mjs';
 import { createDocumentationReader } from './docs.mjs';
 import { startDashboard } from './dashboard.mjs';
 import {
@@ -62,6 +62,23 @@ export function selectRetainedLesson(lessons, taskId, evaluatorVersion, selectio
   const current = taskLessons.filter(item => item.evaluatorVersion === evaluatorVersion);
   const eligible = current.length || !allowPrevious ? current : taskLessons;
   return eligible.length ? eligible[selectionCount % eligible.length] : null;
+}
+
+export function universityLessonPlan({
+  lessons = [], taskId, evaluatorVersion, selectionCount = 0, revalidateLesson = false,
+} = {}) {
+  const current = lessons.filter(item =>
+    !item.stale &&
+    item.taskId === taskId &&
+    item.evaluatorVersion === evaluatorVersion);
+  const lesson = selectRetainedLesson(lessons, taskId, evaluatorVersion, selectionCount, current.length === 0);
+  const bump = Boolean(lesson) && lesson.evaluatorVersion !== evaluatorVersion && current.length === 0;
+  return {
+    lesson,
+    currentCount: current.length,
+    revalidate: Boolean(lesson) && (revalidateLesson || bump),
+    landScaffold: current.length === 0 && !lesson,
+  };
 }
 
 async function selectEndpoint(explicit) {
@@ -254,19 +271,23 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         const selected = await selectCurriculumTask(workDir, state, combined);
         if (selected.university) {
-          const lesson = selectRetainedLesson(
-            state.lessons, selected.id, evidenceVersion,
-            state.scheduler?.selectionCount ?? 0, true);
-          if (lesson && (selected.revalidateLesson || lesson.evaluatorVersion !== evidenceVersion)) {
-            const source = await readJson(path.join(workDir, 'runs', lesson.runId, 'source.json'), null);
-            if (!source || hashFiles(source) !== lesson.sourceHash) {
-              throw new Error(`Retained lesson ${lesson.runId} failed its source-hash check.`);
+          const plan = universityLessonPlan({
+            lessons: state.lessons,
+            taskId: selected.id,
+            evaluatorVersion: evidenceVersion,
+            selectionCount: state.scheduler?.selectionCount ?? 0,
+            revalidateLesson: selected.revalidateLesson === true,
+          });
+          if (plan.revalidate && plan.lesson) {
+            const source = await readJson(path.join(workDir, 'runs', plan.lesson.runId, 'source.json'), null);
+            if (!source || hashFiles(source) !== plan.lesson.sourceHash) {
+              throw new Error(`Retained lesson ${plan.lesson.runId} failed its source-hash check.`);
             }
             return {
               ...selected,
               initialFiles: source,
               revalidateInitial: true,
-              retainedLessonRunId: lesson.runId,
+              retainedLessonRunId: plan.lesson.runId,
             };
           }
         }
@@ -278,16 +299,24 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         if (selected.fileMode === 'app') {
           const appFile = selected.appFile ?? 'App.jsx';
-          const showcase = Boolean(selected.university) &&
-            selected.baseTaskId === 'event-platform-showcase-v1';
+          const contractId = selected.baseTaskId ?? selected.id;
+          const reference = getReference(contractId);
+          const plan = universityLessonPlan({
+            lessons: state.lessons,
+            taskId: selected.id,
+            evaluatorVersion: evidenceVersion,
+          });
+          const overlay = universityAppScaffold(appFile, contractId);
+          const fromReference = reference[appFile] || reference['App.jsx'] || '';
+          const seed = selected.university
+            ? (MARKETING_CONTRACTS.has(contractId) ? overlay : (fromReference || overlay))
+            : '';
           return {
             ...selected,
-            revalidateInitial: showcase || selected.revalidateInitial,
+            revalidateInitial: (Boolean(selected.university) && plan.landScaffold) || selected.revalidateInitial,
             initialFiles: selected.initialFiles ?? {
-              [appFile]: selected.university
-                ? universityAppScaffold(appFile, selected.baseTaskId)
-                : '',
-              'styles.css': getReference(selected.baseTaskId ?? selected.id)['styles.css'],
+              [appFile]: seed,
+              'styles.css': reference['styles.css'] ?? '',
             },
           };
         }

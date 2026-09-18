@@ -34,7 +34,7 @@ async function evidence(result) {
 }
 
 test('curriculum has compact product and marketing-site tasks with strict lookup', () => {
-  assert.equal(TASKS.length, 10);
+  assert.equal(TASKS.length, 16);
   for (const task of TASKS) {
     assert.equal(getTask(task.id), task);
     assert.ok(task.id && task.family && task.title);
@@ -62,6 +62,76 @@ test('all reference implementations pass real browser checks on two meaningful s
       digests.add(record.propsDigest);
     }
     assert.equal(digests.size, 2, `${task.id} seeds should produce different inputs`);
+  }
+});
+
+test('visual-god reference implements the seeded canvas and rejects a generic template', async t => {
+  for (const seed of [1, 2]) {
+    const result = await evaluateIn(t, 'visual-god-v1', getReference('visual-god-v1'), seed);
+    assert.equal(result.passed, true, `seed ${seed}: ${JSON.stringify(result.errors)}`);
+  }
+  const generic = {
+    'App.jsx': `export default function App() {
+  return <main style={{ fontFamily: 'Segoe UI, system-ui, sans-serif', background: '#fff', color: '#111' }}>
+    <h1 style={{ textAlign: 'center', fontSize: 48 }}>Launch your workspace</h1>
+    <a className="cta" href="#x" style={{ background: '#6366f1', color: '#fff' }}>Get started</a>
+    <section>{[1, 2, 3].map(index => <article className="card" key={index} style={{ width: 280, display: 'inline-block' }}>Card {index}</article>)}</section>
+  </main>;
+}`,
+    'styles.css': 'body{margin:0}',
+  };
+  const failed = await evaluateIn(t, 'visual-god-v1', generic, 1);
+  assert.equal(failed.passed, false);
+  assert.ok((failed.errors || []).some(item => /visual-system-tokens-applied|visual-hero|visual-anti-generic/i.test(item)), JSON.stringify(failed.errors));
+});
+
+test('async-data Resource status accepts Title Case option labels without lowercase values', async t => {
+  const files = getReference('async-data-states-v1');
+  files['App.jsx'] = `import {useState} from 'react';
+import './styles.css';
+export default function App({records, errorMessage, emptyLabel}) {
+  const [status, setStatus] = useState('Ready');
+  return <main>
+    <h1>Records</h1>
+    <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+      <option>Loading</option>
+      <option>Error</option>
+      <option>Empty</option>
+      <option>Ready</option>
+    </select></label>
+    {status === 'Loading' && <p role="status">Loading</p>}
+    {status === 'Error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('Ready')}>Retry</button></>}
+    {status === 'Empty' && <p>{emptyLabel}</p>}
+    {status === 'Ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+  </main>;
+}`;
+  const result = await evaluateIn(t, 'async-data-states-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('visual-god reads accent from the named CTA without requiring a .cta class', async t => {
+  const files = getReference('visual-god-v1');
+  files['App.jsx'] = files['App.jsx'].replace(
+    '<a className="cta" href="#note">{primaryCta}</a>',
+    '<a href="#note" style={{ background: visualSystem.accent, color: visualSystem.paper, fontWeight: 800, padding: 12 }}>{primaryCta}</a>',
+  );
+  const result = await evaluateIn(t, 'visual-god-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('god-cycle reference implementations pass two seeds', async t => {
+  const ids = [
+    'client-routing-v1',
+    'async-data-states-v1',
+    'error-boundary-recovery-v1',
+    'large-list-performance-v1',
+    'react-god-workbench-v1',
+  ];
+  for (const taskId of ids) {
+    for (const seed of [1, 2]) {
+      const result = await evaluateIn(t, taskId, getReference(taskId), seed);
+      assert.equal(result.passed, true, `${taskId} seed ${seed}: ${JSON.stringify(result.errors)}`);
+    }
   }
 });
 
@@ -124,11 +194,23 @@ test('typed capstone scaffold passes browser checks on two seeds', async t => {
 test('studio copy may rename Search features and Event type without failing the contract', async t => {
   const files = getReference('event-platform-showcase-v1');
   files['App.jsx'] = files['App.jsx']
-    .replace('>Search features<input', '>Search capabilities<input')
-    .replace('<label>Event type<select', '<label>Program type<select');
-  assert.match(files['App.jsx'], /Search capabilities/);
+    .replace('>Search features<input', '>Filter features<input')
+    .replace('<label>Event type<select', '<label>Program type<select')
+    .replace('<label>Work email<input', '<label>Email<input');
+  assert.match(files['App.jsx'], /Filter features/);
   assert.match(files['App.jsx'], /Program type/);
+  assert.match(files['App.jsx'], /<label>Email<input/);
   const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 29);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('demo form email accepts a visible type=email without Email in the label', async t => {
+  const files = getReference('event-platform-showcase-v1');
+  files['App.jsx'] = files['App.jsx'].replace(
+    '<label>Work email<input aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/></label>',
+    '<label>Office<input type="email" aria-invalid={Boolean(errors.email)} value={form.email} onChange={event=>setForm({...form,email:event.target.value})}/></label><input type="email" hidden name="honeypot" />',
+  );
+  const result = await evaluateIn(t, 'pricing-demo-conversion-v1', files, 29);
   assert.equal(result.passed, true, JSON.stringify(result.errors));
 });
 

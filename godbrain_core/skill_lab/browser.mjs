@@ -80,6 +80,10 @@ export function missingMobileNavCss(css = '') {
   return 'styles.css has no @media rule that hides the nav element (nav{display:none}). Put that mobile block next to the desktop nav rules, not at the end of the file, or a 6k rewrite drops it and overflows ~100-180px.';
 }
 
+function isHostNetworkFailure(value) {
+  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
+}
+
 function overflowDetail(prefix, files = {}) {
   const mismatch = navSelectorMismatch(files['App.jsx'] || files['App.tsx'] || '', files['styles.css'] || '');
   return mismatch ? `${prefix} ${mismatch}` : prefix;
@@ -230,6 +234,109 @@ function pick(random, values) {
   return values[Math.floor(random() * values.length) % values.length];
 }
 
+function godCycleProps(taskId, seed, random, names) {
+  const routes = [
+    { id: `inbox-${seed}`, label: `Inbox ${seed}`, title: `Inbox title ${seed}`, body: `${pick(random, names)} queued item ${seed}.` },
+    { id: `catalog-${seed}`, label: `Catalog ${seed}`, title: `Catalog title ${seed}`, body: `Browse the seeded index for ${seed}.` },
+    { id: `lab-${seed}`, label: `Lab ${seed}`, title: `Lab title ${seed}`, body: `Crash recovery lab ${seed}.` },
+  ];
+  const records = Array.from({ length: 3 }, (_, index) => ({
+    id: `rec-${seed}-${index}`,
+    title: `${pick(random, names)} record ${seed}-${index}`,
+    detail: `Detail ${seed} row ${index + 1}.`,
+  }));
+  const adjectives = ['Copper', 'Velvet', 'Quartz', 'Nimbus', 'Olive', 'Solar', 'Harbor', 'Juniper'];
+  const nouns = ['Lamp', 'Desk', 'Mug', 'Chair', 'Planter', 'Backpack', 'Speaker', 'Notebook'];
+  const groups = ['Alpha', 'Bravo', 'Charlie'];
+  const items = Array.from({ length: 96 }, (_, index) => ({
+    id: `item-${seed}-${index}`,
+    name: `${adjectives[index % adjectives.length]} ${nouns[index % nouns.length]} ${seed}-${index}`,
+    group: groups[index % groups.length],
+  }));
+  const shared = {
+    workspace: `Workbench ${seed}`,
+    routes,
+    records,
+    errorMessage: `Load failed ${seed}`,
+    emptyLabel: `No records ${seed}`,
+    items,
+    panelTitle: `Live panel ${seed}`,
+    crashLabel: `Crash panel ${seed}`,
+    fallbackTitle: `Recovered fallback ${seed}`,
+    recoveryLabel: `Reset lab ${seed}`,
+  };
+  if (taskId === 'client-routing-v1') return { workspace: shared.workspace, routes };
+  if (taskId === 'async-data-states-v1') {
+    return { records, errorMessage: shared.errorMessage, emptyLabel: shared.emptyLabel };
+  }
+  if (taskId === 'error-boundary-recovery-v1') {
+    return {
+      panelTitle: shared.panelTitle,
+      crashLabel: shared.crashLabel,
+      fallbackTitle: shared.fallbackTitle,
+      recoveryLabel: shared.recoveryLabel,
+    };
+  }
+  if (taskId === 'large-list-performance-v1') return { items };
+  return shared;
+}
+
+function visualGodProps(seed, random, names) {
+  const systems = [
+    {
+      name: 'Harbor editorial',
+      ink: '#1c2430',
+      paper: '#f3eee4',
+      accent: '#c45c26',
+      muted: '#5c564c',
+      displayFont: 'Georgia, "Palatino Linotype", serif',
+      bodyFont: 'Georgia, "Times New Roman", serif',
+      radius: '2px',
+      heroAlign: 'start',
+    },
+    {
+      name: 'Signal terminal',
+      ink: '#d7ffe1',
+      paper: '#0b1210',
+      accent: '#3dff9a',
+      muted: '#7aa388',
+      displayFont: 'Consolas, "Cascadia Mono", monospace',
+      bodyFont: 'Consolas, "Courier New", monospace',
+      radius: '0px',
+      heroAlign: 'start',
+    },
+  ];
+  const visualSystem = systems[Math.abs(seed) % systems.length];
+  const person = pick(random, names);
+  return {
+    brand: `${visualSystem.name.split(' ')[0]} ${seed}`,
+    product: `${person.split(' ')[0]} ${visualSystem.name} desk`,
+    tagline: `${visualSystem.name} canvas for seed ${seed}, not a generic template.`,
+    proof: `${person} keeps ${visualSystem.name.toLowerCase()} notes beside the work, never three identical marketing cards.`,
+    primaryCta: `Open the ${visualSystem.name} brief ${seed}`,
+    visualSystem,
+  };
+}
+
+function parseCssColor(value) {
+  const rgb = String(value ?? '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  const hex = String(value ?? '').match(/^#([0-9a-f]{6})$/i);
+  if (!hex) return null;
+  return [Number.parseInt(hex[1].slice(0, 2), 16), Number.parseInt(hex[1].slice(2, 4), 16), Number.parseInt(hex[1].slice(4, 6), 16)];
+}
+
+function colorsClose(actual, expected, tolerance = 22) {
+  const left = parseCssColor(actual);
+  const right = parseCssColor(expected);
+  if (!left || !right) return false;
+  return Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]) <= tolerance;
+}
+
+function firstFamily(stack) {
+  return String(stack ?? '').split(',')[0].replace(/["']/g, '').trim().toLowerCase();
+}
+
 export function taskProps(taskId, seed) {
   const random = seeded(seed);
   const names = ['Ada Rivers', 'Bryn Vale', 'Cora Finch', 'Dax Stone', 'Eli Moss', 'Faye Nova'];
@@ -301,6 +408,16 @@ export function taskProps(taskId, seed) {
       actionLabel: `Open details ${seed}`,
     };
   }
+  if ([
+    'client-routing-v1',
+    'async-data-states-v1',
+    'error-boundary-recovery-v1',
+    'large-list-performance-v1',
+    'react-god-workbench-v1',
+  ].includes(taskId)) {
+    return godCycleProps(taskId, seed, random, names);
+  }
+  if (taskId === 'visual-god-v1') return visualGodProps(seed, random, names);
   if ([
     'marketing-site-architecture-v1',
     'responsive-site-navigation-v1',
@@ -715,6 +832,203 @@ async function checkTabsDialog(page, props, checks, errors) {
   });
 }
 
+async function openLabeledRoute(page, label) {
+  if (!label) return;
+  const link = page.getByRole('link', { name: namePattern(label) });
+  if (await link.count()) await link.first().click();
+}
+
+async function checkClientRouting(page, props, checks, errors) {
+  await addCheck(checks, errors, 'client-routes-update-hash-and-content', async () => {
+    await visibleText(page, props.workspace);
+    const second = props.routes[1];
+    await page.getByRole('link', { name: namePattern(second.label) }).first().click();
+    await visibleText(page, second.title);
+    await visibleText(page, second.body);
+    const hash = await page.evaluate(() => location.hash);
+    if (!hash.includes(second.id)) throw new Error(`location.hash ${hash} did not contain route id ${second.id}.`);
+  });
+  await addCheck(checks, errors, 'unknown-hash-shows-not-found', async () => {
+    await page.evaluate(id => { location.hash = '#/' + id; }, `missing-${props.workspace}`);
+    await visibleText(page, 'Not found');
+    const stray = page.getByText(props.routes[1].body, { exact: false });
+    if (await stray.count() && await stray.first().isVisible()) {
+      throw new Error('Unknown hash still showed a real route body.');
+    }
+  });
+  await addCheck(checks, errors, 'browser-back-restores-previous-route', async () => {
+    const first = props.routes[0];
+    const second = props.routes[1];
+    await page.getByRole('link', { name: namePattern(first.label) }).first().click();
+    await visibleText(page, first.title);
+    await page.getByRole('link', { name: namePattern(second.label) }).first().click();
+    await visibleText(page, second.title);
+    await page.goBack({ timeout: ACTION_TIMEOUT_MS });
+    await visibleText(page, first.title);
+  });
+}
+
+async function checkAsyncData(page, props, checks, errors) {
+  await addCheck(checks, errors, 'resource-status-loading-hides-records', async () => {
+    await openLabeledRoute(page, props.routes?.[0]?.label);
+    const status = page.getByRole('combobox', { name: /resource status/i });
+    await status.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    await status.selectOption({ label: 'Loading' });
+    await page.getByRole('status').filter({ hasText: /^Loading$/ }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    const title = page.getByText(props.records[0].title, { exact: false });
+    if (await title.count() && await title.first().isVisible()) {
+      throw new Error('Loading state still listed a seeded record title.');
+    }
+  });
+  await addCheck(checks, errors, 'resource-status-error-retry-and-empty', async () => {
+    const status = page.getByRole('combobox', { name: /resource status/i });
+    await status.selectOption({ label: 'Error' });
+    await page.getByRole('alert').filter({ hasText: props.errorMessage }).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    await (await buttonByName(page, 'Retry')).click();
+    await visibleText(page, props.records[0].title);
+    await status.selectOption({ label: 'Empty' });
+    await visibleText(page, props.emptyLabel);
+    const title = page.getByText(props.records[1].title, { exact: false });
+    if (await title.count() && await title.first().isVisible()) {
+      throw new Error('Empty state still listed a seeded record title.');
+    }
+  });
+  await addCheck(checks, errors, 'resource-status-ready-lists-seeded-records', async () => {
+    await page.getByRole('combobox', { name: /resource status/i }).selectOption({ label: 'Ready' });
+    for (const record of props.records) {
+      await visibleText(page, record.title);
+      await visibleText(page, record.detail);
+    }
+  });
+}
+
+async function checkErrorBoundary(page, props, checks, errors) {
+  await addCheck(checks, errors, 'error-boundary-replaces-crashed-child', async () => {
+    await openLabeledRoute(page, props.routes?.[2]?.label);
+    await visibleText(page, props.panelTitle);
+    await (await buttonByName(page, props.crashLabel)).click();
+    await visibleText(page, props.fallbackTitle);
+    const live = page.getByText(props.panelTitle, { exact: false });
+    if (await live.count() && await live.first().isVisible()) {
+      throw new Error('The crashed panel title remained visible after the boundary caught the throw.');
+    }
+  });
+  await addCheck(checks, errors, 'error-boundary-reset-restores-panel', async () => {
+    await (await buttonByName(page, props.recoveryLabel)).click();
+    await visibleText(page, props.panelTitle);
+  });
+}
+
+async function checkLargeList(page, props, checks, errors, files = {}) {
+  await addCheck(checks, errors, 'large-list-renders-seeded-rows-with-keys', async () => {
+    await openLabeledRoute(page, props.routes?.[1]?.label);
+    const source = `${files['App.jsx'] ?? ''}\n${files['App.tsx'] ?? ''}`;
+    if (!/key\s*=\s*\{/.test(source)) throw new Error('The large list source must map with a stable key={...}.');
+    await visibleText(page, props.items[0].name);
+    await visibleText(page, props.items.at(-1).name);
+  });
+  await addCheck(checks, errors, 'large-list-filters-a-unique-row-quickly', async () => {
+    const target = props.items[70];
+    const unrelated = props.items[3];
+    const search = page.getByRole('textbox', { name: /search items/i });
+    const started = Date.now();
+    await search.fill(target.name);
+    await visibleText(page, target.name);
+    const elapsed = Date.now() - started;
+    if (elapsed > 1500) throw new Error(`Filtering ${props.items.length} rows took ${elapsed}ms.`);
+    const leftover = page.getByText(unrelated.name, { exact: true });
+    if (await leftover.count() && await leftover.first().isVisible()) {
+      throw new Error('Search left an unrelated seeded row visible.');
+    }
+  });
+}
+
+async function checkVisualGod(page, props, checks, errors) {
+  const system = props.visualSystem;
+  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
+    await visibleText(page, props.brand);
+    await visibleText(page, props.product);
+    await visibleText(page, props.tagline);
+    await visibleText(page, props.proof);
+    const cta = page.getByRole('link', { name: namePattern(props.primaryCta) }).or(page.getByRole('button', { name: namePattern(props.primaryCta) }));
+    await cta.first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    const accent = await cta.first().evaluate(element => getComputedStyle(element).backgroundColor);
+    const computed = await page.evaluate(() => {
+      const candidates = [
+        document.querySelector('[data-visual]'),
+        document.querySelector('.stage'),
+        document.querySelector('main'),
+        document.body,
+      ].filter(Boolean);
+      const stage = candidates.find(element => {
+        const background = getComputedStyle(element).backgroundColor;
+        return background && background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent';
+      }) || document.body;
+      const heading = document.querySelector('h1');
+      const copy = document.querySelector('.lede, main p');
+      return {
+        paper: getComputedStyle(stage).backgroundColor,
+        ink: getComputedStyle(stage).color,
+        muted: copy ? getComputedStyle(copy).color : '',
+        bodyFont: getComputedStyle(stage).fontFamily,
+        displayFont: heading ? getComputedStyle(heading).fontFamily : '',
+        headingAlign: heading ? getComputedStyle(heading).textAlign : '',
+      };
+    });
+    computed.accent = accent;
+    if (!colorsClose(computed.paper, system.paper)) {
+      throw new Error(`Stage/body paper ${computed.paper} does not match seeded ${system.paper}.`);
+    }
+    if (!colorsClose(computed.ink, system.ink)) {
+      throw new Error(`Stage/body ink ${computed.ink} does not match seeded ${system.ink}.`);
+    }
+    if (!colorsClose(computed.accent, system.accent)) {
+      throw new Error(`Primary CTA accent ${computed.accent} does not match seeded ${system.accent}.`);
+    }
+    const display = firstFamily(system.displayFont);
+    if (!computed.displayFont.toLowerCase().includes(display)) {
+      throw new Error(`h1 font ${computed.displayFont} does not use seeded displayFont ${system.displayFont}.`);
+    }
+    if (!computed.bodyFont.toLowerCase().includes(firstFamily(system.bodyFont))) {
+      throw new Error(`Body font ${computed.bodyFont} does not use seeded bodyFont ${system.bodyFont}.`);
+    }
+    if (computed.muted && !colorsClose(computed.muted, system.muted, 36)) {
+      throw new Error(`Body copy muted ${computed.muted} does not match seeded ${system.muted}.`);
+    }
+  });
+  await addCheck(checks, errors, 'visual-hero-is-not-centered-template', async () => {
+    const align = await page.locator('h1').evaluate(element => getComputedStyle(element).textAlign);
+    const expected = system.heroAlign === 'center' ? /^(center)$/i : /^(left|start)$/i;
+    if (!expected.test(align)) {
+      throw new Error(`h1 text-align ${align} does not match seeded heroAlign ${system.heroAlign}.`);
+    }
+  });
+  await addCheck(checks, errors, 'visual-anti-generic-chrome', async () => {
+    const family = await page.locator('h1').evaluate(element => getComputedStyle(element).fontFamily);
+    if (/segoe ui|system-ui|inter|roboto|arial/i.test(family) && !/georgia|palatino|consolas|cascadia|cambria|candara/i.test(family)) {
+      throw new Error(`h1 uses generic UI chrome (${family}) instead of the seeded display stack.`);
+    }
+    const accent = await page.getByRole('link', { name: namePattern(props.primaryCta) })
+      .or(page.getByRole('button', { name: namePattern(props.primaryCta) }))
+      .first()
+      .evaluate(element => getComputedStyle(element).backgroundColor);
+    const banned = ['#2447c6', '#6366f1', '#7c3aed', '#667eea', '#3b82f6'];
+    if (banned.some(hex => colorsClose(accent, hex, 12)) && !colorsClose(accent, system.accent, 12)) {
+      throw new Error('Primary CTA uses a stock Tailwind/gym purple-blue instead of the seeded accent.');
+    }
+  });
+  await addCheck(checks, errors, 'visual-anti-generic-three-up', async () => {
+    const widths = await page.evaluate(() => [...document.querySelectorAll('main article, main .card')].map(element => {
+      const rect = element.getBoundingClientRect();
+      return Math.round(rect.width);
+    }).filter(width => width > 80));
+    if (widths.length === 3) {
+      const delta = Math.max(...widths) - Math.min(...widths);
+      if (delta <= 12) throw new Error('A three-equal-card row is the Squarespace default; use an authored split layout.');
+    }
+  });
+}
+
 async function actionByName(page, name) {
   const pattern = namePattern(name);
   const button = page.getByRole('button', { name: pattern });
@@ -745,6 +1059,37 @@ async function formCombobox(page) {
   const select = form.locator('select');
   if (await select.count()) return select.first();
   throw new Error('Missing a native <select> inside the demo form.');
+}
+
+async function firstVisible(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index++) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible()) return candidate;
+  }
+  return null;
+}
+
+async function formEmail(page) {
+  const form = page.locator('form');
+  for (const name of [/work email/i, /e-?mail/i]) {
+    const named = await firstVisible(form.getByRole('textbox', { name }));
+    if (named) return named;
+  }
+  const typed = await firstVisible(form.locator('input[type="email"]'));
+  if (typed) return typed;
+  throw new Error('Missing an email textbox inside the demo form.');
+}
+
+async function featureSearch(page) {
+  const names = [/search features/i, /search/i, /filter features/i, /filter/i, /find/i];
+  for (const role of ['textbox', 'searchbox']) {
+    for (const name of names) {
+      const named = page.getByRole(role, { name });
+      if (await named.count()) return named.first();
+    }
+  }
+  throw new Error('Missing a Search or Filter features textbox.');
 }
 
 async function checkMarketingQuality(page, props, checks, errors, draftOnly = false, files = {}) {
@@ -878,7 +1223,7 @@ async function checkLifecycleExplorer(page, props, checks, errors) {
   await addCheck(checks, errors, 'feature-search-filters-seeded-content', async () => {
     const target = props.lifecycle[0].features[0];
     const unrelated = props.lifecycle[1].features[0];
-    const search = await roleByNames(page, 'textbox', [/search features/i, /search/i]);
+    const search = await featureSearch(page);
     await search.fill(target.slice(0, Math.max(3, target.length - 2)));
     await visibleText(page, target);
     const unrelatedLocator = page.getByText(unrelated, { exact: false });
@@ -898,7 +1243,7 @@ async function checkPricingDemo(page, props, checks, errors) {
   });
   await addCheck(checks, errors, 'demo-form-validates-before-success', async () => {
     const name = page.locator('form').getByRole('textbox', { name: /name/i });
-    const email = page.locator('form').getByRole('textbox', { name: /work email/i });
+    const email = await formEmail(page);
     const eventType = await formCombobox(page);
     const submit = page.locator('form').getByRole('button', { name: /book a demo/i });
     await submit.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
@@ -938,23 +1283,40 @@ async function runTaskChecks(taskId, page, props, checks, errors, task, files = 
     await checkLifecycleExplorer(page, props, checks, errors);
     return checkPricingDemo(page, props, checks, errors);
   }
+  if (taskId === 'client-routing-v1') return checkClientRouting(page, props, checks, errors);
+  if (taskId === 'async-data-states-v1') return checkAsyncData(page, props, checks, errors);
+  if (taskId === 'error-boundary-recovery-v1') return checkErrorBoundary(page, props, checks, errors);
+  if (taskId === 'large-list-performance-v1') return checkLargeList(page, props, checks, errors, files);
+  if (taskId === 'react-god-workbench-v1') {
+    await checkClientRouting(page, props, checks, errors);
+    await checkAsyncData(page, props, checks, errors);
+    await checkLargeList(page, props, checks, errors, files);
+    return checkErrorBoundary(page, props, checks, errors);
+  }
+  if (taskId === 'visual-god-v1') return checkVisualGod(page, props, checks, errors);
   throw new Error(`No browser assertions for task ${taskId}.`);
 }
 
-async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors) {
+function expectedBoundaryLog(text) {
+  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary/i.test(String(text ?? ''));
+}
+
+async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs = false } = {}) {
+  const runtime = ignoreBoundaryLogs ? pageErrors.filter(item => !expectedBoundaryLog(item)) : pageErrors;
+  const consoles = ignoreBoundaryLogs ? consoleErrors.filter(item => !expectedBoundaryLog(item)) : consoleErrors;
   await addCheck(checks, errors, 'app-rendered-visible-content', async () => {
     await page.locator('#root').waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const text = (await page.locator('#root').innerText({ timeout: ACTION_TIMEOUT_MS })).trim();
     if (text.length < 3) throw new Error('The React root rendered no meaningful visible content.');
   });
   await addCheck(checks, errors, 'no-runtime-errors', async () => {
-    if (pageErrors.length) throw new Error(pageErrors.map(item => clip(item, 160)).join(' | '));
+    if (runtime.length) throw new Error(runtime.map(item => clip(item, 160)).join(' | '));
   });
   await addCheck(checks, errors, 'no-blocked-network-or-popups', async () => {
     if (blockedRequests.length) throw new Error(JSON.stringify(blockedRequests.slice(0, 4)));
   });
   await addCheck(checks, errors, 'no-console-errors', async () => {
-    if (consoleErrors.length) throw new Error(consoleErrors.slice(0, 4).join(' | '));
+    if (consoles.length) throw new Error(consoles.slice(0, 4).join(' | '));
   });
 }
 
@@ -1014,7 +1376,8 @@ export async function evaluateCandidate({
     validateGeneratedSource(task, files) ??
     (navSelectorMismatch(files?.[appFile] ?? '', files?.['styles.css'] ?? '') || null) ??
     (undefinedCssCustomProperties(files?.['styles.css'] ?? '') || null) ??
-    (/<nav[\s>]/i.test(files?.[appFile] ?? '')
+    (['marketing-site-architecture-v1', 'responsive-site-navigation-v1', 'feature-lifecycle-explorer-v1', 'pricing-demo-conversion-v1', 'event-platform-showcase-v1'].includes(contractTaskId) &&
+      /<nav[\s>]/i.test(files?.[appFile] ?? '')
       ? (missingMobileNavCss(files?.['styles.css'] ?? '') || null)
       : null);
   if (inputError) {
@@ -1138,6 +1501,7 @@ export async function evaluateCandidate({
       await page.goto(`${server.origin}/`, { waitUntil: 'domcontentloaded', timeout: 9000 });
       checks.push({ name: 'page-loaded', passed: true });
     } catch (error) {
+      if (isHostNetworkFailure(error.message)) throw error;
       checks.push({ name: 'page-loaded', passed: false, detail: clip(error.message, 600) });
       errors.push(`page-loaded: ${clip(error.message, 600)}`);
       return await writeEvidence({
@@ -1145,11 +1509,16 @@ export async function evaluateCandidate({
         extra: { propsDigest, blockedRequests: blockedRequests.slice(0, 8), pageErrors: pageErrors.slice(0, 8) },
       });
     }
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors);
+    const ignoreBoundaryLogs = ['error-boundary-recovery-v1', 'react-god-workbench-v1'].includes(contractTaskId);
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
+    const hostNoise = [...consoleErrors, ...pageErrors, ...errors].join('\n');
+    if (isHostNetworkFailure(hostNoise)) {
+      throw new Error(clip(hostNoise, 400));
+    }
     if (task.objectiveMode !== 'explore') {
       await runTaskChecks(contractTaskId, page, props, checks, errors, task, files);
     }
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors);
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
     await captureArtifacts(page, artifactDir, checks, errors, artifacts, files);
     const visualFingerprint = task.qualityProfile ? await designFingerprint(page) : null;
     if (expired) {
