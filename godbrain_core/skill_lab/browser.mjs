@@ -1321,6 +1321,69 @@ async function genericChecks(page, checks, errors, pageErrors, blockedRequests, 
   await addCheck(checks, errors, 'no-console-errors', async () => {
     if (consoles.length) throw new Error(consoles.slice(0, 4).join(' | '));
   });
+  await addCheck(checks, errors, 'readable-text-contrast', async () => {
+    const report = await page.evaluate(() => {
+      const parse = value => {
+        const match = String(value ?? '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?/i);
+        if (!match) return null;
+        return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]), a: match[4] === undefined ? 1 : Number(match[4]) };
+      };
+      const mix = (fg, bg) => {
+        const a = Math.min(1, Math.max(0, fg.a));
+        return [
+          Math.round(fg.r * a + bg[0] * (1 - a)),
+          Math.round(fg.g * a + bg[1] * (1 - a)),
+          Math.round(fg.b * a + bg[2] * (1 - a)),
+        ];
+      };
+      const opaqueBackground = element => {
+        const bodyColor = parse(getComputedStyle(document.body).backgroundColor);
+        let background = bodyColor && bodyColor.a > 0.04
+          ? [bodyColor.r, bodyColor.g, bodyColor.b]
+          : [255, 255, 255];
+        const layers = [];
+        let node = element;
+        while (node && node !== document.documentElement) {
+          const color = parse(getComputedStyle(node).backgroundColor);
+          if (color && color.a > 0.04) layers.push(color);
+          node = node.parentElement;
+        }
+        for (const layer of layers.reverse()) background = mix(layer, background);
+        return background;
+      };
+      const luminance = rgb => {
+        const scaled = rgb.map(value => {
+          const channel = value / 255;
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * scaled[0] + 0.7152 * scaled[1] + 0.0722 * scaled[2];
+      };
+      const ratio = (fg, bg) => {
+        const light = Math.max(luminance(fg), luminance(bg));
+        const dark = Math.min(luminance(fg), luminance(bg));
+        return (light + 0.05) / (dark + 0.05);
+      };
+      const heading = document.querySelector('h1');
+      const lede = document.querySelector('.lede') || [...document.querySelectorAll('main p')].find(item => (item.textContent || '').trim().length > 24);
+      const subhead = [...document.querySelectorAll('h2')].find(item => !item.closest('.dark, footer'));
+      const cardCopy = [...document.querySelectorAll('main article p, main article h3, main .card p, main li')].find(item =>
+        (item.textContent || '').trim().length > 8 && !item.closest('.dark, footer'));
+      return [heading, lede, subhead, cardCopy].filter(Boolean).map(element => {
+        const color = parse(getComputedStyle(element).color) || { r: 0, g: 0, b: 0, a: 1 };
+        const background = opaqueBackground(element);
+        const foreground = mix(color, background);
+        return {
+          tag: element.tagName,
+          text: (element.textContent || '').trim().slice(0, 48),
+          ratio: ratio(foreground, background),
+        };
+      });
+    });
+    const weak = report.filter(item => item.ratio < 4.5);
+    if (weak.length) {
+      throw new Error(`${weak[0].tag} "${weak[0].text}" is ${weak[0].ratio.toFixed(2)}:1 against its background (need ≥4.5:1). Light gray on a bright field is not readable.`);
+    }
+  });
 }
 
 async function captureArtifacts(page, artifactDir, checks, errors, artifacts, files = {}) {

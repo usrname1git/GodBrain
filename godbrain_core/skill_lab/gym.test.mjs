@@ -261,6 +261,10 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(searchBox, /Search or Filter/);
   assert.doesNotMatch(searchBox, /htmlFor/);
+  const contrast = cannedTutorAdvice({
+    feedback: 'readable-text-contrast: H1 "Event Operations Cloud" is 1.40:1 against its background (need ≥4.5:1).',
+  });
+  assert.match(contrast, /dark ink/);
   const visualCopy = cannedTutorAdvice({
     feedback: 'visual-seed-copy-visible: No visible text found: Eli Moss keeps signal terminal notes',
   });

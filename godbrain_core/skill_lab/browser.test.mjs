@@ -65,6 +65,24 @@ test('all reference implementations pass real browser checks on two meaningful s
   }
 });
 
+test('washed gray text on a bright hero fails readable-text-contrast', async t => {
+  const files = {
+    'App.jsx': `export default function App() {
+  return <main>
+    <section className="hero">
+      <h1>Event Operations Cloud</h1>
+      <p className="lede">Plan, engage and learn with Northline. Bring planning into one calm operating system.</p>
+    </section>
+    <section><h2>Lifecycle</h2><p>Prepare every touchpoint for program 230225.</p></section>
+  </main>;
+}`,
+    'styles.css': 'body{margin:0;background:#f7fbfc;color:#d5e0e6} .hero{min-height:60vh;background:#f4fbfc} h1{font-size:64px;color:#d7e3ea;font-weight:700} .lede,h2,p{color:#c8d5dc;font-size:20px}',
+  };
+  const failed = await evaluateIn(t, 'marketing-site-architecture-v1', files, 1);
+  assert.equal(failed.passed, false);
+  assert.ok((failed.errors || []).some(item => /readable-text-contrast/i.test(item)), JSON.stringify(failed.errors));
+});
+
 test('visual-god reference implements the seeded canvas and rejects a generic template', async t => {
   for (const seed of [1, 2]) {
     const result = await evaluateIn(t, 'visual-god-v1', getReference('visual-god-v1'), seed);

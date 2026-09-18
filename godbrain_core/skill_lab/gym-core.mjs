@@ -586,6 +586,7 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'visual-hero-is-not-centered-template': 'h1 must be text-align start/left. A centered 80vh hero is a generic template.',
   'visual-anti-generic-chrome': 'Do not use Segoe UI / system-ui / Inter as the display face, or Tailwind purple as the CTA, when the seed gave Georgia or Consolas and a named accent.',
   'visual-anti-generic-three-up': 'Do not use three equal-width cards as the only composition.',
+  'readable-text-contrast': 'h1, lede and light-section h2 must be ≥4.5:1 on their background. Pale gray on white is a fail even if navy/white blocks are fine.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
@@ -668,6 +669,13 @@ export function cannedTutorAdvice(active = {}) {
       'CAUSE: Seeded brand, product, tagline or proof is not visible on first paint.',
       '1. Render {proof} in the main column. Do not hide it behind Open/menu state.',
       '2. Keep {brand}, {product}, {tagline} and {primaryCta} visible without extra clicks.',
+    ].join('\n');
+  }
+  if (/readable-text-contrast/i.test(feedback)) {
+    return [
+      'CAUSE: Text on a bright field is too close to the background (washed gray/blue on white).',
+      '1. On light paper/hero/tint, set h1 and body/lede to a dark ink (near #10243a), not a pastel mix of the background.',
+      '2. Keep muted for eyebrows only. Navy blocks with white text can stay; the bright sections must still read from across the room.',
     ].join('\n');
   }
   if (/visual-system-tokens-applied/i.test(feedback)) {
