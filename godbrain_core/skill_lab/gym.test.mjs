@@ -261,6 +261,10 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(searchBox, /Search or Filter/);
   assert.doesNotMatch(searchBox, /htmlFor/);
+  const visualCopy = cannedTutorAdvice({
+    feedback: 'visual-seed-copy-visible: No visible text found: Eli Moss keeps signal terminal notes',
+  });
+  assert.match(visualCopy, /Do not hide it behind Open/);
   const boundary = cannedTutorAdvice({
     feedback: 'error-boundary-replaces-crashed-child: The crashed panel title remained visible after the boundary caught the throw.',
   });

@@ -945,11 +945,13 @@ async function checkLargeList(page, props, checks, errors, files = {}) {
 
 async function checkVisualGod(page, props, checks, errors) {
   const system = props.visualSystem;
-  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
+  await addCheck(checks, errors, 'visual-seed-copy-visible', async () => {
     await visibleText(page, props.brand);
     await visibleText(page, props.product);
     await visibleText(page, props.tagline);
     await visibleText(page, props.proof);
+  });
+  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
     const cta = page.getByRole('link', { name: namePattern(props.primaryCta) }).or(page.getByRole('button', { name: namePattern(props.primaryCta) }));
     await cta.first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const accent = await cta.first().evaluate(element => getComputedStyle(element).backgroundColor);

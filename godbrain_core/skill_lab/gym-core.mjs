@@ -581,6 +581,7 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
   'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search or Filter and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'visual-seed-copy-visible': 'Brand, product, tagline and proof must be visible without extra clicks. Do not hide proof behind Open.',
   'visual-system-tokens-applied': 'Apply props.visualSystem ink, paper, accent and displayFont to computed styles. Do not hardcode one palette.',
   'visual-hero-is-not-centered-template': 'h1 must be text-align start/left. A centered 80vh hero is a generic template.',
   'visual-anti-generic-chrome': 'Do not use Segoe UI / system-ui / Inter as the display face, or Tailwind purple as the CTA, when the seed gave Georgia or Consolas and a named accent.',
@@ -614,7 +615,7 @@ function feedbackForResults(results) {
       const hint = GENERIC_CHECK_FEEDBACK[check.name];
       compact.push({
         name: check.name,
-        detail: /Missing /i.test(actual) ? actual : (hint ?? actual),
+        detail: /Missing |No visible text found/i.test(actual) ? actual : (hint ?? actual),
       });
     }
     return {
@@ -660,6 +661,20 @@ export function cannedTutorAdvice(active = {}) {
       'CAUSE: The styles.css JSON was truncated before both objects were closed.',
       '1. Return only {"files":{"styles.css":"..."}} under 6000 characters.',
       '2. If you use var(--tint), keep the :root block. Shorten duplicate media queries, not the palette.',
+    ].join('\n');
+  }
+  if (/visual-seed-copy-visible|No visible text found/i.test(feedback)) {
+    return [
+      'CAUSE: Seeded brand, product, tagline or proof is not visible on first paint.',
+      '1. Render {proof} in the main column. Do not hide it behind Open/menu state.',
+      '2. Keep {brand}, {product}, {tagline} and {primaryCta} visible without extra clicks.',
+    ].join('\n');
+  }
+  if (/visual-system-tokens-applied/i.test(feedback)) {
+    return [
+      'CAUSE: Computed paper/ink/accent/displayFont do not match props.visualSystem.',
+      '1. Set CSS variables from visualSystem on the stage (data-visual) and use them for background, color, h1 font and CTA background.',
+      '2. Do not hardcode one palette; practice and transfer seed Harbor vs Signal.',
     ].join('\n');
   }
   if (/error-boundary-replaces-crashed-child|error-boundary-reset-restores-panel/i.test(feedback)) {
