@@ -165,6 +165,26 @@ export const TASKS = Object.freeze([
     ],
     brief: `Inputs: <App {...props}> receives {brand, product, tagline, proof, primaryCta, visualSystem:{name,ink,paper,accent,muted,displayFont,bodyFont,radius,heroAlign}}. The visualSystem is the painted canvas — do not invent Inter, system-ui, Tailwind purple, or a centered 80vh hero. Apply ink/paper/accent/muted as CSS custom properties (or equivalent inline theme) so computed styles on body/stage, a primary CTA, and the h1 match those hex values. h1 must use displayFont (Georgia or Consolas stacks on this host; no network fonts) and text-align start/left. Body copy uses bodyFont. Do not ship a three-equal-card feature row as the only composition. Do not load Google Fonts. Practice and transfer seed different palettes and type; hardcoding one look fails transfer. This is the visual God exam: taste against a seeded duk, not a Squarespace template.`,
   },
+  {
+    id: 'shop-cart-checkout-v1',
+    family: 'persistent-commerce',
+    title: 'Check out a cart against a real shop database',
+    docs: [
+      { title: 'Using the Fetch API', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch' },
+      { title: 'Reacting to input with state', url: 'https://react.dev/learn/reacting-to-input-with-state' },
+    ],
+    brief: `Inputs: <App {...props}> receives {storeName, products:[{sku,title,price}], checkoutEmail}. Same-origin lab API: GET /api/lab/products, GET/POST /api/lab/cart {sku}, POST /api/lab/checkout {email}. Build a shop. Required accessible controls: visible storeName, each seeded product title, a button named "Add {title} to cart" per product, a region labelled Cart that shows line title and quantity after add, textbox "Checkout email", button "Place order". Add-to-cart and checkout must persist in the university Mongo database godbrain_gym — localStorage is not a shop. After checkout show visible confirmation containing Order plus the returned orderId and email. Practice and transfer seed different catalogs; hardcoded SKUs fail transfer. Call only this page's /api/lab/ routes.`,
+  },
+  {
+    id: 'cms-admin-session-v1',
+    family: 'cms-administration',
+    title: 'Sign in to a CMS admin and publish a page',
+    docs: [
+      { title: 'Using the Fetch API', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch' },
+      { title: 'Headers', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Headers' },
+    ],
+    brief: `Inputs: <App {...props}> receives {siteName, adminUser, adminPassword, newPageTitle, newPageBody}. Same-origin lab API: POST /api/lab/login {username,password}, GET/POST /api/lab/pages with Authorization Bearer token. Build a Trippus-style CMS admin. Required: h1 containing siteName, textboxes Username and Password, button Sign in. Wrong password must show visible "Invalid credentials" and must not open the editor. After success, show textboxes Page title and Page body, button Create page, and a list labelled Pages. Creating a page must persist in godbrain_gym; a painted admin without a Mongo session fails. Do not hardcode the password. Call only this page's /api/lab/ routes.`,
+  },
 ]);
 
 export function getTask(id) {

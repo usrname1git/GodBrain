@@ -142,6 +142,100 @@ test('definition bump retargets capstone studios without crowning old mastery', 
   assert.match(studio.focus, /privacy-first/);
 });
 
+test('university listing skips a course whose trusted contract is missing from this process', async t => {
+  const workDir = await workspace(t);
+  await writeJson(path.join(workDir, 'university.json'), {
+    version: 1, capstoneSequence: 0, archivedCapstones: 0, programStatus: 'enrolled', courses: [{
+      id: 'university-shop-cart-checkout-v1',
+      competencyId: 'shop-cart-checkout',
+      discipline: 'Persistent commerce',
+      level: 9,
+      cycle: 5,
+      stage: 1,
+      iteration: 1,
+      title: 'Check out a cart against a real shop database',
+      prerequisites: ['visual-god'],
+      docs: [{ title: 'Using the Fetch API', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch' }],
+      focus: 'shop',
+      verifierSpec: {
+        version: 1,
+        contractTaskId: 'shop-cart-checkout-v1',
+        fileMode: 'app',
+        appFile: 'App.jsx',
+        evaluationProfile: 'full',
+        sourceRules: ['react-state'],
+        maxTokens: 4096,
+      },
+      status: 'active',
+      createdAt: '2026-09-18T00:00:00.000Z',
+      validatedAt: '2026-09-18T00:00:00.000Z',
+      masteredAt: null,
+      validationProfile: 'trusted-contract-extension-v1',
+      definitionVersion: COURSE_DEFINITION_VERSION,
+    }],
+  });
+  const tasks = await listUniversityTasks(workDir, [{
+    id: 'other-v1', title: 'other', family: 'trusted', brief: 'other', docs: [], qualityProfile: 'trusted-v1',
+  }]);
+  assert.equal(tasks.length, 0);
+});
+
+test('cycle 5 shop and CMS sit after visual God on the isolated gym database', () => {
+  const shop = COMPETENCIES.find(item => item.id === 'shop-cart-checkout');
+  assert.equal(shop.cycle, 5);
+  assert.equal(shop.contractTaskId, 'shop-cart-checkout-v1');
+  assert.deepEqual(shop.prerequisites, ['visual-god']);
+  const cms = COMPETENCIES.find(item => item.id === 'cms-admin-session');
+  assert.equal(cms.cycle, 5);
+  assert.equal(cms.contractTaskId, 'cms-admin-session-v1');
+  assert.deepEqual(cms.prerequisites, ['shop-cart-checkout']);
+});
+
+test('a graduated visual-God program reopens into the shop exam when Cycle 5 exists', async t => {
+  const workDir = await workspace(t);
+  await writeJson(path.join(workDir, 'university.json'), {
+    version: 1, capstoneSequence: 0, archivedCapstones: 0,
+    programStatus: 'graduated', graduatedAt: '2026-09-18T06:12:26.850Z',
+    courses: COMPETENCIES.filter(item => item.cycle < 5).map(item => ({
+      id: `university-${item.id}-v1`,
+      competencyId: item.id,
+      discipline: item.discipline,
+      level: item.level,
+      cycle: item.cycle,
+      stage: item.stage,
+      iteration: 1,
+      title: item.title,
+      prerequisites: [...item.prerequisites],
+      docs: item.docs,
+      focus: item.focus,
+      verifierSpec: {
+        version: 1,
+        contractTaskId: item.contractTaskId,
+        fileMode: item.fileMode,
+        appFile: item.appFile,
+        evaluationProfile: 'full',
+        sourceRules: item.sourceRules,
+        maxTokens: 4096,
+      },
+      status: 'mastered',
+      createdAt: '2026-09-16T00:00:00.000Z',
+      validatedAt: '2026-09-16T00:00:00.000Z',
+      masteredAt: '2026-09-18T06:12:26.850Z',
+      validationProfile: 'trusted-contract-extension-v1',
+      definitionVersion: 13,
+    })),
+  });
+  const university = await advanceUniversity(workDir, [], trustedTasks);
+  assert.equal(university.programStatus, 'enrolled');
+  const shop = university.courses.find(course => course.competencyId === 'shop-cart-checkout');
+  assert.equal(shop.status, 'active');
+  assert.equal(shop.cycle, 5);
+  assert.equal(shop.verifierSpec.contractTaskId, 'shop-cart-checkout-v1');
+  assert.equal(university.courses.some(course => course.competencyId === 'cms-admin-session'), false);
+  const tasks = await listUniversityTasks(workDir, trustedTasks);
+  assert.equal(tasks.some(task => task.baseTaskId === 'shop-cart-checkout-v1'), true);
+});
+
 test('L3 composition is nav+form and explorer+form, not the four-suite showcase', () => {
   const composition = COMPETENCIES.find(item => item.id === 'interaction-composition');
   assert.equal(composition.contractTaskId, 'responsive-site-navigation-v1');

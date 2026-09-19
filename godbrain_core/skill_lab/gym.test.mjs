@@ -272,8 +272,9 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   const boundary = cannedTutorAdvice({
     feedback: 'error-boundary-replaces-crashed-child: The crashed panel title remained visible after the boundary caught the throw.',
   });
-  assert.match(boundary, /Do not render panelTitle in the fallback/);
+  assert.match(boundary, /crash button may sit outside/);
   assert.doesNotMatch(boundary, /Add \{this.props.panelTitle\}/);
+  assert.match(boundary, /Do not put the crash button inside Panel/);
   const truncated = cannedTutorAdvice({
     parseFailed: true,
     feedback: 'Response is not valid JSON: Unterminated string in JSON at position 6601',
@@ -284,6 +285,14 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
   });
   assert.match(contract, /hides \.nav but markup is <nav>/);
   assert.match(contract, /nav\{display:none\}/);
+  const shop = cannedTutorAdvice({
+    feedback: 'shop-order-persisted-in-mongo: No order row in godbrain_gym after Place order. localStorage is not a shop.',
+  });
+  assert.match(shop, /POST \/api\/lab\/cart/);
+  const cms = cannedTutorAdvice({
+    feedback: 'cms-page-persisted-in-mongo: CMS page was not stored in godbrain_gym.',
+  });
+  assert.match(cms, /Bearer/);
 });
 
 test('known visual failures skip the GPU tutor', async t => {
@@ -798,6 +807,7 @@ test('host socket exhaustion retries without grading the candidate', async t => 
     },
   });
   assert.equal(isHostNetworkFailure('net::ERR_NO_BUFFER_SPACE'), true);
+  assert.equal(isHostNetworkFailure('lab-database-unavailable: mongosh missing'), true);
   assert.equal(modelCalls, 1);
   assert.equal(browserCalls, 3);
   assert.equal(state.stats.infrastructureErrors, 1);
@@ -858,6 +868,12 @@ test('university lesson plan harvests only after two current-evaluator sources',
   });
   assert.equal(freshStudio.landScaffold, true);
   assert.equal(freshStudio.revalidate, false);
+  const hashBump = universityLessonPlan({
+    lessons: [{ taskId: 'styles-v1', runId: 's', sourceHash: '1', evaluatorVersion: 'browser-evaluator-v6:oldhash', stale: false }],
+    taskId: 'styles-v1', evaluatorVersion: 'browser-evaluator-v6:newhash',
+  });
+  assert.equal(hashBump.landScaffold, false);
+  assert.equal(hashBump.currentCount, 1);
 });
 
 test('CLI rejects malformed numeric controls and model prompts stay bounded', () => {

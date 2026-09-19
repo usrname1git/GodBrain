@@ -54,12 +54,13 @@ export default function App(props) {
 }`;
 
 const marketingCss = `
-:root,[data-theme=ink]{color-scheme:dark;--ink:#e8eef4;--muted:#9aa8b8;--paper:#101826;--navy:#d5e2ee;--on-navy:#10243a;--cyan:#5eead4;--coral:#fb7185;--line:#243044;--header:#101826f2;--tint:#182232;--footer:#070b12;--hero:#151c2b;--eyebrow:#7dd3d0;--stage:#243044}
+:root{color-scheme:light;--ink:#10243a;--muted:#2c3d4d;--paper:#f7f4ee;--navy:#092238;--on-navy:#fff;--cyan:#45c6c8;--coral:#ef765f;--line:#ced9dd;--header:#f7f4eef2;--tint:#e6f1ef;--footer:#061827;--hero:#fff;--eyebrow:#176f75;--stage:#c9dddb}
+[data-theme=ink]{color-scheme:dark;--ink:#e8eef4;--muted:#9aa8b8;--paper:#101826;--navy:#d5e2ee;--on-navy:#10243a;--cyan:#5eead4;--coral:#fb7185;--line:#243044;--header:#101826f2;--tint:#182232;--footer:#070b12;--hero:#151c2b;--eyebrow:#7dd3d0;--stage:#243044}
 [data-theme=tide]{color-scheme:light;--ink:#083344;--muted:#1f4a54;--paper:#e4f4f4;--navy:#0b3d4a;--on-navy:#fff;--cyan:#2bb3b7;--coral:#e07a5f;--line:#b7d4d6;--header:#e4f4f4f2;--tint:#cfe8ea;--footer:#06252c;--hero:#f2fbfb;--eyebrow:#0e6e75;--stage:#b9d9dc}
 [data-theme=ember]{color-scheme:light;--ink:#2a1a12;--muted:#4a3228;--paper:#f4ebe3;--navy:#4a2418;--on-navy:#fff;--cyan:#d4a574;--coral:#c45c26;--line:#e0cfc4;--header:#f4ebe3f2;--tint:#ead9cc;--footer:#1a0e0a;--hero:#fff6ee;--eyebrow:#9a4a28;--stage:#e4cbb8}
 [data-theme=forest]{color-scheme:light;--ink:#14261c;--muted:#2a4536;--paper:#eaf3ea;--navy:#1c3d2e;--on-navy:#fff;--cyan:#5eae66;--coral:#c9842a;--line:#c9d9cc;--header:#eaf3eaf2;--tint:#d5e6d6;--footer:#0c1a12;--hero:#f5faf5;--eyebrow:#2d6a3e;--stage:#c5dcc8}
 [data-theme=sand]{color-scheme:light;--ink:#10243a;--muted:#2c3d4d;--paper:#f7f4ee;--navy:#092238;--on-navy:#fff;--cyan:#45c6c8;--coral:#ef765f;--line:#ced9dd;--header:#f7f4eef2;--tint:#e6f1ef;--footer:#061827;--hero:#fff;--eyebrow:#176f75;--stage:#c9dddb}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 system-ui,Segoe UI,sans-serif}a{color:inherit}header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:18px clamp(22px,5vw,80px);background:var(--header);border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}.brand{font-size:22px;font-weight:850;text-decoration:none;letter-spacing:-.04em}nav{display:flex;gap:24px}nav a,.text-link{font-weight:700;text-underline-offset:5px}.menu{display:none}main section{padding:72px clamp(22px,7vw,112px)}.hero{min-height:82vh;display:grid;align-content:center;background:radial-gradient(circle at 80% 20%,color-mix(in srgb,var(--cyan) 28%,transparent),transparent 30%),linear-gradient(145deg,var(--hero),var(--paper))}.eyebrow,.plan-label{margin:0 0 12px;color:var(--eyebrow);font-size:12px;font-weight:850;letter-spacing:.14em;text-transform:uppercase}h1,h2,h3,p{margin-top:0;color:var(--ink)}h1{max-width:820px;margin-bottom:22px;font-size:clamp(44px,7vw,82px);line-height:.98;letter-spacing:-.06em}h2{max-width:760px;font-size:clamp(31px,4vw,52px);line-height:1.05;letter-spacing:-.045em}.lede{max-width:720px;color:var(--ink);font-size:22px}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}.primary,.secondary,button{display:inline-flex;justify-content:center;border:0;border-radius:999px;padding:13px 20px;font:inherit;font-weight:800;text-decoration:none;cursor:pointer}.primary{background:var(--navy);color:var(--on-navy)}.secondary{background:var(--hero);border:1px solid var(--line);color:var(--ink)}.proof{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:40px}.proof p,.grid article,.solution-row article,.plans article{padding:22px;border:1px solid var(--line);border-radius:20px;background:color-mix(in srgb,var(--hero) 72%,transparent)}.grid,.solution-row,.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}.grid span{color:var(--coral);font-weight:900}.tinted{background:var(--tint)}.stage-buttons{display:flex;gap:10px;flex-wrap:wrap}.stage-buttons button{background:var(--stage);color:var(--ink)}.stage-buttons button[aria-pressed=true]{background:var(--navy);color:var(--on-navy)}.lifecycle{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin:24px 0;padding:28px;border-radius:24px;background:var(--hero)}.search{display:grid;gap:7px;max-width:520px;font-weight:800}.search input,input,select{width:100%;padding:13px;border:1px solid var(--line);border-radius:10px;background:var(--hero);color:var(--ink);font:inherit}.results{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0}.results li{display:flex;justify-content:space-between;padding:12px;border-radius:10px;background:var(--hero)}.dark{background:var(--footer);color:#fff}.dark h1,.dark h2,.dark h3,.dark p,.dark a{color:#fff}.dark .eyebrow{color:var(--cyan)}.featured{border:2px solid var(--coral)!important;transform:translateY(-8px)}.demo{display:grid;grid-template-columns:1fr 1fr;gap:48px;background:var(--hero)}.demo form{padding:24px;border-radius:20px;background:var(--paper)}.demo label{display:grid;gap:6px;margin-bottom:12px;font-weight:750}.error{color:#a12b24;font-weight:750}.success{color:#176b43;font-weight:800}footer{display:flex;justify-content:space-between;padding:32px clamp(22px,7vw,112px);background:var(--footer);color:#fff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}html,body{margin:0;min-height:100%;background:var(--paper);color:var(--ink)}body{font:16px/1.65 system-ui,Segoe UI,sans-serif}[data-theme]{min-height:100vh;background:var(--paper);color:var(--ink)}a{color:inherit}header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:18px clamp(22px,5vw,80px);background:var(--header);border-bottom:1px solid var(--line);backdrop-filter:blur(16px)}.brand{font-size:22px;font-weight:850;text-decoration:none;letter-spacing:-.04em}nav{display:flex;gap:24px}nav a,.text-link{font-weight:700;text-underline-offset:5px}.menu{display:none}main section{padding:72px clamp(22px,7vw,112px)}.hero{min-height:82vh;display:grid;align-content:center;background-color:var(--hero);background-image:radial-gradient(circle at 80% 20%,color-mix(in srgb,var(--cyan) 28%,transparent),transparent 30%),linear-gradient(145deg,var(--hero),var(--paper))}.eyebrow,.plan-label{margin:0 0 12px;color:var(--eyebrow);font-size:12px;font-weight:850;letter-spacing:.14em;text-transform:uppercase}h1,h2,h3,p{margin-top:0;color:var(--ink);opacity:1}h1{max-width:820px;margin-bottom:22px;font-size:clamp(44px,7vw,82px);line-height:.98;letter-spacing:-.06em}h2{max-width:760px;font-size:clamp(31px,4vw,52px);line-height:1.05;letter-spacing:-.045em}.lede{max-width:720px;color:var(--ink);opacity:1;font-size:22px}.grid article,.proof p,.lifecycle,.plans article,.tinted,.demo form{color:var(--ink);opacity:1}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}.primary,.secondary,button{display:inline-flex;justify-content:center;border:0;border-radius:999px;padding:13px 20px;font:inherit;font-weight:800;text-decoration:none;cursor:pointer}.primary{background:var(--navy);color:var(--on-navy)}.secondary{background:var(--hero);border:1px solid var(--line);color:var(--ink)}.proof{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:40px}.proof p,.grid article,.solution-row article,.plans article{padding:22px;border:1px solid var(--line);border-radius:20px;background:color-mix(in srgb,var(--hero) 72%,transparent)}.grid,.solution-row,.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}.grid span{color:var(--coral);font-weight:900}.tinted{background:var(--tint)}.stage-buttons{display:flex;gap:10px;flex-wrap:wrap}.stage-buttons button{background:var(--stage);color:var(--ink)}.stage-buttons button[aria-pressed=true]{background:var(--navy);color:var(--on-navy)}.lifecycle{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin:24px 0;padding:28px;border-radius:24px;background:var(--hero)}.search{display:grid;gap:7px;max-width:520px;font-weight:800}.search input,input,select{width:100%;padding:13px;border:1px solid var(--line);border-radius:10px;background:var(--hero);color:var(--ink);font:inherit}.results{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0}.results li{display:flex;justify-content:space-between;padding:12px;border-radius:10px;background:var(--hero)}.dark{background:var(--footer);color:#fff}.dark h1,.dark h2,.dark h3,.dark p,.dark a{color:#fff}.dark .eyebrow{color:var(--cyan)}.featured{border:2px solid var(--coral)!important;transform:translateY(-8px)}.demo{display:grid;grid-template-columns:1fr 1fr;gap:48px;background:var(--hero)}.demo form{padding:24px;border-radius:20px;background:var(--paper)}.demo label{display:grid;gap:6px;margin-bottom:12px;font-weight:750}.error{color:#a12b24;font-weight:750}.success{color:#176b43;font-weight:800}footer{display:flex;justify-content:space-between;padding:32px clamp(22px,7vw,112px);background:var(--footer);color:#fff}
 @media(max-width:700px){header{padding:14px 18px}.menu{display:inline-flex;background:var(--navy);color:var(--on-navy)}nav{display:none;position:absolute;inset:65px 12px auto;padding:16px;flex-direction:column;border-radius:16px;background:var(--hero);box-shadow:0 18px 50px #09223833}nav.open{display:flex}main section{padding:54px 20px}.hero{min-height:auto;padding-block:74px}h1{font-size:44px}.lede{font-size:19px}.proof,.grid,.solution-row,.plans,.demo,.lifecycle{grid-template-columns:1fr}.featured{transform:none}.results{grid-template-columns:1fr}.actions>a{width:100%}footer{display:block;padding:30px 20px}}
 `;
 
@@ -430,6 +431,100 @@ article, aside { padding: 24px; border: 1px solid color-mix(in srgb, var(--ink) 
 h2 { margin: 0 0 12px; font-family: var(--display); font-size: 22px; }
 @media (max-width: 700px) { h1 { font-size: 40px; } .split { grid-template-columns: 1fr; padding: 32px 20px 56px; } .hero { padding: 48px 20px; } }
 `,
+  },
+  'shop-cart-checkout-v1': {
+    'App.jsx': `import {useEffect,useState} from 'react';
+import './styles.css';
+export default function App({storeName, checkoutEmail}) {
+  const [products,setProducts]=useState([]);
+  const [cart,setCart]=useState({lines:[]});
+  const [email,setEmail]=useState(checkoutEmail||'');
+  const [order,setOrder]=useState(null);
+  const [error,setError]=useState('');
+  async function refresh(){
+    const catalog=await (await fetch('/api/lab/products')).json();
+    setProducts(catalog.products||[]);
+    const held=await (await fetch('/api/lab/cart')).json();
+    setCart(held);
+  }
+  useEffect(()=>{refresh();},[]);
+  async function add(sku){
+    const body=await (await fetch('/api/lab/cart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku})})).json();
+    if(!body.ok){setError(body.error||'cart failed');return;}
+    setCart(body);setError('');
+  }
+  async function buy(event){
+    event.preventDefault();
+    const body=await (await fetch('/api/lab/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})).json();
+    if(!body.ok){setError(body.error||'checkout failed');return;}
+    setOrder(body);setCart({lines:[]});setError('');
+  }
+  return <main>
+    <h1>{storeName}</h1>
+    <section aria-label="Products">{products.map(item=><article key={item.sku}><h2>{item.title}</h2><p>{item.price}</p>
+      <button onClick={()=>add(item.sku)}>Add {item.title} to cart</button></article>)}</section>
+    <section aria-label="Cart"><h2>Cart</h2>
+      {cart.lines?.length?cart.lines.map(line=><p key={line.sku}>{line.title} × {line.qty}</p>):<p>Cart is empty</p>}
+    </section>
+    <form onSubmit={buy}>
+      <label>Checkout email<input value={email} onChange={event=>setEmail(event.target.value)}/></label>
+      <button type="submit">Place order</button>
+    </form>
+    {error&&<p className="error" role="alert">{error}</p>}
+    {order&&<p className="ok" role="status">Order {order.orderId} confirmed for {order.email}</p>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'cms-admin-session-v1': {
+    'App.jsx': `import {useState} from 'react';
+import './styles.css';
+export default function App({siteName}) {
+  const [username,setUsername]=useState('');
+  const [password,setPassword]=useState('');
+  const [token,setToken]=useState('');
+  const [error,setError]=useState('');
+  const [title,setTitle]=useState('');
+  const [body,setBody]=useState('');
+  const [pages,setPages]=useState([]);
+  async function login(event){
+    event.preventDefault();
+    const result=await (await fetch('/api/lab/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})})).json();
+    if(!result.ok){setError('Invalid credentials');setToken('');return;}
+    setToken(result.token);setError('');
+    const listed=await (await fetch('/api/lab/pages',{headers:{Authorization:'Bearer '+result.token}})).json();
+    setPages(listed.pages||[]);
+  }
+  async function create(event){
+    event.preventDefault();
+    const result=await (await fetch('/api/lab/pages',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({title,body})})).json();
+    if(!result.ok){setError(result.error||'unauthorized');return;}
+    const listed=await (await fetch('/api/lab/pages',{headers:{Authorization:'Bearer '+token}})).json();
+    setPages(listed.pages||[]);setError('');
+  }
+  if(!token){
+    return <main>
+      <h1>{siteName} admin</h1>
+      <form onSubmit={login}>
+        <label>Username<input value={username} onChange={event=>setUsername(event.target.value)}/></label>
+        <label>Password<input type="password" value={password} onChange={event=>setPassword(event.target.value)}/></label>
+        <button type="submit">Sign in</button>
+      </form>
+      {error&&<p className="error" role="alert">{error}</p>}
+    </main>;
+  }
+  return <main>
+    <h1>{siteName} pages</h1>
+    <form onSubmit={create}>
+      <label>Page title<input value={title} onChange={event=>setTitle(event.target.value)}/></label>
+      <label>Page body<textarea value={body} onChange={event=>setBody(event.target.value)}/></label>
+      <button type="submit">Create page</button>
+    </form>
+    <ul aria-label="Pages">{pages.map(page=><li key={page.slug}><strong>{page.title}</strong><p>{page.body}</p></li>)}</ul>
+    {error&&<p className="error" role="alert">{error}</p>}
+  </main>;
+}`,
+    'styles.css': baseCss,
   },
 });
 

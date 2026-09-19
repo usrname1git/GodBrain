@@ -1,4 +1,4 @@
-# Gym harness for godbrain_core/skill_lab. Off the GPU. Not Galaxy.
+# Legacy build/README check. Autonomous browser practice: Invoke-FrontendGym.ps1.
 # npm ci + npm run build + README gate, then optional record_skill_run.
 # A green build with no doc is a fail. Apply-only /edit cannot promote.
 

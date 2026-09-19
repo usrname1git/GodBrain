@@ -78,8 +78,8 @@ function Get-FrontendPause {
 function Write-WatchBanner {
     try { $Host.UI.RawUI.WindowTitle = "GodBrainGymWatch" } catch {}
     Write-Host "GodBrain gym watchdog" -ForegroundColor Cyan
-    Write-Host "qwen3.8-27b-exl3-3.5bpw :8888 10k | gym.mjs :4177 | one GPU slot | never kill generate" -ForegroundColor DarkCyan
-    Write-Host "Pause & Save keeps Qwen warm. Pause+Stop Qwen waits until gym is idle." -ForegroundColor DarkCyan
+    Write-Host "qwen3.8-27b-exl3-3.5bpw :8888 10k | Creation Lab http://127.0.0.1:4177 | one GPU slot | never kill generate" -ForegroundColor DarkCyan
+    Write-Host "Dashboard runs hidden under this watchdog. Pause & Save keeps Qwen warm." -ForegroundColor DarkCyan
     Write-Host ("log {0}" -f $events) -ForegroundColor DarkGray
     Write-Host ""
 }
@@ -197,16 +197,20 @@ function Test-LoopbackPort([int]$Port) {
 
 function Start-Dashboard {
     if (Test-LoopbackPort 4177) { return }
-    $dashOut = Join-Path $runtimeDir "dashboard.out.log"
-    $dashErr = Join-Path $runtimeDir "dashboard.err.log"
-    Start-Process -FilePath $pwsh `
+    $proc = Start-Process -FilePath $pwsh `
         -ArgumentList @(
-            "-NoLogo", "-NoProfile", "-File", $gymDoor,
-            "-Command", "dashboard"
+            "-NoLogo", "-NoProfile", "-WindowStyle", "Hidden",
+            "-File", $gymDoor, "-Command", "dashboard"
         ) `
         -WorkingDirectory $RepoRoot `
-        -WindowStyle Normal | Out-Null
-    Write-WatchEvent "dashboard_start" "Started Creation Lab dashboard on :4177."
+        -WindowStyle Hidden `
+        -PassThru
+    if ($proc) {
+        Set-Content -LiteralPath (Join-Path $runtimeDir "dashboard-runtime.json") (
+            (@{ pid = $proc.Id; at = (Get-Date).ToUniversalTime().ToString("o") } | ConvertTo-Json -Compress)
+        )
+    }
+    Write-WatchEvent "dashboard_start" "Creation Lab http://127.0.0.1:4177 pid=$($proc.Id) (hidden; this Watch window is the console)."
 }
 
 function Start-Gym {
@@ -224,12 +228,8 @@ function Start-Gym {
     Start-Dashboard
     Start-Process -FilePath $pwsh `
         -ArgumentList @(
-            "-NoLogo", "-NoProfile", "-File", $gymDoor,
-            "-Continuous",
-            "-NoDashboard",
-            "-Endpoint", "http://127.0.0.1:8888/v1",
-            "-Model", "qwen3.8-27b-exl3-3.5bpw",
-            "-MaxAttempts", "4"
+            "-NoLogo", "-NoProfile", "-NoExit", "-Command",
+            "`$Host.UI.RawUI.WindowTitle='GodBrainGymWorker'; & `"$gymDoor`" -Continuous -NoDashboard -Endpoint http://127.0.0.1:8888/v1 -Model qwen3.8-27b-exl3-3.5bpw -MaxAttempts 4"
         ) `
         -WorkingDirectory $RepoRoot `
         -WindowStyle Normal | Out-Null
@@ -240,6 +240,8 @@ $lastHandledIma = ""
 $lastRestartAt = [datetime]::MinValue
 $lastPauseState = $false
 $cudaUnsafe = $false
+$lastHostLine = ""
+$quietBeats = 0
 Write-WatchBanner
 Write-WatchEvent "watchdog_start" "Overnight frontend gym watchdog started from scripts\Watch-FrontendGymOvernight.ps1."
 
@@ -306,11 +308,31 @@ while ($true) {
         }
         Set-Content -LiteralPath $heartbeat -Value ($beat | ConvertTo-Json -Compress)
         $task = if ($state -and $state.active) { $state.active.taskId } else { "-" }
-        Write-Host ("  gym={0,-12} qwen={1} pause={2} task={3}" -f `
+        $dashPid = $null
+        $dashReceipt = Join-Path $runtimeDir "dashboard-runtime.json"
+        if (Test-Path -LiteralPath $dashReceipt) {
+            try { $dashPid = (Get-Content -LiteralPath $dashReceipt -Raw | ConvertFrom-Json).pid } catch {}
+        }
+        $dash = if (Test-LoopbackPort 4177) {
+            if ($dashPid) { "4177/pid=$dashPid" } else { "4177" }
+        } else { "down" }
+        $hostLine = "  gym={0,-12} qwen={1} dash={2} pause={3} task={4}" -f `
             $beat.gymStatus, `
             $(if ($beat.qwenListening) { "up" } else { "down" }), `
+            $dash, `
             $(if ($beat.paused) { "on" } else { "off" }), `
-            $task)
+            $task
+        if ($hostLine -ne $lastHostLine) {
+            Write-Host $hostLine
+            $lastHostLine = $hostLine
+            $quietBeats = 0
+        } else {
+            $quietBeats++
+            if ($quietBeats -ge 8) {
+                Write-Host $hostLine
+                $quietBeats = 0
+            }
+        }
     } catch {
         Write-WatchEvent "watchdog_error" $_.Exception.Message
     }
