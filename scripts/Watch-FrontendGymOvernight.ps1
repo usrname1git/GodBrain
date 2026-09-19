@@ -213,15 +213,15 @@ function Read-GymGlance {
     $head = @(Get-Content -LiteralPath $gymState -TotalCount 16 -ErrorAction SilentlyContinue)
     $tail = @(Get-Content -LiteralPath $gymState -Tail 40 -ErrorAction SilentlyContinue)
     $status = $null
-    $pid = $null
+    $gymPid = $null
     foreach ($line in $head) {
         if ($line -match '^\s*"status"\s*:\s*"([^"]+)"') { $status = $Matches[1]; break }
     }
     foreach ($line in $tail) {
-        if ($line -match '^\s*"pid"\s*:\s*(\d+)') { $pid = [int]$Matches[1]; break }
+        if ($line -match '^\s*"pid"\s*:\s*(\d+)') { $gymPid = [int]$Matches[1]; break }
     }
     return [pscustomobject]@{
-        pid = $pid
+        pid = $gymPid
         status = $status
         lastError = $null
         taskId = $null
