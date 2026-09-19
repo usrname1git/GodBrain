@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
@@ -8,9 +8,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import * as esbuild from 'esbuild';
 import { chromium } from 'playwright';
 import { getTask } from './curriculum.mjs';
+import { handleLabApi, LAB_TASKS, labPaths, prepareLab } from './gym-lab-api.mjs';
+import { getOrders, getPages, pingGymMongo, readCart } from './gym-lab-db.mjs';
 import { validateGeneratedSource } from './verifier-dsl.mjs';
 
-export const EVALUATOR_VERSION = 'browser-evaluator-v4';
+export const EVALUATOR_VERSION = 'browser-evaluator-v10';
 
 const labRoot = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -418,6 +420,31 @@ export function taskProps(taskId, seed) {
     return godCycleProps(taskId, seed, random, names);
   }
   if (taskId === 'visual-god-v1') return visualGodProps(seed, random, names);
+  if (taskId === 'shop-cart-checkout-v1') {
+    const adjectives = ['Copper', 'Velvet', 'Quartz', 'Nimbus', 'Olive', 'Solar'];
+    const nouns = ['Lamp', 'Desk', 'Mug', 'Chair', 'Planter', 'Backpack'];
+    const person = pick(random, names);
+    const products = Array.from({ length: 3 }, (_, index) => ({
+      sku: `sku-${seed}-${index}`,
+      title: `${adjectives[(index + seed) % adjectives.length]} ${nouns[(index + seed * 3) % nouns.length]} ${seed}`,
+      price: 12 + ((seed * 5 + index * 9) % 40),
+    }));
+    return {
+      storeName: `${person.split(' ')[0]} Shop ${seed}`,
+      products,
+      checkoutEmail: `${person.toLowerCase().replace(/\s+/g, '.')}@orders.test`,
+    };
+  }
+  if (taskId === 'cms-admin-session-v1') {
+    const person = pick(random, names);
+    return {
+      siteName: `${person.split(' ')[0]} CMS ${seed}`,
+      adminUser: `editor${seed}`,
+      adminPassword: `pass-${seed}-${Math.floor(random() * 900 + 100)}`,
+      newPageTitle: `Dispatch ${seed} ${person.split(' ')[1]}`,
+      newPageBody: `${person} published seed ${seed} for the lab CMS.`,
+    };
+  }
   if ([
     'marketing-site-architecture-v1',
     'responsive-site-navigation-v1',
@@ -497,8 +524,9 @@ function htmlFor(props) {
 </html>`;
 }
 
-async function startStaticServer({ bundle, css, props }) {
-  const csp = "default-src 'none'; connect-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
+async function startStaticServer({ bundle, css, props, lab = null }) {
+  const connect = lab ? "'self'" : "'none'";
+  const csp = `default-src 'none'; connect-src ${connect}; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
   const routes = new Map([
     ['/', { status: 200, type: 'text/html; charset=utf-8', body: htmlFor(props) }],
     ['/props.js', { status: 200, type: 'text/javascript; charset=utf-8', body: `window.__GODBRAIN_TASK_PROPS__ = ${JSON.stringify(props).replace(/</g, '\\u003c')};` }],
@@ -506,21 +534,34 @@ async function startStaticServer({ bundle, css, props }) {
     ['/bundle.css', { status: 200, type: 'text/css; charset=utf-8', body: css }],
     ['/favicon.ico', { status: 204, type: 'image/x-icon', body: '' }],
   ]);
+  const allowedPaths = new Set([...routes.keys(), ...labPaths(lab?.kind)]);
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
-    const route = request.method === 'GET' ? routes.get(url.pathname) : null;
     response.setHeader('Content-Security-Policy', csp);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-DNS-Prefetch-Control', 'off');
-    if (!route || url.search) {
-      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      response.end('not found');
-      return;
-    }
-    response.writeHead(route.status, { 'Content-Type': route.type });
-    response.end(route.body);
+    const finish = async () => {
+      if (lab && url.pathname.startsWith('/api/lab/')) {
+        const handled = await handleLabApi(request, response, lab);
+        if (handled) return;
+      }
+      const route = request.method === 'GET' ? routes.get(url.pathname) : null;
+      if (!route || url.search) {
+        response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        response.end('not found');
+        return;
+      }
+      response.writeHead(route.status, { 'Content-Type': route.type });
+      response.end(route.body);
+    };
+    finish().catch(error => {
+      if (!response.headersSent) {
+        response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      }
+      response.end(JSON.stringify({ ok: 0, error: String(error.message ?? error) }));
+    });
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -529,15 +570,18 @@ async function startStaticServer({ bundle, css, props }) {
   return {
     server,
     origin: `http://127.0.0.1:${server.address().port}`,
-    allowedPaths: new Set(routes.keys()),
+    allowedPaths,
   };
 }
 
 async function closeServer(server) {
-  await new Promise(resolve => {
-    server.closeAllConnections?.();
-    server.close(() => resolve());
-  });
+  await Promise.race([
+    new Promise(resolve => {
+      server.closeAllConnections?.();
+      server.close(() => resolve());
+    }),
+    delay(1500),
+  ]);
 }
 
 async function closeBrowser(server) {
@@ -906,15 +950,22 @@ async function checkErrorBoundary(page, props, checks, errors) {
   await addCheck(checks, errors, 'error-boundary-replaces-crashed-child', async () => {
     await openLabeledRoute(page, props.routes?.[2]?.label);
     await visibleText(page, props.panelTitle);
-    await (await buttonByName(page, props.crashLabel)).click();
-    await visibleText(page, props.fallbackTitle);
+    const crash = await buttonByName(page, props.crashLabel);
+    await crash.click({ timeout: ACTION_TIMEOUT_MS, force: true });
+    try {
+      await page.getByText(props.fallbackTitle, { exact: false }).first()
+        .waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+    } catch {
+      const root = await page.locator('#root').innerText().catch(() => '');
+      throw new Error(`Fallback "${props.fallbackTitle}" did not appear after crash. #root=${clip(root, 160)}. Throw during Panel render inside a class boundary; the crash button may stay outside.`);
+    }
     const live = page.getByText(props.panelTitle, { exact: false });
     if (await live.count() && await live.first().isVisible()) {
       throw new Error('The crashed panel title remained visible after the boundary caught the throw.');
     }
   });
   await addCheck(checks, errors, 'error-boundary-reset-restores-panel', async () => {
-    await (await buttonByName(page, props.recoveryLabel)).click();
+    await (await buttonByName(page, props.recoveryLabel)).click({ timeout: ACTION_TIMEOUT_MS, force: true });
     await visibleText(page, props.panelTitle);
   });
 }
@@ -945,11 +996,13 @@ async function checkLargeList(page, props, checks, errors, files = {}) {
 
 async function checkVisualGod(page, props, checks, errors) {
   const system = props.visualSystem;
-  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
+  await addCheck(checks, errors, 'visual-seed-copy-visible', async () => {
     await visibleText(page, props.brand);
     await visibleText(page, props.product);
     await visibleText(page, props.tagline);
     await visibleText(page, props.proof);
+  });
+  await addCheck(checks, errors, 'visual-system-tokens-applied', async () => {
     const cta = page.getByRole('link', { name: namePattern(props.primaryCta) }).or(page.getByRole('button', { name: namePattern(props.primaryCta) }));
     await cta.first().waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const accent = await cta.first().evaluate(element => getComputedStyle(element).backgroundColor);
@@ -1258,7 +1311,69 @@ async function checkPricingDemo(page, props, checks, errors) {
   });
 }
 
-async function runTaskChecks(taskId, page, props, checks, errors, task, files = {}) {
+const LAB_TIMEOUT_MS = 8000;
+
+async function checkShop(page, props, checks, errors, lab) {
+  if (!lab?.runId) throw new Error('Shop exam is missing the godbrain_gym run.');
+  const first = props.products[0];
+  await addCheck(checks, errors, 'shop-renders-seeded-catalog', async () => {
+    await visibleText(page, props.storeName);
+    for (const product of props.products) await visibleText(page, product.title);
+    await page.getByRole('region', { name: /cart/i }).waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await fieldByLabel(page, 'Checkout email');
+    await buttonByName(page, 'Place order');
+  });
+  await addCheck(checks, errors, 'shop-add-to-cart-and-checkout', async () => {
+    await (await buttonByName(page, `Add ${first.title} to cart`)).click();
+    const cart = page.getByRole('region', { name: /cart/i });
+    await cart.getByText(first.title, { exact: false }).waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await (await fieldByLabel(page, 'Checkout email')).fill(props.checkoutEmail);
+    await (await buttonByName(page, 'Place order')).click();
+    await page.getByText(/Order/i).first().waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await visibleText(page, props.checkoutEmail);
+  });
+  await addCheck(checks, errors, 'shop-order-persisted-in-mongo', async () => {
+    const listed = await getOrders(lab.runId);
+    const order = listed.orders?.[0];
+    if (!order) throw new Error('No order row in godbrain_gym after Place order. localStorage is not a shop.');
+    if (order.email !== props.checkoutEmail) throw new Error('Persisted order email did not match checkout email.');
+    if (!order.lines?.some(line => line.sku === first.sku)) throw new Error('Persisted order is missing the added SKU.');
+    const emptied = await readCart(lab.runId);
+    if (emptied.lines?.length) throw new Error('Cart was not emptied in Mongo after checkout.');
+  });
+}
+
+async function checkCms(page, props, checks, errors, lab) {
+  if (!lab?.runId) throw new Error('CMS exam is missing the godbrain_gym run.');
+  await addCheck(checks, errors, 'cms-rejects-invalid-login', async () => {
+    await visibleText(page, props.siteName);
+    await (await fieldByLabel(page, 'Username')).fill(props.adminUser);
+    await (await fieldByLabel(page, 'Password')).fill(`wrong-${props.adminPassword}`);
+    await (await buttonByName(page, 'Sign in')).click();
+    await page.getByText(/Invalid credentials/i).first().waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    const listed = await getPages(lab.runId);
+    if (listed.pages?.length) throw new Error('A failed login must not create CMS pages in Mongo.');
+  });
+  await addCheck(checks, errors, 'cms-login-and-publish-page', async () => {
+    await (await fieldByLabel(page, 'Password')).fill(props.adminPassword);
+    await (await buttonByName(page, 'Sign in')).click();
+    const title = page.getByLabel(/page title/i).first();
+    await title.waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await title.fill(props.newPageTitle);
+    await (await fieldByLabel(page, 'Page body')).fill(props.newPageBody);
+    await (await buttonByName(page, 'Create page')).click();
+    await page.getByText(props.newPageTitle, { exact: false }).first().waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await visibleText(page, props.newPageBody);
+  });
+  await addCheck(checks, errors, 'cms-page-persisted-in-mongo', async () => {
+    const listed = await getPages(lab.runId);
+    if (!listed.pages?.some(item => item.title === props.newPageTitle && item.body === props.newPageBody)) {
+      throw new Error('CMS page was not stored in godbrain_gym. A painted admin without a session is not a CMS.');
+    }
+  });
+}
+
+async function runTaskChecks(taskId, page, props, checks, errors, task, files = {}, lab = null) {
   if ([
     'marketing-site-architecture-v1',
     'responsive-site-navigation-v1',
@@ -1294,16 +1409,27 @@ async function runTaskChecks(taskId, page, props, checks, errors, task, files = 
     return checkErrorBoundary(page, props, checks, errors);
   }
   if (taskId === 'visual-god-v1') return checkVisualGod(page, props, checks, errors);
+  if (taskId === 'shop-cart-checkout-v1') return checkShop(page, props, checks, errors, lab);
+  if (taskId === 'cms-admin-session-v1') return checkCms(page, props, checks, errors, lab);
   throw new Error(`No browser assertions for task ${taskId}.`);
 }
 
 function expectedBoundaryLog(text) {
-  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary/i.test(String(text ?? ''));
+  const value = String(text ?? '');
+  return /god-crash|The above error occurred|React will try to recreate this component tree|error boundary|Error:[\s\S]{0,240}?\s+at\s+\w+/i.test(value);
 }
 
-async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs = false } = {}) {
+function isLabHttpStatusLog(text) {
+  return /Failed to load resource: the server responded with a status of 401/i.test(String(text ?? ''));
+}
+
+async function genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs = false, ignoreLabStatusLogs = false } = {}) {
   const runtime = ignoreBoundaryLogs ? pageErrors.filter(item => !expectedBoundaryLog(item)) : pageErrors;
-  const consoles = ignoreBoundaryLogs ? consoleErrors.filter(item => !expectedBoundaryLog(item)) : consoleErrors;
+  const consoles = consoleErrors.filter(item => {
+    if (ignoreBoundaryLogs && expectedBoundaryLog(item)) return false;
+    if (ignoreLabStatusLogs && isLabHttpStatusLog(item)) return false;
+    return true;
+  });
   await addCheck(checks, errors, 'app-rendered-visible-content', async () => {
     await page.locator('#root').waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     const text = (await page.locator('#root').innerText({ timeout: ACTION_TIMEOUT_MS })).trim();
@@ -1317,6 +1443,116 @@ async function genericChecks(page, checks, errors, pageErrors, blockedRequests, 
   });
   await addCheck(checks, errors, 'no-console-errors', async () => {
     if (consoles.length) throw new Error(consoles.slice(0, 4).join(' | '));
+  });
+  await addCheck(checks, errors, 'readable-text-contrast', async () => {
+    const report = await page.evaluate(() => {
+      const parse = value => {
+        const text = String(value ?? '').trim();
+        let match = text.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+        if (match) {
+          return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]), a: match[4] === undefined ? 1 : Number(match[4]) };
+        }
+        match = text.match(/^rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/i);
+        if (match) {
+          const alpha = match[4] === undefined ? 1 : (String(match[4]).endsWith('%') ? Number.parseFloat(match[4]) / 100 : Number(match[4]));
+          return { r: Number(match[1]), g: Number(match[2]), b: Number(match[3]), a: alpha };
+        }
+        match = text.match(/^color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/i);
+        if (match) {
+          return {
+            r: Math.round(Number(match[1]) * 255),
+            g: Math.round(Number(match[2]) * 255),
+            b: Math.round(Number(match[3]) * 255),
+            a: match[4] === undefined ? 1 : Number(match[4]),
+          };
+        }
+        match = text.match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);
+        if (match) {
+          return {
+            r: Number.parseInt(match[1].slice(0, 2), 16),
+            g: Number.parseInt(match[1].slice(2, 4), 16),
+            b: Number.parseInt(match[1].slice(4, 6), 16),
+            a: match[2] ? Number.parseInt(match[2], 16) / 255 : 1,
+          };
+        }
+        return null;
+      };
+      const stackedOpacity = element => {
+        let opacity = 1;
+        let node = element;
+        while (node && node !== document.documentElement) {
+          const next = Number(getComputedStyle(node).opacity);
+          if (Number.isFinite(next)) opacity *= next;
+          node = node.parentElement;
+        }
+        return opacity;
+      };
+      const mix = (fg, bg) => {
+        const a = Math.min(1, Math.max(0, fg.a));
+        return [
+          Math.round(fg.r * a + bg[0] * (1 - a)),
+          Math.round(fg.g * a + bg[1] * (1 - a)),
+          Math.round(fg.b * a + bg[2] * (1 - a)),
+        ];
+      };
+      const opaqueBackground = element => {
+        const tokenOf = node => {
+          if (!node || node.nodeType !== 1) return null;
+          const cs = getComputedStyle(node);
+          const bg = parse(cs.backgroundColor);
+          if (bg && bg.a > 0.04) return bg;
+          return null;
+        };
+        const themed = document.querySelector('[data-theme]');
+        const pageColor = tokenOf(themed) || tokenOf(document.body);
+        const scheme = (themed ? getComputedStyle(themed).colorScheme : getComputedStyle(document.body).colorScheme);
+        const fallback = scheme === 'dark' ? [16, 24, 38] : [247, 244, 238];
+        let background = pageColor && pageColor.a > 0.04
+          ? [pageColor.r, pageColor.g, pageColor.b]
+          : fallback;
+        const layers = [];
+        let node = element;
+        while (node && node !== document.documentElement) {
+          const color = tokenOf(node);
+          if (color && color.a > 0.04) layers.push(color);
+          node = node.parentElement;
+        }
+        for (const layer of layers.reverse()) background = mix(layer, background);
+        return background;
+      };
+      const luminance = rgb => {
+        const scaled = rgb.map(value => {
+          const channel = value / 255;
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * scaled[0] + 0.7152 * scaled[1] + 0.0722 * scaled[2];
+      };
+      const ratio = (fg, bg) => {
+        const light = Math.max(luminance(fg), luminance(bg));
+        const dark = Math.min(luminance(fg), luminance(bg));
+        return (light + 0.05) / (dark + 0.05);
+      };
+      const heading = document.querySelector('h1');
+      const lede = document.querySelector('.lede') || [...document.querySelectorAll('main p')].find(item => (item.textContent || '').trim().length > 24);
+      const subhead = [...document.querySelectorAll('h2')].find(item => !item.closest('.dark, footer'));
+      const cardCopy = [...document.querySelectorAll('main article p, main article h3, main .card p, main li')].find(item =>
+        (item.textContent || '').trim().length > 8 && !item.closest('.dark, footer'));
+      return [heading, lede, subhead, cardCopy].filter(Boolean).map(element => {
+        const color = parse(getComputedStyle(element).color) || { r: 0, g: 0, b: 0, a: 1 };
+        color.a *= stackedOpacity(element);
+        const background = opaqueBackground(element);
+        const foreground = mix(color, background);
+        return {
+          tag: element.tagName,
+          text: (element.textContent || '').trim().slice(0, 48),
+          ratio: ratio(foreground, background),
+        };
+      });
+    });
+    const weak = report.filter(item => item.ratio < 4.5);
+    if (weak.length) {
+      throw new Error(`${weak[0].tag} "${weak[0].text}" is ${weak[0].ratio.toFixed(2)}:1 against its background (need ≥4.5:1). Light gray on a bright field is not readable.`);
+    }
   });
 }
 
@@ -1397,10 +1633,25 @@ export async function evaluateCandidate({
     ? { objectiveTitle: task.title, objectiveSeed: seed }
     : taskProps(contractTaskId, seed);
   const propsDigest = hash(JSON.stringify(props));
+  const labKind = LAB_TASKS[contractTaskId] ?? null;
+  let lab = null;
+  if (labKind) {
+    let ping;
+    try {
+      ping = await pingGymMongo();
+    } catch (error) {
+      throw new Error(`lab-database-unavailable: ${error.message}`);
+    }
+    if (ping.db !== 'godbrain_gym' || ping.ok !== 1) {
+      throw new Error(`lab-database-unavailable: expected godbrain_gym, got ${ping.db}`);
+    }
+    lab = await prepareLab(labKind, `${labKind}-${seed}-${randomUUID().slice(0, 12)}`, props);
+  }
   const server = await startStaticServer({
     bundle: outputText(built, '.js'),
     css: outputText(built, '.css'),
     props,
+    lab,
   });
   let browser;
   let browserServer;
@@ -1493,9 +1744,9 @@ export async function evaluateCandidate({
       recordBounded(blockedRequests, { method: 'DIALOG', resourceType: dialog.type() });
       dialog.dismiss().catch(error => recordBounded(pageErrors, `Dialog dismissal failed: ${error.message}`));
     });
-    page.on('pageerror', error => recordBounded(pageErrors, clip(error.message, 500)));
+    page.on('pageerror', error => recordBounded(pageErrors, error.message));
     page.on('console', message => {
-      if (['error', 'warning'].includes(message.type())) recordBounded(consoleErrors, clip(message.text(), 300));
+      if (['error', 'warning'].includes(message.type())) recordBounded(consoleErrors, message.text());
     });
     try {
       await page.goto(`${server.origin}/`, { waitUntil: 'domcontentloaded', timeout: 9000 });
@@ -1510,15 +1761,16 @@ export async function evaluateCandidate({
       });
     }
     const ignoreBoundaryLogs = ['error-boundary-recovery-v1', 'react-god-workbench-v1'].includes(contractTaskId);
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
+    const ignoreLabStatusLogs = Boolean(lab);
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs, ignoreLabStatusLogs });
     const hostNoise = [...consoleErrors, ...pageErrors, ...errors].join('\n');
     if (isHostNetworkFailure(hostNoise)) {
       throw new Error(clip(hostNoise, 400));
     }
     if (task.objectiveMode !== 'explore') {
-      await runTaskChecks(contractTaskId, page, props, checks, errors, task, files);
+      await runTaskChecks(contractTaskId, page, props, checks, errors, task, files, lab);
     }
-    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs });
+    await genericChecks(page, checks, errors, pageErrors, blockedRequests, consoleErrors, { ignoreBoundaryLogs, ignoreLabStatusLogs });
     await captureArtifacts(page, artifactDir, checks, errors, artifacts, files);
     const visualFingerprint = task.qualityProfile ? await designFingerprint(page) : null;
     if (expired) {
@@ -1548,8 +1800,9 @@ export async function evaluateCandidate({
     clearTimeout(watchdog);
     try {
       await stopBrowser();
-    } finally {
-      await closeServer(server.server);
+    } catch {
+      // Evidence is already written; a hung renderer must not invert a shop/CMS pass.
     }
+    await closeServer(server.server);
   }
 }

@@ -8,7 +8,10 @@ is the product-site path (capstone once). Cycle 2 is application craft
 recovery, a large keyed list, then one workbench that must pass all four.
 Cycle 4 is the **visual God exam**: a seeded visualSystem (the painted canvas)
 must show up in computed styles; Inter/system-ui/Tailwind purple and a
-three-equal-card row fail. Marketing-site reskins do not pass God. A C/C++
+three-equal-card row fail. Cycle 5 is the **delivery exam**: a real shop
+(cart → checkout) and a Trippus-style CMS admin login against isolated Mongo
+`godbrain_gym` (never the Alexandria `godbrain` database). localStorage is
+not a shop. A painted admin without a session is not a CMS. Marketing-site reskins do not pass God. A C/C++
 Carmack track is a later gym with its own verifiers. GPT and Grok staffed the path; Qwen
 (`qwen3.8-27b-exl3-3.5bpw` on `:8888`) is the learner. A failed attempt is
 normal coursework, not an approval prompt.
@@ -171,6 +174,12 @@ directions. Old mastered capstone metadata is compacted into an archive count so
 the university can continue without unbounded ledger growth. Use
 `.\scripts\Invoke-FrontendGym.ps1 -Command university` or the dashboard's
 **Frontend University** panel to inspect the current frontier.
+
+Cycle 5 talks to a trusted lab API on the evaluate static server
+(`/api/lab/products|cart|checkout` and `/api/lab/login|pages`). Playwright
+allows only those same-origin routes. Qwen writes the React client; the
+backend is the gym's, not a model-authored Mongo dump. Mongo down is
+infrastructure (`lab-database-unavailable`), not a student fail.
 
 The protected browser evaluator checks more than rendering: semantic landmarks,
 heading and CTA hierarchy, substantial non-placeholder content, unsupported

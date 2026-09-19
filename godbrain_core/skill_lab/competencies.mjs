@@ -395,6 +395,42 @@ export const COMPETENCIES = Object.freeze([
     stage: 1,
     focus: 'The seeded visualSystem is the painted canvas. Inter, system-ui, Tailwind purple and a three-up card row fail. You judge finished frames; the examiner enforces the duk.',
   },
+  {
+    id: 'shop-cart-checkout',
+    discipline: 'Persistent commerce',
+    level: 9,
+    title: 'Check out a cart against a real shop database',
+    prerequisites: ['visual-god'],
+    contractTaskId: 'shop-cart-checkout-v1',
+    fileMode: 'app',
+    appFile: 'App.jsx',
+    sourceRules: ['react-state'],
+    docs: [
+      { title: 'Using the Fetch API', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch' },
+      { title: 'Reacting to input with state', url: 'https://react.dev/learn/reacting-to-input-with-state' },
+    ],
+    cycle: 5,
+    stage: 1,
+    focus: 'Fetch the lab catalog, POST add-to-cart and checkout. localStorage is not a shop. The examiner checks Mongo godbrain_gym, never Alexandria godbrain.',
+  },
+  {
+    id: 'cms-admin-session',
+    discipline: 'CMS administration',
+    level: 9,
+    title: 'Sign in to a CMS admin and publish a page',
+    prerequisites: ['shop-cart-checkout'],
+    contractTaskId: 'cms-admin-session-v1',
+    fileMode: 'app',
+    appFile: 'App.jsx',
+    sourceRules: ['react-state'],
+    docs: [
+      { title: 'Using the Fetch API', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch' },
+      { title: 'Headers', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Headers' },
+    ],
+    cycle: 5,
+    stage: 2,
+    focus: 'Login against /api/lab/login, reject bad passwords, publish a page with a session token. Fake admin UI without Mongo sessions fails. This is the Trippus-style CMS exam.',
+  },
 ]);
 
 export const PROGRAM = Object.freeze({

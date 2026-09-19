@@ -5,7 +5,7 @@ import { readJson, writeJson } from './gym-core.mjs';
 import { validateVerifierSpec } from './verifier-dsl.mjs';
 
 const VERSION = 1;
-export const COURSE_DEFINITION_VERSION = 13;
+export const COURSE_DEFINITION_VERSION = 14;
 
 function courseId(competencyId, iteration = 1) {
   return `university-${competencyId}-v${iteration}`;
@@ -120,7 +120,13 @@ export async function listUniversityTasks(workDir, trustedTasks) {
   const university = await readUniversity(workDir);
   return university.courses
     .filter(course => course.status !== 'retired' && course.iteration === 1)
-    .map(course => asTask(course, trustedTasks));
+    .flatMap(course => {
+      try {
+        return [asTask(course, trustedTasks)];
+      } catch {
+        return [];
+      }
+    });
 }
 
 function competencyMastered(courses, competencyId) {
