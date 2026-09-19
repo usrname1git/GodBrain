@@ -80,7 +80,7 @@ function Write-WatchBanner {
     Write-Host "GodBrain gym watchdog" -ForegroundColor Cyan
     Write-Host "qwen3.8-27b-exl3-3.5bpw :8888 10k | Creation Lab http://127.0.0.1:4177 | one GPU slot | never kill generate" -ForegroundColor DarkCyan
     Write-Host "Dashboard runs hidden under this watchdog. Pause & Save keeps Qwen warm." -ForegroundColor DarkCyan
-    Write-Host ("log {0}" -f $events) -ForegroundColor DarkGray
+    Write-Host ("host PS {0} {1} | log {2}" -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition, $events) -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -94,8 +94,8 @@ function Get-QwenListenerProcess {
     try {
         $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
         $proc = Get-Process -Id ([int]$receipt.pid) -ErrorAction SilentlyContinue
-        if ($proc -and $proc.ProcessName -match 'python') {
-            return [pscustomobject]@{ ProcessId = $proc.Id; Name = "python.exe"; CommandLine = "serve_openai.py" }
+        if ($proc) {
+            return [pscustomobject]@{ ProcessId = $proc.Id; Name = $proc.ProcessName; CommandLine = "serve_openai.py" }
         }
     } catch {}
     return $null
@@ -129,8 +129,8 @@ function Get-QwenProcess {
     try {
         $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
         $proc = Get-Process -Id ([int]$receipt.pid) -ErrorAction SilentlyContinue
-        if ($proc -and $proc.ProcessName -match 'python' -and (Test-LoopbackPort 8888)) {
-            return [pscustomobject]@{ ProcessId = $proc.Id; Name = "python.exe"; CommandLine = "serve_openai.py" }
+        if ($proc -and (Test-LoopbackPort 8888)) {
+            return [pscustomobject]@{ ProcessId = $proc.Id; Name = $proc.ProcessName; CommandLine = "serve_openai.py" }
         }
     } catch {}
     return $null
@@ -160,7 +160,7 @@ function Start-Qwen {
     }
     if (Get-QwenProcess) { return }
     if (Test-Port 8888) {
-        Write-WatchEvent "qwen_blocked" "Port 8888 is owned by an unrecognized process."
+        Write-WatchEvent "qwen_keep" "Port 8888 already listening; leaving Qwen alone."
         return
     }
     $launcher = Start-Process -FilePath $pwsh `
@@ -195,6 +195,42 @@ function Test-LoopbackPort([int]$Port) {
     }
 }
 
+function Read-GymGlance {
+    # Windows PowerShell 5.1 ConvertFrom-Json of gym state.json stack-overflows
+    # (0xc00000fd / -1073741571). Node parses the 189-lesson graph; this host
+    # only ConvertFrom-Json the tiny glance.
+    if (-not (Test-Path -LiteralPath $gymState)) { return $null }
+    $nodeExe = $null
+    try { $nodeExe = (Get-Command node -ErrorAction Stop).Source } catch { $nodeExe = $null }
+    if ($nodeExe) {
+        $env:GODBRAIN_GYM_STATE = $gymState
+        $js = 'const fs=require("fs");const s=JSON.parse(fs.readFileSync(process.env.GODBRAIN_GYM_STATE,"utf8"));process.stdout.write(JSON.stringify({pid:s.pid||null,status:s.status||null,lastError:s.lastError?String(s.lastError):null,taskId:(s.active&&s.active.taskId)||null,attempts:(s.stats&&s.stats.attempts)||null,infrastructureErrors:(s.stats&&s.stats.infrastructureErrors)||null,updatedAt:s.updatedAt||null}));'
+        try {
+            $json = & $nodeExe -e $js
+            if (-not [string]::IsNullOrWhiteSpace($json)) { return $json | ConvertFrom-Json }
+        } catch {}
+    }
+    $head = @(Get-Content -LiteralPath $gymState -TotalCount 16 -ErrorAction SilentlyContinue)
+    $tail = @(Get-Content -LiteralPath $gymState -Tail 40 -ErrorAction SilentlyContinue)
+    $status = $null
+    $pid = $null
+    foreach ($line in $head) {
+        if ($line -match '^\s*"status"\s*:\s*"([^"]+)"') { $status = $Matches[1]; break }
+    }
+    foreach ($line in $tail) {
+        if ($line -match '^\s*"pid"\s*:\s*(\d+)') { $pid = [int]$Matches[1]; break }
+    }
+    return [pscustomobject]@{
+        pid = $pid
+        status = $status
+        lastError = $null
+        taskId = $null
+        attempts = $null
+        infrastructureErrors = $null
+        updatedAt = $null
+    }
+}
+
 function Start-Dashboard {
     if (Test-LoopbackPort 4177) { return }
     $proc = Start-Process -FilePath $pwsh `
@@ -215,14 +251,10 @@ function Start-Dashboard {
 
 function Start-Gym {
     $alive = $false
-    if (Test-Path -LiteralPath $gymState) {
-        try {
-            $state = Get-Content -LiteralPath $gymState -Raw | ConvertFrom-Json
-            if ($state.pid) {
-                $process = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
-                $alive = $null -ne $process
-            }
-        } catch {}
+    $glance = Read-GymGlance
+    if ($glance -and $glance.pid) {
+        $process = Get-Process -Id ([int]$glance.pid) -ErrorAction SilentlyContinue
+        $alive = $null -ne $process
     }
     if ($alive) { return }
     Start-Dashboard
@@ -247,18 +279,11 @@ Write-WatchEvent "watchdog_start" "Overnight frontend gym watchdog started from 
 
 while ($true) {
     try {
-        $state = $null
-        if (Test-Path -LiteralPath $gymState) {
-            try {
-                $state = Get-Content -LiteralPath $gymState -Raw -ErrorAction Stop | ConvertFrom-Json
-            } catch {
-                $state = $null
-            }
-        }
+        $state = Read-GymGlance
 
         $imaKey = ""
         if ($state -and $state.lastError -match "illegal memory access|cudaErrorIllegalAddress") {
-            $imaKey = "$($state.stats.infrastructureErrors)|$($state.updatedAt)|$($state.lastError)"
+            $imaKey = "$($state.infrastructureErrors)|$($state.updatedAt)|$($state.lastError)"
         }
 
         if ($imaKey -and $imaKey -ne $lastHandledIma) {
@@ -303,11 +328,11 @@ while ($true) {
             manualPause = [bool]$pause.manual_pause
             cs2Sleep = [bool]$pause.cs2_sleep
             gymStatus = if ($state) { $state.status } else { "unknown" }
-            attempts = if ($state) { $state.stats.attempts } else { $null }
-            infrastructureErrors = if ($state) { $state.stats.infrastructureErrors } else { $null }
+            attempts = if ($state) { $state.attempts } else { $null }
+            infrastructureErrors = if ($state) { $state.infrastructureErrors } else { $null }
         }
         Set-Content -LiteralPath $heartbeat -Value ($beat | ConvertTo-Json -Compress)
-        $task = if ($state -and $state.active) { $state.active.taskId } else { "-" }
+        $task = if ($state -and $state.taskId) { $state.taskId } else { "-" }
         $dashPid = $null
         $dashReceipt = Join-Path $runtimeDir "dashboard-runtime.json"
         if (Test-Path -LiteralPath $dashReceipt) {
