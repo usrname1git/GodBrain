@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addToCart, assertGymMongoUri, checkout, cmsCreatePage, cmsLogin, getOrders, getPages, GYM_MONGO_DB, pingGymMongo, readCart, seedCms, seedShop } from './gym-lab-db.mjs';
+import { addToCart, assertGymMongoUri, checkout, cmsCreatePage, cmsLogin, getOrders, getPages, GYM_MONGO_DB, pingGymMongo, readCart, resolveMongosh, seedCms, seedShop } from './gym-lab-db.mjs';
+import { readFileSync } from 'node:fs';
 
 test('gym Mongo URI fail-closes anything except godbrain_gym', () => {
   assert.equal(assertGymMongoUri('mongodb://127.0.0.1:27017/godbrain_gym'), 'mongodb://127.0.0.1:27017/godbrain_gym');
   assert.throws(() => assertGymMongoUri('mongodb://127.0.0.1:27017/godbrain'), /never Alexandria godbrain/);
   assert.throws(() => assertGymMongoUri('mongodb://127.0.0.1:27017/admin'), /godbrain_gym/);
   assert.throws(() => assertGymMongoUri('mongodb://127.0.0.1:27017/'), /Got none|godbrain_gym/);
+});
+
+test('mongosh is PATH, LOCALAPPDATA, or GODBRAIN_MONGOSH — not a committed profile', () => {
+  const src = readFileSync(new URL('./gym-lab-db.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /Users\\\\autismo/);
+  const resolved = resolveMongosh();
+  assert.ok(resolved === 'mongosh' || /mongosh/i.test(resolved));
 });
 
 let mongo = false;

@@ -1,12 +1,21 @@
 import { execFile } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
-const MONGOSH = process.env.GODBRAIN_MONGOSH ||
-  'C:\\Users\\autismo\\AppData\\Local\\Programs\\mongosh\\mongosh.exe';
+
+export function resolveMongosh() {
+  if (process.env.GODBRAIN_MONGOSH) return process.env.GODBRAIN_MONGOSH;
+  const local = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'mongosh', 'mongosh.exe')
+    : '';
+  if (local && existsSync(local)) return local;
+  return 'mongosh';
+}
+
+const MONGOSH = resolveMongosh();
 export const GYM_MONGO_DB = 'godbrain_gym';
 
 export function assertGymMongoUri(uri) {
