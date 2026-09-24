@@ -1,22 +1,24 @@
 # GodBrain
 
 Local-first Jarvis on this Windows desk. The mouth is an **OpenAI-compatible
-loopback** server on `:8000` (desk default: `llama-server`; Colibri is the
-interchangeable alternative). Not a commercial `-cli` wrapper and not MCP.
-Models inherit the same Golden Records, and the kernel adds tools a stock
-`llama-server` will not give you.
+loopback** server. Desk generate is **Qwen 3.8 27B EXL3** on `:8888`
+(`qwen3.8-27b-exl3-3.5bpw`). `llama-server` and GGUF stay paused: Gemma on
+`:8000` hit a CUDA abort, and this 16 GB card has one generate slot. Colibri
+is the interchangeable alternative, not the daily mouth. Not a commercial
+`-cli` wrapper and not MCP. Models inherit the same Golden Records, and the
+kernel adds tools a stock server will not give you.
 
 ## TLDR
 
 The GodBrain turns local models into a shared, sovereign cognitive system. The core idea:
 
-- **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server on `:8000` (desk default: Gemma 12B on `llama-server`). Not an arbitrary chat API. No model is special; they inherit the same teachings.
+- **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server. Desk default: Qwen 3.8 27B EXL3 on `:8888`. Gemma on `llama-server` `:8000` is paused. Not an arbitrary chat API. No model is special; they inherit the same teachings.
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
-- **🛠️ Tools a stock `llama-server` will not give you** — Built into the C++ kernel, not 40 npm MCP servers. Chat `tool_calls` plus `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell behind `GODBRAIN_API_TOKEN` + a non-blank `reasoning`). Bounded `/edit` is a separate chat door, not a `command_type`.
+- **🛠️ Tools the kernel runs** — Built into the C++ kernel, not 40 npm MCP servers. While Gemma is paused, Galaxy chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
 
 ## The Compute Cheat Code (vault ≠ GPU)
 
-Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Gemma 12B IT Q6_K_L, bartowski MTP on). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE.
+Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Qwen 3.8 27B EXL3 3.5bpw on the 16 GB card). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE. Do not start Gemma beside it.
 
 Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them. Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
@@ -31,8 +33,9 @@ Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The l
 
 GodBrain routes tool calls through a native C++ kernel instead of patching a
 specific inference server's chat template. The mouth must already be an
-OpenAI-compatible loopback server on `:8000` (desk default: `llama-server`;
-Colibri is the interchangeable alternative). This host does not call a
+OpenAI-compatible loopback server. Desk generate is EXL3 on `:8888`.
+`llama-server` on `:8000` stays paused. Colibri is the interchangeable
+alternative. This host does not call a
 commercial API, and `.vscode/mcp.json` is empty on purpose.
 
 - **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Galaxy chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
@@ -52,6 +55,8 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
+| Desk panel (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
+| Lyrics loop (`scripts/lyrics_loop.py`) | daily-driver | CPU Whisper. Audio and `state.json` stay in `C:\nvme\stt\lyrics`. Door: `scripts\Invoke-LyricsLoop.ps1` |
 | [Frontend University](godbrain_core/skill_lab/README.md) | self-expanding degree + browser examiner + Creation Gallery | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; later tracks are a named GO |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
 | [Go router](godbrain_core/go_router/README.md) / [Rust router](godbrain_core/rust_router/) | experimental, parked | `:8082`; not Heal; not this quarter |
@@ -67,7 +72,7 @@ probe or a quote match is real. Librarian distills transcripts to
 **candidates**. The bottleneck is the verifier, not the model. A second node is allowed only when a named
 signal pays for it (Architect vs Surgeon, a second inference runner behind
 the same kernel door, or a future candidate-vs-verified conflict queue).
-Colibri and a rebuilt `llama-server` are interchangeable mouths, not a mesh.
+EXL3 on `:8888` is the desk mouth. Colibri and a paused `llama-server` are other runners behind that same kernel door, not a mesh.
 
 Large changes follow a contractor gate: investigate the repo, state a
 Goal and falsifiable assumptions, ask at most three blocking questions
@@ -167,6 +172,8 @@ Shipped on this desk, not slideware:
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
+- **Desk panel** — `scripts\Show-DeskMenu.ps1`. Tray icon, one GPU model on `:8888`, kernel, RAG, Mongo, gym, lyrics. X hides. The power glyph quits.
+- **Lyrics** — `scripts\lyrics_loop.py` through `scripts\Invoke-LyricsLoop.ps1`. Two CPU Whisper passes, lock the lines that agree, redo only the draft. Recordings stay on `C:\nvme\stt\lyrics`. The 4080 is not used.
 - **Autonomous frontend practice** — `scripts\Invoke-FrontendGym.ps1 -Continuous` runs local learner/tutor attempts against a protected browser evaluator. Failures feed repairs; passing source and evidence become reusable gym examples without operator code review. This is not authority to modify Windows.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."

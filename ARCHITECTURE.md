@@ -17,16 +17,19 @@ verify, then repeat or stop. The bottleneck is the verifier, not the model.
 |---|---|---|
 | `:27017` | Windows service `MongoDB` | Vault. Immutable sources + Golden Records. |
 | `:8084` | `rag-service.exe` | Committed Golden Record search / graph / document. Start/Heal prefer `build/cpp_memory_store/Release`, then Go `memory_store`. |
-| `:8000` | `llama-server` or `coli serve` | One GPU mouth. Chat and Librarian share it. |
-| `:8083` | `godbrain-kernel.exe` | Galaxy, HTTP API, privileged `command_type`. Loopback chat. |
+| `:8888` | EXL3 `serve_openai.py` | Desk mouth. Qwen 3.8 27B 3.5bpw. One GPU slot. |
+| `:8000` | `llama-server` or `coli serve` | Paused. Gemma GGUF stays off while EXL3 holds the card. |
+| `:8083` | `godbrain-kernel.exe` | Galaxy, HTTP API, privileged `command_type`. Loopback chat. Tool rounds go to `:8888` while the llama mouth is paused. |
 
 Heal/Watch keep those listeners up. The **b-line** (one loop, inbox/pending,
-phone glance, SRE diagnose-only, one Gemma mouth) **shipped** — see
+phone glance, SRE diagnose-only, one EXL3 mouth on `:8888`) **shipped** — see
 [`docs/architecture/next.md`](docs/architecture/next.md) (pointer) and
 [`docs/architecture/b-line.md`](docs/architecture/b-line.md) (snapshot).
 
-This desk: mouth is bartowski Gemma 12B IT **Q6_K_L** with bartowski MTP
-(`-NoDraft` to disable); Colibri/GLM is research, not the Heal default. `/edit` writes allowlisted repo files
+This desk: mouth is Qwen 3.8 27B **EXL3 3.5bpw** on `:8888`. Gemma on
+`llama-server` (GGUF, `:8000`) is paused after CUDA aborts. Colibri/GLM is
+research, not the Heal default. The kit stays on `C:\nvme`, not in git.
+`/edit` writes allowlisted repo files
 (apply-only, no RAG, no Oracle persistence; Galaxy This host shows
 `Edit: ok|fail|none`). Librarian distills transcripts into **candidate**
 Golden Records. The operator `/verify` or `/reject` crowns truth. Playbooks
@@ -53,7 +56,7 @@ flowchart LR
     Librarian[Native Librarian]
     Memory[memory-store.exe]
     RAG[rag-service :8084]
-    Mouth[llama-server or coli :8000]
+    Mouth[EXL3 Qwen :8888]
 
     Operator --> UI
     UI --> Kernel

@@ -286,6 +286,12 @@ if (Test-Path -LiteralPath $cs2Helper) {
     . $cs2Helper
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
+$mouthPause = $false
+$mouthHelper = Join-Path $RepoRoot "scripts\GodBrain-Mouth.ps1"
+if (Test-Path -LiteralPath $mouthHelper) {
+    . $mouthHelper
+    $mouthPause = Test-GodBrainMouthPaused -RepoRoot $RepoRoot
+}
 
 $before = Get-Probe
 $needed = @()
@@ -297,7 +303,7 @@ if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag) { $needed += "rag" }
 # "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
 # instead of coli when logs/mouth.txt says llama-server.
-if (-not $before.coli -and -not $coliSleep) { $needed += "coli" }
+if (-not $before.coli -and -not $coliSleep -and -not $mouthPause) { $needed += "coli" }
 if (-not $before.kernel) { $needed += "kernel" }
 
 foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
@@ -354,6 +360,8 @@ $inboxLock = Join-Path $logDir "heal-inbox.lock"
 if ($waitingFiles.Count -gt 0) {
     if ($coliSleep) {
         $inbox.skip = "cs2"
+    } elseif ($mouthPause) {
+        $inbox.skip = "mouth-paused"
     } elseif (-not $after.mouth_ready) {
         $inbox.skip = "mouth-down"
     } elseif (Test-LibrarianRunning) {
@@ -428,6 +436,7 @@ $result = [ordered]@{
     ok          = $ok
     never_kills = $true
     cs2_sleep   = [bool]$coliSleep
+    mouth_paused = [bool]$mouthPause
     mouth       = [bool]$after.mouth
     mouth_ready = [bool]$after.mouth_ready
     rag_ready   = [bool]$after.rag_ready
@@ -455,11 +464,12 @@ function Write-HealFallbackGlance {
         $line = [string](Get-Content -LiteralPath $mouthFile -TotalCount 1 -ErrorAction SilentlyContinue)
         if ($line -match "llama") { $mouthLabel = "llama" }
     }
-    $mouthState = if ($coliSleep) { "sleep" } elseif ($after.mouth_ready) { "serve" } else { "down" }
+    $mouthState = if ($coliSleep) { "sleep" } elseif ($mouthPause) { "paused" } elseif ($after.mouth_ready) { "serve" } else { "down" }
     $ragState = if ($after.rag_ready) { "ready" } else { "down" }
     $healState = if ($ok) { "ok" } else { "fail" }
-    $brief = "{0} | {1}={2} rag={3} heal={4}/0m inbox={5} sre={6} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
-        $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $healState, $inbox.waiting, $sreDiagnose
+    $mongoState = if ($after.mongo) { "up" } else { "down" }
+    $brief = "{0} | {1}={2} rag={3} mongo={4} heal={5}/0m inbox={6} sre={7} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
+        $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $mongoState, $healState, $inbox.waiting, $sreDiagnose
     $healTxt = "playbook=host-listeners (never kills)`nlive kernel=down rag={0} mouth={1}`nlast ok={2} mouth={3} tail={4} cs2={5} age=0m`nneeded={6}`nacted={7}`nlayer={8} sre={9} match=unknown`ninbox={10}" -f `
         $(if ($after.rag) { "up" } else { "down" }),
         $mouthState,

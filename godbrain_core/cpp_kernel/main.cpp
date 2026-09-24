@@ -123,6 +123,7 @@ static json inbox_desk();
 static json load_last_desk_test();
 static json gpu_desk();
 static bool maybe_restart_mouth(bool even_if_up = false);
+static bool mouth_paused();
 static bool cs2_should_sleep_mouth();
 static bool maybe_bind_tailscale_door();
 static bool tailscale_door_bound_to(const std::string& ip);
@@ -956,6 +957,36 @@ static json host_record_from_rag() {
     return json::object();
 }
 
+// The desk worker is EXL3 on :8888. Galaxy paints this instead of the
+// paused llama-server / Gemma door in logs/mouth.txt.
+static json exl3_desk() {
+    json out = {
+        {"up", false},
+        {"port", 8888},
+        {"id", ""},
+        {"ctx", 0},
+    };
+    httplib::Client client("127.0.0.1", 8888);
+    client.set_connection_timeout(0, 300000);
+    client.set_read_timeout(1, 0);
+    const auto probe = client.Get("/v1/models");
+    if (!probe || probe->status != 200) return out;
+    out["up"] = true;
+    try {
+        const json body = json::parse(probe->body);
+        const json data = body.value("data", json::array());
+        if (!data.empty() && data[0].is_object()) {
+            out["id"] = data[0].value("id", "");
+            if (data[0].contains("max_model_len") &&
+                data[0]["max_model_len"].is_number()) {
+                out["ctx"] = data[0]["max_model_len"].get<int>();
+            }
+        }
+    } catch (const json::exception&) {
+    }
+    return out;
+}
+
 static json kernel_status_body() {
     json rag_health = json::object();
     httplib::Client health("127.0.0.1", 8084);
@@ -967,6 +998,7 @@ static json kernel_status_body() {
         } catch (const json::exception&) {
         }
     }
+    const bool mongo_up = telemetry::tcp_loopback_open(27017, 250);
     json tailscale = telemetry::get_tailscale();
     if (tailscale.value("up", false)) {
         if (g_api_token.empty()) {
@@ -1015,10 +1047,13 @@ static json kernel_status_body() {
         {"coli_serve", coli.value("up", false)},
         {"coli", coli},
         {"mouth", load_mouth()},
+        {"exl3", exl3_desk()},
+        {"mouth_paused", mouth_paused()},
         {"mouth_restarting", mouth_restarting},
         {"writes_need_token", !g_api_token.empty()},
         {"vram", gpu_desk()},
         {"rag", rag_health},
+        {"mongo", {{"up", mongo_up}, {"port", 27017}}},
         {"host", host},
         {"host_record", host_record},
         {"tailscale", tailscale},
@@ -1799,6 +1834,70 @@ static json cs2_desk() {
     };
 }
 
+static std::string mouth_pause_path() {
+    return repo_root_from_exe() + "\\logs\\mouth-pause.txt";
+}
+
+static bool mouth_paused() {
+    std::ifstream in(mouth_pause_path(), std::ios::binary);
+    if (!in) return false;
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                             line.back() == ' ')) {
+        line.pop_back();
+    }
+    const std::string lower = ascii_lower_copy(line);
+    return lower == "on" || lower == "pause" || lower == "paused" ||
+           lower == "1" || lower == "true";
+}
+
+static bool write_mouth_paused(bool on) {
+    const std::string path = mouth_pause_path();
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out << (on ? "on\n" : "off\n");
+        out.flush();
+        if (!out) return false;
+    }
+    return MoveFileExA(tmp.c_str(), path.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
+
+static bool run_mouth_script(const std::string& script_rel, const std::string& extra) {
+    const std::string repo = repo_root_from_exe();
+    const std::string hidden = get_exe_dir() + "\\..\\cpp_tools\\run_hidden.exe";
+    const std::string starter = repo + "\\" + script_rel;
+    const std::string pwsh = path_exists("C:\\pwsh\\pwsh.exe")
+                                 ? "C:\\pwsh\\pwsh.exe"
+                                 : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    if (!path_exists(hidden) || !path_exists(starter) || !path_exists(pwsh)) {
+        return false;
+    }
+    std::string cmd = "\"" + hidden + "\" \"" + pwsh +
+                      "\" -NoProfile -WindowStyle Hidden -File \"" + starter +
+                      "\" -RepoRoot \"" + repo + "\"";
+    if (!extra.empty()) cmd += " " + extra;
+    std::vector<char> buf(cmd.begin(), cmd.end());
+    buf.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(
+            nullptr, buf.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, repo.c_str(),
+            &si, &pi)) {
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
 static std::atomic<DWORD> g_mouth_restart_ms{0};
 // Start-LlamaServer kills leftover llama-server.exe. Do not re-kick while
 // weights are still loading. A hung IMA process that never binds :8000
@@ -1807,6 +1906,7 @@ static const DWORD kMouthLoadWaitMs = 300000;
 
 static bool maybe_restart_mouth(bool even_if_up) {
     if (load_mouth().value("label", "") != "llama") return false;
+    if (mouth_paused()) return false;
     if (cs2_should_sleep_mouth()) return false;
     if (!even_if_up && colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
@@ -1901,7 +2001,8 @@ static std::string format_brief_text() {
     const json mouth = st.value("mouth", json::object());
     const std::string mouth_label = mouth.value("label", "coli");
     const char* mouth_state = !coli.value("up", false)
-        ? (st.value("mouth_restarting", false) ? "starting" : "down")
+        ? (st.value("mouth_paused", false) ? "paused"
+           : (st.value("mouth_restarting", false) ? "starting" : "down"))
         : (coli.value("busy", false) ? "busy" : "serve");
     const json pending = st.value("pending_judge", json::object());
     const json heal = st.value("heal", json::object());
@@ -1913,6 +2014,8 @@ static std::string format_brief_text() {
     }
     reply << " rag="
           << (rag.value("ready", false) ? "ready" : "down")
+          << " mongo="
+          << (st.value("mongo", json::object()).value("up", false) ? "up" : "down")
           << " judge=" << pending.value("total", 0);
     {
         for (const auto& item : st.value("pending_items", json::array())) {
@@ -1936,7 +2039,8 @@ static std::string format_brief_text() {
         const bool heal_mouth = heal.value("mouth_ready", heal.value("mouth", false));
         const bool lie = heal_ok && heal_age >= 0 && heal_age <= 20 &&
             ((heal_rag && !live_rag) ||
-             (heal_mouth && !live_mouth && !cs2sleep));
+             (heal_mouth && !live_mouth && !cs2sleep &&
+              !st.value("mouth_paused", false)));
         if (lie) {
             reply << " heal=lie/" << heal_age << "m";
         } else if (heal_age > 20) {
@@ -2049,20 +2153,30 @@ static void handle_brief(const httplib::Request&, httplib::Response& res) {
 
 static void handle_vram(const httplib::Request&, httplib::Response& res) {
     const json plan = gpu_desk();
+    const json ex = exl3_desk();
     std::ostringstream reply;
     reply << plan.value("name", "GPU") << " / "
           << plan.value("dedicated_gb", 0) << " GB dedicated / "
-          << plan.value("slots", 1) << " slot\n"
-          << "mouth=" << plan.value("mouth_label", "?")
-          << " " << plan.value("mouth_model", "") << "\n"
-          << plan.value("worker", "") << "\n"
-          << plan.value("next", "") << "\n"
-          << "coli expert_gb=" << plan.value("expert_gb", 0)
+          << plan.value("slots", 1) << " slot\n";
+    if (ex.value("up", false)) {
+        reply << "exl3=" << ex.value("id", "up")
+              << " ctx=" << ex.value("ctx", 0) << " :8888\n";
+    } else {
+        reply << "exl3=down :8888\n";
+    }
+    reply << "coli expert_gb=" << plan.value("expert_gb", 0)
           << " reserve=" << plan.value("reserve_gb", 0)
           << " overcommit="
           << (plan.value("overcommit", false) ? "on" : "off")
           << "\nOne generate at a time. Librarian shares this slot.";
     json body = plan;
+    if (ex.value("up", false)) {
+        const std::string id = ex.value("id", "");
+        if (!id.empty()) body["worker"] = id;
+    } else {
+        body["worker"] = "EXL3 :8888 down";
+    }
+    body["next"] = "one generate";
     body["response"] = reply.str();
     body["slots"] = plan.value("slots", 1);
     const std::string path = get_exe_dir() + "\\..\\..\\logs\\last-vram.json";
@@ -2713,6 +2827,7 @@ static json load_mouth() {
     }
     mouth["model"] = model;
     mouth["thinking"] = llama_thinking_enabled();
+    mouth["paused"] = mouth_paused();
     return mouth;
 }
 
@@ -2752,18 +2867,11 @@ static bool write_thinking_enabled(bool on) {
 static json gpu_desk() {
     json plan = telemetry::plan_colibri_vram();
     const json mouth = load_mouth();
-    const int gb = plan.value("dedicated_gb", 0);
     plan["slots"] = 1;
     plan["mouth_label"] = mouth.value("label", "");
     plan["mouth_model"] = mouth.value("model", "");
-    if (gb < 24) {
-        plan["worker"] = "Gemma 12B Q4 fits; default 27B Q4 does not";
-        plan["next"] =
-            "24 GB VRAM is the next worker (27B Q4), still one generate";
-    } else {
-        plan["worker"] = "24 GB+ can hold a default 27B Q4 worker";
-        plan["next"] = "still one GPU slot; do not stack Librarian on chat";
-    }
+    plan["worker"] = "EXL3 on :8888";
+    plan["next"] = "one generate";
     return plan;
 }
 
@@ -3060,16 +3168,21 @@ std::string run_colibri_serve(
     const std::string& prior_user = {},
     const std::string& prior_assistant = {},
     std::string* spoken = nullptr,
-    const std::string& tool_hint = {}) {
-    httplib::Client client(kColibriServeHost, kColibriServePort);
+    const std::string& tool_hint = {},
+    const char* serve_host = kColibriServeHost,
+    int serve_port = kColibriServePort,
+    const std::string& serve_model = {},
+    bool exl3_mouth = false) {
+    httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
     client.set_max_timeout(kColiChunkTimeoutMs);
     client.set_follow_location(false);
 
-    const std::string model = []() {
+    const std::string model = [&]() {
+        if (!serve_model.empty()) return serve_model;
         const std::string override_model = read_env("GODBRAIN_COLIBRI_MODEL");
-        return override_model.empty() ? "glm-5.2-colibri" : override_model;
+        return override_model.empty() ? std::string("glm-5.2-colibri") : override_model;
     }();
     json messages = json::array({json{{"role", "system"}, {"content", system}}});
     if (!prior_user.empty() && !prior_assistant.empty()) {
@@ -3078,7 +3191,7 @@ std::string run_colibri_serve(
             json{{"role", "assistant"}, {"content", prior_assistant}});
     }
     messages.push_back(json{{"role", "user"}, {"content", user}});
-    const json base_messages = messages;
+    json base_messages = messages;
     httplib::Headers headers = {{"Accept", "text/event-stream"}};
     const std::string key = read_env("GODBRAIN_COLIBRI_KEY");
     const std::string coli_key = key.empty() ? read_env("COLI_API_KEY") : key;
@@ -3087,25 +3200,29 @@ std::string run_colibri_serve(
     }
 
     const bool llama_mouth = load_mouth().value("label", "") == "llama";
+    // EXL3 on :8888 is the tool mouth while Gemma is paused. Same flatten
+    // loop as llama. Do not recycle llama-server between hops.
+    const bool tool_mouth = llama_mouth || exl3_mouth;
     const std::string apply_src = tool_hint.empty() ? user : tool_hint;
     const bool apply_cont = wants_apply_continue(system, apply_src);
     // Colibri pings empty deltas every ~10s during prefill. llama.cpp does
     // not; a 60s read timeout on a tools prefill looks like "no body".
-    client.set_read_timeout(llama_mouth ? 180 : 60, 0);
-    const int chunk_tokens = llama_mouth ? kLlamaChunkTokens : kColiChunkTokens;
-    const int max_chunks = llama_mouth ? kLlamaMaxChunks : kColiMaxChunks;
+    client.set_read_timeout(tool_mouth ? 180 : 60, 0);
+    const int chunk_tokens = tool_mouth ? kLlamaChunkTokens : kColiChunkTokens;
+    const int max_chunks = tool_mouth ? kLlamaMaxChunks : kColiMaxChunks;
 
     std::string assembled;
     std::string last_reason;
     std::string last_tool_out;
     const bool native_tools =
-        llama_mouth && !apply_cont &&
+        tool_mouth && !apply_cont &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
     {
         std::ofstream dbg(
             (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
             std::ios::trunc);
-        dbg << "llama=" << llama_mouth << " native=" << native_tools
+        dbg << "llama=" << llama_mouth << " exl3=" << exl3_mouth
+            << " port=" << serve_port << " native=" << native_tools
             << " yolo=" << local_tools::yolo_active()
             << " user_len=" << user.size() << "\n";
         dbg << "hint=" << (tool_hint.empty() ? user : tool_hint).substr(0, 240)
@@ -3116,11 +3233,26 @@ std::string run_colibri_serve(
     // false, never send role:tool back. Hops before the last keep the
     // tools schema even after the ledger is non-empty. Last round is
     // speak-only.
-    const int max_tool_rounds =
-        native_tools ? (local_tools::yolo_active() ? 8 : 3) : 1;
     std::string tool_ledger;
     int chain_hops = 0;
     const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
+    // A pasted crash plus "fix" gets the long loop. YOLO stays off, so
+    // elevate and git push stay denied. Eight rounds: seven can run tools,
+    // the last only talks. A passing rerun after a crash ends it sooner.
+    const bool fix_job = native_tools && looks_like_fix_job(chain_goal);
+    int max_tool_rounds =
+        native_tools ? ((local_tools::yolo_active() || fix_job) ? 8 : 3) : 1;
+    if (fix_job && !base_messages.empty() &&
+        base_messages.back().value("role", "") == "user") {
+        const std::string note =
+            "\n\nFix job. Stay on this crash. Read the site, write a small "
+            "repro, run it, change the code, run once more. When the test "
+            "stays up, report the path and stop. Do not start a new project. "
+            "Do not open a PR.";
+        base_messages.back()["content"] =
+            base_messages.back().value("content", "") + note;
+        messages = base_messages;
+    }
     bool hops_ok = true;
     {
         const json prev_ch = load_chain();
@@ -3135,7 +3267,7 @@ std::string run_colibri_serve(
         native_tools ? local_tools::openai_tool_defs_for(chain_goal)
                      : json::array();
     const std::string hop_hint0 = chain_goal;
-    if (llama_mouth && native_tools && !local_tools::yolo_active() &&
+    if (!fix_job && tool_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
         std::string seed = local_tools::analysis_observe(hop_hint0);
@@ -3174,14 +3306,16 @@ std::string run_colibri_serve(
         };
         // /edit apply always off. Ordinary llama chat uses logs/thinking.txt
         // (Galaxy message enable_thinking: false|true, no GPU).
-        if (llama_mouth) {
+        if (tool_mouth) {
             // Tool rounds must not think: reasoning_content ngram-aborts the
             // SSE before delta.tool_calls arrive (empty answer).
             const bool think =
                 use_tools ? false
                           : (apply_cont ? false : llama_thinking_enabled());
             body["chat_template_kwargs"] = {{"enable_thinking", think}};
-            body["cache_prompt"] = false;
+            // cache_prompt is llama.cpp. EXL3 ignores it; omit so the
+            // server does not have to.
+            if (llama_mouth) body["cache_prompt"] = false;
         }
         if (use_tools) {
             body["tools"] = tool_defs;
@@ -3194,7 +3328,7 @@ std::string run_colibri_serve(
         std::string finish_reason;
         bool heading_loop = false;
         g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
-        if (use_tools && llama_mouth) {
+        if (use_tools && tool_mouth) {
             body["stream"] = false;
             httplib::Headers json_headers = headers;
             json_headers.erase("Accept");
@@ -3204,19 +3338,25 @@ std::string run_colibri_serve(
                 "application/json");
             g_coli_job_started_ms.store(0, std::memory_order_relaxed);
             if (!response) {
-                maybe_restart_mouth();
-                std::string err =
-                    colibri_serve_up()
-                        ? "Error: llama-server returned no body (cut or timeout). "
-                          "Ask again. Not Colibri."
-                        : "Error: llama-server CUDA abort or :8000 died. "
-                          "Starting it. Ask again in about a minute. "
-                          "Not Colibri, not GLM paging.";
+                std::string err;
+                if (exl3_mouth) {
+                    err = "Error: EXL3 on :8888 returned no body. Ask again. "
+                          "Gemma stays paused.";
+                } else {
+                    maybe_restart_mouth();
+                    err = colibri_serve_up()
+                              ? "Error: llama-server returned no body (cut or timeout). "
+                                "Ask again. Not Colibri."
+                              : "Error: llama-server CUDA abort or :8000 died. "
+                                "Starting it. Ask again in about a minute. "
+                                "Not Colibri, not GLM paging.";
+                }
                 if (!last_tool_out.empty()) return last_tool_out + "\n" + err;
                 return err;
             }
             if (response->status != 200) {
-                return "Error: llama-server HTTP " +
+                return std::string(exl3_mouth ? "Error: EXL3 HTTP "
+                                              : "Error: llama-server HTTP ") +
                        std::to_string(response->status);
             }
             try {
@@ -3230,7 +3370,9 @@ std::string run_colibri_serve(
                     finish_reason = "tool_calls";
                 }
             } catch (const json::exception&) {
-                return "Error: llama-server returned a malformed completion.";
+                return exl3_mouth
+                           ? "Error: EXL3 on :8888 returned a malformed completion."
+                           : "Error: llama-server returned a malformed completion.";
             }
             last_reason = finish_reason;
             break;
@@ -3265,6 +3407,13 @@ std::string run_colibri_serve(
         if (!response) {
             assembled += strip_replayed_prefix(assembled, sanitize_oracle_body(piece));
             if (assembled.empty()) {
+                if (exl3_mouth) {
+                    const std::string err =
+                        "Error: EXL3 on :8888 returned no body. Ask again. "
+                        "Gemma stays paused.";
+                    if (!last_tool_out.empty()) return last_tool_out + "\n" + err;
+                    return err;
+                }
                 if (llama_mouth) {
                     maybe_restart_mouth();
                     std::string err =
@@ -3283,14 +3432,19 @@ std::string run_colibri_serve(
                        "GLM-5.2 is paging experts off disk on 16 GB. "
                        "Wait until /status shows coli=serve (not busy) and ask again.";
             }
-            assembled += llama_mouth
-                             ? "\n[cut — mouth dropped mid-generate. Ask again, do not Continue.]"
-                             : "\n[cut — serve timed out, say continue]";
+            assembled += exl3_mouth
+                             ? "\n[cut — EXL3 dropped mid-generate. Ask again. Gemma stays paused.]"
+                             : (llama_mouth
+                                    ? "\n[cut — mouth dropped mid-generate. Ask again, do not Continue.]"
+                                    : "\n[cut — serve timed out, say continue]");
             return assembled;
         }
         if (response->status != 200) {
             assembled += piece;
             if (assembled.empty()) {
+                if (exl3_mouth) {
+                    return "Error: EXL3 HTTP " + std::to_string(response->status);
+                }
                 return llama_mouth
                            ? ("Error: llama-server HTTP " +
                               std::to_string(response->status))
@@ -3345,7 +3499,7 @@ std::string run_colibri_serve(
                 {"content", make_edit_continue_prompt(assembled)}});
             continue;
         }
-        if (llama_mouth) {
+        if (tool_mouth) {
             const std::string tail =
                 (spoken && !spoken->empty()) ? *spoken : assembled;
             if (!looks_unfinished(tail)) break;
@@ -3361,7 +3515,7 @@ std::string run_colibri_serve(
         messages.push_back(
             json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
-    if (!llama_mouth || apply_cont) break;
+    if (!tool_mouth || apply_cont) break;
     // Native tools: execute in-process. Do not send role:tool back to
     // llama.cpp (CUDA IMA on that KV). Flatten into a fresh user turn.
     bool had_native = false;
@@ -3380,6 +3534,7 @@ std::string run_colibri_serve(
     auto flatten_tool_turn = [&](std::string tool_out) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         const bool analysis =
+            !fix_job &&
             local_tools::looks_like_local_fs_ask(hop_hint) &&
             !local_tools::looks_like_list_only_ask(hop_hint);
         if (analysis) {
@@ -3393,7 +3548,7 @@ std::string run_colibri_serve(
                 if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
                 tool_out += map;
             }
-        } else {
+        } else if (!fix_job) {
             tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
         }
         if (tool_out.size() > 12000) tool_out.resize(12000);
@@ -3403,11 +3558,15 @@ std::string run_colibri_serve(
         tool_ledger += tool_out;
         if (tool_ledger.size() > 12000) tool_ledger.resize(12000);
         messages = base_messages;
+        const bool stayed = fix_job && fix_test_stayed_up(tool_ledger);
+        if (stayed && max_tool_rounds > tool_round + 2) {
+            max_tool_rounds = tool_round + 2;
+        }
+        const bool speak =
+            stayed || next_round_speak_only(tool_round, max_tool_rounds);
         messages.push_back(json{
             {"role", "user"},
-            {"content", flatten_continue_prompt(
-                            tool_ledger,
-                            next_round_speak_only(tool_round, max_tool_rounds))}});
+            {"content", flatten_continue_prompt(tool_ledger, speak, fix_job)}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
                   << max_tool_rounds << " (" << tool_ledger.size()
                   << " bytes, cache_prompt=0)" << std::endl;
@@ -3461,7 +3620,7 @@ std::string run_colibri_serve(
                    chain_hops, "after", hops_ok);
         assembled.clear();
         if (spoken) spoken->clear();
-        if (llama_mouth && !local_tools::yolo_active()) {
+        if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
             std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
             maybe_restart_mouth(true);
             Sleep(5000);
@@ -3488,7 +3647,7 @@ std::string run_colibri_serve(
                chain_hops, "after", hops_ok);
     assembled.clear();
     if (spoken) spoken->clear();
-    if (llama_mouth && !local_tools::yolo_active()) {
+    if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
         std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
         maybe_restart_mouth(true);
         Sleep(5000);
@@ -3496,7 +3655,7 @@ std::string run_colibri_serve(
     }
     continue;
     }
-    if (last_reason == "length" && !llama_mouth) {
+    if (last_reason == "length" && !tool_mouth) {
         assembled +=
             "\n[cut at 640 tokens — say continue]";
     }
@@ -3536,7 +3695,9 @@ std::string run_colibri_serve(
             (repo_root_from_exe() + "\\logs\\last-tool-hop.txt").c_str(),
             std::ios::app);
         dbg << "hops=" << chain_hops << " ledger=" << tool_ledger.size()
-            << " out=" << assembled.size() << "\n";
+            << " out=" << assembled.size()
+            << " fix=" << (fix_job ? 1 : 0)
+            << " rounds=" << max_tool_rounds << "\n";
     }
     return assembled;
 }
@@ -3677,6 +3838,28 @@ std::string run_colibri(
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
     const std::string mouth = load_mouth().value("label", "coli");
+    if (mouth_paused()) {
+        // Gemma stays paused. The tool rounds go to the EXL3 already on :8888.
+        if (g_coli_job_started_ms.load(std::memory_order_relaxed) != 0) {
+            return "Error: EXL3 is still generating (one GPU slot). "
+                   "Wait, then ask again.";
+        }
+        const json ex = exl3_desk();
+        if (ex.value("up", false)) {
+            std::string id = ex.value("id", "");
+            if (id.empty()) id = "qwen3.8-27b-exl3-3.5bpw";
+            const int port = ex.value("port", 8888);
+            std::cout << "[EXL3] chat at 127.0.0.1:" << port
+                      << " model=" << id << " (llama stays paused)" << std::endl;
+            return run_colibri_serve(
+                system, user, on_token, on_ping, prior_user, prior_assistant,
+                spoken, tool_hint, "127.0.0.1", port, id, true);
+        }
+        return "Error: mouth is paused (logs/mouth-pause.txt) and EXL3 "
+               "is down on :8888. "
+               "/mouth on or scripts\\Start-LlamaServer.ps1 -Resume "
+               "only if this slot is free. Do not Continue.";
+    }
     const bool starting = maybe_restart_mouth();
     if (starting) {
         return "Error: " + mouth +
@@ -4049,6 +4232,10 @@ int main() {
                           << " queued=" << coli.value("queued", 0);
                 }
                 reply << " rag=" << (rag.value("ready", false) ? "ready" : "down")
+                      << " mongo="
+                      << (st.value("mongo", json::object()).value("up", false)
+                              ? "up"
+                              : "down")
                       << " writes="
                       << (st.value("writes_need_token", false) ? "need bearer"
                                                               : "open on loopback")
@@ -4147,6 +4334,54 @@ int main() {
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
                 handle_brief(req, res);
+                return;
+            }
+
+            if (starts_with_ignore_case(user_msg, "/mouth") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                const std::string rest = trim_copy(user_msg.size() > 6
+                                                       ? user_msg.substr(6)
+                                                       : "");
+                const std::string arg = ascii_lower_copy(rest);
+                std::ostringstream reply;
+                if (arg.empty() || arg == "status") {
+                    reply << "mouth=" << load_mouth().value("label", "?")
+                          << " paused=" << (mouth_paused() ? "on" : "off")
+                          << " :8000="
+                          << (colibri_serve_up() ? "up" : "down")
+                          << "\n";
+                } else if (arg == "off" || arg == "pause") {
+                    if (!write_mouth_paused(true)) {
+                        res.status = 500;
+                        res.set_content(
+                            json({{"response",
+                                   "Could not write logs/mouth-pause.txt"}})
+                                .dump(),
+                            "application/json");
+                        return;
+                    }
+                    run_mouth_script("scripts\\Stop-LlamaServer.ps1", "");
+                    reply << "mouth=paused. Watch/Heal/kernel will not start "
+                             "llama. Slot free. /mouth on to resume.\n";
+                } else if (arg == "on" || arg == "resume") {
+                    if (!write_mouth_paused(false)) {
+                        res.status = 500;
+                        res.set_content(
+                            json({{"response",
+                                   "Could not write logs/mouth-pause.txt"}})
+                                .dump(),
+                            "application/json");
+                        return;
+                    }
+                    maybe_restart_mouth(true);
+                    reply << "mouth=on. Starting llama if mouth.txt says "
+                             "llama. Ask again in about a minute.\n";
+                } else {
+                    reply << "usage: /mouth off | /mouth on | /mouth\n";
+                }
+                res.set_content(json({{"response", reply.str()}}).dump(),
+                                "application/json");
                 return;
             }
 
@@ -4380,6 +4615,95 @@ int main() {
                 return;
             }
 
+            auto handle_rainman = [&](const std::string& rest, bool store_if_text) {
+                const std::string body = trim_view(rest);
+                try {
+                    if (store_if_text && !body.empty()) {
+                        json stored = memory::save_thought(
+                            {{"content", body}, {"sector", "personal"}});
+                        res.set_content(
+                            json({{"response",
+                                   std::string("On the shelf (candidate, sector=personal). "
+                                               "Not in tech RAG. /verify to keep. stable_id=") +
+                                       stored.value("stable_id", "")}})
+                                .dump(),
+                            "application/json");
+                        return;
+                    }
+                    std::ostringstream listing;
+                    listing << "Rainman shelf (sector=personal, not tech RAG):\n";
+                    int shown = 0;
+                    const json session =
+                        memory::session_snapshot(25).value("thoughts", json::array());
+                    for (const auto& thought : session) {
+                        if (thought.value("sector", "") != "personal") continue;
+                        ++shown;
+                        listing << "- [session/" << thought.value("status", "candidate")
+                                << "] "
+                                << thought.value("stable_id", thought.value("id", ""))
+                                << " | " << thought.value("label", "") << "\n";
+                    }
+                    if (body.empty()) {
+                        listing << "Projected personal cards:\n";
+                        const json recent =
+                            memory::get_recent_personal(8).value("thoughts", json::array());
+                        if (recent.empty()) {
+                            listing << "(none in the active projection yet)\n";
+                        } else {
+                            for (const auto& thought : recent) {
+                                ++shown;
+                                listing << "- [" << thought.value("status", "candidate")
+                                        << "] "
+                                        << thought.value("stable_id", thought.value("id", ""))
+                                        << " | " << thought.value("label", "") << "\n";
+                            }
+                        }
+                    } else {
+                        listing << "Verified personal recall for " << body << ":\n";
+                        const json hits =
+                            memory::search_verified(body, 8, "personal")
+                                .value("thoughts", json::array());
+                        if (hits.empty()) {
+                            listing << "(none)\n";
+                        } else {
+                            for (const auto& thought : hits) {
+                                ++shown;
+                                listing << "- [" << thought.value("status", "verified")
+                                        << "] "
+                                        << thought.value("label", thought.value("id", ""))
+                                        << "\n";
+                            }
+                        }
+                    }
+                    if (shown == 0 && body.empty()) {
+                        listing << "Empty is the price until density. /hylla <note> to file.";
+                    }
+                    res.set_content(
+                        json({{"response", listing.str()}}).dump(),
+                        "application/json");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    res.set_content(
+                        json({{"response",
+                               std::string("Rainman failed: ") + error.what()}})
+                            .dump(),
+                        "application/json");
+                }
+            };
+
+            if (starts_with_ignore_case(user_msg, "/hylla") &&
+                (user_msg.size() == 6 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
+                handle_rainman(user_msg.substr(6), true);
+                return;
+            }
+            if (starts_with_ignore_case(user_msg, "/rainman") &&
+                (user_msg.size() == 8 ||
+                 std::isspace(static_cast<unsigned char>(user_msg[8])) != 0)) {
+                handle_rainman(user_msg.substr(8), false);
+                return;
+            }
+
             if (starts_with_ignore_case(user_msg, "/ideas") &&
                 (user_msg.size() == 6 ||
                  std::isspace(static_cast<unsigned char>(user_msg[6])) != 0)) {
@@ -4493,10 +4817,16 @@ int main() {
                     if (session.empty()) {
                         listing << "(nothing remembered in this kernel process)\n";
                     } else {
+                        int shown = 0;
                         for (const auto& thought : session) {
+                            if (thought.value("sector", "") == "personal") continue;
+                            ++shown;
                             listing << "- [" << thought.value("status", "candidate") << "] "
                                     << thought.value("id", "") << " | "
                                     << thought.value("label", "") << "\n";
+                        }
+                        if (shown == 0) {
+                            listing << "(nothing remembered in this kernel process)\n";
                         }
                     }
                     const std::string recall_query = trim_copy(user_msg.substr(7));

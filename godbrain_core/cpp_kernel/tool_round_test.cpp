@@ -47,6 +47,53 @@ int main() {
         return 1;
     }
 
+    if (!expect(looks_like_fix_job(
+                    "panic: nil pointer dereference\n\nfix"),
+                "crash plus fix is a fix job") ||
+        !expect(!looks_like_fix_job("No tools. What is 2+2?"),
+                "no-tools is not a fix job") ||
+        !expect(!looks_like_fix_job(
+                    "what else do you still need to be Jarvis"),
+                "jarvis need is not a fix job") ||
+        !expect(!looks_like_fix_job("the prefix is fine"),
+                "prefix is not the word fix") ||
+        !expect(tools_schema_on_round(true, 0, 8), "fix round 0 has tools") ||
+        !expect(tools_schema_on_round(true, 6, 8), "fix round 6 has tools") ||
+        !expect(!tools_schema_on_round(true, 7, 8), "fix last round talks")) {
+        return 1;
+    }
+
+    const std::string crashed = "run_pwsh inline\nexit=1 timeout=0\n";
+    const std::string stayed = crashed + "run_pwsh inline\nexit=0 timeout=0\n";
+    if (!expect(!fix_test_stayed_up(crashed), "a crash is not stayed up") ||
+        !expect(!fix_test_stayed_up("run_pwsh inline\nexit=0 timeout=0\n"),
+                "a pass with no earlier crash does not end the job") ||
+        !expect(fix_test_stayed_up(stayed), "pass after crash stayed up") ||
+        !expect(!fix_test_stayed_up(stayed + "exit=2 timeout=0\n"),
+                "a later crash keeps the loop") ||
+        !expect(!fix_test_stayed_up(
+                    "run_pwsh inline\nexit=1 timeout=0\nexit=0 timeout=1\n"),
+                "a timeout is not stayed up")) {
+        return 1;
+    }
+
+    const std::string fix_mid = flatten_continue_prompt(crashed, false, true);
+    const std::string fix_done = flatten_continue_prompt(stayed, false, true);
+    if (!expect(fix_mid.find("small repro") != std::string::npos,
+                "mid fix asks for a repro") ||
+        !expect(fix_mid.find("Do not call tools") == std::string::npos,
+                "mid fix still allows tools") ||
+        !expect(fix_mid.find("Do not open a PR") != std::string::npos,
+                "mid fix refuses a PR") ||
+        !expect(fix_done.find("stayed up") != std::string::npos,
+                "passing rerun tells the mouth to stop") ||
+        !expect(fix_done.find("Do not call tools") != std::string::npos,
+                "passing rerun forbids tools") ||
+        !expect(fix_done.find("Do not open a PR") != std::string::npos,
+                "passing rerun refuses a PR")) {
+        return 1;
+    }
+
     std::cout << "tool_round_test ok" << std::endl;
     return 0;
 }
