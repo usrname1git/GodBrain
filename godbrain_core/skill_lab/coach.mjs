@@ -153,14 +153,14 @@ export function alternativePrompt(campaign, variant, stage, retry = 0) {
     );
   } else {
     common.push(
-      'Write only CSS. One hero photo is allowed: url("/media/event-a.jpg"), url("/media/event-b.jpg"), or url("/media/event-c.jpg"). Cover .hero and keep a dark scrim so the headline stays readable. No other url().',
-      'Compose like a product studio: one dark or warm field, a very large headline that says what the platform does, one filled button, and the proof points as a tight row of frames. Not a generic menu over a stock smile.',
-      'section.tinted and section.dark use the hero paper. .tinted is not a mint band. .dark is not a floating navy billboard. Set :root and every [data-theme] to the same tokens.',
-      'Forbidden: light teal, mint, sage, pale aqua. Text is dark on light or light on dark. Two fonts. One type scale.',
-      `Change spacing and the one accent so "${variant.title}" is recognizable. The product claim stays huge.`,
+      'Write only CSS. A hero photo means the whole page is dark, like Northline: near-black paper, light type, one copper accent on the button only.',
+      'One photo: url("/media/event-a.jpg"), url("/media/event-b.jpg"), or url("/media/event-c.jpg") on .hero, with a dark scrim. No other url().',
+      'Header, body, .tinted, .dark, cards, and footer use that same dark paper. Do not drop to cream, ivory, or a bleached field under the photo.',
+      'Set :root and every [data-theme] so --paper, --header, --tint, and --footer are the same dark color. No light teal, mint, sage, or pale aqua. Two fonts. One type scale.',
+      `Change spacing so "${variant.title}" is recognizable. The product claim stays huge.`,
     );
     if (retry) {
-      common.push('The last pass changed color mid-page or used a mint band. Keep the opening palette and delete the extra colors.');
+      common.push('The last pass put a cream page under the dark photo. Make --paper dark and the type light, including .dark and the footer.');
     }
   }
   return objectivePrompt(common);
