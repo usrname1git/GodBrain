@@ -8,8 +8,8 @@ $RepoRoot = $PSScriptRoot
 . (Join-Path $RepoRoot "GodBrain-Cs2.ps1")
 
 $pwsh = if (Test-Path -LiteralPath "C:\pwsh\pwsh.exe") { "C:\pwsh\pwsh.exe" } else { "pwsh.exe" }
-$qwenStart = "C:\Temp\GitHub\Qwen3.8-27B-16gb\paper-godbrain\Start-PaperQwen.ps1"
-$qwenModel = "C:\Temp\GitHub\Qwen3.8-27B-16gb\models\Qwen3.8-27B-EXL3-3.5bpw"
+$qwenStart = "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-PaperQwen.ps1"
+$qwenModel = "C:\nvme\Qwen3.8-27B-16gb\models\Qwen3.8-27B-EXL3-3.5bpw"
 $gymDoor = Join-Path $RepoRoot "scripts\Invoke-FrontendGym.ps1"
 $pauseProbe = Join-Path $RepoRoot "scripts\Get-FrontendGymPause.ps1"
 $gymState = Join-Path $RepoRoot "godbrain_core\skill_lab\work\gym\state.json"

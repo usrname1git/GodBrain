@@ -142,6 +142,8 @@ foreach ($stale in @(
         "Ask-GodBrain.ps1",
         "Invoke-Librarian.ps1",
         "Start-LlamaServer.ps1",
+        "Stop-LlamaServer.ps1",
+        "GodBrain-Mouth.ps1",
         "build_pipeline.ps1",
         "AGENT_FACTORY_ROSTER.md"
     )) {
@@ -154,6 +156,15 @@ if ($status -and $status.vram -and [int]$status.vram.slots -ne 1) {
 }
 if ($brief -and [string]$brief.response -notmatch "llama=|coli=") {
     $fails.Add("brief missing mouth state")
+}
+$pauseFile = Join-Path $RepoRoot "logs\mouth-pause.txt"
+$mouthPaused = $false
+if (Test-Path -LiteralPath $pauseFile) {
+    $pauseRaw = Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue
+    if ($pauseRaw -match '(?i)^\s*(on|pause|paused|1|true)\s*$') { $mouthPaused = $true }
+}
+if ($brief -and [string]$brief.response -match "llama=paused" -and -not $mouthPaused) {
+    $fails.Add("brief llama=paused but mouth-pause.txt is not on")
 }
 if ($brief -and [string]$brief.response -notmatch "desk=") {
     $fails.Add("brief missing desk=")
@@ -173,6 +184,18 @@ if ($brief -and [string]$brief.response -match "heal=lie") {
 }
 if ($brief -and [string]$brief.response -match " rag=ready" -and $status -and $status.rag -and -not [bool]$status.rag.ready) {
     $fails.Add("brief rag=ready but status.rag.ready is false")
+}
+if ($status -and ($null -eq $status.mongo -or $null -eq $status.mongo.up)) {
+    $fails.Add("status.mongo.up missing")
+}
+if ($brief -and [string]$brief.response -notmatch " mongo=(up|down)") {
+    $fails.Add("brief missing mongo=")
+}
+if ($brief -and [string]$brief.response -match " mongo=up" -and $status -and $status.mongo -and -not [bool]$status.mongo.up) {
+    $fails.Add("brief mongo=up but status.mongo.up is false")
+}
+if ($brief -and [string]$brief.response -match " mongo=down" -and $status -and $status.mongo -and [bool]$status.mongo.up) {
+    $fails.Add("brief mongo=down but status.mongo.up is true")
 }
 if ($brief -and [string]$brief.response -match "=(serve|busy) " -and $status -and $status.coli -and -not [bool]$status.coli.up) {
     $fails.Add("brief mouth serve/busy but coli.up is false")

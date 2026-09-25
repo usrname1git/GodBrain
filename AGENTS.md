@@ -188,12 +188,14 @@ plan step is skipped when the blast radius is a one-liner.
 - **Verify on the running host.** Ports, `/status`, Galaxy click-path, or
   a failing test — not only a diff. For UI, screenshot or exercise the
   route. For Colibri, `/health` and `coli=serve` (not busy).
-- **Voice I/O is local and CPU-first.** STT: `faster-whisper` `large-v3`
-  at `C:\nvme\faster-whisper-large-v3` via `C:\nvme\stt\Transcribe-Clip.ps1`
-  (20 threads, no CUDA while coli holds VRAM). TTS: `python -m piper` with
-  voices in `C:\nvme\piper-voices` via `C:\nvme\stt\Speak-Text.ps1`.
+- **Voice I/O is local and CPU-first.** Lyrics loop source is
+  `scripts\lyrics_loop.py` (door `scripts\Invoke-LyricsLoop.ps1`). Weights
+  stay `C:\nvme\faster-whisper-large-v3`. Audio and `state.json` stay
+  `C:\nvme\stt\lyrics`. Clip STT is still
+  `C:\nvme\stt\Transcribe-Clip.ps1` (20 threads). TTS: `python -m piper`
+  with voices in `C:\nvme\piper-voices` via `C:\nvme\stt\Speak-Text.ps1`.
   FFmpeg is `C:\Tools\ffmpeg\ffmpeg.exe`. Do not use cloud STT/TTS. Do
-  not load Whisper or Piper on the 4080 while `coli serve` is pinned.
+  not load Whisper or Piper on the 4080 while the EXL3 slot is pinned.
 - **Next loop starts from persisted state.** Read
   `logs/where-we-are.md` first if it exists (session pointer: what
   changed, what is next). Then `last_oracle.json`, Heal last, git,
@@ -329,7 +331,8 @@ mouth while CS2 is running or has been gone under 10 minutes, unless
 `last_action` is `resume-now`.
 
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
-  mouth (desk default `llama-server`; Colibri is interchangeable). Reserve a
+  mouth (desk default EXL3 on `:8888`; Colibri is interchangeable;
+  `llama-server` GGUF is paused). Reserve a
   heavier runner for a flagged contradiction or a high-stakes synthesis the
   loop itself marked as worth extra scrutiny.
 - **A digest, if anyone writes one, is a pointer.** Only what changed in
@@ -342,8 +345,9 @@ mouth while CS2 is running or has been gone under 10 minutes, unless
 
 `godbrain_core/cpp_kernel/` is the canonical privileged runtime. `main.cpp`
 serves the Galaxy UI and HTTP API on loopback port 8083, retrieves committed
-Golden Records from the canonical loopback RAG service, talks to the mouth on
-`:8000`, authenticates privileged `command_type` requests, and delegates
+Golden Records from the canonical loopback RAG service, talks to the desk
+mouth on `:8888` while `logs/mouth-pause.txt` is `on` (otherwise `:8000`),
+authenticates privileged `command_type` requests, and delegates
 recognized commands to `GodBrainKernel`. Chat fails closed when RAG is
 unavailable **and** this process has no session notes; non-empty session notes
 may still go to the mouth without a fresh Golden Record hit.
@@ -419,10 +423,20 @@ on. Watch/kernel must not restore MTP after a CUDA IMA fail-closed start.
 The Galaxy node panel and `POST /api/judge` are the same judgment path.
 `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after Start-GodBrain.
 
-### Mouth (llama-server / Colibri)
+### Mouth (EXL3 Qwen 3.8 / paused llama-server)
 
-Live `/edit` works on the Gemma 12B IT mouth. Desk default is
-`scripts\Start-LlamaServer.ps1` bartowski Gemma 4 IT **Q6_K_L with MTP**
+Desk generate is Qwen 3.8 27B **EXL3 3.5bpw** on `:8888`
+(`C:\nvme\Qwen3.8-27B-16gb`, `paper-godbrain\Start-PaperQwen.ps1`). One GPU
+slot. GGUF and `llama-server` are not the desk format. Gemma stays paused
+(`logs/mouth-pause.txt=on`) because that door CUDA-aborts. While it is
+paused and `:8888` is up, Galaxy chat and tool rounds POST there and do
+not start `llama-server`. A pasted crash plus the word `fix` gets eight
+rounds (last round talks; a passing rerun stops early) and does not turn
+on `/yolo`. `git push` stays denied. The desk panel is
+`scripts\Show-DeskMenu.ps1`.
+
+The paused `:8000` door is still `scripts\Start-LlamaServer.ps1` bartowski
+Gemma 4 IT **Q6_K_L with MTP**
 when `mtp-gemma-4-12B-it-Q8_0.gguf` is on disk **and** `logs/mtp.txt` is
 not `off`. Hauhau QAT+MTP IMA'd Librarian extracts and was removed
 (different draft). `-NoDraft` disables and persists `mtp.txt=off`.
@@ -503,7 +517,9 @@ reboot / SAM|SECURITY hives / GodBrain* task delete or disable /
 BFE|mpssvc|Dnscache|MongoDB stop. Heal still never launches SysInternals.
 CORS stays the kernel/localhost list.
 
-Chat prefers an already-running OpenAI door on `:8000`. Colibri 1.10.0
+When `logs/mouth-pause.txt` is `on` and `:8888` answers, chat prefers that
+EXL3 door and does not cold-start `:8000`. Otherwise chat prefers an
+already-running OpenAI door on `:8000`. Colibri 1.10.0
 (`../colibri/c`, or `GODBRAIN_COLIBRI_DIR`) is preferred over the vendored
 1.1.1 tree under `LLM/colibri_LLM`. Cold-spawn of the GLM snapshot on
 16 GB is disabled. Do not set both `COLI_GPU` and `COLI_GPUS`. Colibri

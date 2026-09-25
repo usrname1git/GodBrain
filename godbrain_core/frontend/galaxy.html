@@ -205,7 +205,7 @@
             <button id="reject-last-btn" type="button">Reject last</button>
         </div>
         <div class="toolbar">
-            <input type="text" id="chat-input" placeholder="/idea ...  /remember ...  or ask GodBrain" spellcheck="true" autocomplete="off" autocapitalize="off">
+            <input type="text" id="chat-input" placeholder="/mouth off  /hylla ...  /idea ...  or ask GodBrain" spellcheck="true" autocomplete="off" autocapitalize="off">
             <button id="send-btn" style="width: auto; padding: 5px 15px;">TX</button>
         </div>
     </div>
@@ -835,46 +835,41 @@
                 });
         }
 
+        function exl3Mouth(status) {
+            const ex = (status && status.exl3) || {};
+            if (!ex.up) return { short: 'exl3 down', eq: 'exl3=down' };
+            const id = ex.id ? (' ' + ex.id) : '';
+            return { short: 'exl3 serve' + id, eq: 'exl3=serve' + id };
+        }
+
         function formatColiStatus(status) {
             const coli = (status && status.coli) || {};
             const host = (status && status.host) || {};
             const rec = (status && status.host_record) || {};
             const tail = (status && status.tailscale) || {};
             const rag = (status && status.rag) || {};
-            const busy = !!coli.busy;
+            const busy = !!(status && status.generate_busy) || !!coli.busy;
             if (busy) {
                 if (!coliBusySince) coliBusySince = Date.now();
             } else {
                 coliBusySince = 0;
             }
-            const elapsed = (typeof coli.elapsed_s === 'number')
-                ? coli.elapsed_s
-                : (coliBusySince ? Math.floor((Date.now() - coliBusySince) / 1000) : null);
             const lines = [];
             lines.push(
                 (host.computer_name || '?') + ' / ' +
                 (host.total_physical_ram_gb || '?') + ' GB / ' +
                 (host.logical_processors || '?') + ' threads');
             lines.push('host_record=' + (rec.status || 'none'));
-            const mouth = (status && status.mouth) || {};
-            const engine = mouth.label || mouth.engine || 'coli';
-            let coliLine;
-            if (!coli.up && !status.coli_serve) {
-                coliLine = engine + (status.mouth_restarting ? '=starting' : '=down');
-            } else if (busy) {
-                coliLine = engine + '=busy' +
-                    (elapsed !== null ? (' ' + elapsed + 's') : '') +
-                    ' — generating, do not ask again';
-            } else {
-                coliLine = engine + '=serve';
+            let coliLine = exl3Mouth(status).eq;
+            if (busy) {
+                coliLine += ' — generating, do not ask again';
             }
-            if (mouth.model) coliLine += ' ' + mouth.model;
-            if (engine === 'coli') {
-                coliLine += ' active=' + (coli.active || 0) +
-                    ' done=' + (coli.completed || 0) +
-                    ' queued=' + (coli.queued || 0);
-            }
+            const mongo = (status && status.mongo) || {};
+            const mongoWord = (typeof mongo.up === 'boolean')
+                ? (mongo.up ? 'up' : 'down')
+                : 'unread';
             coliLine += ' rag=' + (rag.ready ? 'ready' : 'down') +
+                ' mongo=' + mongoWord +
                 ' writes=' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
             lines.push(coliLine);
             if (coli.experts_disk != null) {
@@ -906,10 +901,13 @@
             }
             const vram = (status && status.vram) || {};
             if (typeof vram.dedicated_gb === 'number') {
-                lines.push(
-                    'gpu ' + vram.dedicated_gb + ' GB / ' +
-                    (vram.slots || 1) + ' slot' +
-                    (vram.next ? (' — ' + vram.next) : ''));
+                const ex = (status && status.exl3) || {};
+                let gpuLine = 'gpu ' + vram.dedicated_gb + ' GB / ' +
+                    (vram.slots || 1) + ' slot';
+                if (ex.id) gpuLine += ' — ' + ex.id;
+                else if (ex.up) gpuLine += ' — exl3 up';
+                else gpuLine += ' — exl3 down';
+                lines.push(gpuLine);
             }
             const desk = (status && status.desk_test) || {};
             if (typeof desk.ok === 'boolean') {
@@ -954,6 +952,9 @@
                     (volume.label || '') + ' ' +
                     (volume.total_gb || 0) + ' GB');
             });
+            const elapsed = coliBusySince
+                ? Math.max(0, Math.round((Date.now() - coliBusySince) / 1000))
+                : null;
             return {
                 text: lines.join('\n'),
                 busy: busy,
@@ -1263,17 +1264,58 @@
         document.getElementById('verify-btn').addEventListener('click', () => judgeOpenNode('verified'));
         document.getElementById('reject-btn').addEventListener('click', () => judgeOpenNode('rejected'));
 
+        function paintMouthGlance(status, mongoWord) {
+            const glance = document.getElementById('mouth-glance');
+            if (!glance) return;
+            const host = (status && status.host) || {};
+            let line = (host.computer_name || '?') + ' | ' + exl3Mouth(status).eq;
+            line += ' rag=' + ((status.rag && status.rag.ready) ? 'ready' : 'down');
+            line += ' mongo=' + (mongoWord || 'unread');
+            const pending = (status && status.pending_judge) || {};
+            if (typeof pending.total === 'number') line += ' judge=' + pending.total;
+            const heal = formatHealLine((status && status.heal) || {});
+            if (heal) line += ' ' + heal.replace(/^heal /, 'heal=');
+            const inbox = (status && status.inbox) || {};
+            if (typeof inbox.waiting === 'number') {
+                line += ' inbox=' + inbox.waiting;
+                if (inbox.failed) line += ' failed=' + inbox.failed;
+            }
+            const tail = (status && status.tailscale) || {};
+            if (tail.up && tail.bound) {
+                line += ' tail=door' + (tail.ip ? ('/' + tail.ip) : '');
+            } else if (tail.up) {
+                line += ' tail=up';
+            } else if (tail.reason === 'needs_login') {
+                line += ' tail=login';
+            }
+            const cs2 = (status && status.cs2) || {};
+            if (cs2.sleep) line += ' cs2=' + (cs2.running ? 'play' : 'sleep');
+            const vram = (status && status.vram) || {};
+            if (typeof vram.dedicated_gb === 'number' && vram.dedicated_gb > 0) {
+                line += ' gpu=' + vram.dedicated_gb + 'GB/' + (vram.slots || 1) + 'slot';
+            }
+            const desk = (status && status.desk_test) || {};
+            if (typeof desk.ok === 'boolean') line += ' desk=' + (desk.ok ? 'ok' : 'fail');
+            if (typeof host.ram_available_gb === 'number') {
+                line += ' RAM ' + host.ram_available_gb.toFixed(1) + ' GB free';
+            }
+            glance.textContent = '[SYS] ' + line;
+        }
+
         function paintStatus(status) {
             return attachPendingItems(status).then((status) => {
             writesNeedToken = !!status.writes_need_token;
             const painted = formatColiStatus(status);
             coliBusy = !!painted.busy;
             const ragReady = status.rag && status.rag.ready;
-            const mouth = status.mouth || {};
-            const engine = mouth.label || mouth.engine || 'coli';
+            const mongo = status.mongo || {};
+            const mongoWord = (typeof mongo.up === 'boolean')
+                ? (mongo.up ? 'up' : 'down')
+                : 'unread';
+            const exl3 = exl3Mouth(status);
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
-                ' | ' + engine + ' ' + painted.label +
-                (mouth.model ? (' ' + mouth.model) : '') +
+                ' | Mongo ' + mongoWord +
+                ' | ' + exl3.short +
                 ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
             const stats = document.getElementById('stats');
             if (stats) {
@@ -1295,16 +1337,13 @@
                         (host.logical_processors || '?') + ' threads',
                     'Record: ' + (record.status || 'none') +
                         (record.stable_id ? ' ' + String(record.stable_id).slice(0, 12) : ''),
-                    'Mouth: ' + engine + ' ' + painted.label +
-                        (mouth.model ? (' ' + mouth.model) : '') +
-                        (engine === 'coli'
-                            ? (' done=' + ((status.coli && status.coli.completed) || 0))
-                            : ''),
+                    'Mouth: ' + exl3.short,
                 ];
                 const deskCard = status.desk_test || {};
                 if (typeof deskCard.ok === 'boolean') {
                     lines.push('Desk: ' + (deskCard.ok ? 'ok' : 'fail'));
                 }
+                lines.push('Mongo: ' + mongoWord);
                 const cs2 = status.cs2 || {};
                 if (cs2.running) {
                     lines.push('CS2: play');
@@ -1433,34 +1472,12 @@
                         ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
                         : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes are open. Tailscale remember stays closed.'
                 ));
-                const last = status.last_oracle || {};
-                const ram = status.host && typeof status.host.ram_available_gb === 'number'
-                    ? status.host.ram_available_gb.toFixed(1)
-                    : '?';
                 boot.appendChild(document.createElement('br'));
-                fetch('/api/brief')
-                    .then(r => r.json())
-                    .then(data => {
-                        const text = String((data && data.response) || '');
-                        const lines = text.split('\n');
-                        let one = '';
-                        for (let i = 0; i < lines.length; i++) {
-                            if (lines[i].indexOf(' | ') !== -1 &&
-                                lines[i].indexOf('=') !== -1) {
-                                one = lines[i];
-                                break;
-                            }
-                        }
-                        boot.appendChild(document.createTextNode(
-                            '[SYS] ' + (one || 'Brief ready (GET /api/brief, no GPU).')));
-                    })
-                    .catch(() => {
-                        boot.appendChild(document.createTextNode(
-                            '[SYS] Brief: coli ' + painted.label +
-                            ' | RAG ' + ((status.rag && status.rag.ready) ? 'ready' : 'down') +
-                            ' | RAM ' + ram + ' GB free'));
-                    });
+                const glance = document.createElement('div');
+                glance.id = 'mouth-glance';
+                boot.appendChild(glance);
             }
+            paintMouthGlance(status, mongoWord);
             replayLastOracle(status);
             });
         }

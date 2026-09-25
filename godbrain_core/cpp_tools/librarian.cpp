@@ -138,9 +138,29 @@ static bool mouth_http_up(const std::string& host, int port) {
     client.set_connection_timeout(0, 300000);
     client.set_read_timeout(2, 0);
     if (const auto probe = client.Get("/health")) {
-        return probe->status == 200;
+        if (probe->status == 200) return true;
+    }
+    // EXL3's OpenAI server has /v1/models and no llama.cpp /health.
+    if (const auto models = client.Get("/v1/models")) {
+        return models->status == 200;
     }
     return false;
+}
+
+static std::string openai_model_id(const std::string& host, int port) {
+    httplib::Client client(host, port);
+    client.set_connection_timeout(0, 300000);
+    client.set_read_timeout(2, 0);
+    const auto res = client.Get("/v1/models");
+    if (!res || res->status != 200) return "";
+    try {
+        const json parsed = json::parse(res->body);
+        const auto& data = parsed.at("data");
+        if (!data.is_array() || data.empty()) return "";
+        return data.at(0).value("id", "");
+    } catch (const std::exception&) {
+        return "";
+    }
 }
 
 static std::string extract_json_object(const std::string& text) {
@@ -1142,6 +1162,10 @@ int main(int argc, char* argv[]) {
         0.1,
         dry_run
     };
+    if (mouth_port == 8888 && env_or("GODBRAIN_LIBRARIAN_MODEL", "").empty()) {
+        const std::string id = openai_model_id(config.mouth_host, mouth_port);
+        if (!id.empty()) config.model_id = id;
+    }
     
     // Check if input is a file and read it, with 10MB limit
     std::string transcript;
