@@ -10,7 +10,7 @@ import { startDashboard } from './dashboard.mjs';
 import {
   claimObjective, completeObjective, listObjectives, objectiveIsTerminal,
 } from './objectives.mjs';
-import { advanceCampaigns } from './coach.mjs';
+import { advanceCampaigns, continueRepeatedCampaign } from './coach.mjs';
 import {
   advanceUniversity, COURSE_DEFINITION_VERSION, listUniversityTasks, readUniversity, universitySummary,
 } from './course-factory.mjs';
@@ -252,6 +252,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
       },
       nextTask: async () => {
         await advanceCampaigns(workDir, TASKS);
+        await continueRepeatedCampaign(workDir, TASKS);
         return claimObjective(workDir, TASKS);
       },
       onObjectiveResult: (task, run, outcome) =>

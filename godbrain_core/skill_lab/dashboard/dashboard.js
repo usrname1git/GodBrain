@@ -187,7 +187,9 @@ function render(data) {
 async function refresh() {
   try {
     const response=await fetch('/api/snapshot',{cache:'no-store'});
-    render(await response.json());
+    const body=await response.json();
+    if(!response.ok)throw new Error(body.error||response.statusText);
+    render(body);
   } catch(error) {
     $('status').textContent='Dashboard error';
     $('updated').textContent=error.message;

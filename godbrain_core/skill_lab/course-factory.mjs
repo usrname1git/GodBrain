@@ -118,9 +118,14 @@ export async function readUniversity(workDir) {
 
 export async function listUniversityTasks(workDir, trustedTasks) {
   const university = await readUniversity(workDir);
-  return university.courses
-    .filter(course => course.status !== 'retired' && course.iteration === 1)
-    .map(course => asTask(course, trustedTasks));
+  const tasks = [];
+  for (const course of university.courses) {
+    if (course.status === 'retired' || course.iteration !== 1) continue;
+    const contractId = course.verifierSpec?.contractTaskId;
+    if (!trustedTasks.some(task => task.id === contractId)) continue;
+    tasks.push(asTask(course, trustedTasks));
+  }
+  return tasks;
 }
 
 function competencyMastered(courses, competencyId) {

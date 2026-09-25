@@ -81,6 +81,14 @@ export async function enqueueObjective(workDir, input, trustedTasks, metadata = 
       if (existing) return existing;
     }
     if (queue.items.length >= MAX_OBJECTIVES) {
+      const done = queue.items.filter(item => item.status === 'completed');
+      if (done.length) {
+        const archive = path.join(workDir, 'objectives-archive.jsonl');
+        await fs.appendFile(archive, done.map(item => JSON.stringify(item)).join('\n') + '\n');
+        queue.items = queue.items.filter(item => item.status !== 'completed');
+      }
+    }
+    if (queue.items.length >= MAX_OBJECTIVES) {
       throw new Error(`Objective queue capacity (${MAX_OBJECTIVES}) reached; finish or archive existing work first.`);
     }
     const item = {

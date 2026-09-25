@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildBundle, outputText, taskProps } from './browser.mjs';
+import { buildBundle, GYM_MEDIA_FILES, gymMediaDir, outputText, taskProps } from './browser.mjs';
 import { createCampaign, listCampaigns, requestCampaignAlternatives } from './coach.mjs';
 import { listObjectives, enqueueObjective } from './objectives.mjs';
 import { readJson, writeJson } from './gym-core.mjs';
@@ -304,6 +304,17 @@ export async function startDashboard({ workDir, trustedTasks, port = 4177, host 
           response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/preview/${runId}/bundle.css"></head><body><div id="root"></div><script src="/preview/${runId}/props.js"></script><script src="/preview/${runId}/bundle.js"></script></body></html>`);
         }
         return;
+      }
+      const mediaName = request.method === 'GET' ? GYM_MEDIA_FILES.get(url.pathname) : null;
+      if (mediaName) {
+        try {
+          const media = await fs.readFile(path.join(gymMediaDir(), mediaName));
+          response.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+          response.end(media);
+          return;
+        } catch {
+          // Missing local photo falls through to not found.
+        }
       }
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('not found');

@@ -21,6 +21,8 @@ $qwenOut = Join-Path $runtimeDir "qwen.out.log"
 $qwenErr = Join-Path $runtimeDir "qwen.err.log"
 $gymOut = Join-Path $runtimeDir "gym.out.log"
 $gymErr = Join-Path $runtimeDir "gym.err.log"
+$crashLatch = Join-Path $runtimeDir "crash-latch.json"
+$crashAlert = Join-Path $RepoRoot "logs\gym-watch-alert.txt"
 
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 
@@ -178,23 +180,96 @@ function Start-Qwen {
     Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) at 10K with MTP off."
 }
 
+$script:gymLaunch = $null
+$script:gymCrashStreak = 0
+$script:gymCrashLatched = $false
+
+function Save-GymCrashLatch {
+    @{
+        latched = [bool]$script:gymCrashLatched
+        streak = [int]$script:gymCrashStreak
+        at = (Get-Date).ToUniversalTime().ToString("o")
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $crashLatch
+}
+
+function Read-GymCrashLatch {
+    if (-not (Test-Path -LiteralPath $crashLatch)) { return }
+    try {
+        $saved = Get-Content -LiteralPath $crashLatch -Raw | ConvertFrom-Json
+        $script:gymCrashLatched = [bool]$saved.latched
+        $script:gymCrashStreak = [int]$saved.streak
+    } catch {}
+}
+
+function Get-GymCrashTail {
+    if (-not (Test-Path -LiteralPath $gymErr)) { return "" }
+    $lines = @(Get-Content -LiteralPath $gymErr -Tail 6 -ErrorAction SilentlyContinue)
+    return (($lines -join " ") -replace "\s+", " ").Trim()
+}
+
+function Send-GymCrashNotice([string]$message) {
+    $dir = Split-Path $crashAlert -Parent
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    Set-Content -LiteralPath $crashAlert -Value $message
+    $clip = $message
+    if ($clip.Length -gt 220) { $clip = $clip.Substring(0, 220) }
+    $msg = Join-Path $env:SystemRoot "System32\msg.exe"
+    if (Test-Path -LiteralPath $msg) {
+        Start-Process -FilePath $msg -ArgumentList @("*", "/TIME:120", $clip) -WindowStyle Hidden | Out-Null
+    }
+}
+
+function Test-GymProcessAlive([int]$processId) {
+    if ($processId -le 0) { return $false }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
+    return [bool]($process -and $process.CommandLine -and (
+        $process.CommandLine -like "*Invoke-FrontendGym.ps1*" -or
+        $process.CommandLine -like "*skill_lab\gym.mjs*" -or
+        $process.CommandLine -like "*skill_lab/gym.mjs*"))
+}
+
 function Start-Gym {
+    if ($script:gymLaunch) {
+        $ageSeconds = ((Get-Date) - $script:gymLaunch.At).TotalSeconds
+        $launchAlive = Test-GymProcessAlive $script:gymLaunch.Pid
+        if ($launchAlive) {
+            if ($ageSeconds -ge 120) {
+                $script:gymCrashStreak = 0
+                $script:gymCrashLatched = $false
+                Save-GymCrashLatch
+            }
+            return
+        }
+        if ($ageSeconds -lt 120) {
+            $script:gymCrashStreak++
+            $tail = Get-GymCrashTail
+            Write-WatchEvent "gym_crash" "Gym exited after $([int]$ageSeconds)s. Streak $($script:gymCrashStreak)/10. $tail"
+            Save-GymCrashLatch
+            if ($script:gymCrashStreak -ge 10) {
+                $script:gymCrashLatched = $true
+                Save-GymCrashLatch
+                $notice = "GodBrain gym crashed 10 times in a row and will stay down. $tail"
+                Write-WatchEvent "gym_crash_stop" $notice
+                Send-GymCrashNotice $notice
+                $script:gymLaunch = $null
+                return
+            }
+        } else {
+            $script:gymCrashStreak = 0
+            Save-GymCrashLatch
+        }
+        $script:gymLaunch = $null
+    }
+    if ($script:gymCrashLatched) { return }
     $alive = $false
     if (Test-Path -LiteralPath $gymState) {
         try {
             $state = Get-Content -LiteralPath $gymState -Raw | ConvertFrom-Json
-            if ($state.pid) {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$state.pid)" -ErrorAction SilentlyContinue
-                $alive = $process -and
-                    $process.CommandLine -and
-                    ($process.CommandLine -like "*Invoke-FrontendGym.ps1*" -or
-                     $process.CommandLine -like "*skill_lab\gym.mjs*" -or
-                     $process.CommandLine -like "*skill_lab/gym.mjs*")
-            }
+            if ($state.pid) { $alive = Test-GymProcessAlive ([int]$state.pid) }
         } catch {}
     }
     if ($alive) { return }
-    Start-Process -FilePath $pwsh `
+    $started = Start-Process -FilePath $pwsh `
         -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $gymDoor,
             "-Continuous",
@@ -205,14 +280,17 @@ function Start-Gym {
         -WorkingDirectory $RepoRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput $gymOut `
-        -RedirectStandardError $gymErr | Out-Null
-    Write-WatchEvent "gym_start" "Started the persistent frontend gym worker."
+        -RedirectStandardError $gymErr `
+        -PassThru
+    $script:gymLaunch = @{ Pid = [int]$started.Id; At = Get-Date }
+    Write-WatchEvent "gym_start" "Started the persistent frontend gym worker pid=$($started.Id)."
 }
 
 $lastHandledIma = ""
 $lastRestartAt = [datetime]::MinValue
 $lastPauseState = $false
 $cudaUnsafe = $false
+Read-GymCrashLatch
 Write-WatchBanner
 Write-WatchEvent "watchdog_start" "Overnight frontend gym watchdog started from scripts\Watch-FrontendGymOvernight.ps1."
 

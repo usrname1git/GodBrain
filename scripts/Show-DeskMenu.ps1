@@ -165,6 +165,49 @@ function Stop-Door {
     return $true
 }
 
+function Test-GymStarting {
+    $hits = Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*Invoke-FrontendGym.ps1*" }
+    return [bool]$hits
+}
+
+function Start-GymDashboard {
+    $gym = Join-Path $Repo "scripts\Invoke-FrontendGym.ps1"
+    if (-not (Test-Path -LiteralPath $gym)) {
+        [System.Windows.Forms.MessageBox]::Show("Missing $gym")
+        return
+    }
+    if (Test-Port 4177) {
+        Start-Process "http://127.0.0.1:4177/"
+        return
+    }
+    if (Test-GymStarting) {
+        [System.Windows.Forms.MessageBox]::Show("Gym is already starting. The dashboard comes up on :4177.")
+        return
+    }
+    if (Test-GenerateBusy) {
+        [System.Windows.Forms.MessageBox]::Show("A generate is already running. Wait, then start the gym.")
+        return
+    }
+    $modelId = ""
+    try { $modelId = [string](Invoke-RestMethod http://127.0.0.1:8888/v1/models -TimeoutSec 2).data[0].id } catch {}
+    if ($modelId -match 'vl') {
+        $ask = [System.Windows.Forms.MessageBox]::Show(
+            "8B vision is on :8888. The gym uses that one slot. Start anyway?",
+            "Start gym",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    }
+    Start-Process -FilePath $Pwsh -ArgumentList @(
+        "-NoProfile", "-File", $gym, "-Continuous", "-RepoRoot", $Repo
+    ) -WindowStyle Normal | Out-Null
+    $note = "Gym window started. Dashboard: http://127.0.0.1:4177/"
+    if (-not (Test-Port 8888)) {
+        $note += "`n:8888 is down. Start 27B text and the gym will use it."
+    }
+    [System.Windows.Forms.MessageBox]::Show($note, "Start gym")
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -419,20 +462,21 @@ Add-Button $pageModel "8B vision" 208 56 176 { if (Stop-Door) { Start-Door $Star
 Add-Button $pageModel "Stop" 20 100 112 { if (Stop-Door) { Update-Status } } $false
 Add-Button $pageModel "Galaxy" 144 100 112 { Start-Process "http://127.0.0.1:8083/" } $false
 Add-Button $pageModel "Gym" 268 100 116 { Start-Process "http://127.0.0.1:4177/" } $false
+Add-Button $pageModel "Start gym" 20 144 364 { Start-GymDashboard } $true
 
 $cwdLabel = New-Object System.Windows.Forms.Label
 $cwdLabel.Text = "Grok folder"
 $cwdLabel.ForeColor = $mute
-$cwdLabel.Location = New-Object System.Drawing.Point(20, 152)
+$cwdLabel.Location = New-Object System.Drawing.Point(20, 196)
 $cwdLabel.AutoSize = $true
 $pageModel.Controls.Add($cwdLabel)
 $cwd = New-Object System.Windows.Forms.TextBox
 $cwd.Text = $Repo
-$cwd.Location = New-Object System.Drawing.Point(20, 174)
+$cwd.Location = New-Object System.Drawing.Point(20, 218)
 $cwd.Size = New-Object System.Drawing.Size(240, 26)
 Style-Box $cwd
 $pageModel.Controls.Add($cwd)
-Add-Button $pageModel "Open Grok" 272 170 112 {
+Add-Button $pageModel "Open Grok" 272 214 112 {
     $dir = $cwd.Text
     if (-not (Test-Path -LiteralPath $dir)) { [System.Windows.Forms.MessageBox]::Show("No such folder: $dir"); return }
     $grok = (Get-Command grok -ErrorAction SilentlyContinue).Source
