@@ -156,11 +156,13 @@ test('L3 composition is nav+form and explorer+form, not the four-suite showcase'
   ]);
 });
 
-test('university opens prerequisites one course at a time and then creates new capstones', async t => {
+test('university opens prerequisites one course at a time and then cycle-2 app craft', async t => {
   const workDir = await workspace(t);
   let university = await advanceUniversity(workDir, [], trustedTasks);
   assert.equal(university.courses.length, 1);
   assert.equal(university.courses[0].competencyId, 'component-composition');
+  assert.equal(university.courses[0].cycle, 1);
+  assert.equal(university.courses[0].stage, 1);
   let tasks = await listUniversityTasks(workDir, trustedTasks);
   assert.equal(tasks[0].appFile, 'App.tsx');
   assert.equal(tasks[0].fileMode, 'app');
@@ -178,14 +180,91 @@ test('university opens prerequisites one course at a time and then creates new c
   const fixed = university.courses.filter(course => course.iteration === 1);
   assert.equal(fixed.length, COMPETENCIES.length);
   assert.equal(fixed.every(course => course.status === 'mastered'), true);
+  assert.equal(university.programStatus, 'graduated');
+  assert.ok(university.graduatedAt);
   const studio = university.courses.find(course => course.iteration === 2);
-  assert.ok(studio);
-  assert.equal(studio.competencyId, 'product-site-capstone');
-  assert.equal(studio.status, 'active');
+  assert.equal(studio, undefined);
+  assert.ok(university.courses.some(course => course.competencyId === 'persistent-settings' && course.status === 'mastered'));
   const summary = universitySummary(university, []);
   assert.equal(summary.blueprintCount, COMPETENCIES.length);
-  assert.equal(summary.active.id, studio.id);
+  assert.equal(summary.programStatus, 'graduated');
+  assert.equal(summary.active, null);
+  assert.equal(summary.courses.length, COMPETENCIES.length);
 
   tasks = await listUniversityTasks(workDir, trustedTasks);
-  assert.equal(tasks.some(task => task.id === studio.id), true);
+  assert.equal(tasks.every(task => task.university.iteration === 1), true);
+});
+
+test('extra capstone studios are retired instead of becoming the next term', async t => {
+  const workDir = await workspace(t);
+  await writeJson(path.join(workDir, 'university.json'), {
+    version: 1, capstoneSequence: 27, archivedCapstones: 0, programStatus: 'enrolled', courses: [
+      ...COMPETENCIES.filter(item => item.cycle === 1).map(item => ({
+        id: `university-${item.id}-v1`,
+        competencyId: item.id,
+        discipline: item.discipline,
+        level: item.level,
+        cycle: item.cycle,
+        stage: item.stage,
+        iteration: 1,
+        title: item.title,
+        prerequisites: [...item.prerequisites],
+        docs: item.docs,
+        focus: item.focus,
+        verifierSpec: {
+          version: 1,
+          contractTaskId: item.contractTaskId,
+          fileMode: item.fileMode,
+          appFile: item.appFile,
+          evaluationProfile: 'full',
+          sourceRules: item.sourceRules,
+          maxTokens: 4096,
+        },
+        status: 'mastered',
+        createdAt: '2026-09-16T00:00:00.000Z',
+        validatedAt: '2026-09-16T00:00:00.000Z',
+        masteredAt: '2026-09-16T00:00:00.000Z',
+        validationProfile: 'trusted-contract-extension-v1',
+        definitionVersion: COURSE_DEFINITION_VERSION,
+      })),
+      {
+        id: 'university-product-site-capstone-v29',
+        competencyId: 'product-site-capstone',
+        discipline: 'Capstone',
+        level: 4,
+        cycle: 1,
+        stage: 6,
+        iteration: 29,
+        title: 'Deliver an integrated typed product-site capstone · studio 29',
+        prerequisites: ['interaction-composition', 'lifecycle-form-composition', 'responsive-product-system'],
+        docs: [{ title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' }],
+        focus: 'studio leftover',
+        verifierSpec: {
+          version: 1,
+          contractTaskId: 'event-platform-showcase-v1',
+          fileMode: 'app',
+          appFile: 'App.tsx',
+          evaluationProfile: 'full',
+          sourceRules: ['typescript-component', 'react-state', 'semantic-layout', 'form-validation'],
+          maxTokens: 4096,
+        },
+        status: 'active',
+        createdAt: '2026-09-18T00:00:00.000Z',
+        validatedAt: '2026-09-18T00:00:00.000Z',
+        masteredAt: null,
+        validationProfile: 'trusted-contract-extension-v1',
+        definitionVersion: COURSE_DEFINITION_VERSION,
+      },
+    ],
+  });
+  const university = await advanceUniversity(workDir, [], trustedTasks);
+  const leftover = university.courses.find(course => course.id === 'university-product-site-capstone-v29');
+  assert.equal(leftover.status, 'retired');
+  assert.equal(university.programStatus, 'enrolled');
+  const next = university.courses.find(course => course.status === 'active');
+  assert.equal(next.competencyId, 'persistent-settings');
+  assert.equal(next.cycle, 2);
+  const tasks = await listUniversityTasks(workDir, trustedTasks);
+  assert.equal(tasks.some(task => task.id === leftover.id), false);
+  assert.equal(tasks.every(task => task.university.iteration === 1), true);
 });

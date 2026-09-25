@@ -104,6 +104,67 @@ export const TASKS = Object.freeze([
     ],
     brief: `Inputs combine all marketing-site props: brand, product, tagline, sections, CTAs, proofPoints, lifecycle, plans and eventTypes. Build one cohesive premium event-platform marketing site that passes the complete architecture, responsive Menu navigation, lifecycle stage switching, feature search, comparable plan cards and validated demo-form requirements from the trusted marketing contracts. Use seeded content everywhere. Establish a distinctive but restrained visual system with deliberate hierarchy, spacing, responsive composition and conversion flow. Do not use placeholders or invent prices, customer statistics, certifications, guarantees or security claims.`,
   },
+  {
+    id: 'client-routing-v1',
+    family: 'application-systems',
+    title: 'Client-route a seeded workbench',
+    docs: [
+      { title: 'The Location interface', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Location' },
+      { title: 'hashchange', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Window/hashchange_event' },
+    ],
+    brief: `Inputs: <App {...props}> receives {workspace:string, routes:[{id,label,title,body}]}. Build a client-routed workbench with no network router. Render the seeded workspace as a visible heading. Provide navigation links named exactly from every routes[].label whose href hash contains that item's id (for example #/inbox-12). Selecting a route must show that same item's title and body and update location.hash so it contains the id. An unknown hash such as #/missing-seed must show visible text "Not found" and must not show another route's body. Browser back must restore the previously visible route title. Do not hardcode fixture labels; practice and transfer use different route ids. Hash routing is enough; do not fetch remote URLs.`,
+  },
+  {
+    id: 'async-data-states-v1',
+    family: 'application-systems',
+    title: 'Render loading, error, empty and ready data states',
+    docs: [
+      { title: 'ARIA status', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Roles/status_role' },
+      { title: 'ARIA alert', url: 'https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Roles/alert_role' },
+    ],
+    brief: `Inputs: <App {...props}> receives {records:[{id,title,detail}], errorMessage:string, emptyLabel:string}. Build a records panel whose Resource status combobox offers Loading, Error, Empty and Ready. Loading must expose a status named Loading and must not list seeded record titles. Error must expose role=alert containing errorMessage and a Retry button that returns to Ready. Empty must show emptyLabel and must not list seeded record titles. Ready must list every seeded record title and detail. The evaluator switches all four states and checks that titles disappear during Loading and Empty. Do not fetch the network; drive state from the combobox. Do not hardcode record titles.`,
+  },
+  {
+    id: 'error-boundary-recovery-v1',
+    family: 'application-systems',
+    title: 'Recover from a render crash behind an error boundary',
+    docs: [
+      { title: 'React error boundaries', url: 'https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary' },
+      { title: 'getDerivedStateFromError', url: 'https://react.dev/reference/react/Component#static-getderivedstatefromerror' },
+    ],
+    brief: `Inputs: <App {...props}> receives {panelTitle:string, crashLabel:string, fallbackTitle:string, recoveryLabel:string}. Render panelTitle in a child that can crash during render (not in a click handler). A button named crashLabel arms the crash. After the throw, an error boundary must show fallbackTitle and must not keep showing panelTitle. A button named recoveryLabel resets the boundary so panelTitle is visible again. Use a class error boundary (getDerivedStateFromError or componentDidCatch). Event-handler throws do not count. Do not let the whole #root go blank. Do not hardcode the seeded titles.`,
+  },
+  {
+    id: 'large-list-performance-v1',
+    family: 'application-systems',
+    title: 'Filter a large keyed list without stalling',
+    docs: [
+      { title: 'Rendering lists', url: 'https://react.dev/learn/rendering-lists' },
+      { title: 'Keeping list items in order with key', url: 'https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key' },
+    ],
+    brief: `Inputs: <App {...props}> receives {items:[{id,name,group}]} with dozens of unique seeded rows. Render a textbox named Search items and a list labelled Items. With an empty query every seeded name is visible. Filtering by a unique name must show that row and hide an unrelated seeded name. Map with a stable key on each row (key={item.id} or equivalent). The filter interaction must complete inside the examiner action timeout; a synchronous O(n) filter over the seeded array is enough, a hung render is not. Do not hardcode names. Do not fetch. Missing keys fail the source contract.`,
+  },
+  {
+    id: 'react-god-workbench-v1',
+    family: 'application-systems',
+    title: 'Assemble a React God workbench',
+    docs: [
+      { title: 'Thinking in React', url: 'https://react.dev/learn/thinking-in-react' },
+      { title: 'React error boundaries', url: 'https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary' },
+    ],
+    brief: `Inputs combine the God-cycle contracts: workspace, routes[{id,label,title,body}] (Inbox, Catalog, Lab), records, errorMessage, emptyLabel, items[{id,name,group}], panelTitle, crashLabel, fallbackTitle, recoveryLabel. Build one client-routed workbench that still passes client routing (hash links, Not found, back), Resource status loading/error/empty/ready on Inbox, Search items over the large keyed catalog list, and the Lab error boundary crash/recovery. Default hash is the Inbox route. Do not call the network. Do not hardcode seeded labels. This is the God exam: all four systems in one app, not a marketing site reskin.`,
+  },
+  {
+    id: 'visual-god-v1',
+    family: 'visual-systems',
+    title: 'Author a distinctive visual system from a seeded canvas',
+    qualityProfile: 'visual-god-v1',
+    docs: [
+      { title: 'CSS custom properties', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties' },
+      { title: 'font-family', url: 'https://developer.mozilla.org/en-US/docs/Web/CSS/font-family' },
+    ],
+    brief: `Inputs: <App {...props}> receives {brand, product, tagline, proof, primaryCta, visualSystem:{name,ink,paper,accent,muted,displayFont,bodyFont,radius,heroAlign}}. The visualSystem is the painted canvas — do not invent Inter, system-ui, Tailwind purple, or a centered 80vh hero. Apply ink/paper/accent/muted as CSS custom properties (or equivalent inline theme) so computed styles on body/stage, a primary CTA, and the h1 match those hex values. h1 must use displayFont (Georgia or Consolas stacks on this host; no network fonts) and text-align start/left. Body copy uses bodyFont. Do not ship a three-equal-card feature row as the only composition. Do not load Google Fonts. Practice and transfer seed different palettes and type; hardcoding one look fails transfer. This is the visual God exam: taste against a seeded duk, not a Squarespace template.`,
+  },
 ]);
 
 export function getTask(id) {

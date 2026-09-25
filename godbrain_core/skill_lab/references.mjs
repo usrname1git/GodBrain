@@ -215,6 +215,222 @@ export default function App({tabs, dialogTitle, dialogBody, actionLabel}) {
   'feature-lifecycle-explorer-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
   'pricing-demo-conversion-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
   'event-platform-showcase-v1': { 'App.jsx': marketingApp, 'styles.css': marketingCss },
+  'client-routing-v1': {
+    'App.jsx': `import {useEffect,useState} from 'react';
+import './styles.css';
+export default function App({workspace, routes}) {
+  const read = () => (location.hash.replace(/^#\\/?/, '') || routes[0].id);
+  const [id, setId] = useState(read);
+  useEffect(() => {
+    const onHash = () => setId(read());
+    if (!location.hash) location.hash = '#/' + routes[0].id;
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [routes]);
+  const route = routes.find(item => item.id === id);
+  return <main>
+    <h1>{workspace}</h1>
+    <nav aria-label="Workbench">{routes.map(item => <a key={item.id} href={'#/' + item.id}>{item.label}</a>)}</nav>
+    {route ? <section><h2>{route.title}</h2><p>{route.body}</p></section> : <p role="status">Not found</p>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'async-data-states-v1': {
+    'App.jsx': `import {useState} from 'react';
+import './styles.css';
+export default function App({records, errorMessage, emptyLabel}) {
+  const [status, setStatus] = useState('ready');
+  return <main>
+    <h1>Records</h1>
+    <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+      <option value="loading">Loading</option>
+      <option value="error">Error</option>
+      <option value="empty">Empty</option>
+      <option value="ready">Ready</option>
+    </select></label>
+    {status === 'loading' && <p role="status">Loading</p>}
+    {status === 'error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('ready')}>Retry</button></>}
+    {status === 'empty' && <p>{emptyLabel}</p>}
+    {status === 'ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'error-boundary-recovery-v1': {
+    'App.jsx': `import {Component,useState} from 'react';
+import './styles.css';
+class Boundary extends Component {
+  constructor(props) { super(props); this.state = {failed: false}; }
+  static getDerivedStateFromError() { return {failed: true}; }
+  render() {
+    if (this.state.failed) {
+      return <>
+        <h2>{this.props.fallbackTitle}</h2>
+        <button onClick={() => { this.setState({failed: false}); this.props.onReset(); }}>{this.props.recoveryLabel}</button>
+      </>;
+    }
+    return this.props.children;
+  }
+}
+function Panel({armed, panelTitle}) {
+  if (armed) throw new Error('god-crash');
+  return <p>{panelTitle}</p>;
+}
+export default function App({panelTitle, crashLabel, fallbackTitle, recoveryLabel}) {
+  const [armed, setArmed] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  return <main>
+    <h1>Lab</h1>
+    <Boundary key={nonce} fallbackTitle={fallbackTitle} recoveryLabel={recoveryLabel} onReset={() => { setArmed(false); setNonce(value => value + 1); }}>
+      <Panel armed={armed} panelTitle={panelTitle} />
+    </Boundary>
+    <button onClick={() => setArmed(true)}>{crashLabel}</button>
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'large-list-performance-v1': {
+    'App.jsx': `import {useMemo,useState} from 'react';
+import './styles.css';
+export default function App({items}) {
+  const [query, setQuery] = useState('');
+  const shown = useMemo(() => items.filter(item => item.name.toLowerCase().includes(query.toLowerCase())), [items, query]);
+  return <main>
+    <h1>Index</h1>
+    <label>Search items<input value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <p>{shown.length} matches</p>
+    <ul aria-label="Items">{shown.map(item => <li key={item.id}>{item.name}<span>{item.group}</span></li>)}</ul>
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'react-god-workbench-v1': {
+    'App.jsx': `import {Component,useEffect,useMemo,useState} from 'react';
+import './styles.css';
+class Boundary extends Component {
+  constructor(props) { super(props); this.state = {failed: false}; }
+  static getDerivedStateFromError() { return {failed: true}; }
+  render() {
+    if (this.state.failed) {
+      return <>
+        <h2>{this.props.fallbackTitle}</h2>
+        <button onClick={() => { this.setState({failed: false}); this.props.onReset(); }}>{this.props.recoveryLabel}</button>
+      </>;
+    }
+    return this.props.children;
+  }
+}
+function Panel({armed, panelTitle}) {
+  if (armed) throw new Error('god-crash');
+  return <p>{panelTitle}</p>;
+}
+export default function App({workspace, routes, records, errorMessage, emptyLabel, items, panelTitle, crashLabel, fallbackTitle, recoveryLabel}) {
+  const read = () => (location.hash.replace(/^#\\/?/, '') || routes[0].id);
+  const [id, setId] = useState(read);
+  const [status, setStatus] = useState('ready');
+  const [query, setQuery] = useState('');
+  const [armed, setArmed] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    const onHash = () => setId(read());
+    if (!location.hash) location.hash = '#/' + routes[0].id;
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [routes]);
+  const shown = useMemo(() => items.filter(item => item.name.toLowerCase().includes(query.toLowerCase())), [items, query]);
+  const route = routes.find(item => item.id === id);
+  const inbox = routes[0];
+  const catalog = routes[1];
+  const lab = routes[2];
+  return <main>
+    <h1>{workspace}</h1>
+    <nav aria-label="Workbench">{routes.map(item => <a key={item.id} href={'#/' + item.id}>{item.label}</a>)}</nav>
+    {!route && <p role="status">Not found</p>}
+    {route && id === inbox.id && <>
+      <h2>{inbox.title}</h2><p>{inbox.body}</p>
+      <label>Resource status<select value={status} onChange={event => setStatus(event.target.value)}>
+        <option value="loading">Loading</option>
+        <option value="error">Error</option>
+        <option value="empty">Empty</option>
+        <option value="ready">Ready</option>
+      </select></label>
+      {status === 'loading' && <p role="status">Loading</p>}
+      {status === 'error' && <><p role="alert">{errorMessage}</p><button onClick={() => setStatus('ready')}>Retry</button></>}
+      {status === 'empty' && <p>{emptyLabel}</p>}
+      {status === 'ready' && <ul>{records.map(item => <li key={item.id}><strong>{item.title}</strong><p>{item.detail}</p></li>)}</ul>}
+    </>}
+    {route && id === catalog.id && <>
+      <h2>{catalog.title}</h2><p>{catalog.body}</p>
+      <label>Search items<input value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <p>{shown.length} matches</p>
+      <ul aria-label="Items">{shown.map(item => <li key={item.id}>{item.name}<span>{item.group}</span></li>)}</ul>
+    </>}
+    {route && id === lab.id && <>
+      <h2>{lab.title}</h2><p>{lab.body}</p>
+      <Boundary key={nonce} fallbackTitle={fallbackTitle} recoveryLabel={recoveryLabel} onReset={() => { setArmed(false); setNonce(value => value + 1); }}>
+        <Panel armed={armed} panelTitle={panelTitle} />
+      </Boundary>
+      <button onClick={() => setArmed(true)}>{crashLabel}</button>
+    </>}
+  </main>;
+}`,
+    'styles.css': baseCss,
+  },
+  'visual-god-v1': {
+    'App.jsx': `import './styles.css';
+export default function App({brand, product, tagline, proof, primaryCta, visualSystem}) {
+  const theme = {
+    '--ink': visualSystem.ink,
+    '--paper': visualSystem.paper,
+    '--accent': visualSystem.accent,
+    '--muted': visualSystem.muted,
+    '--display': visualSystem.displayFont,
+    '--body': visualSystem.bodyFont,
+    '--radius': visualSystem.radius,
+  };
+  return <div data-visual="stage" style={theme}>
+    <header><a href="#top">{brand}</a></header>
+    <main id="top">
+      <section className="hero">
+        <p className="eyebrow">{visualSystem.name}</p>
+        <h1>{product}</h1>
+        <p className="lede">{tagline}</p>
+        <a className="cta" href="#note">{primaryCta}</a>
+      </section>
+      <section className="split" id="note">
+        <article>
+          <h2>Field notes</h2>
+          <p>{proof}</p>
+        </article>
+        <aside>
+          <h2>Canvas</h2>
+          <p>{visualSystem.name}</p>
+        </aside>
+      </section>
+    </main>
+    <footer>{brand}</footer>
+  </div>;
+}`,
+    'styles.css': `
+:root { --ink: #111111; --paper: #ffffff; --accent: #888888; --muted: #666666; --display: Georgia, serif; --body: Georgia, serif; --radius: 0px; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+[data-visual] { min-height: 100vh; background: var(--paper); color: var(--ink); font-family: var(--body); }
+header, footer { padding: 20px 7vw; }
+header a { color: inherit; font-weight: 800; text-decoration: none; }
+main { padding: 0; }
+.hero { padding: 72px 7vw 56px; text-align: start; max-width: 52rem; }
+.eyebrow { margin: 0 0 12px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; font-size: 12px; font-weight: 800; }
+h1 { margin: 0 0 16px; font-family: var(--display); font-size: 56px; line-height: 1.05; text-align: start; letter-spacing: -.03em; }
+.lede { margin: 0 0 28px; font-size: 20px; color: var(--muted); max-width: 40rem; }
+.cta { display: inline-block; background: var(--accent); color: var(--paper); text-decoration: none; font-weight: 800; padding: 12px 18px; border-radius: var(--radius); }
+.split { display: grid; grid-template-columns: 1.6fr .8fr; gap: 28px; padding: 48px 7vw 80px; }
+article, aside { padding: 24px; border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: var(--radius); }
+h2 { margin: 0 0 12px; font-family: var(--display); font-size: 22px; }
+@media (max-width: 700px) { h1 { font-size: 40px; } .split { grid-template-columns: 1fr; padding: 32px 20px 56px; } .hero { padding: 48px 20px; } }
+`,
+  },
 });
 
 export function getReference(taskId) {
