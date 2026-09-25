@@ -57,7 +57,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
 | Desk panel (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
 | Lyrics loop (`scripts/lyrics_loop.py`) | daily-driver | CPU Whisper. Audio and `state.json` stay in `C:\nvme\stt\lyrics`. Door: `scripts\Invoke-LyricsLoop.ps1` |
-| [Frontend University](godbrain_core/skill_lab/README.md) | self-expanding degree + browser examiner + Creation Gallery | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; later tracks are a named GO |
+| [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder + React God + visual God (seeded canvas, anti-generic) | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; C++ Carmack is a later GO |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
 | [Go router](godbrain_core/go_router/README.md) / [Rust router](godbrain_core/rust_router/) | experimental, parked | `:8082`; not Heal; not this quarter |
 | [polymarket_paper](godbrain_core/polymarket_paper/README.md), [polygon_*](godbrain_core/polygon_observer/README.md) | paper / read-only | no live orders, no wallet |

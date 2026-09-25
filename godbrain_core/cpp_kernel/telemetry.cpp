@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -392,12 +393,14 @@ namespace telemetry {
         if (port <= 0 || port > 65535) return false;
         if (timeout_ms < 50) timeout_ms = 50;
         // Extra WSAStartup is refcounted. Never WSACleanup here: httplib owns the count.
-        static bool wsa_ready = false;
-        if (!wsa_ready) {
+        // call_once so concurrent /api/status probes do not race the first init.
+        static std::once_flag wsa_once;
+        static bool wsa_ok = false;
+        std::call_once(wsa_once, [] {
             WSADATA wsa{};
-            if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
-            wsa_ready = true;
-        }
+            wsa_ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        });
+        if (!wsa_ok) return false;
         const SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock == INVALID_SOCKET) return false;
         u_long nonblock = 1;

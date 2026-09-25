@@ -1909,6 +1909,8 @@ static bool maybe_restart_mouth(bool even_if_up) {
     if (load_mouth().value("label", "") != "llama") return false;
     if (mouth_paused()) return false;
     if (cs2_should_sleep_mouth()) return false;
+    // One GPU slot. Do not start llama-server while EXL3 still holds :8888.
+    if (telemetry::tcp_loopback_open(8888, 300)) return false;
     if (!even_if_up && colibri_serve_up()) return false;
     const DWORD now = GetTickCount();
     const DWORD last = g_mouth_restart_ms.load(std::memory_order_relaxed);
@@ -4392,7 +4394,14 @@ int main() {
                         reply << ". Do not start another model on this slot.\n";
                     }
                 } else if (arg == "on" || arg == "resume") {
-                    if (!write_mouth_paused(false)) {
+                    if (telemetry::tcp_loopback_open(8888, 300)) {
+                        const json ex = exl3_desk();
+                        const std::string id = ex.value("id", "");
+                        reply << "mouth stays paused. :8888 is still listening";
+                        if (!id.empty()) reply << " (" << id << ")";
+                        reply << ". Stop that model before /mouth on. "
+                                 "One GPU slot.\n";
+                    } else if (!write_mouth_paused(false)) {
                         res.status = 500;
                         res.set_content(
                             json({{"response",
@@ -4400,10 +4409,11 @@ int main() {
                                 .dump(),
                             "application/json");
                         return;
+                    } else {
+                        maybe_restart_mouth(true);
+                        reply << "mouth=on. Starting llama if mouth.txt says "
+                                 "llama. Ask again in about a minute.\n";
                     }
-                    maybe_restart_mouth(true);
-                    reply << "mouth=on. Starting llama if mouth.txt says "
-                             "llama. Ask again in about a minute.\n";
                 } else {
                     reply << "usage: /mouth off | /mouth on | /mouth\n";
                 }
