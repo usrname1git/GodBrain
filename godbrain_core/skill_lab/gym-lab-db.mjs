@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,10 +48,10 @@ ${script}
 }
 
 async function mongoFile(script) {
-  const file = path.join(os.tmpdir(), `godbrain-gym-${process.pid}-${Date.now()}.js`);
+  const file = path.join(os.tmpdir(), `godbrain-gym-${process.pid}-${randomUUID()}.js`);
   await fs.writeFile(file, `${guard(script)}\n`, 'utf8');
   try {
-    const { stdout } = await execute(MONGOSH, [URI, '--quiet', '--file', file], {
+    const { stdout } = await execute(MONGOSH, [URI, '--quiet', '--norc', '--file', file], {
       timeout: 10_000, windowsHide: true, maxBuffer: 1_000_000,
     });
     const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
@@ -115,7 +116,7 @@ print(JSON.stringify({ ok: 1, orderId, total, email: ${JSON.stringify(email)} })
 
 export async function getOrders(runId) {
   return mongoFile(`
-const orders = db.orders.find({ runId: ${JSON.stringify(runId)} }, { _id: 0 }).toArray();
+const orders = db.orders.find({ runId: ${JSON.stringify(runId)} }, { _id: 0 }).sort({ at: -1 }).toArray();
 print(JSON.stringify({ ok: 1, orders }));
 `);
 }

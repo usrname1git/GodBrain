@@ -298,14 +298,6 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         }
         const selected = await selectCurriculumTask(workDir, state, combined);
         if (!selected) return null;
-        if (selected.fileMode === 'styles' && selected.university) {
-          return {
-            ...selected,
-            skipLearnerGenerate: true,
-            revalidateInitial: true,
-            initialFiles: getReference(selected.baseTaskId ?? selected.id),
-          };
-        }
         if (selected.university) {
           const plan = universityLessonPlan({
             lessons: state.lessons,
@@ -337,8 +329,6 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         if (selected.fileMode === 'styles') {
           return {
             ...selected,
-            skipLearnerGenerate: Boolean(selected.university),
-            revalidateInitial: Boolean(selected.university) || selected.revalidateInitial,
             initialFiles: selected.initialFiles ?? getReference(selected.baseTaskId ?? selected.id),
           };
         }

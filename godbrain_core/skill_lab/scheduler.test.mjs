@@ -265,6 +265,24 @@ test('parse failures count against quality mastery and a death spiral is parked'
   assert.equal(choice.selected.id, 'quality-b');
 });
 
+test('ten perfect attempts do not hold an active course', () => {
+  const events = passingEvents('university-a', 10, 2);
+  const row = classifyMastery(events, state(), tasks).find(item => item.id === 'university-a');
+  assert.equal(row.mastery, 'learning');
+  assert.equal(examinerHolds(row), false);
+  const choice = chooseTask(classifyMastery(events, state(), tasks), { selectionCount: 1 });
+  assert.equal(choice.selected.id, 'university-a');
+});
+
+test('measured mastery holds an active course', () => {
+  const events = passingEvents('university-a', 20, 2);
+  const row = classifyMastery(events, state(), tasks).find(item => item.id === 'university-a');
+  assert.equal(row.mastery, 'mastered');
+  assert.equal(examinerHolds(row), true);
+  const choice = chooseTask(classifyMastery(events, state(), tasks), { selectionCount: 1 });
+  assert.notEqual(choice.selected?.id, 'university-a');
+});
+
 test('zero-pass university exam is persisted on parkedTaskIds', async t => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), 'work', 'tests');
   await fs.mkdir(root, { recursive: true });

@@ -20,9 +20,7 @@ export function isHostNetworkFailure(value) {
 
 export function evaluatorFamily(version) {
   const text = String(version ?? '');
-  const head = text.split(':')[0];
-  const match = head.match(/^(browser-evaluator)-v\d+$/i);
-  return match ? match[1].toLowerCase() : head;
+  return text.split(':')[0];
 }
 
 function hexLum(hex) {
@@ -1166,10 +1164,6 @@ export async function runPractice(options, dependencies) {
         } catch (error) {
           if (!(error instanceof CandidateError)) throw error;
           candidateError = error.message;
-        }
-        if (files && task.university) {
-          const ref = getReference(task.baseTaskId ?? task.id);
-          if (ref['styles.css']) files = { ...files, 'styles.css': ref['styles.css'] };
         }
         if (!candidateError && files?.['styles.css']) {
           const wash = washedLightThemeInk(files['styles.css']);

@@ -86,7 +86,9 @@ function weakest(rows) {
 }
 
 export function examinerHolds(row) {
-  return (row.recentAttempts ?? 0) >= 10 && (row.recentPassRate ?? 0) >= 1;
+  const perfect = (row.recentAttempts ?? 0) >= 10 && (row.recentPassRate ?? 0) >= 1;
+  if (row.university?.status === 'mastered') return perfect;
+  return row.mastery === 'mastered';
 }
 
 export function chooseTask(rows, scheduler = {}) {

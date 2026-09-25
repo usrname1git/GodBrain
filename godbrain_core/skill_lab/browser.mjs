@@ -1328,13 +1328,23 @@ async function checkShop(page, props, checks, errors, lab) {
     const cart = page.getByRole('region', { name: /cart/i });
     await cart.getByText(first.title, { exact: false }).waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
     await (await fieldByLabel(page, 'Checkout email')).fill(props.checkoutEmail);
+    const before = await getOrders(lab.runId);
+    lab.orderIdsBefore = new Set((before.orders ?? []).map(item => item.orderId));
     await (await buttonByName(page, 'Place order')).click();
-    await page.getByText(/Order/i).first().waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await page.getByRole('status').getByText(props.checkoutEmail, { exact: false }).first()
+      .waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
     await visibleText(page, props.checkoutEmail);
   });
   await addCheck(checks, errors, 'shop-order-persisted-in-mongo', async () => {
-    const listed = await getOrders(lab.runId);
-    const order = listed.orders?.[0];
+    const deadline = Date.now() + LAB_TIMEOUT_MS;
+    let order = null;
+    while (Date.now() < deadline) {
+      const listed = await getOrders(lab.runId);
+      order = (listed.orders ?? []).find(item => !lab.orderIdsBefore?.has(item.orderId));
+      if (order?.email === props.checkoutEmail && order.lines?.some(line => line.sku === first.sku)) break;
+      order = null;
+      await page.waitForTimeout(200);
+    }
     if (!order) throw new Error('No order row in godbrain_gym after Place order. localStorage is not a shop.');
     if (order.email !== props.checkoutEmail) throw new Error('Persisted order email did not match checkout email.');
     if (!order.lines?.some(line => line.sku === first.sku)) throw new Error('Persisted order is missing the added SKU.');
@@ -1359,15 +1369,30 @@ async function checkCms(page, props, checks, errors, lab) {
     await (await buttonByName(page, 'Sign in')).click();
     const title = page.getByLabel(/page title/i).first();
     await title.waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    const beforePages = await getPages(lab.runId);
+    lab.pageTitlesBefore = new Set((beforePages.pages ?? []).map(item => item.title));
     await title.fill(props.newPageTitle);
     await (await fieldByLabel(page, 'Page body')).fill(props.newPageBody);
     await (await buttonByName(page, 'Create page')).click();
-    await page.getByText(props.newPageTitle, { exact: false }).first().waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
-    await visibleText(page, props.newPageBody);
+    const pages = page.getByRole('list', { name: 'Pages' });
+    await pages.getByText(props.newPageTitle, { exact: true }).first()
+      .waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
+    await pages.getByText(props.newPageBody, { exact: false }).first()
+      .waitFor({ state: 'visible', timeout: LAB_TIMEOUT_MS });
   });
   await addCheck(checks, errors, 'cms-page-persisted-in-mongo', async () => {
-    const listed = await getPages(lab.runId);
-    if (!listed.pages?.some(item => item.title === props.newPageTitle && item.body === props.newPageBody)) {
+    const deadline = Date.now() + LAB_TIMEOUT_MS;
+    let found = false;
+    while (Date.now() < deadline) {
+      const listed = await getPages(lab.runId);
+      found = (listed.pages ?? []).some(item =>
+        item.title === props.newPageTitle &&
+        item.body === props.newPageBody &&
+        !lab.pageTitlesBefore?.has(item.title));
+      if (found) break;
+      await page.waitForTimeout(200);
+    }
+    if (!found) {
       throw new Error('CMS page was not stored in godbrain_gym. A painted admin without a session is not a CMS.');
     }
   });
