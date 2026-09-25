@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -386,5 +387,48 @@ namespace telemetry {
             {"overcommit", overcommit},
             {"adapters", gpu.value("adapters", json::array())},
         };
+    }
+
+    bool tcp_loopback_open(int port, int timeout_ms) {
+        if (port <= 0 || port > 65535) return false;
+        if (timeout_ms < 50) timeout_ms = 50;
+        // Extra WSAStartup is refcounted. Never WSACleanup here: httplib owns the count.
+        // call_once so concurrent /api/status probes do not race the first init.
+        static std::once_flag wsa_once;
+        static bool wsa_ok = false;
+        std::call_once(wsa_once, [] {
+            WSADATA wsa{};
+            wsa_ok = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        });
+        if (!wsa_ok) return false;
+        const SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) return false;
+        u_long nonblock = 1;
+        ioctlsocket(sock, FIONBIO, &nonblock);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<u_short>(port));
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        bool open = false;
+        const int rc = connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        if (rc == 0) {
+            open = true;
+        } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(sock, &writable);
+            timeval wait{};
+            wait.tv_sec = timeout_ms / 1000;
+            wait.tv_usec = (timeout_ms % 1000) * 1000;
+            if (select(0, nullptr, &writable, nullptr, &wait) > 0) {
+                int so_error = 0;
+                int so_len = sizeof(so_error);
+                getsockopt(sock, SOL_SOCKET, SO_ERROR,
+                           reinterpret_cast<char*>(&so_error), &so_len);
+                open = (so_error == 0);
+            }
+        }
+        closesocket(sock);
+        return open;
     }
 }

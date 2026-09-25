@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { cancelObjective, enqueueObjective, listObjectives } from './objectives.mjs';
 import { readJson, writeJson } from './gym-core.mjs';
@@ -17,22 +18,22 @@ const ALTERNATIVE_DIRECTIONS = Object.freeze([
   {
     id: 'nordic-editorial',
     title: 'Nordic editorial',
-    direction: 'Spacious Scandinavian editorial composition, off-white canvas, deep navy typography, restrained coral accents, asymmetric grids and confident product storytelling.',
+    direction: 'Spacious editorial composition on warm paper with near-black ink and one bronze accent. No second background.',
   },
   {
     id: 'product-led',
     title: 'Product-led interactive',
-    direction: 'Interface-forward product storytelling with layered workflow panels, an interactive lifecycle centerpiece, crisp cyan accents and dense information made easy to explore.',
+    direction: 'Tighter product panels on the same paper and ink as the hero. One ink button. No cyan and no teal.',
   },
   {
     id: 'enterprise-trust',
     title: 'Enterprise trust',
-    direction: 'Calm enterprise presentation with architectural clarity, strong trust and governance sections, restrained navy and stone palette, precise comparison layouts and evidence-first content.',
+    direction: 'Calm comparison layout on the same paper as the hero. Thin rules, black ink. No floating navy panel.',
   },
   {
     id: 'event-experience',
     title: 'Event experience',
-    direction: 'Human event-journey storytelling with expressive but professional color, rhythmic section transitions, participant touchpoints and strong before/during/after narrative.',
+    direction: 'More air around the same paper and ink. One warm accent. The journey sections stay on that paper.',
   },
 ]);
 const MAX_ALTERNATIVE_HISTORY = 10;
@@ -137,20 +138,30 @@ function assemblyPolishPrompt(campaign) {
   ]);
 }
 
-function alternativePrompt(campaign, variant, stage, retry = 0) {
+export function alternativePrompt(campaign, variant, stage, retry = 0) {
   const brief = campaign.brief;
   const common = [
     `Create the "${variant.title}" alternative for ${brief.name}.`,
     variant.direction,
-    'This is Trippus: a Scandinavian B2B event-management platform spanning planning, invitations, registration, payments, communication, attendee experience, check-in, engagement, surveys and reporting. Eventus is an AI assistant, not the whole product.',
-    'Primary actions: Book a demo, Try it yourself, Explore the platform and Compare packages.',
-    'Use realistic demonstrative content only. Never invent customer metrics, certifications, guarantees or prices.',
   ];
   if (stage === 'app') {
-    common.push('Build the complete semantic React structure and all trusted interactions. Keep JSX compact. Source content from runtime props where the verifier requires it. CSS is supplied separately.');
+    common.push(
+      'This is Trippus, a Scandinavian B2B event platform. Eventus is one assistant, not the whole product.',
+      'Primary actions: Book a demo, Try it yourself, Explore the platform, Compare packages.',
+      'Use realistic demonstrative content only. Never invent metrics, certifications, guarantees, or prices.',
+      'Build the semantic React structure and the trusted interactions. Keep JSX compact. CSS is supplied separately.',
+    );
   } else {
-    common.push('Write only the complete CSS for the existing React source. Make the direction materially recognizable through layout, typography, spacing, color, component geometry and responsive composition.');
-    if (retry) common.push('The previous styling was not sufficiently distinct or did not pass. Change the design system and composition substantially while preserving usability.');
+    common.push(
+      'Write only CSS. One hero photo is allowed: url("/media/event-a.jpg"), url("/media/event-b.jpg"), or url("/media/event-c.jpg"). Cover .hero and keep a dark scrim so the headline stays readable. No other url().',
+      'Compose like a product studio: one dark or warm field, a very large headline that says what the platform does, one filled button, and the proof points as a tight row of frames. Not a generic menu over a stock smile.',
+      'section.tinted and section.dark use the hero paper. .tinted is not a mint band. .dark is not a floating navy billboard. Set :root and every [data-theme] to the same tokens.',
+      'Forbidden: light teal, mint, sage, pale aqua. Text is dark on light or light on dark. Two fonts. One type scale.',
+      `Change spacing and the one accent so "${variant.title}" is recognizable. The product claim stays huge.`,
+    );
+    if (retry) {
+      common.push('The last pass changed color mid-page or used a mint band. Keep the opening palette and delete the extra colors.');
+    }
   }
   return objectivePrompt(common);
 }
@@ -510,6 +521,51 @@ export async function advanceCampaigns(workDir, trustedTasks) {
     const campaigns = await readCampaigns(workDir);
     return reconcileCampaigns(workDir, campaigns, trustedTasks);
   });
+}
+
+async function saveReadyAlternatives(workDir, campaign, saveDir) {
+  const generation = campaign.alternativeGeneration ?? 1;
+  for (const variant of campaign.alternatives ?? []) {
+    if (variant.status !== 'ready' || !variant.runId) continue;
+    const folder = path.join(saveDir, `${campaign.id}-g${generation}-${variant.id}`);
+    try {
+      await fs.access(path.join(folder, 'source.json'));
+      continue;
+    } catch { /* not saved yet */ }
+    await fs.mkdir(folder, { recursive: true });
+    const runDir = path.join(workDir, 'runs', variant.runId);
+    const sourcePath = path.join(runDir, 'source.json');
+    try {
+      const source = await readJson(sourcePath, {});
+      for (const [name, text] of Object.entries(source)) {
+        if (typeof text !== 'string') continue;
+        await fs.writeFile(path.join(folder, name.replace(/[\\/]/g, '_')), text);
+      }
+      await fs.copyFile(sourcePath, path.join(folder, 'source.json'));
+    } catch { /* source missing */ }
+    for (const shot of ['practice/desktop.png', 'practice/mobile.png']) {
+      try {
+        await fs.copyFile(path.join(runDir, shot), path.join(folder, shot.replace('/', '-')));
+      } catch { /* screenshot missing */ }
+    }
+  }
+}
+
+// repeat-campaign.json keeps one finished brief generating another set of four
+// until the file is removed or training is paused.
+export async function continueRepeatedCampaign(workDir, trustedTasks) {
+  const marker = await readJson(path.join(workDir, 'repeat-campaign.json'), null);
+  const campaignId = marker?.campaignId;
+  if (!campaignId) return null;
+  const campaigns = await readCampaigns(workDir);
+  const campaign = (campaigns.items ?? []).find(item => item.id === campaignId);
+  if (!campaign || !['alternatives_ready', 'alternatives_limited'].includes(campaign.status)) {
+    return null;
+  }
+  const saveDir = marker.saveDir || 'C:\\nvme\\godbrain-sites\\trippus';
+  await saveReadyAlternatives(workDir, campaign, saveDir);
+  console.log(`Repeat campaign ${campaign.brief?.name || campaignId}: generation ${campaign.alternativeGeneration ?? 1} saved, starting the next four.`);
+  return requestCampaignAlternatives(workDir, campaignId, trustedTasks);
 }
 
 export async function requestCampaignAlternatives(workDir, campaignId, trustedTasks) {

@@ -146,6 +146,7 @@ function Test-MouthBusy([bool]$KernelUp) {
     if (-not $KernelUp) { return $true }
     try {
         $st = Invoke-RestMethod -TimeoutSec 3 -Uri "http://127.0.0.1:8083/api/status"
+        if ($st.generate_busy) { return $true }
         if ($st.coli -and [bool]$st.coli.busy) { return $true }
         if ($st.mouth -and $st.mouth.PSObject.Properties.Name -contains "busy" -and [bool]$st.mouth.busy) {
             return $true
@@ -174,7 +175,14 @@ function Get-InboxFailed {
 }
 
 function Get-Probe {
-    $mouth = Test-Port "127.0.0.1" 8000
+    $llama = Test-Port "127.0.0.1" 8000
+    $exl3 = Test-Port "127.0.0.1" 8888
+    $mouth = if ($mouthPause) { $exl3 } else { $llama }
+    $mouthReady = if ($mouthPause) {
+        $exl3
+    } else {
+        [bool]($llama -and (Test-HttpOk "http://127.0.0.1:8000/health"))
+    }
     $rag = Test-Port "127.0.0.1" 8084
     $ragHealth = $null
     if ($rag) { $ragHealth = Get-RagHealth }
@@ -185,7 +193,8 @@ function Get-Probe {
         rag_building  = [bool]($ragHealth -and -not [string]::IsNullOrWhiteSpace([string]$ragHealth.building_generation))
         coli          = $mouth
         mouth         = $mouth
-        mouth_ready   = [bool]($mouth -and (Test-HttpOk "http://127.0.0.1:8000/health"))
+        exl3          = $exl3
+        mouth_ready   = [bool]$mouthReady
         kernel        = Test-Port "127.0.0.1" 8083
         tailscale     = Test-TailscaleCgNat
         dns           = Test-ServiceUp "Dnscache"
@@ -286,6 +295,11 @@ if (Test-Path -LiteralPath $cs2Helper) {
     . $cs2Helper
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
+$mouthPause = $false
+$pauseFile = Join-Path $RepoRoot "logs\mouth-pause.txt"
+if (Test-Path -LiteralPath $pauseFile) {
+    $mouthPause = ((Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
 
 $before = Get-Probe
 $needed = @()
@@ -297,7 +311,7 @@ if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag) { $needed += "rag" }
 # "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
 # instead of coli when logs/mouth.txt says llama-server.
-if (-not $before.coli -and -not $coliSleep) { $needed += "coli" }
+if (-not $before.coli -and -not $coliSleep -and -not $mouthPause) { $needed += "coli" }
 if (-not $before.kernel) { $needed += "kernel" }
 
 foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
@@ -354,6 +368,8 @@ $inboxLock = Join-Path $logDir "heal-inbox.lock"
 if ($waitingFiles.Count -gt 0) {
     if ($coliSleep) {
         $inbox.skip = "cs2"
+    } elseif ($mouthPause -and -not $after.exl3) {
+        $inbox.skip = "mouth-paused"
     } elseif (-not $after.mouth_ready) {
         $inbox.skip = "mouth-down"
     } elseif (Test-LibrarianRunning) {
@@ -371,7 +387,23 @@ if ($waitingFiles.Count -gt 0) {
             try {
                 [System.IO.File]::WriteAllText($inboxLock, "$PID $(Get-Date -Format o)")
                 $beforeName = $waitingFiles[0].Name
-                & $lib -Inbox -RepoRoot $RepoRoot
+                $prevMouthPort = $env:GODBRAIN_MOUTH_PORT
+                $prevLibModel = $env:GODBRAIN_LIBRARIAN_MODEL
+                if ($mouthPause) {
+                    $env:GODBRAIN_MOUTH_PORT = "8888"
+                    try {
+                        $mid = (Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8888/v1/models").data[0].id
+                        if ($mid) { $env:GODBRAIN_LIBRARIAN_MODEL = [string]$mid }
+                    } catch {}
+                }
+                try {
+                    & $lib -Inbox -RepoRoot $RepoRoot
+                } finally {
+                    if ($null -eq $prevMouthPort) { Remove-Item Env:GODBRAIN_MOUTH_PORT -ErrorAction SilentlyContinue }
+                    else { $env:GODBRAIN_MOUTH_PORT = $prevMouthPort }
+                    if ($null -eq $prevLibModel) { Remove-Item Env:GODBRAIN_LIBRARIAN_MODEL -ErrorAction SilentlyContinue }
+                    else { $env:GODBRAIN_LIBRARIAN_MODEL = $prevLibModel }
+                }
                 if ($LASTEXITCODE -eq 0) {
                     $inbox.acted = $true
                     $acted += "inbox:librarian"
@@ -428,6 +460,7 @@ $result = [ordered]@{
     ok          = $ok
     never_kills = $true
     cs2_sleep   = [bool]$coliSleep
+    mouth_paused = [bool]$mouthPause
     mouth       = [bool]$after.mouth
     mouth_ready = [bool]$after.mouth_ready
     rag_ready   = [bool]$after.rag_ready
@@ -455,11 +488,12 @@ function Write-HealFallbackGlance {
         $line = [string](Get-Content -LiteralPath $mouthFile -TotalCount 1 -ErrorAction SilentlyContinue)
         if ($line -match "llama") { $mouthLabel = "llama" }
     }
-    $mouthState = if ($coliSleep) { "sleep" } elseif ($after.mouth_ready) { "serve" } else { "down" }
+    $mouthState = if ($coliSleep) { "sleep" } elseif ($mouthPause) { "paused" } elseif ($after.mouth_ready) { "serve" } else { "down" }
     $ragState = if ($after.rag_ready) { "ready" } else { "down" }
     $healState = if ($ok) { "ok" } else { "fail" }
-    $brief = "{0} | {1}={2} rag={3} heal={4}/0m inbox={5} sre={6} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
-        $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $healState, $inbox.waiting, $sreDiagnose
+    $mongoState = if ($after.mongo) { "up" } else { "down" }
+    $brief = "{0} | {1}={2} rag={3} mongo={4} heal={5}/0m inbox={6} sre={7} desk=unknown`nkernel=down (Heal fallback; GET /api/brief needs :8083)" -f `
+        $env:COMPUTERNAME, $mouthLabel, $mouthState, $ragState, $mongoState, $healState, $inbox.waiting, $sreDiagnose
     $healTxt = "playbook=host-listeners (never kills)`nlive kernel=down rag={0} mouth={1}`nlast ok={2} mouth={3} tail={4} cs2={5} age=0m`nneeded={6}`nacted={7}`nlayer={8} sre={9} match=unknown`ninbox={10}" -f `
         $(if ($after.rag) { "up" } else { "down" }),
         $mouthState,

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -13,6 +13,26 @@ import { getOrders, getPages, pingGymMongo, readCart } from './gym-lab-db.mjs';
 import { validateGeneratedSource } from './verifier-dsl.mjs';
 
 export const EVALUATOR_VERSION = 'browser-evaluator-v10';
+
+export const GYM_MEDIA_FILES = new Map([
+  ['/media/event-a.jpg', 'event-a.jpg'],
+  ['/media/event-b.jpg', 'event-b.jpg'],
+  ['/media/event-c.jpg', 'event-c.jpg'],
+]);
+
+export function gymMediaDir() {
+  return process.env.GODBRAIN_GYM_MEDIA || 'C:\\nvme\\godbrain-sites\\media';
+}
+
+function readGymMediaSync(pathname) {
+  const name = GYM_MEDIA_FILES.get(pathname);
+  if (!name) return null;
+  try {
+    return readFileSync(path.join(gymMediaDir(), name));
+  } catch {
+    return null;
+  }
+}
 
 const labRoot = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -150,8 +170,11 @@ function validateAuthoredImports(source, css) {
     }
   }
   if (/\bimport\.meta\b/.test(source)) return 'import.meta is not available to learner code.';
-  if (/@import\b/i.test(css) || /\burl\s*\(/i.test(css)) {
-    return 'styles.css may not import or fetch external resources.';
+  if (/@import\b/i.test(css)) return 'styles.css may not import external resources.';
+  for (const match of css.matchAll(/\burl\s*\(\s*(['"]?)([^'")]+)\1\s*\)/gi)) {
+    if (!GYM_MEDIA_FILES.has(match[2].trim())) {
+      return 'styles.css may only use /media/event-a.jpg, /media/event-b.jpg, or /media/event-c.jpg.';
+    }
   }
   return null;
 }
@@ -174,6 +197,7 @@ createRoot(document.getElementById('root')).render(__React.createElement(App, pr
         if (args.namespace !== 'student') return null;
         if (args.path === 'react') return { path: require.resolve('react') };
         if (args.path === './styles.css') return { path: 'styles.css', namespace: 'student' };
+        if (GYM_MEDIA_FILES.has(args.path)) return { path: args.path, external: true };
         return { errors: [{ text: `Unexpected student import "${args.path}". Only react and ./styles.css are available.` }] };
       });
       build.onResolve({ filter: /^trusted-entry\.jsx$/ }, () => ({ path: 'trusted-entry.jsx', namespace: 'trusted' }));
@@ -534,7 +558,7 @@ async function startStaticServer({ bundle, css, props, lab = null }) {
     ['/bundle.css', { status: 200, type: 'text/css; charset=utf-8', body: css }],
     ['/favicon.ico', { status: 204, type: 'image/x-icon', body: '' }],
   ]);
-  const allowedPaths = new Set([...routes.keys(), ...labPaths(lab?.kind)]);
+  const allowedPaths = new Set([...routes.keys(), ...labPaths(lab?.kind), ...GYM_MEDIA_FILES.keys()]);
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     response.setHeader('Content-Security-Policy', csp);
@@ -546,6 +570,12 @@ async function startStaticServer({ bundle, css, props, lab = null }) {
       if (lab && url.pathname.startsWith('/api/lab/')) {
         const handled = await handleLabApi(request, response, lab);
         if (handled) return;
+      }
+      const media = request.method === 'GET' && !url.search ? readGymMediaSync(url.pathname) : null;
+      if (media) {
+        response.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        response.end(media);
+        return;
       }
       const route = request.method === 'GET' ? routes.get(url.pathname) : null;
       if (!route || url.search) {
@@ -1217,10 +1247,52 @@ async function checkMarketingQuality(page, props, checks, errors, draftOnly = fa
     if (metrics.tinyRatio > 0.18) throw new Error('Too much visible text is smaller than 13px.');
     if (metrics.distinctFontSizes < 4) throw new Error('The typography lacks a deliberate hierarchy.');
     if (metrics.colors < 3) {
-      throw new Error(`Need ≥3 distinct tones on visible main descendants; found ${metrics.colors}. CSS gradients now count; keep .tinted/.dark/hero from collapsing onto the same white as cards.`);
+      throw new Error(`Need ≥3 distinct tones on visible main descendants; found ${metrics.colors}. A button fill, a rule, or a photo scrim can supply them. Do not give .tinted or .dark a different background from the hero.`);
     }
     if (metrics.roomySections < 3) throw new Error('Section spacing is too compressed for a premium marketing page.');
     if (metrics.interactive < 7) throw new Error('The page lacks meaningful navigation and conversion interactions.');
+  });
+  await addCheck(checks, errors, 'one-surface', async () => {
+    const detail = await page.evaluate(() => {
+      const parse = css => {
+        const match = String(css).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+        if (!match || Number(match[4] ?? 1) === 0) return null;
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const lightTeal = ([r, g, b]) => {
+        const light = (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
+        return light >= 145 && g >= r + 16 && b >= r + 8 && g >= 150 && b >= 140;
+      };
+      for (const element of document.querySelectorAll('body *')) {
+        const color = parse(getComputedStyle(element).backgroundColor);
+        if (!color || !lightTeal(color)) continue;
+        const name = element.className ? `.${String(element.className).trim().split(/\s+/)[0]}` : element.tagName.toLowerCase();
+        return `${name} uses light teal rgb(${color.join(',')}). That color is forbidden.`;
+      }
+      const header = document.querySelector('header');
+      const surface = header ? parse(getComputedStyle(header).backgroundColor) : null;
+      const hero = document.querySelector('.hero');
+      const heroImage = hero ? getComputedStyle(hero).backgroundImage : 'none';
+      if (surface && heroImage && heroImage !== 'none') {
+        const light = (Math.max(...surface) + Math.min(...surface)) / 2;
+        if (light >= 170) {
+          return `The hero is a photograph and the rest of the page is a bleached field rgb(${surface.join(',')}). Keep the header and every section on that dark surface, with light type.`;
+        }
+      }
+      if (!surface) return '';
+      const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      for (const element of document.querySelectorAll('body *')) {
+        if (hero && (element === hero || hero.contains(element))) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 280 || rect.height < 140) continue;
+        const color = parse(getComputedStyle(element).backgroundColor);
+        if (!color || distance(color, surface) <= 72) continue;
+        const name = element.className ? `.${String(element.className).trim().split(/\s+/)[0]}` : element.tagName.toLowerCase();
+        return `${name} is rgb(${color.join(',')}) on a page that is rgb(${surface.join(',')}). A hero photo may be dark. Lifecycle, trust, packages, and the footer stay on the page color.`;
+      }
+      return '';
+    });
+    if (detail) throw new Error(detail);
   });
   await addCheck(checks, errors, 'intentional-mobile-composition', async () => {
     await page.setViewportSize({ width: 390, height: 844 });

@@ -100,18 +100,26 @@ $inboxDir = $null
 $failDir = $null
 if ($Inbox) {
     try {
-        $probe = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8000/health"
+        $mouthPort = 8000
+        if ($env:GODBRAIN_MOUTH_PORT) { $mouthPort = [int]$env:GODBRAIN_MOUTH_PORT }
+        $probeUri = if ($mouthPort -eq 8888) {
+            "http://127.0.0.1:8888/v1/models"
+        } else {
+            "http://127.0.0.1:${mouthPort}/health"
+        }
+        $probe = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 $probeUri
         if ($probe.StatusCode -ne 200) { throw "mouth not healthy" }
     } catch {
-        throw "mouth is down on :8000 — will not ingest. Start the mouth first."
+        throw "mouth is down on :$mouthPort — will not ingest. Start the mouth first."
     }
     try {
         $st = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8083/api/status"
-        $busy = [bool]($st.coli -and $st.coli.busy)
+        $busy = [bool]$st.generate_busy
+        $busy = $busy -or [bool]($st.coli -and $st.coli.busy)
         if ($st.mouth -and $st.mouth.PSObject.Properties.Name -contains "busy") {
             $busy = $busy -or [bool]$st.mouth.busy
         }
-        if ($busy) { throw "mouth is busy on :8000 — will not ingest during generate." }
+        if ($busy) { throw "mouth is busy — will not ingest during generate." }
     } catch {
         if ("$_" -match "will not ingest") { throw }
         throw "kernel status unavailable — will not ingest (cannot tell if the mouth is busy)."
@@ -154,7 +162,8 @@ if ([string]::IsNullOrWhiteSpace($SessionId)) {
 }
 
 try {
-    Write-Host "Invoke-Librarian session=$SessionId mouth=:8000"
+    $mouthPortNote = if ($env:GODBRAIN_MOUTH_PORT) { $env:GODBRAIN_MOUTH_PORT } else { "8000" }
+    Write-Host "Invoke-Librarian session=$SessionId mouth=:$mouthPortNote"
     & $exe $SessionId $inputPath
     $code = $LASTEXITCODE
     if ($code -ne 0) {

@@ -1013,6 +1013,21 @@ json search_verified(const std::string& query, int limit) {
     return {{"status", "success"}, {"thoughts", thoughts}, {"query", query}};
 }
 
+json search_verified(const std::string& query, int limit, const std::string& sector) {
+    json found = search_verified(query, 25);
+    if (sector.empty()) return found;
+    if (limit <= 0) limit = 8;
+    if (limit > 25) limit = 25;
+    json kept = json::array();
+    for (const auto& thought : found.value("thoughts", json::array())) {
+        if (thought.value("sector", "") != sector) continue;
+        kept.push_back(thought);
+        if (static_cast<int>(kept.size()) >= limit) break;
+    }
+    found["thoughts"] = std::move(kept);
+    return found;
+}
+
 json get_recent(int limit) {
     if (limit <= 0) limit = 5;
     if (limit > 25) limit = 25;
@@ -1031,6 +1046,19 @@ json get_recent(int limit) {
             {"sector", node.at("sector")},
             {"status", node.at("status")},
         });
+    }
+    return {{"status", "success"}, {"thoughts", thoughts}};
+}
+
+json get_recent_personal(int limit) {
+    if (limit <= 0) limit = 8;
+    if (limit > 25) limit = 25;
+    const json recent = get_recent(25);
+    json thoughts = json::array();
+    for (const auto& thought : recent.value("thoughts", json::array())) {
+        if (thought.value("sector", "") != "personal") continue;
+        thoughts.push_back(thought);
+        if (static_cast<int>(thoughts.size()) >= limit) break;
     }
     return {{"status", "success"}, {"thoughts", thoughts}};
 }
