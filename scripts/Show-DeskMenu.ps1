@@ -14,6 +14,7 @@ $Start27 = Join-Path $Kit "paper-godbrain\Start-PaperQwen.ps1"
 $StopModel = Join-Path $Kit "paper-godbrain\Stop-PaperQwen.ps1"
 $Repo = Split-Path $PSScriptRoot -Parent
 $StartVl = Join-Path $Repo "scripts\Start-QwenVL.ps1"
+$StartImage = Join-Path $Repo "scripts\Start-QwenImage.ps1"
 $Lyrics = Join-Path $Repo "scripts\Invoke-LyricsLoop.ps1"
 $Pwsh = "C:\pwsh\pwsh.exe"
 $cs2Helper = Join-Path $Repo "GodBrain-Cs2.ps1"
@@ -509,6 +510,7 @@ $rowGpu = Add-Row $pageStatus "GPU" 220
 $rowRust = Add-Row $pageStatus "RustDesk" 244
 $rowSsh = Add-Row $pageStatus "SSH" 268
 $rowTail = Add-Row $pageStatus "Tailscale" 292
+$rowImage = Add-Row $pageStatus "Image" 316
 
 function Update-Status {
     $mouth = "unread"
@@ -525,11 +527,12 @@ function Update-Status {
     $rowRust.Text = Get-RustDeskLine
     $rowSsh.Text = Get-SshLine
     $rowTail.Text = Get-TailscaleLine
+    $rowImage.Text = $(if (Test-Port 8871) { "up :8871" } else { "down" })
 }
-Add-Button $pageStatus "Start RustDesk" 20 328 176 {
+Add-Button $pageStatus "Start RustDesk" 20 352 176 {
     Set-HostService "RustDesk" "start"
 } $true
-Add-Button $pageStatus "Stop RustDesk" 208 328 176 {
+Add-Button $pageStatus "Stop RustDesk" 208 352 176 {
     $ask = [System.Windows.Forms.MessageBox]::Show(
         "Stop the RustDesk service? Remote desktop will drop.",
         "RustDesk",
@@ -544,8 +547,9 @@ $timer.Add_Tick({ Update-Status })
 $timer.Start()
 
 Add-Head $pageModel "Model" 16
-Add-Button $pageModel "27B text" 20 56 176 { if (Stop-Door) { Start-Door $Start27 } } $true
-Add-Button $pageModel "8B vision" 208 56 176 { if (Stop-Door) { Start-Door $StartVl } } $false
+Add-Button $pageModel "27B text" 20 56 112 { if (Stop-Door) { Start-Door $Start27 } } $true
+Add-Button $pageModel "8B vision" 140 56 112 { if (Stop-Door) { Start-Door $StartVl } } $false
+Add-Button $pageModel "Image" 260 56 124 { if (Stop-Door) { Start-Door $StartImage } } $false
 Add-Button $pageModel "Stop" 20 100 112 { if (Stop-Door) { Update-Status } } $false
 Add-Button $pageModel "Galaxy" 144 100 112 { Start-Process "http://127.0.0.1:8083/" } $false
 Add-Button $pageModel "Gym" 268 100 116 { Start-Process "http://127.0.0.1:4177/" } $false
