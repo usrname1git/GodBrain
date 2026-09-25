@@ -1,5 +1,5 @@
 # One window for the doors already on this machine.
-# Status: model on :8888, kernel :8083, RAG :8084, Mongo :27017, gym :4177, CS2, mouth pause, GPU.
+# Status: model on :8888, kernel :8083, RAG :8084, Mongo :27017, gym :4177, CS2, mouth pause, GPU, RustDesk, sshd :2222, Tailscale.
 # Model clicks stop whoever owns :8888, then start the other. One GPU slot.
 # Lyrics: start the capture, wait until loopback is recording, wait the preroll,
 # then Shift+P into the running ncspot (track already loaded and paused).
@@ -14,6 +14,7 @@ $Start27 = Join-Path $Kit "paper-godbrain\Start-PaperQwen.ps1"
 $StopModel = Join-Path $Kit "paper-godbrain\Stop-PaperQwen.ps1"
 $Repo = Split-Path $PSScriptRoot -Parent
 $StartVl = Join-Path $Repo "scripts\Start-QwenVL.ps1"
+$StartImage = Join-Path $Repo "scripts\Start-QwenImage.ps1"
 $Lyrics = Join-Path $Repo "scripts\Invoke-LyricsLoop.ps1"
 $Pwsh = "C:\pwsh\pwsh.exe"
 $cs2Helper = Join-Path $Repo "GodBrain-Cs2.ps1"
@@ -43,6 +44,44 @@ function Get-GpuLine {
         $u = (& nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits).Trim()
         return "GPU $u MiB"
     } catch { return "GPU unread" }
+}
+
+function Get-ServiceWord([string]$Name) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) { return "missing" }
+    return $svc.Status.ToString().ToLower()
+}
+
+function Get-RustDeskLine {
+    $word = Get-ServiceWord "RustDesk"
+    if ($word -eq "running" -and (Test-Port 21118)) { return "up :21118" }
+    return $word
+}
+
+function Get-SshLine {
+    $word = Get-ServiceWord "sshd"
+    if ($word -eq "running" -and (Test-Port 2222)) { return "up :2222" }
+    return $word
+}
+
+function Get-TailscaleLine {
+    $word = Get-ServiceWord "Tailscale"
+    if ($word -ne "running") { return $word }
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like "100.*" } |
+        Select-Object -First 1
+    if ($ip) { return "up $($ip.IPAddress)" }
+    return "running, no 100.x"
+}
+
+function Set-HostService([string]$Name, [string]$Action) {
+    $wsudo = "C:\Tools\TeamM2\wsudo.exe"
+    if (-not (Test-Path -LiteralPath $wsudo)) {
+        [System.Windows.Forms.MessageBox]::Show("Need $wsudo to $Action $Name")
+        return
+    }
+    Start-Process -FilePath $wsudo -ArgumentList @("-A", "-w", "sc.exe", $Action, $Name) -WindowStyle Hidden -Wait
+    Update-Status
 }
 
 function Get-Cs2DeskLine {
@@ -208,16 +247,48 @@ function Start-GymDashboard {
     [System.Windows.Forms.MessageBox]::Show($note, "Start gym")
 }
 
+function Start-ClipScan {
+    $scan = Join-Path $Repo "scripts\Scan-Cs2Deadtime.ps1"
+    if (-not (Test-Path -LiteralPath $scan)) {
+        [System.Windows.Forms.MessageBox]::Show("Missing $scan")
+        return
+    }
+    $already = Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*Scan-Cs2Deadtime.ps1*" }
+    if ($already) {
+        [System.Windows.Forms.MessageBox]::Show("A clip scan is already running.")
+        return
+    }
+    $modelId = ""
+    try { $modelId = [string](Invoke-RestMethod http://127.0.0.1:8888/v1/models -TimeoutSec 2).data[0].id } catch {}
+    if ($modelId -notmatch 'vl') {
+        $ask = [System.Windows.Forms.MessageBox]::Show(
+            "8B vision is not the model on :8888. Stop that model and start Qwen-VL, then scan new clips?",
+            "Scan clips",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        if (-not (Stop-Door)) { return }
+        Start-Door $StartVl
+    }
+    Start-Process -FilePath $Pwsh -ArgumentList @(
+        "-NoProfile", "-File", $scan, "-Limit", "0", "-NativeVideo"
+    ) -WorkingDirectory $Repo -WindowStyle Normal | Out-Null
+    [System.Windows.Forms.MessageBox]::Show(
+        "Scanning new clips only. Files already in the deadtime index are skipped. Qwen-VL has to stay on :8888.",
+        "Scan clips")
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$bg = [System.Drawing.Color]::FromArgb(12, 28, 44)
-$card = [System.Drawing.Color]::FromArgb(16, 40, 60)
-$ink = [System.Drawing.Color]::FromArgb(236, 244, 250)
-$mute = [System.Drawing.Color]::FromArgb(154, 180, 198)
-$teal = [System.Drawing.Color]::FromArgb(72, 214, 204)
-$fieldBg = [System.Drawing.Color]::FromArgb(8, 22, 36)
-$pill = [System.Drawing.Color]::FromArgb(27, 78, 112)
+# Uncle Sam, same palette as ncspot and the terminal: navy field, old-glory red, steel text.
+$bg = [System.Drawing.Color]::FromArgb(10, 17, 28)
+$card = [System.Drawing.Color]::FromArgb(18, 32, 51)
+$ink = [System.Drawing.Color]::FromArgb(244, 246, 248)
+$mute = [System.Drawing.Color]::FromArgb(143, 164, 196)
+$teal = [System.Drawing.Color]::FromArgb(191, 10, 48)
+$fieldBg = [System.Drawing.Color]::FromArgb(7, 13, 22)
+$pill = [System.Drawing.Color]::FromArgb(191, 10, 48)
 
 function New-GodBrainIcon {
     $bmp = New-Object System.Drawing.Bitmap 64, 64
@@ -225,24 +296,24 @@ function New-GodBrainIcon {
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $g.Clear([System.Drawing.Color]::Transparent)
-    $edge = [System.Drawing.Color]::FromArgb(255, 12, 28, 44)
+    $edge = [System.Drawing.Color]::FromArgb(255, 10, 17, 28)
     $crossBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 244, 246, 248))
     $crossPen = New-Object System.Drawing.Pen $edge, 2
     $g.FillRectangle($crossBrush, 26, 2, 12, 60)
     $g.DrawRectangle($crossPen, 26, 2, 12, 60)
     $g.FillRectangle($crossBrush, 6, 10, 52, 12)
     $g.DrawRectangle($crossPen, 6, 10, 52, 12)
-    $brain = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 72, 214, 204))
-    $brainPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 8, 48, 52)), 2
+    $brain = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 0, 40, 104))
+    $brainPen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 10, 17, 28)), 2
     $g.FillEllipse($brain, 12, 28, 22, 26)
     $g.FillEllipse($brain, 30, 28, 22, 26)
     $g.FillEllipse($brain, 18, 44, 28, 14)
     $g.DrawEllipse($brainPen, 12, 28, 22, 26)
     $g.DrawEllipse($brainPen, 30, 28, 22, 26)
     $g.DrawEllipse($brainPen, 18, 44, 28, 14)
-    $fold = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 8, 48, 52)), 1.6
+    $fold = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 10, 17, 28)), 1.6
     $g.DrawLine($fold, 32, 32, 32, 52)
-    $gyrus = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 220, 255, 250)), 1.4
+    $gyrus = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 244, 246, 248)), 1.4
     $g.DrawArc($gyrus, 15, 32, 14, 12, 200, 140)
     $g.DrawArc($gyrus, 35, 32, 14, 12, 200, 140)
     $g.Dispose()
@@ -277,7 +348,7 @@ function New-GodBrainIcon {
     return New-Object System.Drawing.Icon $ico
 }
 
-$railBg = [System.Drawing.Color]::FromArgb(8, 18, 28)
+$railBg = [System.Drawing.Color]::FromArgb(7, 13, 22)
 $deskIcon = New-GodBrainIcon
 $f = New-Object System.Windows.Forms.Form
 $f.Text = "Desk"
@@ -406,7 +477,7 @@ function Add-Row([System.Windows.Forms.Control]$parent, [string]$name, [int]$y) 
 function Paint-Button([System.Windows.Forms.Button]$b, [bool]$primary) {
     $b.FlatStyle = "Flat"
     $b.FlatAppearance.BorderSize = 0
-    $b.ForeColor = $ink
+    $b.ForeColor = $(if ($primary) { [System.Drawing.Color]::White } else { $ink })
     $b.BackColor = $(if ($primary) { $pill } else { $card })
     $b.Cursor = [System.Windows.Forms.Cursors]::Hand
 }
@@ -436,6 +507,10 @@ $rowGym = Add-Row $pageStatus "Gym" 148
 $rowCs2 = Add-Row $pageStatus "CS2" 172
 $rowMouth = Add-Row $pageStatus "Mouth" 196
 $rowGpu = Add-Row $pageStatus "GPU" 220
+$rowRust = Add-Row $pageStatus "RustDesk" 244
+$rowSsh = Add-Row $pageStatus "SSH" 268
+$rowTail = Add-Row $pageStatus "Tailscale" 292
+$rowImage = Add-Row $pageStatus "Image" 316
 
 function Update-Status {
     $mouth = "unread"
@@ -449,7 +524,22 @@ function Update-Status {
     $rowCs2.Text = Get-Cs2DeskLine
     $rowMouth.Text = $mouth
     $rowGpu.Text = (Get-GpuLine) -replace "^GPU ", ""
+    $rowRust.Text = Get-RustDeskLine
+    $rowSsh.Text = Get-SshLine
+    $rowTail.Text = Get-TailscaleLine
+    $rowImage.Text = $(if (Test-Port 8871) { "up :8871" } else { "down" })
 }
+Add-Button $pageStatus "Start RustDesk" 20 352 176 {
+    Set-HostService "RustDesk" "start"
+} $true
+Add-Button $pageStatus "Stop RustDesk" 208 352 176 {
+    $ask = [System.Windows.Forms.MessageBox]::Show(
+        "Stop the RustDesk service? Remote desktop will drop.",
+        "RustDesk",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo)
+    if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    Set-HostService "RustDesk" "stop"
+} $false
 Update-Status
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 4000
@@ -457,12 +547,14 @@ $timer.Add_Tick({ Update-Status })
 $timer.Start()
 
 Add-Head $pageModel "Model" 16
-Add-Button $pageModel "27B text" 20 56 176 { if (Stop-Door) { Start-Door $Start27 } } $true
-Add-Button $pageModel "8B vision" 208 56 176 { if (Stop-Door) { Start-Door $StartVl } } $false
+Add-Button $pageModel "27B text" 20 56 112 { if (Stop-Door) { Start-Door $Start27 } } $true
+Add-Button $pageModel "8B vision" 140 56 112 { if (Stop-Door) { Start-Door $StartVl } } $false
+Add-Button $pageModel "Image" 260 56 124 { if (Stop-Door) { Start-Door $StartImage } } $false
 Add-Button $pageModel "Stop" 20 100 112 { if (Stop-Door) { Update-Status } } $false
 Add-Button $pageModel "Galaxy" 144 100 112 { Start-Process "http://127.0.0.1:8083/" } $false
 Add-Button $pageModel "Gym" 268 100 116 { Start-Process "http://127.0.0.1:4177/" } $false
-Add-Button $pageModel "Start gym" 20 144 364 { Start-GymDashboard } $true
+Add-Button $pageModel "Start gym" 20 144 176 { Start-GymDashboard } $true
+Add-Button $pageModel "Scan clips" 208 144 176 { Start-ClipScan } $false
 
 $cwdLabel = New-Object System.Windows.Forms.Label
 $cwdLabel.Text = "Grok folder"
