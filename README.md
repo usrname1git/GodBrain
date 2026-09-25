@@ -1,26 +1,33 @@
 # GodBrain
 
-Local-first Jarvis on this Windows desk. The mouth is an **OpenAI-compatible
-loopback** server. Desk generate is **Qwen 3.8 27B EXL3** on `:8888`
-(`qwen3.8-27b-exl3-3.5bpw`). `llama-server` and GGUF stay paused: Gemma on
-`:8000` hit a CUDA abort, and this 16 GB card has one generate slot. Colibri
-is the interchangeable alternative, not the daily mouth. Not a commercial
-`-cli` wrapper and not MCP. Models inherit the same Golden Records, and the
-kernel adds tools a stock server will not give you.
+Local-first Jarvis on this Windows machine.
+The mouth is an **OpenAI-compatible loopback** server. Desk generate is **Qwen 3.8 27B EXL3** on `:8888` (`qwen3.8-27b-exl3-3.5bpw`).
+`llama-server` and GGUF usage have been temporarily stopped from being used because of recurring IMA problems.
+
+16 GB GPU's has a max ability for one generate slot.
+Colibri is a possible interchangeable alternative, due to it not relying on GPU VRAM, but not recommended as the daily mouth.
+
+No commercial `-cli` wrappers and no MCP-servers. Models inherit the same Golden Records, and the custom kernel adds tools a stock server will not give you.
 
 ## TLDR
 
 The GodBrain turns local models into a shared, sovereign cognitive system. The core idea:
 
-- **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server. Desk default: Qwen 3.8 27B EXL3 on `:8888`. Gemma on `llama-server` `:8000` is paused. Not an arbitrary chat API. No model is special; they inherit the same teachings.
+- **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server. Desk default: Qwen 3.8 27B EXL3 on `:8888`.
+- Not an arbitrary chat API. No model is special; they inherit the same teachings.
+
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
-- **🛠️ Tools the kernel runs** — Built into the C++ kernel, not 40 npm MCP servers. While Gemma is paused, Galaxy chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
+
+- **🛠️ Tools the kernel runs** — All tools are built into the C++ kernel, so you don't need 40 different MCP servers.
+- Galaxy GUI chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
 
 ## The Compute Cheat Code (vault ≠ GPU)
 
-Mongo + rag-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 128GB Mac can still read the same Golden Records. This desk is **one generate slot** (Qwen 3.8 27B EXL3 3.5bpw on the 16 GB card). A 3090 replacing the 4080 is still that slot, not a second mouth and not a silent swap to GLM MoE. Do not start Gemma beside it.
+Mongo + RAG-service is the vault. The mouth is just compute. A bigger card, a future cloud ingest, or a 512GB Mac Studio can still read the same Golden Records because of the json format being enforced by the librarian.
+This machine has **one generate slot** (Qwen 3.8 27B EXL3 3.5bpw on the 16 GB card). A 3090 replacing the 4080 would still use a single slot, not a second mouth and not a silent swap to GLM MoE.
 
-Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them. Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
+Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them.
+Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
 ## See it running
 
@@ -31,12 +38,9 @@ Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The l
 
 ## How it works
 
-GodBrain routes tool calls through a native C++ kernel instead of patching a
-specific inference server's chat template. The mouth must already be an
-OpenAI-compatible loopback server. Desk generate is EXL3 on `:8888`.
-`llama-server` on `:8000` stays paused. Colibri is the interchangeable
-alternative. This host does not call a
-commercial API, and `.vscode/mcp.json` is empty on purpose.
+GodBrain routes tool calls through a native C++ kernel instead of patching a specific inference server's chat template.
+The mouth must already be an OpenAI-compatible loopback server. Desk generate is currently EXL3 on `:8888`.
+`llama-server` on `:8000` stays paused. Colibri is the interchangeable alternative. This host does not call a commercial API, and `.vscode/mcp.json` is empty on purpose.
 
 - **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Galaxy chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
@@ -65,59 +69,38 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | `LLM/colibri_LLM` | vendored mouth | interchangeable generate engine |
 
 The runtime default is **one loop**, not an agent graph: discover → plan →
-execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up. Oracle chat
-generates; `/verify last` / `/reject last` is the check for playbooks and
-fights. Host inventory and Learn-backed facts promote themselves when a
-probe or a quote match is real. Librarian distills transcripts to
-**candidates**. The bottleneck is the verifier, not the model. A second node is allowed only when a named
-signal pays for it (Architect vs Surgeon, a second inference runner behind
-the same kernel door, or a future candidate-vs-verified conflict queue).
+execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up.
+Oracle chat generates; `/verify last` / `/reject last` is the check for playbooks and fights.
+Host inventory and Learn-backed facts promote themselves when a probe or a quote match is real.
+Librarian distills transcripts to **candidates**. The bottleneck is the verifier, not the model.
+A second node is allowed only when a named signal pays for it (Architect vs Surgeon, a second inference runner behind the same kernel door, or a future candidate-vs-verified conflict queue).
 EXL3 on `:8888` is the desk mouth. Colibri and a paused `llama-server` are other runners behind that same kernel door, not a mesh.
 
-Large changes follow a contractor gate: investigate the repo, state a
-Goal and falsifiable assumptions, ask at most three blocking questions
-(each with a default), then implement. One-liners skip the ceremony.
-Verify on the live ports, then persist. The next loop starts from git and
-Golden Records, not from chat history.
+Large changes follow a contractor gate: investigate the repo, state a goal and falsifiable assumptions, ask at most three blocking questions (each with a default), then implement.
+One-liners skip the ceremony.
+Verify on the live ports, then persist. The next loop starts from git and Golden Records, not from chat history.
 
-Ingest is the same loop with a stricter write rule: **raw sources stay
-immutable**; Librarian extracts *new claims*, not a recap; contradictions
-are flagged on both sides and never silently overwritten; open questions
-stay questions. Chat and any digest read the processed Golden Record
-layer, not the raw transcript pile. Routine extract uses the cheap local
-runner; a heavier model is only for a flagged fight or a high-stakes
+Ingest is the same loop with a stricter write rule: **raw sources stay immutable**; Librarian extracts *new claims*, not a recap; contradictions are flagged on both sides and never silently overwritten; open questions stay questions.
+Chat and any digest read the processed Golden Record layer, not the raw transcript pile. Routine extract uses the cheap local runner; a heavier model is only for a flagged fight or a high-stakes
 synthesis.
 
 ### Golden Record RAG status
 
-Golden Records are the **manual**: crowned facts the mouth RTFMs instead of
-scouring the internet. Retrieval ranking among verified cards is "which page,"
-not "what most pages said." Candidates and raw web text are not Oracle truth.
+Golden Records are the **manual**: crowned facts the mouth RTFMs instead of scouring the internet. Retrieval ranking among verified cards is "which page," not "what most pages said."
+Candidates and raw web text are not Oracle truth.
 
-Layer 3 is implemented. The production C++ kernel and the parked Go/Rust
-routers retrieve prompt context only through
-`http://127.0.0.1:8084/v1/search`. They validate the generation and
-`hybrid-v1` contract, preserve bounded citations and trust labels, and wrap
-retrieved text as explicitly untrusted reference data. If the service is
-unavailable, unready, malformed, oversized, or returns no usable context,
-**and** this kernel process has no session notes, chat fails closed before a
-model is started. Non-empty process session notes (hydrated from RAG at boot,
-or `/remember`) may still go to the mouth without a fresh Golden Record hit.
-They do not fall back to the old `nodes` collection. Galaxy graph and node
-lookup use the same service (`/v1/graph`, `/v1/document`) and the active
-`rag_documents` generation.
+Layer 3 is implemented. The production C++ kernel and the parked Go/Rust routers retrieve prompt context only through `http://127.0.0.1:8084/v1/search`.
+They validate the generation and `hybrid-v1` contract, preserve bounded citations and trust labels, and wrap retrieved text as explicitly untrusted reference data.
+If the service is unavailable, unready, malformed, oversized, or returns no usable context, **and** this kernel process has no session notes, chat fails closed before a model is started.
+Non-empty process session notes (hydrated from RAG at boot, or `/remember`) may still go to the mouth without a fresh Golden Record hit.
+They do not fall back to the old `nodes` collection. Galaxy graph and node lookup use the same service (`/v1/graph`, `/v1/document`) and the active `rag_documents` generation.
 
 Lexical/metadata retrieval remains the zero-configuration canonical fallback.
-An optional exact-loopback OpenAI-compatible embedding provider enables
-generation-versioned embeddings and deterministic hybrid RRF over a bounded
-4,096-document exact-cosine backend. Health and search responses state the exact
-mode and degradation reason; they never claim hybrid when the provider, model
-identity, projection, or bounded backend is unavailable. The checked-in
-synthetic fixture currently measures Recall@K, MRR, and nDCG@K at 1.0 with zero
-hidden-record leakage. These are reproducibility checks for the deterministic
-fake provider, not real-model quality claims. Privileged `command_type` dispatch
-remains a separate C++ request path protected by the configured bearer token and
-sovereignty checks.
+An optional exact-loopback OpenAI-compatible embedding provider enables generation-versioned embeddings and deterministic hybrid RRF over a bounded 4,096-document exact-cosine backend.
+Health and search responses state the exact mode and degradation reason; they never claim hybrid when the provider, model identity, projection, or bounded backend is unavailable.
+The checked-in synthetic fixture currently measures Recall@K, MRR, and nDCG@K at 1.0 with zero hidden-record leakage.
+These are reproducibility checks for the deterministic fake provider, not real-model quality claims.
+Privileged `command_type` dispatch remains a separate C++ request path protected by the configured bearer token and sovereignty checks.
 
 ### Kernel `command_type`s
 
@@ -156,8 +139,13 @@ Karpathy's second brain is cute for taking notes. GodBrain is the same idea with
 
 Two product wants that are not notes:
 
-- **Replace Copilot / gemini-cli on this host.** GodBrain is the local agent loop you own: Galaxy + C++ kernel + one mouth. Hands are compiled into `local_tools.cpp`, not an MCP/plugin catalog. Copilot's Filesystem + Desktop Commander list was existence proof, not a stack to import. Do not dual-run. llama-server is an interchangeable generate engine; a GodBrain llama fork is later, only if ggml sunsets or blocks the tool path. Kernel tools and judge stay here so a vendor CLI dying does not take the desk with it.
-- **Replace the web-dev loop on this repo.** Galaxy, Tailscale glances, Shortcuts, and allowlisted `/edit` should grow until you do not hire someone to ship GodBrain UI. That is a destination, not "no sandbox, write anything."
+- **Replace any need for use of the Claude, Codex, Copilot, Gemini-cli and similar on this host.**
+- GodBrain is the local agent loop you own: Galaxy + C++ kernel + one mouth. Hands are compiled into `local_tools.cpp`, not an MCP/plugin catalog.
+- Copilot's Filesystem + Desktop Commander list was existence proof, not a stack to import.
+- Do not dual-run. llama-server is an interchangeable generate engine; a GodBrain fork might be made later, only if ggml sunsets or blocks the tool path.
+- Kernel tools and judge stay here so a vendor CLI dying does not take the desk with it.
+- **Replace the web-dev loop on this repo.** Galaxy, Tailscale glances, Shortcuts, and allowlisted `/edit` should grow until you do not hire someone to ship GodBrain UI.
+- That is a destination, not "no sandbox, write anything."
 - **Models teach models over time.** Chat already retrieves committed teachings through rag-service (`:8084`). `query_recent_thoughts` and `/recall` list newest projected nodes; `/recall <query>` searches **verified** Golden Records through that same API — not `mongosh`, not a MongoDB IDE/MCP plugin against the live vault.
 
 On this host it is **one Windows loop**, not Ring 0, not a Distributed Cognitive OS across Devuan/macOS, and not zero permission-begging. The vault is decoupled from the GPU. The operator is not.
@@ -174,7 +162,8 @@ Shipped on this desk, not slideware:
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
 - **Desk panel** — `scripts\Show-DeskMenu.ps1`. Tray icon, one GPU model on `:8888`, kernel, RAG, Mongo, gym, lyrics. X hides. The power glyph quits.
 - **Lyrics** — `scripts\lyrics_loop.py` through `scripts\Invoke-LyricsLoop.ps1`. Two CPU Whisper passes, lock the lines that agree, redo only the draft. Recordings stay on `C:\nvme\stt\lyrics`. The 4080 is not used.
-- **Autonomous frontend practice** — `scripts\Invoke-FrontendGym.ps1 -Continuous` runs local learner/tutor attempts against a protected browser evaluator. Failures feed repairs; passing source and evidence become reusable gym examples without operator code review. This is not authority to modify Windows.
+- **Autonomous frontend practice** — `scripts\Invoke-FrontendGym.ps1 -Continuous` runs local learner/tutor attempts against a protected browser evaluator.
+- Failures feed repairs; passing source and evidence become reusable gym examples without operator code review. This is not authority to modify Windows.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
 
@@ -214,4 +203,4 @@ Not this host — several are standing nos. See [`docs/architecture/future.md`](
 
 ## Credits
 
-TrustedInstaller on this desk is `wsudo -T` from conhost or Windows Terminal (`C:\Tools\TeamM2\wsudo.exe`). `Privexec.exe` in that folder is a GUI picker and is not used. Heal never calls `wsudo`. Chat `run_elevate` under `/yolo` uses MinSudo / `wsudo -A -w`, never `-T`. Chat `acl_takeover` / `acl_release` is the named `-T` door.
+https://github.com/M2Team - wsudo enable's elevation to TrustedInstaller in every way you could possibly need.
