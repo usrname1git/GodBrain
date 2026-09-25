@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { chooseTask, classifyMastery, masterySnapshot, selectCurriculumTask } from './scheduler.mjs';
+import { chooseTask, classifyMastery, examinerHolds, masterySnapshot, selectCurriculumTask } from './scheduler.mjs';
 
 const tasks = [
   { id: 'legacy', title: 'Legacy', family: 'old' },
@@ -63,6 +63,121 @@ test('mastery ignores verdicts from obsolete evaluator epochs', () => {
   assert.equal(row.mastery, 'mastered');
 });
 
+test('evaluator family keeps a contrast collapse across hash bumps', () => {
+  const masteredTask = {
+    ...tasks.find(item => item.id === 'university-a'),
+    university: {
+      ...tasks.find(item => item.id === 'university-a').university,
+      status: 'mastered',
+    },
+  };
+  const events = [
+    ...Array.from({ length: 20 }, () => ({
+      type: 'attempt_failed',
+      taskId: masteredTask.id,
+      evaluatorVersion: 'browser-evaluator-v6:aaa',
+    })),
+    ...Array.from({ length: 8 }, () => ({
+      type: 'attempt_failed',
+      taskId: masteredTask.id,
+      evaluatorVersion: 'browser-evaluator-v6:bbb',
+    })),
+  ];
+  const row = classifyMastery(events, state(), [masteredTask])[0];
+  assert.equal(row.recentAttempts, 28);
+  assert.equal(row.recentPassed, 0);
+  assert.equal(row.mastery, 'improving');
+});
+
+test('persisted university mastery collapses when the current examiner fails the window', () => {
+  const masteredTask = {
+    ...tasks.find(item => item.id === 'university-a'),
+    university: {
+      ...tasks.find(item => item.id === 'university-a').university,
+      status: 'mastered',
+    },
+  };
+  const events = Array.from({ length: 20 }, () => ({
+    type: 'attempt_failed',
+    taskId: masteredTask.id,
+    evaluatorVersion: 'browser-v6',
+  }));
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== masteredTask.id),
+    masteredTask,
+  ]);
+  assert.equal(rows.find(item => item.id === masteredTask.id).mastery, 'improving');
+  assert.equal(rows.find(item => item.id === masteredTask.id).recentPassed, 0);
+  const choice = chooseTask(rows, { selectionCount: 1 });
+  assert.equal(choice.reason, 'university-growth');
+  assert.equal(choice.selected.id, masteredTask.id);
+});
+
+test('ledger-mastered cycle 1 courses still retrain when contrast is 0%', () => {
+  const layout = {
+    id: 'university-responsive-layout-v1',
+    title: 'Layout',
+    family: 'university',
+    qualityProfile: 'frontend-university-v1',
+    baseTaskId: 'quality-a',
+    university: { competencyId: 'responsive-layout', level: 2, cycle: 1, stage: 1, status: 'mastered' },
+  };
+  const events = Array.from({ length: 20 }, () => ({
+    type: 'attempt_failed', taskId: layout.id, evaluatorVersion: 'browser-evaluator-v6:x',
+  }));
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== 'university-a'),
+    layout,
+  ]);
+  assert.equal(examinerHolds(rows.find(item => item.id === layout.id)), false);
+  const choice = chooseTask(rows, { selectionCount: 1 });
+  assert.equal(choice.selected.id, layout.id);
+});
+
+test('cycle 4 visual God still retrains when the current examiner collapses', () => {
+  const visual = {
+    id: 'university-visual-god-v1',
+    title: 'Visual God',
+    family: 'university',
+    qualityProfile: 'frontend-university-v1',
+    baseTaskId: 'visual-god-v1',
+    university: { competencyId: 'visual-god', level: 9, cycle: 4, stage: 1, status: 'mastered' },
+  };
+  const events = Array.from({ length: 20 }, () => ({
+    type: 'attempt_failed', taskId: visual.id, evaluatorVersion: 'browser-evaluator-v6:x',
+  }));
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== 'university-a'),
+    visual,
+  ]);
+  assert.equal(examinerHolds(rows.find(item => item.id === visual.id)), false);
+  const choice = chooseTask(rows, { selectionCount: 1 });
+  assert.equal(choice.selected.id, visual.id);
+});
+
+test('a majority-passing window is still retrained until it is 100%', () => {
+  const masteredTask = {
+    ...tasks.find(item => item.id === 'university-a'),
+    university: {
+      ...tasks.find(item => item.id === 'university-a').university,
+      status: 'mastered',
+    },
+  };
+  const events = [
+    ...passingEvents(masteredTask.id, 6, 2),
+    ...Array.from({ length: 4 }, () => ({ type: 'attempt_failed', taskId: masteredTask.id })),
+    ...passingEvents('quality-b', 24, 3),
+    ...passingEvents('legacy', 24, 3),
+  ];
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== 'university-a'),
+    masteredTask,
+  ]);
+  assert.equal(examinerHolds(rows.find(item => item.id === masteredTask.id)), false);
+  const choice = chooseTask(rows, { selectionCount: 1 });
+  assert.equal(choice.selected.id, masteredTask.id);
+});
+
 test('persisted university mastery is not revoked by a short regression epoch', () => {
   const masteredTask = {
     ...tasks.find(item => item.id === 'university-a'),
@@ -112,7 +227,7 @@ test('active university study outranks a weaker legacy quality course', () => {
   const rows = classifyMastery(events, state(), tasks);
   const choice = chooseTask(rows, { selectionCount: 1 });
   assert.equal(rows.find(row => row.id === 'university-a').recentPassRate, 0.9);
-  assert.equal(choice.reason, 'university-growth');
+  assert.equal(examinerHolds(rows.find(row => row.id === 'university-a')), false);
   assert.equal(choice.selected.id, 'university-a');
 });
 
@@ -150,6 +265,24 @@ test('parse failures count against quality mastery and a death spiral is parked'
   assert.equal(choice.selected.id, 'quality-b');
 });
 
+test('ten perfect attempts do not hold an active course', () => {
+  const events = passingEvents('university-a', 10, 2);
+  const row = classifyMastery(events, state(), tasks).find(item => item.id === 'university-a');
+  assert.equal(row.mastery, 'learning');
+  assert.equal(examinerHolds(row), false);
+  const choice = chooseTask(classifyMastery(events, state(), tasks), { selectionCount: 1 });
+  assert.equal(choice.selected.id, 'university-a');
+});
+
+test('measured mastery holds an active course', () => {
+  const events = passingEvents('university-a', 20, 2);
+  const row = classifyMastery(events, state(), tasks).find(item => item.id === 'university-a');
+  assert.equal(row.mastery, 'mastered');
+  assert.equal(examinerHolds(row), true);
+  const choice = chooseTask(classifyMastery(events, state(), tasks), { selectionCount: 1 });
+  assert.notEqual(choice.selected?.id, 'university-a');
+});
+
 test('zero-pass university exam is persisted on parkedTaskIds', async t => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), 'work', 'tests');
   await fs.mkdir(root, { recursive: true });
@@ -160,9 +293,14 @@ test('zero-pass university exam is persisted on parkedTaskIds', async t => {
     Array.from({ length: 20 }, () => JSON.stringify({ type: 'attempt_failed', taskId: 'university-a' })).join('\n'),
   );
   const current = state();
-  current.scheduler = { selectionCount: 1, parkedTaskIds: [] };
-  await selectCurriculumTask(workDir, current, tasks);
-  assert.ok(current.scheduler.parkedTaskIds.includes('university-a'));
+  current.scheduler = { selectionCount: 1, parkedTaskIds: ['university-a'] };
+  const selected = await selectCurriculumTask(workDir, current, tasks);
+  assert.equal(selected.id, 'university-a');
+  assert.equal(current.scheduler.parkedTaskIds.includes('university-a'), false);
+  assert.equal(examinerHolds(classifyMastery(
+    Array.from({ length: 20 }, () => ({ type: 'attempt_failed', taskId: 'university-a' })),
+    state(), tasks,
+  ).find(item => item.id === 'university-a')), false);
 });
 
 test('zero-pass university growth is parked after a long fail streak', () => {
@@ -174,21 +312,75 @@ test('zero-pass university growth is parked after a long fail streak', () => {
   const many = classifyMastery(
     Array.from({ length: 20 }, () => ({ type: 'attempt_failed', taskId: 'university-a' })),
     state(), tasks);
-  const parked = chooseTask(many, { selectionCount: 3, lastTaskId: 'university-a', failedBatchStreak: 8 });
-  assert.notEqual(parked.selected.id, 'university-a');
-  assert.notEqual(parked.reason, 'university-growth');
-  const maintenance = chooseTask(many, { selectionCount: 1, parkedTaskIds: ['university-a'] });
-  assert.notEqual(maintenance.selected.id, 'university-a');
+  const retrains = chooseTask(many, { selectionCount: 3, lastTaskId: 'university-a', failedBatchStreak: 8 });
+  assert.equal(retrains.reason, 'university-growth');
+  assert.equal(retrains.selected.id, 'university-a');
 });
 
-test('mastered drills are sampled as regression rather than repeated continuously', () => {
-  const events = tasks.flatMap(task => passingEvents(task.id, 24, 3));
-  const rows = classifyMastery(events, state(), tasks);
-  const regression = chooseTask(rows, { selectionCount: 20 });
-  assert.equal(regression.reason, 'regression');
-  const maintenance = chooseTask(rows, { selectionCount: 21 });
-  assert.equal(maintenance.reason, 'quality-maintenance');
-  assert.equal(maintenance.selected.qualityProfile, 'marketing-site-v1');
+test('mastered university courses and their contracts are never replayed', () => {
+  const universityMastered = {
+    id: 'university-nav-v1',
+    title: 'University nav',
+    family: 'university',
+    qualityProfile: 'frontend-university-v1',
+    baseTaskId: 'quality-a',
+    university: { competencyId: 'accessible-navigation', level: 2, status: 'mastered' },
+  };
+  const events = [
+    ...passingEvents('university-nav-v1', 24, 3),
+    ...passingEvents('quality-a', 24, 3),
+    ...passingEvents('quality-b', 24, 3),
+    ...passingEvents('legacy', 24, 3),
+  ];
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== 'university-a'),
+    universityMastered,
+  ]);
+  const idle = chooseTask(rows, { selectionCount: 20 });
+  assert.equal(idle.reason, 'ladder-complete');
+  assert.equal(idle.selected, null);
+});
+
+test('ledger-mastered university still hides the base contract after a contrast collapse', () => {
+  const collapsed = {
+    id: 'university-tokens-v1',
+    title: 'Tokens',
+    family: 'university',
+    qualityProfile: 'frontend-university-v1',
+    baseTaskId: 'quality-a',
+    university: { competencyId: 'design-tokens', level: 2, status: 'mastered' },
+  };
+  const events = [
+    ...Array.from({ length: 20 }, () => ({ type: 'attempt_failed', taskId: 'university-tokens-v1', evaluatorVersion: 'browser-evaluator-v6:x' })),
+    ...passingEvents('quality-b', 24, 3),
+    ...passingEvents('legacy', 24, 3),
+  ];
+  const rows = classifyMastery(events, state(), [
+    ...tasks.filter(item => item.id !== 'university-a'),
+    collapsed,
+  ]);
+  const retrains = chooseTask(rows, { selectionCount: 3 });
+  assert.equal(retrains.reason, 'university-growth');
+  assert.equal(retrains.selected.id, 'university-tokens-v1');
+});
+
+test('unmastered university work still outranks a mastered contract replay', () => {
+  const universityActive = {
+    id: 'university-shop-v1',
+    title: 'Shop',
+    family: 'university',
+    qualityProfile: 'frontend-university-v1',
+    baseTaskId: 'shop-cart-checkout-v1',
+    university: { competencyId: 'shop-cart-checkout', level: 9, status: 'active' },
+  };
+  const events = [
+    ...passingEvents('quality-a', 24, 3),
+    ...passingEvents('legacy', 24, 3),
+  ];
+  const rows = classifyMastery(events, state(), [...tasks, universityActive]);
+  const choice = chooseTask(rows, { selectionCount: 1 });
+  assert.equal(choice.reason, 'university-growth');
+  assert.equal(choice.selected.id, 'university-shop-v1');
 });
 
 test('repeated failed university batches rotate autonomous replans', async t => {

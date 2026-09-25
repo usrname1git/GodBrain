@@ -5,7 +5,7 @@ import { readJson, writeJson } from './gym-core.mjs';
 import { validateVerifierSpec } from './verifier-dsl.mjs';
 
 const VERSION = 1;
-export const COURSE_DEFINITION_VERSION = 13;
+export const COURSE_DEFINITION_VERSION = 14;
 
 function courseId(competencyId, iteration = 1) {
   return `university-${competencyId}-v${iteration}`;

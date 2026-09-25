@@ -59,7 +59,13 @@ function bars(rows, bad = false) {
   return rows.map(row => `<div class="bar-row ${bad ? 'bad' : ''}"><span>${esc(row.label)}</span><div class="bar"><i style="width:${Math.max(2,row.value/max*100)}%"></i></div><strong>${esc(row.display ?? row.value)}</strong></div>`).join('');
 }
 
+function examinerStale(course) {
+  return (course.recentAttempts || 0) >= 8 && (course.recentPassRate || 0) < 1;
+}
+
 function render(data) {
+  const university=data.university||{};
+  const staleCourses=(university.courses||[]).filter(examinerStale);
   const live=['generating','evaluating','learning','consulting_tutor'].includes(data.status);
   const armed=Boolean(data.trainingPaused && live);
   $('status').textContent = armed
@@ -68,7 +74,11 @@ function render(data) {
       ? (data.trainingStopQwen ? 'paused · Qwen stops when idle' : 'paused and saved')
       : data.status === 'autoplay_off'
         ? 'autoplay off · waiting'
-        : data.status;
+        : data.status === 'ladder_complete'
+          ? (staleCourses.length
+              ? `idle · ${staleCourses.length} courses under 100%`
+              : 'ladder complete · all sampled courses 100%')
+          : data.status;
   $('updated').textContent = data.updatedAt ? new Date(data.updatedAt).toLocaleTimeString() : '';
   $('liveDot').style.background = !data.trainingPaused && live ? 'var(--green)' : 'var(--amber)';
   $('trainingToggle').textContent = armed
@@ -107,23 +117,24 @@ function render(data) {
     {label:'New candidate source',value:n.newSource||0},{label:'Reused qualified source',value:n.knownLessonSource||0},{label:'Invalid / no source',value:n.noSource||0}
   ]);
   $('objectives').innerHTML=(data.objectives||[]).filter(o=>o.status!=='completed').slice().reverse().slice(0,8).map(o=>`<div class="queue"><strong>${esc(o.title)}</strong><div class="meta">${esc(o.mode)} · ${esc(o.status)} · ${(o.runIds||[]).length} runs</div></div>`).join('')||'<p class="meta">Queue empty. Completed work is retained in campaigns and the gallery.</p>';
-  const university=data.university||{};
   const parked=new Set(data.scheduler?.parkedTaskIds||[]);
   const liveTask=data.active?.taskId||data.task||'';
   const studying=university.active&&!parked.has(university.active.id)?university.active:null;
   const graduated=university.programStatus==='graduated';
   $('universityStatus').textContent=graduated
-    ?`Ladder complete · ${university.programTitle||'Frontend mastery'}`
+    ?(staleCourses.length
+        ?`Ledger ${university.masteredCount||0}/${university.blueprintCount||0} · ${staleCourses.length} under 100%`
+        :`Ladder complete · ${university.programTitle||'Frontend mastery'}`)
     :(studying?`Cycle ${studying.cycle} · Stage ${studying.stage} · ${studying.title}`:(parked.size?`Parked ${[...parked][0]} · live ${liveTask||'—'}`:'Preparing the next course'));
   $('universityMetrics').innerHTML=[
-    ['Program',graduated?'Complete':(university.currentCycle?`C${university.currentCycle} S${university.currentStage}`:'Enrolled')],
+    ['Program',graduated?(staleCourses.length?'Crowned · not 100%':'Complete'):(university.currentCycle?`C${university.currentCycle} S${university.currentStage}`:'Enrolled')],
     ['Courses',`${university.masteredCount||0}/${university.blueprintCount||0}`],
     ['Cycle',studying?.cycle||university.currentCycle||'—'],
   ].map(([a,b])=>`<div class="pill"><small class="meta">${a}</small><strong>${b}</strong></div>`).join('');
   $('universityCourses').innerHTML=(university.courses||[]).map(course=>{
     const isParked=parked.has(course.id);
     const isLive=liveTask===course.id;
-    const stamp=isParked?'parked':isLive?'live':course.status;
+    const stamp=isParked?'parked':isLive?'live':examinerStale(course)?'stale vs examiner':course.status;
     const tries=course.recentAttempts||0;
     const score=`${tries} tries · ${course.recentPassed||0} pass · ${course.recentFailed||0} fail · ${pct(course.recentPassRate)}`;
     const when=course.cycle&&course.stage?`C${course.cycle} S${course.stage}`:`Level ${course.level}`;

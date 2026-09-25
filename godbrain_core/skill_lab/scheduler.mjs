@@ -1,11 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { evaluatorFamily } from './gym-core.mjs';
 
 const WINDOW = 40;
 const MIN_MASTERY_SAMPLES = 20;
 const MASTERY_RATE = 0.95;
-const REGRESSION_INTERVAL = 20;
-const LEGACY_WEAK_INTERVAL = 5;
 const UNIVERSITY_REPLAN_HINTS = Object.freeze([
   'Rebuild from the typed prop contract first. Render every required seeded value before adding optional presentation details.',
   'Use a minimal semantic shell: header and generated navigation, hero and CTAs, four generated sections, proof points, footer, then the responsive Menu state.',
@@ -44,8 +43,9 @@ export function classifyMastery(events, state, tasks) {
       : allTaskEvents;
     const latestEvaluatorVersion = [...sinceExam].reverse()
       .find(event => typeof event.evaluatorVersion === 'string' && event.evaluatorVersion)?.evaluatorVersion;
-    const currentEvents = latestEvaluatorVersion
-      ? sinceExam.filter(event => event.evaluatorVersion === latestEvaluatorVersion)
+    const currentFamily = evaluatorFamily(latestEvaluatorVersion);
+    const currentEvents = currentFamily
+      ? sinceExam.filter(event => evaluatorFamily(event.evaluatorVersion) === currentFamily)
       : sinceExam;
     const taskEvents = currentEvents.slice(-WINDOW);
     const passed = taskEvents.filter(event => event.type === 'exercise_passed');
@@ -54,12 +54,15 @@ export function classifyMastery(events, state, tasks) {
     const distinctPassingSources = new Set(passed.map(event => event.sourceHash).filter(Boolean)).size;
     const measuredMastery = taskEvents.length >= MIN_MASTERY_SAMPLES &&
       passRate >= MASTERY_RATE && distinctPassingSources >= 2;
-    const mastered = task.university?.status === 'mastered' || measuredMastery;
+    const collapsed = taskEvents.length >= MIN_MASTERY_SAMPLES && passRate < 0.5;
+    const mastered = measuredMastery ||
+      (task.university?.status === 'mastered' && !collapsed);
     return {
       id: task.id,
       title: task.title,
       family: task.family,
       qualityProfile: task.qualityProfile ?? null,
+      baseTaskId: task.baseTaskId ?? null,
       university: task.university ?? null,
       attempted: state.stats.byTask[task.id]?.attempted ?? 0,
       passed: state.stats.byTask[task.id]?.passed ?? 0,
@@ -82,80 +85,77 @@ function weakest(rows) {
     a.id.localeCompare(b.id))[0];
 }
 
+export function examinerHolds(row) {
+  const perfect = (row.recentAttempts ?? 0) >= 10 && (row.recentPassRate ?? 0) >= 1;
+  if (row.university?.status === 'mastered') return perfect;
+  return row.mastery === 'mastered';
+}
+
 export function chooseTask(rows, scheduler = {}) {
   const selectionCount = Number.isSafeInteger(scheduler.selectionCount) ? scheduler.selectionCount : 0;
   const parked = new Set(scheduler.parkedTaskIds ?? []);
   for (const row of rows) {
-    if (row.university && row.mastery !== 'mastered' &&
-        row.recentAttempts >= MIN_MASTERY_SAMPLES && row.recentPassed === 0) {
-      parked.add(row.id);
-    }
-    if (row.qualityProfile && !row.university && row.mastery !== 'mastered' &&
-        row.recentAttempts >= 10 && row.recentPassRate < 0.35) {
+    if (examinerHolds(row) || row.university) continue;
+    if (row.qualityProfile && row.recentAttempts >= 10 && row.recentPassRate < 0.35) {
       parked.add(row.id);
     }
   }
-  const allQuality = rows.filter(row => row.qualityProfile);
-  const quality = allQuality.filter(row => !parked.has(row.id));
-  const universityLearning = quality.filter(row => row.university && row.mastery !== 'mastered');
-  const qualityLearning = quality.filter(row => row.mastery !== 'mastered');
-  const legacyLearning = rows.filter(row => !row.qualityProfile && row.mastery !== 'mastered');
-  const mastered = rows.filter(row => row.mastery === 'mastered');
-  let selected;
-  let reason;
+  const masteredContracts = new Set();
+  for (const row of rows) {
+    if (row.university && examinerHolds(row)) {
+      masteredContracts.add(row.id);
+      if (row.baseTaskId) masteredContracts.add(row.baseTaskId);
+    }
+  }
+  const eligible = rows.filter(row =>
+    !parked.has(row.id) &&
+    !examinerHolds(row) &&
+    !masteredContracts.has(row.id));
+  const universityLearning = eligible.filter(row => row.university);
+  const qualityLearning = eligible.filter(row => row.qualityProfile);
+  const legacyLearning = eligible.filter(row => !row.qualityProfile && !row.university);
   if (universityLearning.length) {
-    selected = weakest(universityLearning);
-    reason = 'university-growth';
-  } else if (qualityLearning.length) {
-    selected = weakest(qualityLearning);
-    reason = 'quality-growth';
-  } else if (mastered.length && selectionCount % REGRESSION_INTERVAL === 0) {
-    selected = mastered[selectionCount % mastered.length];
-    reason = 'regression';
-  } else if (legacyLearning.length && selectionCount % LEGACY_WEAK_INTERVAL === 0) {
-    selected = weakest(legacyLearning);
-    reason = 'targeted-weakness';
-  } else if (quality.length) {
-    selected = quality[selectionCount % quality.length];
-    reason = 'quality-maintenance';
-  } else {
-    selected = weakest(legacyLearning.length ? legacyLearning : rows);
-    reason = legacyLearning.length ? 'targeted-weakness' : 'regression';
+    return { selected: weakest(universityLearning), reason: 'university-growth' };
   }
-  return { selected, reason };
+  if (qualityLearning.length) {
+    return { selected: weakest(qualityLearning), reason: 'quality-growth' };
+  }
+  if (legacyLearning.length) {
+    return { selected: weakest(legacyLearning), reason: 'targeted-weakness' };
+  }
+  return { selected: null, reason: 'ladder-complete' };
 }
 
 export async function selectCurriculumTask(workDir, state, tasks) {
   const rows = classifyMastery(await recentEvents(workDir), state, tasks);
   const scheduler = state.scheduler ?? { selectionCount: 0, lastTaskId: null, lastReason: null };
-  scheduler.parkedTaskIds = [...(scheduler.parkedTaskIds ?? [])];
+  scheduler.parkedTaskIds = (scheduler.parkedTaskIds ?? []).filter(id => {
+    const row = rows.find(item => item.id === id);
+    if (row?.university && !examinerHolds(row)) return false;
+    return true;
+  });
   if (state.lastRun?.passed === true && state.lastRun.taskId) {
     scheduler.parkedTaskIds = scheduler.parkedTaskIds.filter(id => id !== state.lastRun.taskId);
   }
   if ((scheduler.failedBatchStreak ?? 0) >= 6 && scheduler.lastTaskId) {
     const stuck = rows.find(row => row.id === scheduler.lastTaskId);
-    if (stuck && stuck.mastery !== 'mastered' && stuck.recentPassed === 0) {
+    if (stuck && !examinerHolds(stuck) && stuck.recentPassed === 0) {
       if (!scheduler.parkedTaskIds.includes(stuck.id)) scheduler.parkedTaskIds.push(stuck.id);
     }
   }
   const choice = chooseTask(rows, scheduler);
-  for (const row of rows) {
-    if (row.university && row.mastery !== 'mastered' &&
-        row.recentAttempts >= MIN_MASTERY_SAMPLES && row.recentPassed === 0 &&
-        !scheduler.parkedTaskIds.includes(row.id)) {
-      scheduler.parkedTaskIds.push(row.id);
-    }
-  }
-  const repeatedFailedBatch = choice.reason === 'university-growth' &&
+  const repeatedFailedBatch = Boolean(choice.selected) &&
+    choice.reason === 'university-growth' &&
     scheduler.lastTaskId === choice.selected.id &&
     state.lastRun?.taskId === choice.selected.id &&
     state.lastRun?.passed === false;
   scheduler.failedBatchStreak = repeatedFailedBatch ? (scheduler.failedBatchStreak ?? 0) + 1 : 0;
   scheduler.selectionCount++;
-  scheduler.lastTaskId = choice.selected.id;
+  scheduler.lastTaskId = choice.selected?.id ?? null;
   scheduler.lastReason = choice.reason;
   scheduler.updatedAt = new Date().toISOString();
   state.scheduler = scheduler;
+  if (!choice.selected) return null;
   const task = tasks.find(candidate => candidate.id === choice.selected.id);
   if (!task || choice.reason !== 'university-growth') return task;
   const selectedTask = choice.selected.distinctPassingSources >= 2

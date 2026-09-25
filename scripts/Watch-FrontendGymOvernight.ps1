@@ -67,14 +67,14 @@ function Get-FrontendPause {
 function Write-WatchBanner {
     try { $Host.UI.RawUI.WindowTitle = "GodBrainGymWatch" } catch {}
     Write-Host "GodBrain gym watchdog" -ForegroundColor Cyan
-    Write-Host "qwen3.8-27b-exl3-3.5bpw :8888 10k | gym.mjs :4177 | one GPU slot | never kill generate" -ForegroundColor DarkCyan
-    Write-Host "Pause & Save keeps Qwen warm. Pause+Stop Qwen waits until gym is idle." -ForegroundColor DarkCyan
-    Write-Host ("log {0}" -f $events) -ForegroundColor DarkGray
+    Write-Host "qwen3.8-27b-exl3-3.5bpw :8888 10k | Creation Lab http://127.0.0.1:4177 | one GPU slot | never kill generate" -ForegroundColor DarkCyan
+    Write-Host "Dashboard runs hidden under this watchdog. Pause & Save keeps Qwen warm." -ForegroundColor DarkCyan
+    Write-Host ("host PS {0} {1} | log {2}" -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition, $events) -ForegroundColor DarkGray
     Write-Host ""
 }
 
 function Test-Port([int]$port) {
-    return $null -ne (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    return Test-LoopbackPort $port
 }
 
 function Get-QwenListenerProcess {
@@ -84,9 +84,13 @@ function Get-QwenListenerProcess {
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
     if ($process -and
         $process.Name -eq "python.exe" -and
-        $process.CommandLine -like "*tools\serve_openai.py*" -and
+        $process.CommandLine -like "*serve_openai.py*" -and
         $process.CommandLine -like "*Qwen3.8-27B-EXL3-3.5bpw*") {
-        return $process
+        return [pscustomobject]@{
+            ProcessId = [int]$process.ProcessId
+            Name = $process.Name
+            CommandLine = $process.CommandLine
+        }
     }
     return $null
 }
@@ -111,23 +115,8 @@ function Set-QwenReceipt($process) {
 
 function Get-QwenProcess {
     $listener = Get-QwenListenerProcess
-    if ($listener) {
-        Set-QwenReceipt $listener
-        return $listener
-    }
-    if (-not (Test-Path -LiteralPath $qwenReceipt)) { return $null }
-    try {
-        $receipt = Get-Content -LiteralPath $qwenReceipt -Raw | ConvertFrom-Json
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$receipt.pid)" -ErrorAction SilentlyContinue
-        if ($process -and
-            $process.Name -eq "python.exe" -and
-            $process.CommandLine -like "*tools\serve_openai.py*" -and
-            $process.CommandLine -like "*Qwen3.8-27B-EXL3-3.5bpw*" -and
-            $process.CommandLine -like "*--port 8888*") {
-            return $process
-        }
-    } catch {}
-    return $null
+    if ($listener) { Set-QwenReceipt $listener }
+    return $listener
 }
 
 function Stop-Qwen {
@@ -154,17 +143,15 @@ function Start-Qwen {
     }
     if (Get-QwenProcess) { return }
     if (Test-Port 8888) {
-        Write-WatchEvent "qwen_blocked" "Port 8888 is owned by an unrecognized process."
+        Write-WatchEvent "qwen_keep" "Port 8888 already listening; leaving Qwen alone."
         return
     }
     $launcher = Start-Process -FilePath $pwsh `
         -ArgumentList @(
-            "-NoLogo", "-NoProfile", "-NonInteractive", "-File", $qwenStart
+            "-NoLogo", "-NoProfile", "-File", $qwenStart
         ) `
         -WorkingDirectory (Split-Path (Split-Path $qwenStart -Parent) -Parent) `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $qwenOut `
-        -RedirectStandardError $qwenErr `
+        -WindowStyle Normal `
         -PassThru
     $deadline = (Get-Date).AddMinutes(4)
     $process = $null
@@ -178,6 +165,53 @@ function Start-Qwen {
     if (-not $process) { throw "Qwen did not become ready on :8888 within four minutes." }
     Set-QwenReceipt $process
     Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) at 10K with MTP off."
+}
+
+function Test-LoopbackPort([int]$Port) {
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $ok = $client.ConnectAsync("127.0.0.1", $Port).Wait(400)
+        $client.Close()
+        return [bool]$ok
+    } catch {
+        return $false
+    }
+}
+
+function Read-GymGlance {
+    # Windows PowerShell 5.1 ConvertFrom-Json of gym state.json stack-overflows
+    # (0xc00000fd / -1073741571). Node parses the 189-lesson graph; this host
+    # only ConvertFrom-Json the tiny glance.
+    if (-not (Test-Path -LiteralPath $gymState)) { return $null }
+    $nodeExe = $null
+    try { $nodeExe = (Get-Command node -ErrorAction Stop).Source } catch { $nodeExe = $null }
+    if ($nodeExe) {
+        $env:GODBRAIN_GYM_STATE = $gymState
+        $js = 'const fs=require("fs");const s=JSON.parse(fs.readFileSync(process.env.GODBRAIN_GYM_STATE,"utf8"));process.stdout.write(JSON.stringify({pid:s.pid||null,status:s.status||null,lastError:s.lastError?String(s.lastError):null,taskId:(s.active&&s.active.taskId)||null,attempts:(s.stats&&s.stats.attempts)||null,infrastructureErrors:(s.stats&&s.stats.infrastructureErrors)||null,updatedAt:s.updatedAt||null}));'
+        try {
+            $json = & $nodeExe -e $js
+            if (-not [string]::IsNullOrWhiteSpace($json)) { return $json | ConvertFrom-Json }
+        } catch {}
+    }
+    $head = @(Get-Content -LiteralPath $gymState -TotalCount 16 -ErrorAction SilentlyContinue)
+    $tail = @(Get-Content -LiteralPath $gymState -Tail 40 -ErrorAction SilentlyContinue)
+    $status = $null
+    $gymPid = $null
+    foreach ($line in $head) {
+        if ($line -match '^\s*"status"\s*:\s*"([^"]+)"') { $status = $Matches[1]; break }
+    }
+    foreach ($line in $tail) {
+        if ($line -match '^\s*"pid"\s*:\s*(\d+)') { $gymPid = [int]$Matches[1]; break }
+    }
+    return [pscustomobject]@{
+        pid = $gymPid
+        status = $status
+        lastError = $null
+        taskId = $null
+        attempts = $null
+        infrastructureErrors = $null
+        updatedAt = $null
+    }
 }
 
 $script:gymLaunch = $null
@@ -228,6 +262,24 @@ function Test-GymProcessAlive([int]$processId) {
         $process.CommandLine -like "*skill_lab/gym.mjs*"))
 }
 
+function Start-Dashboard {
+    if (Test-LoopbackPort 4177) { return }
+    $proc = Start-Process -FilePath $pwsh `
+        -ArgumentList @(
+            "-NoLogo", "-NoProfile", "-WindowStyle", "Hidden",
+            "-File", $gymDoor, "-Command", "dashboard"
+        ) `
+        -WorkingDirectory $RepoRoot `
+        -WindowStyle Hidden `
+        -PassThru
+    if ($proc) {
+        Set-Content -LiteralPath (Join-Path $runtimeDir "dashboard-runtime.json") (
+            (@{ pid = $proc.Id; at = (Get-Date).ToUniversalTime().ToString("o") } | ConvertTo-Json -Compress)
+        )
+    }
+    Write-WatchEvent "dashboard_start" "Creation Lab http://127.0.0.1:4177 pid=$($proc.Id) (hidden; this Watch window is the console)."
+}
+
 function Start-Gym {
     if ($script:gymLaunch) {
         $ageSeconds = ((Get-Date) - $script:gymLaunch.At).TotalSeconds
@@ -262,24 +314,20 @@ function Start-Gym {
     }
     if ($script:gymCrashLatched) { return }
     $alive = $false
-    if (Test-Path -LiteralPath $gymState) {
-        try {
-            $state = Get-Content -LiteralPath $gymState -Raw | ConvertFrom-Json
-            if ($state.pid) { $alive = Test-GymProcessAlive ([int]$state.pid) }
-        } catch {}
-    }
+    $glance = Read-GymGlance
+    if ($glance -and $glance.pid) { $alive = Test-GymProcessAlive ([int]$glance.pid) }
     if ($alive) { return }
+    Start-Dashboard
     $started = Start-Process -FilePath $pwsh `
         -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", $gymDoor,
-            "-Continuous",
+            "-Continuous", "-NoDashboard",
             "-Endpoint", "http://127.0.0.1:8888/v1",
             "-Model", "qwen3.8-27b-exl3-3.5bpw",
             "-MaxAttempts", "4"
         ) `
         -WorkingDirectory $RepoRoot `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $gymOut `
+        -WindowStyle Normal `
         -RedirectStandardError $gymErr `
         -PassThru
     $script:gymLaunch = @{ Pid = [int]$started.Id; At = Get-Date }
@@ -290,24 +338,19 @@ $lastHandledIma = ""
 $lastRestartAt = [datetime]::MinValue
 $lastPauseState = $false
 $cudaUnsafe = $false
+$lastHostLine = ""
+$quietBeats = 0
 Read-GymCrashLatch
 Write-WatchBanner
 Write-WatchEvent "watchdog_start" "Overnight frontend gym watchdog started from scripts\Watch-FrontendGymOvernight.ps1."
 
 while ($true) {
     try {
-        $state = $null
-        if (Test-Path -LiteralPath $gymState) {
-            try {
-                $state = Get-Content -LiteralPath $gymState -Raw -ErrorAction Stop | ConvertFrom-Json
-            } catch {
-                $state = $null
-            }
-        }
+        $state = Read-GymGlance
 
         $imaKey = ""
         if ($state -and $state.lastError -match "illegal memory access|cudaErrorIllegalAddress") {
-            $imaKey = "$($state.stats.infrastructureErrors)|$($state.updatedAt)|$($state.lastError)"
+            $imaKey = "$($state.infrastructureErrors)|$($state.updatedAt)|$($state.lastError)"
         }
 
         if ($imaKey -and $imaKey -ne $lastHandledIma) {
@@ -352,16 +395,36 @@ while ($true) {
             manualPause = [bool]$pause.manual_pause
             cs2Sleep = [bool]$pause.cs2_sleep
             gymStatus = if ($state) { $state.status } else { "unknown" }
-            attempts = if ($state) { $state.stats.attempts } else { $null }
-            infrastructureErrors = if ($state) { $state.stats.infrastructureErrors } else { $null }
+            attempts = if ($state) { $state.attempts } else { $null }
+            infrastructureErrors = if ($state) { $state.infrastructureErrors } else { $null }
         }
         Set-Content -LiteralPath $heartbeat -Value ($beat | ConvertTo-Json -Compress)
-        $task = if ($state -and $state.active) { $state.active.taskId } else { "-" }
-        Write-Host ("  gym={0,-12} qwen={1} pause={2} task={3}" -f `
+        $task = if ($state -and $state.taskId) { $state.taskId } else { "-" }
+        $dashPid = $null
+        $dashReceipt = Join-Path $runtimeDir "dashboard-runtime.json"
+        if (Test-Path -LiteralPath $dashReceipt) {
+            try { $dashPid = (Get-Content -LiteralPath $dashReceipt -Raw | ConvertFrom-Json).pid } catch {}
+        }
+        $dash = if (Test-LoopbackPort 4177) {
+            if ($dashPid) { "4177/pid=$dashPid" } else { "4177" }
+        } else { "down" }
+        $hostLine = "  gym={0,-12} qwen={1} dash={2} pause={3} task={4}" -f `
             $beat.gymStatus, `
             $(if ($beat.qwenListening) { "up" } else { "down" }), `
+            $dash, `
             $(if ($beat.paused) { "on" } else { "off" }), `
-            $task)
+            $task
+        if ($hostLine -ne $lastHostLine) {
+            Write-Host $hostLine
+            $lastHostLine = $hostLine
+            $quietBeats = 0
+        } else {
+            $quietBeats++
+            if ($quietBeats -ge 8) {
+                Write-Host $hostLine
+                $quietBeats = 0
+            }
+        }
     } catch {
         Write-WatchEvent "watchdog_error" $_.Exception.Message
     }

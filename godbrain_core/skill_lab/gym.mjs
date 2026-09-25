@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
-import { hashFiles, localEndpoint, loadState, MARKETING_CONTRACTS, readJson, requestStop, runPractice, StopRequested, universityAppScaffold } from './gym-core.mjs';
+import { evaluatorFamily, hashFiles, localEndpoint, loadState, MARKETING_CONTRACTS, readJson, requestStop, runPractice, StopRequested, universityAppScaffold, washedLightThemeInk } from './gym-core.mjs';
 import { createDocumentationReader } from './docs.mjs';
 import { startDashboard } from './dashboard.mjs';
 import {
@@ -45,7 +45,7 @@ export function parseOptions(args) {
       help: { type: 'boolean', default: false },
     },
   });
-  if (positionals.length > 1) throw new Error('Specify only one command: run, status, stop, tasks, lessons, objectives, or university.');
+  if (positionals.length > 1) throw new Error('Specify only one command: run, status, stop, tasks, lessons, objectives, university, or dashboard.');
   for (const name of ['rounds', 'max-attempts', 'keep-runs', 'max-tokens', 'timeout-seconds',
     'interval-seconds', 'retry-seconds', 'tutor-every', 'dashboard-port']) {
     if (!/^\d+$/.test(values[name]) || !Number.isSafeInteger(Number(values[name]))) {
@@ -59,7 +59,7 @@ export function selectRetainedLesson(lessons, taskId, evaluatorVersion, selectio
   const taskLessons = lessons.filter(item =>
     !item.stale &&
     item.taskId === taskId);
-  const current = taskLessons.filter(item => item.evaluatorVersion === evaluatorVersion);
+  const current = taskLessons.filter(item => evaluatorFamily(item.evaluatorVersion) === evaluatorFamily(evaluatorVersion));
   const eligible = current.length || !allowPrevious ? current : taskLessons;
   return eligible.length ? eligible[selectionCount % eligible.length] : null;
 }
@@ -70,9 +70,9 @@ export function universityLessonPlan({
   const current = lessons.filter(item =>
     !item.stale &&
     item.taskId === taskId &&
-    item.evaluatorVersion === evaluatorVersion);
+    evaluatorFamily(item.evaluatorVersion) === evaluatorFamily(evaluatorVersion));
   const lesson = selectRetainedLesson(lessons, taskId, evaluatorVersion, selectionCount, current.length === 0);
-  const bump = Boolean(lesson) && lesson.evaluatorVersion !== evaluatorVersion && current.length === 0;
+  const bump = Boolean(lesson) && evaluatorFamily(lesson.evaluatorVersion) !== evaluatorFamily(evaluatorVersion) && current.length === 0;
   return {
     lesson,
     currentCount: current.length,
@@ -97,19 +97,27 @@ async function selectEndpoint(explicit) {
   return 'http://127.0.0.1:8888/v1';
 }
 
+async function cs2ShouldSleep() {
+  if (process.platform !== 'win32') return false;
+  try {
+    const { stdout } = await execute('tasklist.exe', ['/FI', 'IMAGENAME eq CS2.exe', '/NH'], {
+      timeout: 4000, windowsHide: true, maxBuffer: 8000,
+    });
+    if (/\bCS2\.exe\b/i.test(stdout)) return true;
+  } catch {
+    // A dead tasklist must not pause training.
+  }
+  const state = await readJson(path.join(repoRoot, 'logs', 'cs2-pause.json'), null);
+  if (!state || state.paused !== true || state.last_action === 'resume-now') return false;
+  const seen = Date.parse(state.last_seen || state.at || '');
+  if (!Number.isFinite(seen)) return false;
+  return (Date.now() - seen) < 10 * 60 * 1000;
+}
+
 async function hostPauseReason(endpoint, workDir) {
   const trainingControl = await readJson(path.join(workDir, 'training-pause.json'), { paused: false });
   if (trainingControl.paused === true) return 'Frontend training is explicitly paused and saved.';
-  if (process.platform !== 'win32') return null;
-  const executable = path.join(process.env.SystemRoot ?? 'C:\\Windows',
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const { stdout } = await execute(executable, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-    path.join(repoRoot, 'scripts', 'Get-FrontendGymPause.ps1'),
-  ], { timeout: 10_000, windowsHide: true, maxBuffer: 16_000 });
-  const result = JSON.parse(stdout.trim());
-  if (typeof result.cs2_sleep !== 'boolean') throw new Error('Host pause probe returned an invalid response.');
-  if (result.cs2_sleep) return 'CS2 is active or inside its configured resume delay.';
+  if (await cs2ShouldSleep()) return 'CS2 is active or inside its configured resume delay.';
   if (new URL(endpoint).port === '8000') {
     const file = path.join(repoRoot, 'logs', 'mouth-pause.txt');
     let paused;
@@ -137,6 +145,7 @@ export async function main(args = process.argv.slice(2)) {
   node gym.mjs lessons                      List hash-bound, machine-tested examples
   node gym.mjs objectives                   List custom Explore and Qualify requests
   node gym.mjs university                   Show the generated degree path and current frontier
+  node gym.mjs dashboard                    Serve Creation Lab on :4177 without the practice worker
 
 Options: --endpoint http://127.0.0.1:8888/v1 --model ID
   --teacher-endpoint URL --teacher-model ID --tutor-every 2 (0 disables tutor)
@@ -193,6 +202,15 @@ Passing exercises become local gym lessons without /verify; they grant no host a
     return;
   }
   const { TASKS } = await import('./curriculum.mjs');
+  if (command === 'dashboard') {
+    process.stdin.resume();
+    const dashboard = await startDashboard({
+      workDir, trustedTasks: TASKS, port: Number(values['dashboard-port']),
+    });
+    console.log(`Dashboard: ${dashboard.origin} pid=${process.pid}`);
+    await new Promise(() => {});
+    return 0;
+  }
   if (command === 'university') {
     const state = await loadState(workDir);
     const generated = await listUniversityTasks(workDir, TASKS);
@@ -215,7 +233,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
   const evaluatorHash = createHash('sha256');
   for (const file of [
     'browser.mjs', 'curriculum.mjs', 'competencies.mjs', 'course-factory.mjs',
-    'verifier-dsl.mjs', 'package-lock.json',
+    'verifier-dsl.mjs', 'gym-lab-api.mjs', 'gym-lab-db.mjs', 'package-lock.json',
   ]) {
     evaluatorHash.update(file).update(await fs.readFile(path.join(labRoot, file)));
   }
@@ -233,7 +251,16 @@ Passing exercises become local gym lessons without /verify; they grant no host a
       });
       console.log(`Dashboard: ${dashboard.origin}`);
     }
-    console.log(`Gym: ${tasks.length} exercises | learner=${endpoint} | automatic browser evidence | ${workDir}`);
+    const uni = await readJson(path.join(workDir, 'university.json'), { courses: [] });
+    const degree = (uni.courses ?? []).filter(course => course.iteration === 1);
+    const paintTitle = (attempts = 0) => {
+      try {
+        process.stdout.write(`\x1b]0;GodBrainGymWorker ${degree.filter(course => course.status === 'mastered').length}/${degree.length} · ${attempts} attempts\x07`);
+      } catch { /* ignore non-TTY */ }
+    };
+    const started = await loadState(workDir);
+    paintTitle(started.stats?.attempts ?? 0);
+    console.log(`Gym: ${degree.filter(course => course.status === 'mastered').length}/${degree.length} university courses | attempts=${started.stats?.attempts ?? 0} passed=${started.stats?.passed ?? 0} lessons=${(started.lessons ?? []).filter(item => !item.stale).length} | learner=${endpoint} | ${workDir}`);
     await runPractice({
       workDir, lockDir: path.join(labRoot, 'work'),
       endpoint, model: values.model, teacherEndpoint: values['teacher-endpoint'] ?? endpoint,
@@ -271,6 +298,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
           state.scheduler.parkedTaskIds = state.scheduler.parkedTaskIds.filter(id => !unpark.has(id));
         }
         const selected = await selectCurriculumTask(workDir, state, combined);
+        if (!selected) return null;
         if (selected.university) {
           const plan = universityLessonPlan({
             lessons: state.lessons,
@@ -284,12 +312,19 @@ Passing exercises become local gym lessons without /verify; they grant no host a
             if (!source || hashFiles(source) !== plan.lesson.sourceHash) {
               throw new Error(`Retained lesson ${plan.lesson.runId} failed its source-hash check.`);
             }
-            return {
-              ...selected,
-              initialFiles: source,
-              revalidateInitial: true,
-              retainedLessonRunId: plan.lesson.runId,
-            };
+            const wash = washedLightThemeInk(source['styles.css'] ?? '');
+            if (wash) {
+              for (const item of state.lessons) {
+                if (item.runId === plan.lesson.runId) item.stale = true;
+              }
+            } else {
+              return {
+                ...selected,
+                initialFiles: source,
+                revalidateInitial: true,
+                retainedLessonRunId: plan.lesson.runId,
+              };
+            }
           }
         }
         if (selected.fileMode === 'styles') {
@@ -325,7 +360,10 @@ Passing exercises become local gym lessons without /verify; they grant no host a
           ? { ...selected, fileMode: 'styles', initialFiles: getReference(selected.id) }
           : selected;
       },
-      onProgress: result => console.log(`${new Date().toISOString()} ${result.taskId} ${result.passed ? 'PASS' : 'RETRY'} | attempts=${result.stats.attempts} examples=${result.lessonCount} | ${result.runId}`),
+      onProgress: result => {
+        paintTitle(result.stats.attempts);
+        console.log(`${new Date().toISOString()} ${result.taskId} ${result.passed ? 'PASS' : 'RETRY'} | ${degree.filter(course => course.status === 'mastered').length}/${degree.length} courses | attempts=${result.stats.attempts} examples=${result.lessonCount} | ${result.runId}`);
+      },
     }, {
       tasks, evaluate: evaluateCandidate, evaluatorVersion: evidenceVersion,
       documentation: createDocumentationReader(workDir, { offline: values['offline-docs'] }),

@@ -84,7 +84,12 @@ async function snapshot(workDir, trustedTasks) {
   const universityState = await readUniversity(workDir);
   const universityTasks = await listUniversityTasks(workDir, trustedTasks);
   const allTasks = [...trustedTasks, ...universityTasks];
-  const tasks = await taskRows(workDir, state, allTasks, events);
+  const tasks = await taskRows(
+    workDir,
+    state,
+    universityTasks.length ? universityTasks : trustedTasks,
+    events,
+  );
   const campaignRunIds = new Set(campaigns.flatMap(campaign =>
     [
       ...(campaign.alternatives ?? []).map(item => item.runId),
@@ -116,8 +121,10 @@ async function snapshot(workDir, trustedTasks) {
   }
   const gallery = [];
   const galleryKeys = new Set();
-  for (const item of candidates.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))) {
+  const ordered = [...candidates].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  for (const item of ordered) {
     if (galleryKeys.has(item.galleryKey)) continue;
+    if (!item.desktop) continue;
     galleryKeys.add(item.galleryKey);
     gallery.push(item);
     if (gallery.length >= 12) break;

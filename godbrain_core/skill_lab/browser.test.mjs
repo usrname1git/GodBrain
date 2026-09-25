@@ -6,6 +6,7 @@ import test from 'node:test';
 import { buildBundle, evaluateCandidate, EVALUATOR_VERSION, missingMobileNavCss, navSelectorMismatch, outputText, undefinedCssCustomProperties } from './browser.mjs';
 import { getTask, TASKS } from './curriculum.mjs';
 import { universityAppScaffold } from './gym-core.mjs';
+import { GYM_MONGO_DB, pingGymMongo } from './gym-lab-db.mjs';
 import { getReference, REFERENCES } from './references.mjs';
 
 const labRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -33,8 +34,20 @@ async function evidence(result) {
   return JSON.parse(await fs.readFile(file, 'utf8'));
 }
 
+let gymMongo = false;
+try {
+  const ping = await pingGymMongo();
+  gymMongo = ping.ok === 1 && ping.db === GYM_MONGO_DB;
+} catch {
+  gymMongo = false;
+}
+
+function isLabTask(id) {
+  return id === 'shop-cart-checkout-v1' || id === 'cms-admin-session-v1';
+}
+
 test('curriculum has compact product and marketing-site tasks with strict lookup', () => {
-  assert.equal(TASKS.length, 16);
+  assert.equal(TASKS.length, 18);
   for (const task of TASKS) {
     assert.equal(getTask(task.id), task);
     assert.ok(task.id && task.family && task.title);
@@ -47,6 +60,7 @@ test('curriculum has compact product and marketing-site tasks with strict lookup
 
 test('all reference implementations pass real browser checks on two meaningful seeds', async t => {
   for (const task of TASKS) {
+    if (isLabTask(task.id)) continue;
     const digests = new Set();
     for (const seed of [1, 2]) {
       const result = await evaluateIn(t, task.id, getReference(task.id), seed);
@@ -63,6 +77,24 @@ test('all reference implementations pass real browser checks on two meaningful s
     }
     assert.equal(digests.size, 2, `${task.id} seeds should produce different inputs`);
   }
+});
+
+test('washed gray text on a bright hero fails readable-text-contrast', async t => {
+  const files = {
+    'App.jsx': `export default function App() {
+  return <main>
+    <section className="hero">
+      <h1>Event Operations Cloud</h1>
+      <p className="lede">Plan, engage and learn with Northline. Bring planning into one calm operating system.</p>
+    </section>
+    <section><h2>Lifecycle</h2><p>Prepare every touchpoint for program 230225.</p></section>
+  </main>;
+}`,
+    'styles.css': 'body{margin:0;background:#f7fbfc;color:#d5e0e6} .hero{min-height:60vh;background:#e8f3ea} h1{font-size:64px;color:rgb(213 227 218);font-weight:700} .lede,h2,p{color:rgb(200 220 208);font-size:20px}',
+  };
+  const failed = await evaluateIn(t, 'marketing-site-architecture-v1', files, 1);
+  assert.equal(failed.passed, false);
+  assert.ok((failed.errors || []).some(item => /readable-text-contrast/i.test(item)), JSON.stringify(failed.errors));
 });
 
 test('visual-god reference implements the seeded canvas and rejects a generic template', async t => {
@@ -116,6 +148,13 @@ test('visual-god reads accent from the named CTA without requiring a .cta class'
     '<a href="#note" style={{ background: visualSystem.accent, color: visualSystem.paper, fontWeight: 800, padding: 12 }}>{primaryCta}</a>',
   );
   const result = await evaluateIn(t, 'visual-god-v1', files, 1);
+  assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('error-boundary console filter accepts a learner throw message, not only god-crash', async t => {
+  const files = getReference('error-boundary-recovery-v1');
+  files['App.jsx'] = files['App.jsx'].replace("throw new Error('god-crash')", "throw new Error('render-fault')");
+  const result = await evaluateIn(t, 'error-boundary-recovery-v1', files, 1);
   assert.equal(result.passed, true, JSON.stringify(result.errors));
 });
 
@@ -251,7 +290,7 @@ test('undefined CSS variables fail source-contract before tonal depth', async t 
   assert.equal(undefinedCssCustomProperties(':root{--tint:#e6f1ef}.tinted{background:var(--tint)}'), '');
   const files = getReference('event-platform-showcase-v1');
   files['styles.css'] = files['styles.css']
-    .replace(/:root,\[[^\]]*\]\{[^}]*\}/g, '')
+    .replace(/:root(?:,\[[^\]]*\])?\{[^}]*\}/g, '')
     .replace(/\[[^\]]*\]\{[^}]*\}/g, '');
   assert.equal(/--tint\s*:/.test(files['styles.css']), false);
   assert.match(files['styles.css'], /var\(--tint\)/);
@@ -445,4 +484,59 @@ test('non-HTTP connection and worker capabilities are unavailable to learner cod
 ${files['App.jsx']}`;
   const result = await evaluateIn(t, 'settings-persistence-v1', files, 44);
   assert.equal(result.passed, true, JSON.stringify(result.errors));
+});
+
+test('shop reference checks out into godbrain_gym and a localStorage cart fails', { skip: !gymMongo }, async t => {
+  for (const seed of [1, 2]) {
+    const result = await evaluateIn(t, 'shop-cart-checkout-v1', getReference('shop-cart-checkout-v1'), seed);
+    assert.equal(result.passed, true, `seed ${seed}: ${JSON.stringify(result.errors)}`);
+  }
+  const fake = {
+    'App.jsx': `import {useState} from 'react';
+export default function App({storeName, products, checkoutEmail}) {
+  const [cart,setCart]=useState([]);
+  const [order,setOrder]=useState(null);
+  return <main>
+    <h1>{storeName}</h1>
+    <section aria-label="Products">{products.map(item=><article key={item.sku}><h2>{item.title}</h2>
+      <button onClick={()=>setCart(rows=>[...rows,item])}>Add {item.title} to cart</button></article>)}</section>
+    <section aria-label="Cart"><h2>Cart</h2>{cart.map(item=><p key={item.sku}>{item.title} × 1</p>)}</section>
+    <form onSubmit={event=>{event.preventDefault();setOrder({orderId:'fake-local',email:checkoutEmail});}}>
+      <label>Checkout email<input defaultValue={checkoutEmail}/></label>
+      <button type="submit">Place order</button>
+    </form>
+    {order&&<p>Order {order.orderId} confirmed for {order.email}</p>}
+  </main>;
+}`,
+    'styles.css': 'body{margin:0;color:#10243a;background:#fff}',
+  };
+  const failed = await evaluateIn(t, 'shop-cart-checkout-v1', fake, 3);
+  assert.equal(failed.passed, false);
+  assert.match(failed.errors.join('\n'), /godbrain_gym|localStorage is not a shop/i);
+});
+
+test('CMS reference publishes a page and a painted admin without login fails', { skip: !gymMongo }, async t => {
+  for (const seed of [1, 2]) {
+    const result = await evaluateIn(t, 'cms-admin-session-v1', getReference('cms-admin-session-v1'), seed);
+    assert.equal(result.passed, true, `seed ${seed}: ${JSON.stringify(result.errors)}`);
+  }
+  const fake = {
+    'App.jsx': `export default function App({siteName, newPageTitle, newPageBody}) {
+  return <main>
+    <h1>{siteName} pages</h1>
+    <p>Invalid credentials</p>
+    <label>Username<input/></label>
+    <label>Password<input type="password"/></label>
+    <button>Sign in</button>
+    <label>Page title<input defaultValue={newPageTitle}/></label>
+    <label>Page body<textarea defaultValue={newPageBody}/></label>
+    <button>Create page</button>
+    <ul aria-label="Pages"><li><strong>{newPageTitle}</strong><p>{newPageBody}</p></li></ul>
+  </main>;
+}`,
+    'styles.css': 'body{margin:0;color:#10243a;background:#fff}',
+  };
+  const failed = await evaluateIn(t, 'cms-admin-session-v1', fake, 4);
+  assert.equal(failed.passed, false);
+  assert.match(failed.errors.join('\n'), /godbrain_gym|session|Invalid credentials|Mongo/i);
 });

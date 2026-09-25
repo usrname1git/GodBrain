@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { REFERENCES } from './references.mjs';
+import { getReference, REFERENCES } from './references.mjs';
 
 const SOURCE_LIMIT = 48_000;
 const RESPONSE_LIMIT = 256_000;
@@ -15,7 +15,42 @@ export class BackendError extends Error {}
 export class StopRequested extends Error {}
 
 export function isHostNetworkFailure(value) {
-  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED/i.test(String(value ?? ''));
+  return /ERR_NO_BUFFER_SPACE|ERR_INSUFFICIENT_RESOURCES|WSAENOBUFS|ERR_NETWORK_IO_SUSPENDED|lab-database-unavailable/i.test(String(value ?? ''));
+}
+
+export function evaluatorFamily(version) {
+  const text = String(version ?? '');
+  return text.split(':')[0];
+}
+
+function hexLum(hex) {
+  const n = Number.parseInt(hex, 16);
+  const chan = shift => {
+    const c = ((n >> shift) & 255) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * chan(16) + 0.7152 * chan(8) + 0.0722 * chan(0);
+}
+
+export function washedLightThemeInk(css) {
+  const text = String(css ?? '');
+  const ratioOf = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const blocks = [...text.matchAll(/(?::root|\[data-theme=(?:tide|ember|forest|sand)\])\s*\{([^}]+)\}/gi)];
+  for (const block of blocks) {
+    const ink = block[1].match(/--ink\s*:\s*#([0-9a-f]{6})/i);
+    const paper = block[1].match(/--paper\s*:\s*#([0-9a-f]{6})/i);
+    if (!ink || !paper) continue;
+    const ratio = ratioOf(hexLum(ink[1]), hexLum(paper[1]));
+    if (ratio < 4.5) {
+      return `washed-light-ink: --ink #${ink[1]} on --paper #${paper[1]} is ${ratio.toFixed(2)}:1. Light themes need dark ink (#10243a), not pastel.`;
+    }
+  }
+  const paper = text.match(/--paper\s*:\s*#([0-9a-f]{6})/i);
+  const heading = text.match(/\bh1[^{]{0,40}\s*\{[^}]*\bcolor\s*:\s*#([0-9a-f]{6})/i);
+  if (paper && heading && hexLum(paper[1]) > 0.65 && hexLum(heading[1]) > 0.45) {
+    return `washed-light-ink: h1 #${heading[1]} on --paper #${paper[1]} is pastel-on-mint. Use #10243a for headings on light fields.`;
+  }
+  return null;
 }
 
 export const MARKETING_CONTRACTS = new Set([
@@ -175,6 +210,19 @@ function repairCandidateJson(raw, expectedNames = []) {
   if (!raw.includes('"files"')) return null;
   const complete = firstJsonObject(raw);
   if (complete) return complete;
+  const appName = expectedNames.find(name => /^App\.(jsx|tsx)$/.test(name));
+  if (appName) {
+    let candidate = raw.trimEnd();
+    if ((candidate.match(/\\+$/) || [''])[0].length % 2 === 1) candidate = candidate.slice(0, -1);
+    for (const suffix of ['"}}', '"}\n}', '"} }']) {
+      try {
+        const value = JSON.parse(candidate + suffix);
+        if (typeof value?.files?.[appName] === 'string' && value.files[appName].length >= 40) return value;
+      } catch {
+        // Keep trying a closed app envelope.
+      }
+    }
+  }
   if (expectedNames.join() === 'styles.css') {
     const lastBrace = raw.lastIndexOf('}');
     const key = raw.search(/"styles\.css"\s*:\s*"/);
@@ -568,10 +616,12 @@ const GENERIC_CHECK_FEEDBACK = Object.freeze({
   'responsive-menu-opens-closes': 'A seeded section link is missing or still hidden after Menu opens. Hide nav with nav{display:none} / nav.open{display:flex}, never .nav, never className=menu on nav, and close it on Escape.',
   'lifecycle-stages-change-content': 'Render every lifecycle item as a visible button or role=tab whose accessible name comes from stage.stage. Selecting it must reveal that same item summary and every feature.',
   'feature-search-filters-seeded-content': 'Render a textbox whose accessible name includes Search or Filter and search case-insensitively across features from every lifecycle item. Show all matches regardless of the selected stage.',
+  'visual-seed-copy-visible': 'Brand, product, tagline and proof must be visible without extra clicks. Do not hide proof behind Open.',
   'visual-system-tokens-applied': 'Apply props.visualSystem ink, paper, accent and displayFont to computed styles. Do not hardcode one palette.',
   'visual-hero-is-not-centered-template': 'h1 must be text-align start/left. A centered 80vh hero is a generic template.',
   'visual-anti-generic-chrome': 'Do not use Segoe UI / system-ui / Inter as the display face, or Tailwind purple as the CTA, when the seed gave Georgia or Consolas and a named accent.',
   'visual-anti-generic-three-up': 'Do not use three equal-width cards as the only composition.',
+  'readable-text-contrast': 'h1, lede and light-section h2 must be ≥4.5:1 on their background. Pale gray on white is a fail even if navy/white blocks are fine.',
 });
 
 export function summarizeCheckDetail(detail, limit = 160) {
@@ -599,9 +649,13 @@ function feedbackForResults(results) {
       seen.add(check.name);
       const actual = summarizeCheckDetail(check.detail);
       const hint = GENERIC_CHECK_FEEDBACK[check.name];
+      const examinerLied = /TypeError|Failed to execute|not of type|evaluation-deadline|watchdog/i.test(actual);
+      const measured = /\d+\.\d+:1|washed-light-ink/i.test(actual);
       compact.push({
         name: check.name,
-        detail: /Missing /i.test(actual) ? actual : (hint ?? actual),
+        detail: (examinerLied || measured || /Missing /i.test(actual) || !hint)
+          ? actual
+          : hint,
       });
     }
     return {
@@ -642,11 +696,61 @@ export function cannedTutorAdvice(active = {}) {
   const feedback = String(active.feedback ?? '');
   const css = active.files?.['styles.css'] ?? '';
   const jsx = active.files?.['App.jsx'] ?? active.files?.['App.tsx'] ?? '';
+  if (/shop-order-persisted-in-mongo|shop-add-to-cart-and-checkout/i.test(feedback)) {
+    return [
+      'CAUSE: Cart and checkout did not persist in godbrain_gym. A useState cart is not a shop.',
+      '1. GET /api/lab/products, POST /api/lab/cart {sku}, POST /api/lab/checkout {email}, then show the returned orderId.',
+      '2. Keep buttons named Add {title} to cart, a Cart region, Checkout email, and Place order.',
+    ].join('\n');
+  }
+  if (/cms-rejects-invalid-login|cms-page-persisted-in-mongo|cms-login-and-publish-page/i.test(feedback)) {
+    return [
+      'CAUSE: CMS admin did not use /api/lab/login and a Bearer session. Painted pages are not a CMS.',
+      '1. POST login, show Invalid credentials on 401, then GET/POST /api/lab/pages with Authorization: Bearer <token>.',
+      '2. Keep Username, Password, Sign in, Page title, Page body, and Create page.',
+    ].join('\n');
+  }
   if (active.parseFailed || /Unterminated string|not valid JSON/i.test(feedback)) {
     return [
       'CAUSE: The styles.css JSON was truncated before both objects were closed.',
       '1. Return only {"files":{"styles.css":"..."}} under 6000 characters.',
       '2. If you use var(--tint), keep the :root block. Shorten duplicate media queries, not the palette.',
+    ].join('\n');
+  }
+  if (/visual-seed-copy-visible|No visible text found/i.test(feedback)) {
+    return [
+      'CAUSE: Seeded brand, product, tagline or proof is not visible on first paint.',
+      '1. Render {proof} in the main column. Do not hide it behind Open/menu state.',
+      '2. Keep {brand}, {product}, {tagline} and {primaryCta} visible without extra clicks.',
+    ].join('\n');
+  }
+  if (/readable-text-contrast|washed-light-ink/i.test(feedback)) {
+    if (/TypeError|Failed to execute|not of type|evaluation-deadline|watchdog/i.test(feedback)) {
+      return [
+        'CAUSE: The contrast checker crashed or timed out. That is an examiner bug, not a pastel theme.',
+        '1. Do not change heading colors for this fail. The screenshot may already be readable.',
+        '2. Keep the current ink/paper. Do not invent mint-on-white because the tutor yelled.',
+      ].join('\n');
+    }
+    return [
+      'STOP. Pastel ink on mint/white is unreadable. That is not a theme. The examiner will fail it every time.',
+      '1. Light paper/hero/card/tint: dark ink #10243a on h1, .lede, h2, article p { color:#10243a; opacity:1 }. Never #e8eef4, never color-mix with white.',
+      '2. --ink on tide/forest/sand/ember must be a dark hex. Muted is 11px eyebrows only. Do this before anything else.',
+    ].join('\n');
+  }
+  if (/visual-system-tokens-applied/i.test(feedback)) {
+    return [
+      'CAUSE: Computed paper/ink/accent/displayFont do not match props.visualSystem.',
+      '1. Set CSS variables from visualSystem on the stage (data-visual) and use them for background, color, h1 font and CTA background.',
+      '2. Do not hardcode one palette; practice and transfer seed Harbor vs Signal.',
+    ].join('\n');
+  }
+  if (/error-boundary-replaces-crashed-child|error-boundary-reset-restores-panel|evaluation-deadline/i.test(feedback) &&
+      /Boundary|god-crash|crashLabel|fallbackTitle/i.test(jsx + feedback)) {
+    return [
+      'CAUSE: The child must throw during render while armed. The crash button may sit outside the boundary. An uncaught throw blanks #root and hangs the examiner.',
+      '1. <Boundary><Panel armed={armed} /></Boundary> then a sibling crash button setArmed(true). Class getDerivedStateFromError → fallbackTitle only.',
+      '2. Recovery: setArmed(false) and remount with key={nonce}. Do not throw inside the click handler. Do not put the crash button inside Panel.',
     ].join('\n');
   }
   if (/source-contract/i.test(feedback)) {
@@ -815,6 +919,7 @@ ${appReference}`
       role: 'system',
       content: `You are practicing frontend engineering in a restricted browser gym.
 ${stageRules}
+COLOR IS NOT OPTIONAL. Pastel gray/mint/lavender on white or mint paper fails every time. Light surfaces: h1, .lede, h2, article p { color:#10243a; opacity:1 }. Never #e8eef4 on a bright field. Muted is 11px eyebrows only. If the last fail was readable-text-contrast, change the heading color first — do not resubmit the same CSS.
 Close both the files object and the outer object. A complete response ends with two closing braces outside the final string.
 The external browser evaluator decides success. You cannot edit tests, install packages, execute shell commands,
 access the host, or request approvals. Failed attempts are normal: use their errors and try again.
@@ -956,6 +1061,13 @@ export async function runPractice(options, dependencies) {
       if (!state.active) {
         const queuedTask = await nextTask();
         const task = queuedTask ?? await selectTask({ state, tasks });
+        if (!task) {
+          state.status = 'ladder_complete';
+          state.lastError = null;
+          await saveState(workDir, state);
+          await delay(Math.max(retryMs, 5000), undefined, { signal });
+          continue;
+        }
         state.active = {
           taskId: task.id, attempt: 0, files: task.initialFiles ?? null, feedback: '', advice: '',
           trainSeed: 11 + state.sequence * 17, holdoutSeed: 1009 + state.sequence * 31,
@@ -984,7 +1096,12 @@ export async function runPractice(options, dependencies) {
           await appendEvent(workDir, { type: 'documentation_unavailable', taskId: task.id, message: clip(warning, 500) });
         }
         const lessonContextResult = await lessonContext(workDir, state, task, evaluatorVersion);
-        if (tutorEvery && active.attempt > 0 && active.attempt % tutorEvery === 0 && active.coachedAt !== active.attempt) {
+        const skipGenerate = Boolean(active.files) && (
+          task.skipLearnerGenerate === true ||
+          task.revalidateInitial === true ||
+          active.revalidateInitial === true
+        );
+        if (!skipGenerate && tutorEvery && active.attempt > 0 && active.attempt % tutorEvery === 0 && active.coachedAt !== active.attempt) {
           state.status = 'consulting_tutor';
           await saveState(workDir, state);
           const canned = cannedTutorAdvice(active);
@@ -1016,16 +1133,19 @@ export async function runPractice(options, dependencies) {
             }
           }
         }
-        state.status = 'generating';
-        await saveState(workDir, state);
+        if (!skipGenerate) {
+          state.status = 'generating';
+          await saveState(workDir, state);
+        }
         let answer;
         let files;
         let candidateError;
-        const revalidating = active.attempt === 0 &&
-          (task.revalidateInitial === true || active.revalidateInitial === true) && active.files;
+        const revalidating = skipGenerate;
         try {
           if (revalidating) {
             files = active.files;
+            active.revalidateInitial = false;
+            task.revalidateInitial = false;
           } else {
           const generationStartedAt = Date.now();
           answer = await complete({
@@ -1044,6 +1164,10 @@ export async function runPractice(options, dependencies) {
         } catch (error) {
           if (!(error instanceof CandidateError)) throw error;
           candidateError = error.message;
+        }
+        if (!candidateError && files?.['styles.css']) {
+          const wash = washedLightThemeInk(files['styles.css']);
+          if (wash) candidateError = wash;
         }
         active.parseFailed = Boolean(candidateError);
         if (answer) active.lastResponse = clip(answer.text, 14_000);
@@ -1112,7 +1236,14 @@ export async function runPractice(options, dependencies) {
         const taskStats = state.stats.byTask[task.id] ??= { attempted: 0, passed: 0, failed: 0 };
         taskStats.attempted++;
         taskStats[passed ? 'passed' : 'failed']++;
-        const priorHashes = new Set(state.lessons.filter(item => !item.stale).map(item => item.sourceHash));
+        const priorHashes = new Set(
+          state.lessons
+            .filter(item =>
+              !item.stale &&
+              item.taskId === task.id &&
+              evaluatorFamily(item.evaluatorVersion) === evaluatorFamily(evaluatorVersion))
+            .map(item => item.sourceHash),
+        );
         const novelty = sourceHash
           ? (priorHashes.has(sourceHash) ? 'known_lesson_source' : 'new_source')
           : 'no_source';
@@ -1135,6 +1266,17 @@ export async function runPractice(options, dependencies) {
           active.feedback += '\nThis repeats the same failing source byte-for-byte. Make a concrete change addressing the failure, rather than resubmitting it.';
         }
         if (!passed) active.failedHash = sourceHash;
+        const contrastFail = results.some(result =>
+          result.checks.some(check => !check.passed && check.name === 'readable-text-contrast')) ||
+          /washed-light-ink/i.test(candidateError ?? '');
+        if (!passed && contrastFail && !active.resetContrastOnce) {
+          const ref = getReference(task.baseTaskId ?? task.id);
+          if (ref['styles.css']) {
+            active.files = { ...(active.files ?? {}), 'styles.css': ref['styles.css'] };
+            active.revalidateInitial = true;
+            active.resetContrastOnce = true;
+          }
+        }
         if (sourceHash && state.lessons.some(item => item.sourceHash === sourceHash && item.taskId === task.id) && !passed) {
           for (const item of state.lessons.filter(item => item.sourceHash === sourceHash && item.taskId === task.id)) {
             item.stale = true;

@@ -355,7 +355,9 @@ test('dashboard is loopback-only, reports state, accepts same-origin objectives 
     await fs.mkdir(path.join(workDir, 'runs', runId), { recursive: true });
     await writeJson(path.join(workDir, 'runs', runId, 'receipt.json'), {
       runId, taskId, at: new Date().toISOString(), passed: true,
-      sourceHash: runId.slice(-12).padEnd(64, '0'), evidence: [], timings: { totalMs: 1 },
+      sourceHash: runId.slice(-12).padEnd(64, '0'),
+      evidence: taskId === 'trusted-v1' ? [{ artifacts: ['desktop.png'] }] : [],
+      timings: { totalMs: 1 },
     });
   }
   const dashboard = await startDashboard({ workDir, trustedTasks, port: 0 });
