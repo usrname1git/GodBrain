@@ -146,6 +146,7 @@ function Test-MouthBusy([bool]$KernelUp) {
     if (-not $KernelUp) { return $true }
     try {
         $st = Invoke-RestMethod -TimeoutSec 3 -Uri "http://127.0.0.1:8083/api/status"
+        if ($st.generate_busy) { return $true }
         if ($st.coli -and [bool]$st.coli.busy) { return $true }
         if ($st.mouth -and $st.mouth.PSObject.Properties.Name -contains "busy" -and [bool]$st.mouth.busy) {
             return $true
@@ -174,7 +175,14 @@ function Get-InboxFailed {
 }
 
 function Get-Probe {
-    $mouth = Test-Port "127.0.0.1" 8000
+    $llama = Test-Port "127.0.0.1" 8000
+    $exl3 = Test-Port "127.0.0.1" 8888
+    $mouth = if ($mouthPause) { $exl3 } else { $llama }
+    $mouthReady = if ($mouthPause) {
+        $exl3
+    } else {
+        [bool]($llama -and (Test-HttpOk "http://127.0.0.1:8000/health"))
+    }
     $rag = Test-Port "127.0.0.1" 8084
     $ragHealth = $null
     if ($rag) { $ragHealth = Get-RagHealth }
@@ -185,7 +193,8 @@ function Get-Probe {
         rag_building  = [bool]($ragHealth -and -not [string]::IsNullOrWhiteSpace([string]$ragHealth.building_generation))
         coli          = $mouth
         mouth         = $mouth
-        mouth_ready   = [bool]($mouth -and (Test-HttpOk "http://127.0.0.1:8000/health"))
+        exl3          = $exl3
+        mouth_ready   = [bool]$mouthReady
         kernel        = Test-Port "127.0.0.1" 8083
         tailscale     = Test-TailscaleCgNat
         dns           = Test-ServiceUp "Dnscache"
@@ -287,10 +296,9 @@ if (Test-Path -LiteralPath $cs2Helper) {
     $coliSleep = Test-GodBrainColiShouldSleep $RepoRoot
 }
 $mouthPause = $false
-$mouthHelper = Join-Path $RepoRoot "scripts\GodBrain-Mouth.ps1"
-if (Test-Path -LiteralPath $mouthHelper) {
-    . $mouthHelper
-    $mouthPause = Test-GodBrainMouthPaused -RepoRoot $RepoRoot
+$pauseFile = Join-Path $RepoRoot "logs\mouth-pause.txt"
+if (Test-Path -LiteralPath $pauseFile) {
+    $mouthPause = ((Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
 }
 
 $before = Get-Probe
@@ -360,7 +368,7 @@ $inboxLock = Join-Path $logDir "heal-inbox.lock"
 if ($waitingFiles.Count -gt 0) {
     if ($coliSleep) {
         $inbox.skip = "cs2"
-    } elseif ($mouthPause) {
+    } elseif ($mouthPause -and -not $after.exl3) {
         $inbox.skip = "mouth-paused"
     } elseif (-not $after.mouth_ready) {
         $inbox.skip = "mouth-down"
@@ -379,7 +387,23 @@ if ($waitingFiles.Count -gt 0) {
             try {
                 [System.IO.File]::WriteAllText($inboxLock, "$PID $(Get-Date -Format o)")
                 $beforeName = $waitingFiles[0].Name
-                & $lib -Inbox -RepoRoot $RepoRoot
+                $prevMouthPort = $env:GODBRAIN_MOUTH_PORT
+                $prevLibModel = $env:GODBRAIN_LIBRARIAN_MODEL
+                if ($mouthPause) {
+                    $env:GODBRAIN_MOUTH_PORT = "8888"
+                    try {
+                        $mid = (Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8888/v1/models").data[0].id
+                        if ($mid) { $env:GODBRAIN_LIBRARIAN_MODEL = [string]$mid }
+                    } catch {}
+                }
+                try {
+                    & $lib -Inbox -RepoRoot $RepoRoot
+                } finally {
+                    if ($null -eq $prevMouthPort) { Remove-Item Env:GODBRAIN_MOUTH_PORT -ErrorAction SilentlyContinue }
+                    else { $env:GODBRAIN_MOUTH_PORT = $prevMouthPort }
+                    if ($null -eq $prevLibModel) { Remove-Item Env:GODBRAIN_LIBRARIAN_MODEL -ErrorAction SilentlyContinue }
+                    else { $env:GODBRAIN_LIBRARIAN_MODEL = $prevLibModel }
+                }
                 if ($LASTEXITCODE -eq 0) {
                     $inbox.acted = $true
                     $acted += "inbox:librarian"

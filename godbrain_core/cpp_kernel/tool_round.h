@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cctype>
+#include <cstdlib>
 #include <string>
+#include <vector>
 
 // Native tool rounds: advertise OpenAI tools on every hop except the last.
 // The ledger being non-empty does not drop the schema. CUDA IMA is avoided
@@ -48,47 +50,74 @@ inline bool looks_like_fix_job(const std::string& msg) {
     if (t.find("still need") != std::string::npos) return false;
     if (t.find("what do you need") != std::string::npos) return false;
     if (!fix_has_word(t, "fix")) return false;
-    return t.find("panic") != std::string::npos ||
-           t.find("traceback") != std::string::npos ||
-           t.find("stack trace") != std::string::npos ||
-           t.find("fatal") != std::string::npos ||
-           t.find("exception") != std::string::npos ||
-           t.find("segfault") != std::string::npos ||
-           t.find("segmentation") != std::string::npos ||
-           t.find("error") != std::string::npos ||
-           t.find("assert") != std::string::npos ||
-           t.find("exit status") != std::string::npos ||
-           fix_has_word(t, "crash");
+    if (fix_has_word(t, "panic") || fix_has_word(t, "traceback") ||
+        fix_has_word(t, "segfault") || fix_has_word(t, "crash")) {
+        return true;
+    }
+    if (t.find("exit status") != std::string::npos ||
+        t.find("stack trace") != std::string::npos ||
+        t.find("fatal error") != std::string::npos ||
+        t.find("segmentation fault") != std::string::npos ||
+        t.find("assertion failed") != std::string::npos ||
+        t.find("exception:") != std::string::npos) {
+        return true;
+    }
+    std::size_t at = 0;
+    while (at < t.size()) {
+        while (at < t.size() && (t[at] == ' ' || t[at] == '\t')) ++at;
+        if (t.compare(at, 6, "error:") == 0) return true;
+        const std::size_t nl = t.find('\n', at);
+        if (nl == std::string::npos) break;
+        at = nl + 1;
+    }
+    return false;
 }
 
-// True after a failed run (exit!=0) and a later run that stayed up (exit=0).
+// A runner header from local_tools, not an exit= buried in stdout.
+inline bool fix_runner_header(const std::string& line) {
+    return line.rfind("run_pwsh", 0) == 0 || line.rfind("run_python", 0) == 0 ||
+           line.rfind("run_node", 0) == 0;
+}
+
+// True when the same script file failed and a later run of that file exited 0.
+// Inline bodies share one header, so they do not end the job early.
 inline bool fix_test_stayed_up(const std::string& ledger) {
-    int last = -1;
-    bool saw_fail = false;
-    bool last_timeout = false;
+    struct Run {
+        std::string header;
+        int code = 1;
+        bool timeout = false;
+    };
+    std::vector<Run> runs;
     std::size_t pos = 0;
-    while ((pos = ledger.find("exit=", pos)) != std::string::npos) {
-        std::size_t i = pos + 5;
-        if (i >= ledger.size() ||
-            std::isdigit(static_cast<unsigned char>(ledger[i])) == 0) {
-            pos += 5;
-            continue;
-        }
-        int val = 0;
-        while (i < ledger.size() &&
-               std::isdigit(static_cast<unsigned char>(ledger[i])) != 0) {
-            val = val * 10 + (ledger[i] - '0');
-            ++i;
-        }
-        if (last > 0) saw_fail = true;
-        last = val;
-        const std::size_t line_end = ledger.find('\n', pos);
+    while (pos < ledger.size()) {
+        const std::size_t end = ledger.find('\n', pos);
         const std::string line = ledger.substr(
-            pos, line_end == std::string::npos ? std::string::npos : line_end - pos);
-        last_timeout = line.find("timeout=1") != std::string::npos;
-        pos = i;
+            pos, end == std::string::npos ? std::string::npos : end - pos);
+        const std::size_t next = end == std::string::npos ? ledger.size() : end + 1;
+        if (fix_runner_header(line) && next < ledger.size()) {
+            const std::size_t exit_end = ledger.find('\n', next);
+            const std::string exit_line = ledger.substr(
+                next, exit_end == std::string::npos ? std::string::npos : exit_end - next);
+            if (exit_line.rfind("exit=", 0) == 0) {
+                Run run;
+                run.header = line;
+                run.code = std::atoi(exit_line.c_str() + 5);
+                run.timeout = exit_line.find("timeout=1") != std::string::npos;
+                runs.push_back(run);
+            }
+        }
+        if (end == std::string::npos) break;
+        pos = end + 1;
     }
-    return last == 0 && saw_fail && !last_timeout;
+    for (std::size_t i = 0; i < runs.size(); ++i) {
+        const Run& run = runs[i];
+        if (run.code != 0 || run.timeout) continue;
+        if (run.header.find(" inline") != std::string::npos) continue;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (runs[j].header == run.header && runs[j].code != 0) return true;
+        }
+    }
+    return false;
 }
 
 inline std::string flatten_continue_prompt(const std::string& ledger,

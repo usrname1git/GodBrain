@@ -57,22 +57,47 @@ int main() {
                 "jarvis need is not a fix job") ||
         !expect(!looks_like_fix_job("the prefix is fine"),
                 "prefix is not the word fix") ||
+        !expect(!looks_like_fix_job("fix the error in the comment"),
+                "the word error is not a crash line") ||
+        !expect(!looks_like_fix_job("no exception, just fix the typo"),
+                "exception in a sentence is not a crash") ||
+        !expect(!looks_like_fix_job("fix the segmentation of this paragraph"),
+                "segmentation of a paragraph is not a fault") ||
+        !expect(looks_like_fix_job("Error: nil pointer\n\nfix"),
+                "an Error: line plus fix is a fix job") ||
         !expect(tools_schema_on_round(true, 0, 8), "fix round 0 has tools") ||
         !expect(tools_schema_on_round(true, 6, 8), "fix round 6 has tools") ||
         !expect(!tools_schema_on_round(true, 7, 8), "fix last round talks")) {
         return 1;
     }
 
-    const std::string crashed = "run_pwsh inline\nexit=1 timeout=0\n";
-    const std::string stayed = crashed + "run_pwsh inline\nexit=0 timeout=0\n";
+    const std::string crashed =
+        "run_pwsh -File C:\\t\\repro.ps1\nexit=1 timeout=0\nboom\n";
+    const std::string stayed =
+        crashed + "run_pwsh -File C:\\t\\repro.ps1\nexit=0 timeout=0\n";
+    const std::string other_ok =
+        crashed + "run_pwsh inline\nexit=0 timeout=0\n";
+    const std::string inline_pair =
+        "run_pwsh inline\nexit=1 timeout=0\n"
+        "run_pwsh inline\nexit=0 timeout=0\n";
     if (!expect(!fix_test_stayed_up(crashed), "a crash is not stayed up") ||
-        !expect(!fix_test_stayed_up("run_pwsh inline\nexit=0 timeout=0\n"),
-                "a pass with no earlier crash does not end the job") ||
-        !expect(fix_test_stayed_up(stayed), "pass after crash stayed up") ||
-        !expect(!fix_test_stayed_up(stayed + "exit=2 timeout=0\n"),
-                "a later crash keeps the loop") ||
         !expect(!fix_test_stayed_up(
-                    "run_pwsh inline\nexit=1 timeout=0\nexit=0 timeout=1\n"),
+                    "run_pwsh -File C:\\t\\repro.ps1\nexit=0 timeout=0\n"),
+                "a pass with no earlier crash does not end the job") ||
+        !expect(fix_test_stayed_up(stayed), "same script staying up ends the job") ||
+        !expect(!fix_test_stayed_up(other_ok),
+                "a different command staying up does not end the job") ||
+        !expect(!fix_test_stayed_up(inline_pair),
+                "inline runs do not end the job") ||
+        !expect(!fix_test_stayed_up(
+                    "run_pwsh -File C:\\t\\repro.ps1\nexit=1 timeout=0\n"
+                    "the log itself says exit=0\n"
+                    "run_pwsh -File C:\\t\\repro.ps1\nexit=1 timeout=0\n"
+                    "exit=0 somewhere in the output\n"),
+                "exit= inside stdout is not a runner result") ||
+        !expect(!fix_test_stayed_up(
+                    "run_pwsh -File C:\\t\\repro.ps1\nexit=1 timeout=0\n"
+                    "run_pwsh -File C:\\t\\repro.ps1\nexit=0 timeout=1\n"),
                 "a timeout is not stayed up")) {
         return 1;
     }

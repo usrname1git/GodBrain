@@ -848,7 +848,7 @@
             const rec = (status && status.host_record) || {};
             const tail = (status && status.tailscale) || {};
             const rag = (status && status.rag) || {};
-            const busy = !!coli.busy;
+            const busy = !!(status && status.generate_busy) || !!coli.busy;
             if (busy) {
                 if (!coliBusySince) coliBusySince = Date.now();
             } else {
@@ -952,6 +952,9 @@
                     (volume.label || '') + ' ' +
                     (volume.total_gb || 0) + ' GB');
             });
+            const elapsed = coliBusySince
+                ? Math.max(0, Math.round((Date.now() - coliBusySince) / 1000))
+                : null;
             return {
                 text: lines.join('\n'),
                 busy: busy,

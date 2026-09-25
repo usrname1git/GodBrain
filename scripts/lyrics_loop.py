@@ -285,8 +285,25 @@ def merge_passes(a, b):
     return segs
 
 
+def refuse_overwrite(stpath: Path, new_take: bool, force: bool) -> str | None:
+    """A new mix must not land on top of locked lines unless --force."""
+    if not new_take or force or not stpath.exists():
+        return None
+    try:
+        state = load_state(stpath)
+    except Exception:
+        return None
+    locked = [s for s in (state.get("segments") or []) if s.get("locked")]
+    if not locked:
+        return None
+    return (
+        f"locked lines exist ({len(locked)}); refusing to overwrite the mix. "
+        "Pass --force to record again."
+    )
+
+
 def preserve_locks(new_segs, old_locked):
-    """Operator-crowned lines survive a rematch / re-transcribe."""
+    """Operator-crowned lines survive a rematch of the same take."""
     out = [dict(s) for s in new_segs]
     for old in old_locked:
         hit = False
@@ -587,6 +604,10 @@ def main():
     wav = work / "vocals.wav"
     stpath = work / "state.json"
     rec = parse_song(args.record) or 0.0
+    new_take = rec > 0 or bool(args.path)
+    blocked = refuse_overwrite(stpath, new_take, args.force)
+    if blocked:
+        raise SystemExit(blocked)
 
     if rec > 0:
         record_loopback(mix, rec)
@@ -794,7 +815,9 @@ def main():
         return
 
     old_locked = []
-    if stpath.exists():
+    # A new recording has a new clock. Do not stamp the previous take's
+    # locked sentences onto it.
+    if stpath.exists() and not new_take:
         try:
             old_locked = [s for s in load_state(stpath)["segments"] if s.get("locked")]
         except Exception:

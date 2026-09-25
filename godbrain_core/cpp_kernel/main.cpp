@@ -1044,6 +1044,7 @@ static json kernel_status_body() {
     }
     return {
         {"kernel", true},
+        {"generate_busy", g_coli_job_started_ms.load(std::memory_order_relaxed) != 0},
         {"coli_serve", coli.value("up", false)},
         {"coli", coli},
         {"mouth", load_mouth()},
@@ -1983,9 +1984,7 @@ static json coli_serve_status() {
         if (active > 0 && started != 0) {
             result["elapsed_s"] = static_cast<int>((GetTickCount() - started) / 1000);
         }
-        if (active <= 0) {
-            g_coli_job_started_ms.store(0, std::memory_order_relaxed);
-        }
+
     } catch (const json::exception&) {
     }
     return result;
@@ -3327,7 +3326,8 @@ std::string run_colibri_serve(
         std::string sse_buf;
         std::string finish_reason;
         bool heading_loop = false;
-        g_coli_job_started_ms.store(GetTickCount(), std::memory_order_relaxed);
+        const DWORD tick = GetTickCount();
+        g_coli_job_started_ms.store(tick == 0 ? 1 : tick, std::memory_order_relaxed);
         if (use_tools && tool_mouth) {
             body["stream"] = false;
             httplib::Headers json_headers = headers;
@@ -3336,7 +3336,6 @@ std::string run_colibri_serve(
             const auto response = client.Post(
                 "/v1/chat/completions", json_headers, body.dump(),
                 "application/json");
-            g_coli_job_started_ms.store(0, std::memory_order_relaxed);
             if (!response) {
                 std::string err;
                 if (exl3_mouth) {
@@ -3391,7 +3390,6 @@ std::string run_colibri_serve(
                 }
                 return true;
             });
-        g_coli_job_started_ms.store(0, std::memory_order_relaxed);
         if (heading_loop) {
             if (unused49::contains(piece)) unused49_seen = true;
             piece = sanitize_oracle_body(piece);
@@ -3822,28 +3820,20 @@ std::string run_colibri(
     const std::string& prior_assistant = {},
     std::string* spoken = nullptr,
     const std::string& tool_hint = {}) {
-    const json coli = coli_serve_status();
-    if (coli.value("up", false)) {
-        if (coli.value("busy", false)) {
-            std::cout << "[COLIBRI] Serve is busy; refusing to stack a second slot"
-                      << std::endl;
-            return "Error: Colibri is still generating the previous answer "
-                   "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
-        }
-        std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
-        return run_colibri_serve(
-            system, user, on_token, on_ping, prior_user, prior_assistant,
-            spoken, tool_hint);
+    DWORD expected = 0;
+    const DWORD now = GetTickCount();
+    const DWORD stamp = now == 0 ? 1 : now;
+    if (!g_coli_job_started_ms.compare_exchange_strong(
+            expected, stamp, std::memory_order_acq_rel)) {
+        return "Error: a generate is still running (one GPU slot). "
+               "Wait, then ask again.";
     }
-    std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
-              << std::endl;
-    const std::string mouth = load_mouth().value("label", "coli");
-    if (mouth_paused()) {
-        // Gemma stays paused. The tool rounds go to the EXL3 already on :8888.
-        if (g_coli_job_started_ms.load(std::memory_order_relaxed) != 0) {
-            return "Error: EXL3 is still generating (one GPU slot). "
-                   "Wait, then ask again.";
+    struct ClearGenerate {
+        ~ClearGenerate() {
+            g_coli_job_started_ms.store(0, std::memory_order_release);
         }
+    } clear_generate;
+    if (mouth_paused()) {
         const json ex = exl3_desk();
         if (ex.value("up", false)) {
             std::string id = ex.value("id", "");
@@ -3860,6 +3850,22 @@ std::string run_colibri(
                "/mouth on or scripts\\Start-LlamaServer.ps1 -Resume "
                "only if this slot is free. Do not Continue.";
     }
+    const json coli = coli_serve_status();
+    if (coli.value("up", false)) {
+        if (coli.value("busy", false)) {
+            std::cout << "[COLIBRI] Serve is busy; refusing to stack a second slot"
+                      << std::endl;
+            return "Error: Colibri is still generating the previous answer "
+                   "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
+        }
+        std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
+        return run_colibri_serve(
+            system, user, on_token, on_ping, prior_user, prior_assistant,
+            spoken, tool_hint);
+    }
+    std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
+              << std::endl;
+    const std::string mouth = load_mouth().value("label", "coli");
     const bool starting = maybe_restart_mouth();
     if (starting) {
         return "Error: " + mouth +
@@ -4361,9 +4367,30 @@ int main() {
                             "application/json");
                         return;
                     }
-                    run_mouth_script("scripts\\Stop-LlamaServer.ps1", "");
-                    reply << "mouth=paused. Watch/Heal/kernel will not start "
-                             "llama. Slot free. /mouth on to resume.\n";
+                    // run_hidden exits as soon as it spawns pwsh, so the
+                    // script's own exit is not visible here. :8000 is the check.
+                    const bool launched =
+                        run_mouth_script("scripts\\Stop-LlamaServer.ps1", "");
+                    bool down = !colibri_serve_up();
+                    if (!down && launched) {
+                        for (int i = 0; i < 40 && !down; ++i) {
+                            Sleep(500);
+                            down = !colibri_serve_up();
+                        }
+                    }
+                    if (down) {
+                        reply << "mouth=paused. :8000 is down. "
+                                 "Watch/Heal/kernel will not start llama. "
+                                 "/mouth on to resume.\n";
+                    } else {
+                        reply << "mouth=paused is written, but :8000 is still "
+                                 "listening";
+                        if (!launched) {
+                            reply << " and scripts\\Stop-LlamaServer.ps1 did not "
+                                     "start";
+                        }
+                        reply << ". Do not start another model on this slot.\n";
+                    }
                 } else if (arg == "on" || arg == "resume") {
                     if (!write_mouth_paused(false)) {
                         res.status = 500;

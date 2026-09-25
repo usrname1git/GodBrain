@@ -12,10 +12,12 @@ $ErrorActionPreference = "Stop"
 $Kit = "C:\nvme\Qwen3.8-27B-16gb"
 $Start27 = Join-Path $Kit "paper-godbrain\Start-PaperQwen.ps1"
 $StopModel = Join-Path $Kit "paper-godbrain\Stop-PaperQwen.ps1"
-$StartVl = "C:\Users\autismo\Documents\GitHub\GodBrain\scripts\Start-QwenVL.ps1"
-$Lyrics = "C:\Users\autismo\Documents\GitHub\GodBrain\scripts\Invoke-LyricsLoop.ps1"
-$Repo = "C:\Users\autismo\Documents\GitHub\GodBrain"
+$Repo = Split-Path $PSScriptRoot -Parent
+$StartVl = Join-Path $Repo "scripts\Start-QwenVL.ps1"
+$Lyrics = Join-Path $Repo "scripts\Invoke-LyricsLoop.ps1"
 $Pwsh = "C:\pwsh\pwsh.exe"
+$cs2Helper = Join-Path $Repo "GodBrain-Cs2.ps1"
+if (Test-Path -LiteralPath $cs2Helper) { . $cs2Helper }
 
 function Test-Port([int]$Port) {
     try {
@@ -43,11 +45,48 @@ function Get-GpuLine {
     } catch { return "GPU unread" }
 }
 
+function Get-Cs2DeskLine {
+    if (-not (Get-Command Test-Cs2Running -ErrorAction SilentlyContinue)) { return "unread" }
+    if (Test-Cs2Running) { return "running" }
+    if (Test-GodBrainColiShouldSleep $Repo) { return "sleep" }
+    return "idle"
+}
+
+function Test-GenerateBusy {
+    try {
+        $st = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8083/api/status"
+        if ($st.generate_busy) { return $true }
+        if ($st.coli -and $st.coli.busy) { return $true }
+        return $false
+    } catch {
+        return $null
+    }
+}
+
+function ConvertTo-LyricSlug([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+    $t = $Text.Trim().Replace(" ", "_")
+    $t = [regex]::Replace($t, "[^\w\-]+", "_")
+    return $t.Trim("_-".ToCharArray())
+}
+
+function Get-LyricsStatePath {
+    $parts = @()
+    foreach ($bit in @($artist.Text, $album.Text, $name.Text)) {
+        $s = ConvertTo-LyricSlug $bit
+        if ($s) { $parts += $s }
+    }
+    if ($parts.Count -eq 0) { return $null }
+    $dir = "C:\nvme\stt\lyrics"
+    foreach ($p in $parts) { $dir = Join-Path $dir $p }
+    return (Join-Path $dir "state.json")
+}
+
 function Get-DeskStatus {
     $mouth = "mouth pause unread"
     $mf = Join-Path $Repo "logs\mouth-pause.txt"
     if (Test-Path $mf) { $mouth = "mouth pause $((Get-Content $mf -Raw).Trim())" }
-    $cs2 = if (Get-Process -Name CS2 -ErrorAction SilentlyContinue) { "CS2 running" } else { "CS2 not running" }
+    $cs2 = "CS2 $(Get-Cs2DeskLine)"
     $gym = if (Test-Port 4177) { "gym :4177 up" } else { "gym :4177 down" }
     $kernel = if (Test-Port 8083) { "kernel :8083 up" } else { "kernel :8083 down" }
     $rag = if (Test-Port 8084) { "RAG :8084 up" } else { "RAG :8084 down" }
@@ -114,7 +153,16 @@ function Start-Door([string]$File) {
 }
 
 function Stop-Door {
+    $busy = Test-GenerateBusy
+    if ($busy) {
+        $ask = [System.Windows.Forms.MessageBox]::Show(
+            "A generate is in flight on this GPU slot. Stop the model anyway?",
+            "Stop",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return $false }
+    }
     & $Pwsh -NoProfile -File $StopModel
+    return $true
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -355,7 +403,7 @@ function Update-Status {
     $rowRag.Text = $(if (Test-Port 8084) { "up" } else { "down" })
     $rowMongo.Text = $(if (Test-Port 27017) { "up" } else { "down" })
     $rowGym.Text = $(if (Test-Port 4177) { "up" } else { "down" })
-    $rowCs2.Text = $(if (Get-Process -Name CS2 -ErrorAction SilentlyContinue) { "running" } else { "not running" })
+    $rowCs2.Text = Get-Cs2DeskLine
     $rowMouth.Text = $mouth
     $rowGpu.Text = (Get-GpuLine) -replace "^GPU ", ""
 }
@@ -366,9 +414,9 @@ $timer.Add_Tick({ Update-Status })
 $timer.Start()
 
 Add-Head $pageModel "Model" 16
-Add-Button $pageModel "27B text" 20 56 176 { Stop-Door; Start-Door $Start27 } $true
-Add-Button $pageModel "8B vision" 208 56 176 { Stop-Door; Start-Door $StartVl } $false
-Add-Button $pageModel "Stop" 20 100 112 { Stop-Door; Update-Status } $false
+Add-Button $pageModel "27B text" 20 56 176 { if (Stop-Door) { Start-Door $Start27 } } $true
+Add-Button $pageModel "8B vision" 208 56 176 { if (Stop-Door) { Start-Door $StartVl } } $false
+Add-Button $pageModel "Stop" 20 100 112 { if (Stop-Door) { Update-Status } } $false
 Add-Button $pageModel "Galaxy" 144 100 112 { Start-Process "http://127.0.0.1:8083/" } $false
 Add-Button $pageModel "Gym" 268 100 116 { Start-Process "http://127.0.0.1:4177/" } $false
 
@@ -399,14 +447,24 @@ $prompt.Size = New-Object System.Drawing.Size(240, 26)
 Style-Box $prompt
 $pageAsk.Controls.Add($prompt)
 Add-Button $pageAsk "Send" 272 52 112 {
-    if (-not (Test-Port 8888)) { [System.Windows.Forms.MessageBox]::Show("Nothing is listening on 8888"); return }
-    $id = "qwen3.8-27b-exl3-3.5bpw"
-    try { $id = (Invoke-RestMethod http://127.0.0.1:8888/v1/models -TimeoutSec 2).data[0].id } catch {}
-    $body = @{ model = $id; messages = @(@{ role = "user"; content = $prompt.Text }); max_tokens = 512 } | ConvertTo-Json -Depth 6
+    $busy = Test-GenerateBusy
+    if ($null -eq $busy) {
+        [System.Windows.Forms.MessageBox]::Show("Kernel status is down, so Ask cannot tell if the GPU slot is free.")
+        return
+    }
+    if ($busy) {
+        [System.Windows.Forms.MessageBox]::Show("A generate is already running (one GPU slot). Wait.")
+        return
+    }
+    $text = [string]$prompt.Text
+    if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
+    $body = @{ message = $text } | ConvertTo-Json -Compress
     $reply.Text = "waiting..."
     try {
-        $res = Invoke-RestMethod http://127.0.0.1:8888/v1/chat/completions -Method Post -Body $body -ContentType "application/json; charset=utf-8" -TimeoutSec 180
-        $reply.Text = [string]$res.choices[0].message.content
+        $res = Invoke-RestMethod http://127.0.0.1:8083/api/chat -Method Post -Body $body -ContentType "application/json; charset=utf-8" -TimeoutSec 180
+        if ($res.response) { $reply.Text = [string]$res.response }
+        elseif ($res.error) { $reply.Text = [string]$res.error }
+        else { $reply.Text = ($res | ConvertTo-Json -Compress) }
     } catch {
         $reply.Text = $_.Exception.Message
     }
@@ -457,6 +515,26 @@ $go.Add_Click({
     $nc = Get-Process -Name ncspot -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $nc) { [System.Windows.Forms.MessageBox]::Show("ncspot is not running"); return }
     if (-not $name.Text -or -not $song.Text) { [System.Windows.Forms.MessageBox]::Show("Track and length are required"); return }
+    $force = @()
+    $st = Get-LyricsStatePath
+    if ($st -and (Test-Path -LiteralPath $st)) {
+        $locked = 0
+        try {
+            $state = Get-Content -LiteralPath $st -Raw | ConvertFrom-Json
+            $locked = @($state.segments | Where-Object { $_.locked }).Count
+        } catch {
+            $locked = -1
+        }
+        if ($locked -ne 0) {
+            $n = if ($locked -lt 0) { "an unreadable" } else { "$locked locked" }
+            $ask = [System.Windows.Forms.MessageBox]::Show(
+                "This track has $n take. Recording again overwrites the mix and does not keep the old locked lines. Continue?",
+                "Record",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo)
+            if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+            $force = @("-Force")
+        }
+    }
     $log = Join-Path $env:TEMP "desk-lyrics.log"
     $err = Join-Path $env:TEMP "desk-lyrics.err.log"
     Remove-Item $log, $err -ErrorAction SilentlyContinue
@@ -468,6 +546,7 @@ $go.Add_Click({
     )
     if ($artist.Text) { $args += @("-Artist", $artist.Text) }
     if ($album.Text) { $args += @("-Album", $album.Text) }
+    if ($force.Count -gt 0) { $args += $force }
     Start-Process -FilePath $Pwsh -ArgumentList $args -RedirectStandardOutput $log -RedirectStandardError $err -WindowStyle Normal | Out-Null
     $deadline = (Get-Date).AddSeconds(45)
     $saw = $false
