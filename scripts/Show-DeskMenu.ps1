@@ -845,13 +845,46 @@ Add-Button $pageModel "Open Grok" 272 214 112 {
     Start-Process -FilePath $grok -WorkingDirectory $dir | Out-Null
 } $false
 
+function Get-DeskJailRoots {
+    @(
+        $env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA, $env:ProgramData,
+        ${env:ProgramFiles}, ${env:ProgramFiles(x86)}, "C:\Tools", "C:\Temp\GitHub"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+}
+function Test-DeskGrantedPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    $full = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path.Trim()))
+    foreach ($root in Get-DeskJailRoots) {
+        $r = [IO.Path]::GetFullPath($root).TrimEnd("\")
+        if ($full.Equals($r, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($full.StartsWith($r + "\", [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+function Test-DeskPathToken([string]$Text) {
+    return $Text -match '(?i)(?:[a-z]:[\\/]|%[A-Za-z0-9_()]+%\\)'
+}
+
 Add-Head $pageAsk "Ask" 16
+$fileLabel = New-Object System.Windows.Forms.Label
+$fileLabel.Text = "File path  (empty = chat only)"
+$fileLabel.ForeColor = $mute
+$fileLabel.Location = New-Object System.Drawing.Point(20, 44)
+$fileLabel.AutoSize = $true
+$pageAsk.Controls.Add($fileLabel)
+$askPath = New-Object System.Windows.Forms.TextBox
+$askPath.Location = New-Object System.Drawing.Point(20, 66)
+$askPath.Size = New-Object System.Drawing.Size(364, 26)
+Style-Box $askPath
+$pageAsk.Controls.Add($askPath)
 $prompt = New-Object System.Windows.Forms.TextBox
-$prompt.Location = New-Object System.Drawing.Point(20, 56)
-$prompt.Size = New-Object System.Drawing.Size(240, 26)
+$prompt.Multiline = $true
+$prompt.ScrollBars = "Vertical"
+$prompt.Location = New-Object System.Drawing.Point(20, 100)
+$prompt.Size = New-Object System.Drawing.Size(252, 52)
 Style-Box $prompt
 $pageAsk.Controls.Add($prompt)
-Add-Button $pageAsk "Send" 272 52 112 {
+Add-Button $pageAsk "Send" 280 100 104 {
     $busy = Test-GenerateBusy
     if ($null -eq $busy) {
         [System.Windows.Forms.MessageBox]::Show("Kernel status is down, so Ask cannot tell if the GPU slot is free.")
@@ -861,8 +894,26 @@ Add-Button $pageAsk "Send" 272 52 112 {
         [System.Windows.Forms.MessageBox]::Show("A generate is already running (one GPU slot). Wait.")
         return
     }
+    $path = [string]$askPath.Text
     $text = [string]$prompt.Text
-    if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
+    $path = $path.Trim()
+    if ($path) {
+        try {
+            if (-not (Test-DeskGrantedPath $path)) {
+                $reply.Text = "That path is outside the kernel file jail. Granted roots are your profile, AppData, Program Files, C:\Tools, and C:\Temp\GitHub."
+                return
+            }
+        } catch {
+            $reply.Text = $_.Exception.Message
+            return
+        }
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            $text = "Read this path and say what the file or folder is."
+        }
+        $text = "Path: $path`n`n$text"
+    } elseif (-not (Test-DeskPathToken $text)) {
+        if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
+    }
     $body = @{ message = $text } | ConvertTo-Json -Compress
     $reply.Text = "waiting..."
     try {
@@ -877,8 +928,9 @@ Add-Button $pageAsk "Send" 272 52 112 {
 $reply = New-Object System.Windows.Forms.TextBox
 $reply.Multiline = $true
 $reply.ScrollBars = "Vertical"
-$reply.Location = New-Object System.Drawing.Point(20, 96)
-$reply.Size = New-Object System.Drawing.Size(364, 200)
+$reply.Location = New-Object System.Drawing.Point(20, 164)
+$reply.Size = New-Object System.Drawing.Size(364, 420)
+$reply.MaxLength = 0
 Style-Box $reply
 $pageAsk.Controls.Add($reply)
 
