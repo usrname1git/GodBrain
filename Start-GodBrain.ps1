@@ -7,7 +7,8 @@
 param(
     [string]$RepoRoot = $PSScriptRoot,
     [int]$MongoWaitSeconds = 30,
-    [switch]$SelfTestEnv
+    [switch]$SelfTestEnv,
+    [switch]$KeepPause
 )
 
 # Nested powershell -File can leave $PSScriptRoot empty. Never start with
@@ -246,10 +247,25 @@ if (-not $env:MONGODB_URI) {
     $env:MONGODB_URI = "mongodb://127.0.0.1:27017"
 }
 
+function Test-DeskPause([string]$FileName) {
+    $path = Join-Path $logDir $FileName
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
+
+function Clear-DeskPause([string]$FileName) {
+    $path = Join-Path $logDir $FileName
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+}
+
 $rag = Resolve-AlexandriaExe "rag-service.exe"
-if (Test-Port "127.0.0.1" 8084) {
+if ($KeepPause -and (Test-DeskPause "rag-pause.txt")) {
+    Write-Log "skip rag-service (rag-pause.txt=on)"
+} elseif (Test-Port "127.0.0.1" 8084) {
+    if (-not $KeepPause) { Clear-DeskPause "rag-pause.txt" }
     Write-Log "skip rag-service (:8084 already listening)"
 } else {
+    if (-not $KeepPause) { Clear-DeskPause "rag-pause.txt" }
     Write-Log "rag-service $rag"
     Start-LoggedProcess -Name "rag-service" -FilePath $rag `
         -WorkingDirectory (Split-Path $rag -Parent)
@@ -384,9 +400,14 @@ if ($mouthPaused) {
 }
 
 $kernel = Join-Path $RepoRoot "godbrain_core\cpp_kernel\godbrain-kernel.exe"
-if (Test-Port "127.0.0.1" 8083) {
+$kernelHeld = $KeepPause -and (Test-DeskPause "kernel-pause.txt")
+if ($kernelHeld) {
+    Write-Log "skip kernel (kernel-pause.txt=on)"
+} elseif (Test-Port "127.0.0.1" 8083) {
+    if (-not $KeepPause) { Clear-DeskPause "kernel-pause.txt" }
     Write-Log "skip kernel (:8083 already listening)"
 } else {
+    if (-not $KeepPause) { Clear-DeskPause "kernel-pause.txt" }
     $kernelEnv = @{}
     if ($env:MONGODB_URI) { $kernelEnv["MONGODB_URI"] = $env:MONGODB_URI }
     if ($env:GODBRAIN_API_TOKEN) { $kernelEnv["GODBRAIN_API_TOKEN"] = $env:GODBRAIN_API_TOKEN }
@@ -396,7 +417,7 @@ if (Test-Port "127.0.0.1" 8083) {
 }
 
 $kernelDeadline = (Get-Date).AddSeconds(20)
-while (-not (Test-Port "127.0.0.1" 8083)) {
+while (-not $kernelHeld -and -not (Test-Port "127.0.0.1" 8083)) {
     if ((Get-Date) -gt $kernelDeadline) {
         Write-Log "kernel :8083 not up after 20s; skip observe"
         break

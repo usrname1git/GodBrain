@@ -1,6 +1,7 @@
 # One loop for THIS host: detect → reason (layer) → allowlist patch → verify.
 # TCP ports, then HTTP readiness (rag /health.ready, mouth /health).
 # Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
+# logs/kernel-pause.txt or logs/rag-pause.txt = on skips that listener until Start-GodBrain.
 # Allowlist repair: Clear-DnsClientCache only when dns_self fails, Dnscache is
 # up, and icmp_loopback is up. If rag listens but the projection is unready,
 # rag-rebuild.exe once (30 min cooldown, never kills rag-service).
@@ -210,10 +211,12 @@ function Get-DiagnoseLayer($probe) {
     if (-not $probe.icmp_loopback) { return "icmp" }
     if (-not $probe.dns -or -not $probe.dns_self) { return "dns" }
     if (-not $probe.nic_tcpip) { return "nic" }
-    if (-not ($probe.mongo -and $probe.rag -and $probe.coli -and $probe.kernel)) {
+    $ragOk = ($probe.rag -and $probe.rag_ready) -or ($ragPaused -and -not $probe.rag)
+    $kernelOk = $probe.kernel -or ($kernelPaused -and -not $probe.kernel)
+    if (-not ($probe.mongo -and $ragOk -and $probe.coli -and $kernelOk)) {
         return "listeners"
     }
-    if (-not $probe.rag_ready) { return "rag" }
+    if (-not $probe.rag_ready -and -not ($ragPaused -and -not $probe.rag)) { return "rag" }
     if (-not $probe.mouth_ready -and -not $coliSleep) { return "mouth" }
     return "ok"
 }
@@ -301,18 +304,26 @@ if (Test-Path -LiteralPath $pauseFile) {
     $mouthPause = ((Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
 }
 
+function Test-DeskPause([string]$FileName) {
+    $path = Join-Path $logDir $FileName
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
+
 $before = Get-Probe
 $needed = @()
 $acted = @()
+$kernelPaused = Test-DeskPause "kernel-pause.txt"
+$ragPaused = Test-DeskPause "rag-pause.txt"
 if (-not $before.mongo) { $needed += "mongo" }
 if (-not $before.dns) { $needed += "dns" }
 if (-not $before.iphlp) { $needed += "iphlp" }
 if (-not $before.nsi) { $needed += "nsi" }
-if (-not $before.rag) { $needed += "rag" }
+if (-not $before.rag -and -not $ragPaused) { $needed += "rag" }
 # "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
 # instead of coli when logs/mouth.txt says llama-server.
 if (-not $before.coli -and -not $coliSleep -and -not $mouthPause) { $needed += "coli" }
-if (-not $before.kernel) { $needed += "kernel" }
+if (-not $before.kernel -and -not $kernelPaused) { $needed += "kernel" }
 
 foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
     if ($needed -contains $key) {
@@ -323,7 +334,7 @@ foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
 
 $processNeeded = @($needed | Where-Object { $_ -notin @("mongo", "dns", "iphlp", "nsi") })
 if ($processNeeded.Count -gt 0) {
-    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15
+    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15 -KeepPause
     Start-Sleep -Seconds 2
     $acted += "start:listeners"
 } elseif ($needed -contains "mongo") {
@@ -429,8 +440,10 @@ if ($waitingFiles.Count -gt 0) {
     }
 }
 
+$ragHeld = $ragPaused -and -not $after.rag
+$kernelHeld = $kernelPaused -and -not $after.kernel
 $ok = [bool](
-    $after.mongo -and $after.rag -and $after.rag_ready -and $after.kernel -and
+    $after.mongo -and (($after.rag -and $after.rag_ready) -or $ragHeld) -and ($after.kernel -or $kernelHeld) -and
     $after.dns -and $after.iphlp -and $after.nsi -and
     ($after.mouth_ready -or $coliSleep)
 )

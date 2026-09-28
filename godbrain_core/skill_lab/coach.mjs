@@ -18,22 +18,22 @@ const ALTERNATIVE_DIRECTIONS = Object.freeze([
   {
     id: 'nordic-editorial',
     title: 'Nordic editorial',
-    direction: 'Spacious editorial composition on warm paper with near-black ink and one bronze accent. No second background.',
+    direction: 'Spacious editorial composition on near-black paper with light type and one copper accent on the button only. No second background.',
   },
   {
     id: 'product-led',
     title: 'Product-led interactive',
-    direction: 'Tighter product panels on the same paper and ink as the hero. One ink button. No cyan and no teal.',
+    direction: 'Tighter product panels on that same dark paper and light type. One copper button. No cyan and no teal.',
   },
   {
     id: 'enterprise-trust',
     title: 'Enterprise trust',
-    direction: 'Calm comparison layout on the same paper as the hero. Thin rules, black ink. No floating navy panel.',
+    direction: 'Calm comparison layout on the same dark paper and light type. Thin rules. No cream field and no floating navy panel.',
   },
   {
     id: 'event-experience',
     title: 'Event experience',
-    direction: 'More air around the same paper and ink. One warm accent. The journey sections stay on that paper.',
+    direction: 'More air around the same dark paper and light type. One copper accent. The journey sections stay on that paper.',
   },
 ]);
 const MAX_ALTERNATIVE_HISTORY = 10;
@@ -153,14 +153,14 @@ export function alternativePrompt(campaign, variant, stage, retry = 0) {
     );
   } else {
     common.push(
-      'Write only CSS. One hero photo is allowed: url("/media/event-a.jpg"), url("/media/event-b.jpg"), or url("/media/event-c.jpg"). Cover .hero and keep a dark scrim so the headline stays readable. No other url().',
-      'Compose like a product studio: one dark or warm field, a very large headline that says what the platform does, one filled button, and the proof points as a tight row of frames. Not a generic menu over a stock smile.',
-      'section.tinted and section.dark use the hero paper. .tinted is not a mint band. .dark is not a floating navy billboard. Set :root and every [data-theme] to the same tokens.',
-      'Forbidden: light teal, mint, sage, pale aqua. Text is dark on light or light on dark. Two fonts. One type scale.',
-      `Change spacing and the one accent so "${variant.title}" is recognizable. The product claim stays huge.`,
+      'Write only CSS. A hero photo means the whole page is dark, like Northline: near-black paper, light type, one copper accent on the button only.',
+      'One photo: url("/media/event-a.jpg"), url("/media/event-b.jpg"), or url("/media/event-c.jpg") on .hero, with a dark scrim. No other url().',
+      'Header, body, .tinted, .dark, cards, and footer use that same dark paper. Do not drop to cream, ivory, or a bleached field under the photo.',
+      'Set :root and every [data-theme] so --paper, --header, --tint, and --footer are the same dark color. No light teal, mint, sage, or pale aqua. Two fonts. One type scale.',
+      `Change spacing so "${variant.title}" is recognizable. The product claim stays huge.`,
     );
     if (retry) {
-      common.push('The last pass changed color mid-page or used a mint band. Keep the opening palette and delete the extra colors.');
+      common.push('The last pass put a cream page under the dark photo. Make --paper dark and the type light, including .dark and the footer.');
     }
   }
   return objectivePrompt(common);
