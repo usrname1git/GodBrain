@@ -326,7 +326,7 @@ function Invoke-VlWindowed([object[]]$Frames, [string]$Name, [double]$Duration) 
     [pscustomobject]@{
         file = $Name
         duration_s = $Duration
-        keep = @($keeps | Where-Object { $_ -and ([double]$_.out - [double]$_.in -gt 0 -or [double]$_.in -gt 0) })
+        keep = @($keeps | Where-Object { $_ -and ([double]$_.out -gt [double]$_.in) })
         drop = @($drops | Where-Object { $_ -and ([double]$_.out -gt [double]$_.in) })
     }
 }
@@ -439,6 +439,8 @@ foreach ($name in $all) {
         $index | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $indexPath -Encoding utf8
         Write-Output ("ok {0} parts={1} drop={2} keep={3}" -f $name, $nParts, @($result.drop).Count, @($result.keep).Count)
     } finally {
+        Get-ChildItem -LiteralPath $OutDir -Filter "${safe}_part*.mp4" -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
         if ($copied) {
             Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
         }

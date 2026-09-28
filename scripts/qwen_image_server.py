@@ -37,6 +37,15 @@ def load_pipe():
     return pipe
 
 
+def _as_int(value, name):
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{name} must be an integer")
+    try:
+        return int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+
+
 def clamp_side(value, default):
     try:
         n = int(value)
@@ -79,9 +88,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         raw = self.rfile.read(length)
         try:
-            req = json.loads(raw.decode("utf-8") or "{}")
-        except json.JSONDecodeError as exc:
-            self._send(400, {"error": str(exc)})
+            req = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send(400, {"error": "Request body must be valid JSON."})
+            return
+        if not isinstance(req, dict):
+            self._send(400, {"error": "Request body must be a JSON object."})
             return
         prompt = str(req.get("prompt") or "").strip()
         if not prompt:
@@ -92,10 +104,14 @@ class Handler(BaseHTTPRequestHandler):
             w, h = size.lower().split("x", 1)
         else:
             w, h = req.get("width", 1024), req.get("height", 1024)
-        width = clamp_side(w, 1024)
-        height = clamp_side(h, 1024)
-        steps = max(1, min(int(req.get("num_inference_steps") or req.get("steps") or 40), 40))
-        seed = int(req.get("seed") or 0)
+        try:
+            width = clamp_side(w, 1024)
+            height = clamp_side(h, 1024)
+            steps = max(1, min(_as_int(req.get("num_inference_steps") or req.get("steps") or 40, "steps"), 40))
+            seed = _as_int(req.get("seed") or 0, "seed")
+        except ValueError as exc:
+            self._send(400, {"error": str(exc)})
+            return
         try:
             with GENERATE_LOCK:
                 pipe = load_pipe()
