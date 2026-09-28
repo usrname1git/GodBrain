@@ -6,8 +6,11 @@ Default size is 1024. Native 2K stays behind QWEN_IMAGE_MAX=2048.
 """
 import json
 import os
+import threading
+import time
 import traceback
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import torch
@@ -18,6 +21,7 @@ HOST = os.environ.get("QWEN_IMAGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("QWEN_IMAGE_PORT", "8871"))
 MAX_SIDE = int(os.environ.get("QWEN_IMAGE_MAX", "1024"))
 PIPE = None
+GENERATE_LOCK = threading.Lock()
 
 
 def load_pipe():
@@ -85,18 +89,20 @@ class Handler(BaseHTTPRequestHandler):
         steps = max(1, min(int(req.get("num_inference_steps") or req.get("steps") or 40), 40))
         seed = int(req.get("seed") or 0)
         try:
-            pipe = load_pipe()
-            image = pipe(
-                prompt=prompt,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                generator=torch.Generator("cuda").manual_seed(seed),
-            ).images[0]
-            OUT.mkdir(parents=True, exist_ok=True)
-            dest = OUT / f"qwen-image-{seed}-{width}x{height}.png"
-            image.save(dest)
-            self._send(200, {"path": str(dest), "width": width, "height": height, "steps": steps})
+            with GENERATE_LOCK:
+                pipe = load_pipe()
+                image = pipe(
+                    prompt=prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=steps,
+                    generator=torch.Generator("cuda").manual_seed(seed),
+                ).images[0]
+                OUT.mkdir(parents=True, exist_ok=True)
+                token = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+                dest = OUT / f"qwen-image-{token}-{width}x{height}.png"
+                image.save(dest)
+            self._send(200, {"path": str(dest), "width": width, "height": height, "steps": steps, "seed": seed})
         except Exception as exc:
             traceback.print_exc()
             self._send(500, {"error": str(exc)})
@@ -110,7 +116,7 @@ def main():
     print("Loading the pipeline onto the 4080 with CPU offload. First load is slow.", flush=True)
     load_pipe()
     print("ready", flush=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    HTTPServer((HOST, PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

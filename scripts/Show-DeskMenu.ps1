@@ -1,5 +1,6 @@
 # One window for the doors already on this machine.
 # Status: model on :8888, kernel :8083, RAG :8084, Mongo :27017, gym :4177, CS2, mouth pause, GPU, RustDesk, sshd :2222, Tailscale.
+# Stop holds kernel and RAG against Watch (logs/*-pause.txt) until Start-GodBrain. Tailscale stop is the Windows service only.
 # Model clicks stop whoever owns :8888, then start the other. One GPU slot.
 # Lyrics: start the capture, wait until loopback is recording, wait the preroll,
 # then Shift+P into the running ncspot (track already loaded and paused).
@@ -27,6 +28,48 @@ function Test-Port([int]$Port) {
         $c.Close()
         return [bool]$ok
     } catch { return $false }
+}
+
+$script:tokSample = $null
+function Get-TokLine {
+    if ((Test-Port 8871) -and -not (Test-Port 8888)) { return "image" }
+    if (-not (Test-Port 8888)) { $script:tokSample = $null; return "idle" }
+    try { $h = Invoke-RestMethod -TimeoutSec 1 http://127.0.0.1:8888/health } catch { return "unread" }
+    $total = [int64]$h.prompt_tokens_total + [int64]$h.completion_tokens_total
+    $now = [datetime]::UtcNow
+    $text = "idle"
+    if ($script:tokSample) {
+        $dt = ($now - $script:tokSample.At).TotalSeconds
+        $delta = $total - $script:tokSample.Total
+        if ($dt -ge 0.8) {
+            if ($delta -gt 0) { $text = "{0:N0} T/s" -f ($delta / $dt) }
+            elseif ($h.busy) { $text = "busy" }
+            else { $text = "idle" }
+        } else { $text = [string]$script:tokSample.Text }
+    }
+    $script:tokSample = @{ At = $now; Total = $total; Text = $text }
+    return $text
+}
+
+function Update-MicMark {
+    if (-not $script:micRail) { return }
+    try {
+        $st = [MicDesk]::State()
+        $script:micHot = ($st[1] -gt 0)
+        if ($st[0] -eq 0) {
+            $script:micRail.ForeColor = $fieldBg
+            $script:micTip.SetToolTip($script:micRail, "No microphone")
+        } elseif ($script:micHot) {
+            $script:micRail.ForeColor = $teal
+            $script:micTip.SetToolTip($script:micRail, "Mic hot. Click to mute.")
+        } else {
+            $script:micRail.ForeColor = $mute
+            $script:micTip.SetToolTip($script:micRail, "Mic muted. Click to open it.")
+        }
+    } catch {
+        $script:micRail.ForeColor = $mute
+        $script:micTip.SetToolTip($script:micRail, "Mic unread")
+    }
 }
 
 function Get-ModelLine {
@@ -74,6 +117,24 @@ function Get-TailscaleLine {
     return "running, no 100.x"
 }
 
+function Get-WatchLine {
+    $out = & schtasks.exe /Query /TN GodBrainWatch /FO LIST 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($out)) { return "missing" }
+    if ($out -match "Disabled") { return "disabled" }
+    if ($out -match "Running") { return "running" }
+    return "enabled"
+}
+
+function Set-WatchTask([string]$Action) {
+    $proc = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
+        "/Change", "/TN", "GodBrainWatch", "/$Action"
+    ) -WindowStyle Hidden -Wait -PassThru
+    if ($proc.ExitCode -ne 0) {
+        [System.Windows.Forms.MessageBox]::Show("Could not $Action GodBrainWatch (exit $($proc.ExitCode)).")
+    }
+    Update-Status
+}
+
 function Set-HostService([string]$Name, [string]$Action) {
     $wsudo = "C:\Tools\TeamM2\wsudo.exe"
     if (-not (Test-Path -LiteralPath $wsudo)) {
@@ -81,6 +142,75 @@ function Set-HostService([string]$Name, [string]$Action) {
         return
     }
     Start-Process -FilePath $wsudo -ArgumentList @("-A", "-w", "sc.exe", $Action, $Name) -WindowStyle Hidden -Wait
+    Update-Status
+}
+
+function Test-DeskPause([string]$Name) {
+    $path = Join-Path $Repo "logs\$Name-pause.txt"
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
+
+function Set-DeskPause([string]$Name) {
+    $dir = Join-Path $Repo "logs"
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir | Out-Null
+    }
+    Set-Content -LiteralPath (Join-Path $dir "$Name-pause.txt") -Value "on" -NoNewline
+}
+
+function Confirm-Stop([string]$Text, [string]$Title) {
+    $ask = [System.Windows.Forms.MessageBox]::Show(
+        $Text, $Title, [System.Windows.Forms.MessageBoxButtons]::YesNo)
+    return $ask -eq [System.Windows.Forms.DialogResult]::Yes
+}
+
+function Get-PortListener([int]$Port) {
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $conn) { return $null }
+    return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f [int]$conn.OwningProcess) -ErrorAction SilentlyContinue
+}
+
+function Stop-OwnedListener([int]$Port, [string]$Needle, [string]$Label) {
+    $proc = Get-PortListener $Port
+    if (-not $proc) {
+        [System.Windows.Forms.MessageBox]::Show("$Label is already down.")
+        return $false
+    }
+    $blob = "{0} {1}" -f $proc.ExecutablePath, $proc.CommandLine
+    $underRepo = $blob -like ("*{0}*" -f $Repo)
+    if ($blob -notlike ("*{0}*" -f $Needle) -or -not $underRepo) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "$Label on :$Port is not the GodBrain process. Leaving it alone.`n$($proc.ExecutablePath)")
+        return $false
+    }
+    Stop-Process -Id $proc.ProcessId -Force
+    return $true
+}
+
+function Stop-GymDashboard {
+    $stopped = $false
+    $parents = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*Invoke-FrontendGym.ps1*" -and $_.CommandLine -like ("*{0}*" -f $Repo) })
+    foreach ($parent in $parents) {
+        $kids = @(Get-CimInstance Win32_Process -Filter ("ParentProcessId = {0}" -f [int]$parent.ProcessId) -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like "*gym.mjs*" })
+        foreach ($kid in $kids) {
+            Stop-Process -Id $kid.ProcessId -Force -ErrorAction SilentlyContinue
+            $stopped = $true
+        }
+        Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped = $true
+    }
+    $listen = Get-PortListener 4177
+    if ($listen -and $listen.CommandLine -like "*gym.mjs*" -and $listen.CommandLine -like ("*{0}*" -f $Repo)) {
+        Stop-Process -Id $listen.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped = $true
+    }
+    if (-not $stopped) {
+        [System.Windows.Forms.MessageBox]::Show("Gym is already down.")
+    }
     Update-Status
 }
 
@@ -201,6 +331,15 @@ function Stop-Door {
         if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return $false }
     }
     & $Pwsh -NoProfile -File $StopModel
+    $image = Get-PortListener 8871
+    if ($image -and $image.CommandLine -like "*qwen_image_server.py*" -and $image.CommandLine -like "*$Repo*") {
+        $parentId = [int]$image.ParentProcessId
+        Stop-Process -Id $image.ProcessId -Force -ErrorAction SilentlyContinue
+        $parent = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $parentId) -ErrorAction SilentlyContinue
+        if ($parent -and $parent.CommandLine -like "*Start-QwenImage.ps1*") {
+            Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    }
     return $true
 }
 
@@ -230,7 +369,7 @@ function Start-GymDashboard {
     }
     $modelId = ""
     try { $modelId = [string](Invoke-RestMethod http://127.0.0.1:8888/v1/models -TimeoutSec 2).data[0].id } catch {}
-    if ($modelId -match 'vl') {
+    if ($modelId -eq "qwen3-vl-8b-exl3") {
         $ask = [System.Windows.Forms.MessageBox]::Show(
             "8B vision is on :8888. The gym uses that one slot. Start anyway?",
             "Start gym",
@@ -261,7 +400,7 @@ function Start-ClipScan {
     }
     $modelId = ""
     try { $modelId = [string](Invoke-RestMethod http://127.0.0.1:8888/v1/models -TimeoutSec 2).data[0].id } catch {}
-    if ($modelId -notmatch 'vl') {
+    if ($modelId -ne "qwen3-vl-8b-exl3") {
         $ask = [System.Windows.Forms.MessageBox]::Show(
             "8B vision is not the model on :8888. Stop that model and start Qwen-VL, then scan new clips?",
             "Scan clips",
@@ -280,6 +419,82 @@ function Start-ClipScan {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioEndpointVolume {
+    int RegisterControlChangeNotify(IntPtr pNotify);
+    int UnregisterControlChangeNotify(IntPtr pNotify);
+    int GetChannelCount(out int pnChannelCount);
+    int SetMasterVolumeLevel(float fLevelDB, ref Guid ctx);
+    int SetMasterVolumeLevelScalar(float fLevel, ref Guid ctx);
+    int GetMasterVolumeLevel(out float pfLevelDB);
+    int GetMasterVolumeLevelScalar(out float pfLevel);
+    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, ref Guid ctx);
+    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid ctx);
+    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid ctx);
+    int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDevice {
+    int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+    int OpenPropertyStore(int stgmAccess, out IntPtr ppProperties);
+    int GetId([MarshalAs(UnmanagedType.LPWStr)] out string ppstrId);
+    int GetState(out int pdwState);
+}
+[Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDeviceCollection {
+    int GetCount(out int pcDevices);
+    int Item(int nDevice, out IMMDevice ppDevice);
+}
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDeviceEnumerator {
+    int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IMMDeviceCollection ppDevices);
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppEndpoint);
+}
+public static class MicDesk {
+    static Guid Ctx = Guid.Empty;
+    static IMMDeviceEnumerator En() {
+        var t = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"));
+        return (IMMDeviceEnumerator)Activator.CreateInstance(t);
+    }
+    static IAudioEndpointVolume Vol(IMMDevice dev) {
+        var iid = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
+        object obj;
+        dev.Activate(ref iid, 23, IntPtr.Zero, out obj);
+        return (IAudioEndpointVolume)obj;
+    }
+    public static int[] State() {
+        IMMDeviceCollection col;
+        En().EnumAudioEndpoints(1, 1, out col);
+        int count; col.GetCount(out count);
+        int hot = 0, muted = 0;
+        for (int i = 0; i < count; i++) {
+            IMMDevice dev; col.Item(i, out dev);
+            bool mute; Vol(dev).GetMute(out mute);
+            if (mute) muted++; else hot++;
+        }
+        return new int[] { count, hot, muted };
+    }
+    public static void SetAll(bool mute) {
+        IMMDeviceCollection col;
+        En().EnumAudioEndpoints(1, 1, out col);
+        int count; col.GetCount(out count);
+        for (int i = 0; i < count; i++) {
+            IMMDevice dev; col.Item(i, out dev);
+            Vol(dev).SetMute(mute, ref Ctx);
+        }
+    }
+    public static void UnmuteDefault() {
+        IMMDevice dev;
+        En().GetDefaultAudioEndpoint(1, 1, out dev);
+        Vol(dev).SetMute(false, ref Ctx);
+    }
+}
+"@
 
 # Uncle Sam, same palette as ncspot and the terminal: navy field, old-glory red, steel text.
 $bg = [System.Drawing.Color]::FromArgb(10, 17, 28)
@@ -354,7 +569,7 @@ $f = New-Object System.Windows.Forms.Form
 $f.Text = "Desk"
 $f.FormBorderStyle = "FixedSingle"
 $f.MaximizeBox = $false
-$f.ClientSize = New-Object System.Drawing.Size(456, 440)
+$f.ClientSize = New-Object System.Drawing.Size(456, 640)
 $f.StartPosition = "CenterScreen"
 $f.BackColor = $bg
 $f.ForeColor = $ink
@@ -363,7 +578,7 @@ $f.Icon = $deskIcon
 
 $rail = New-Object System.Windows.Forms.Panel
 $rail.Location = New-Object System.Drawing.Point(0, 0)
-$rail.Size = New-Object System.Drawing.Size(52, 440)
+$rail.Size = New-Object System.Drawing.Size(52, 612)
 $rail.BackColor = $railBg
 $f.Controls.Add($rail)
 
@@ -371,7 +586,7 @@ $pages = @{}
 function New-Page {
     $p = New-Object System.Windows.Forms.Panel
     $p.Location = New-Object System.Drawing.Point(52, 0)
-    $p.Size = New-Object System.Drawing.Size(404, 440)
+    $p.Size = New-Object System.Drawing.Size(404, 612)
     $p.BackColor = $bg
     $p.Visible = $false
     $f.Controls.Add($p)
@@ -428,6 +643,26 @@ Add-Rail "Model" ([char]0xE706) 64
 Add-Rail "Ask" ([char]0xE8BD) 112
 Add-Rail "Lyrics" ([char]0xE189) 160
 
+$script:micRail = New-Object System.Windows.Forms.Button
+$script:micRail.Text = [char]0xE720
+$script:micRail.Font = New-Object System.Drawing.Font("Segoe MDL2 Assets", 14)
+$script:micRail.FlatStyle = "Flat"
+$script:micRail.FlatAppearance.BorderSize = 0
+$script:micRail.BackColor = $railBg
+$script:micRail.ForeColor = $mute
+$script:micRail.Location = New-Object System.Drawing.Point(6, 344)
+$script:micRail.Size = New-Object System.Drawing.Size(40, 36)
+$script:micRail.Cursor = [System.Windows.Forms.Cursors]::Hand
+$script:micRail.Add_Click({
+    try {
+        if ($script:micHot) { [MicDesk]::SetAll($true) }
+        else { [MicDesk]::UnmuteDefault() }
+    } catch {}
+    Update-MicMark
+})
+$rail.Controls.Add($script:micRail)
+$script:micTip = New-Object System.Windows.Forms.ToolTip
+
 $exitRail = New-Object System.Windows.Forms.Button
 $exitRail.Text = [char]0xE7E8
 $exitRail.Font = New-Object System.Drawing.Font("Segoe MDL2 Assets", 14)
@@ -435,7 +670,7 @@ $exitRail.FlatStyle = "Flat"
 $exitRail.FlatAppearance.BorderSize = 0
 $exitRail.BackColor = $railBg
 $exitRail.ForeColor = $mute
-$exitRail.Location = New-Object System.Drawing.Point(6, 392)
+$exitRail.Location = New-Object System.Drawing.Point(6, 420)
 $exitRail.Size = New-Object System.Drawing.Size(40, 36)
 $exitRail.Cursor = [System.Windows.Forms.Cursors]::Hand
 $exitRail.Add_Click({
@@ -500,25 +735,29 @@ function Style-Box([System.Windows.Forms.TextBox]$t) {
 
 Add-Head $pageStatus "Status" 16
 $rowModel = Add-Row $pageStatus "Model" 52
-$rowKernel = Add-Row $pageStatus "Kernel" 76
-$rowRag = Add-Row $pageStatus "RAG" 100
-$rowMongo = Add-Row $pageStatus "Mongo" 124
-$rowGym = Add-Row $pageStatus "Gym" 148
-$rowCs2 = Add-Row $pageStatus "CS2" 172
-$rowMouth = Add-Row $pageStatus "Mouth" 196
-$rowGpu = Add-Row $pageStatus "GPU" 220
-$rowRust = Add-Row $pageStatus "RustDesk" 244
-$rowSsh = Add-Row $pageStatus "SSH" 268
-$rowTail = Add-Row $pageStatus "Tailscale" 292
-$rowImage = Add-Row $pageStatus "Image" 316
+$rowTok = Add-Row $pageStatus "Tok/s" 76
+$rowKernel = Add-Row $pageStatus "Kernel" 100
+$rowRag = Add-Row $pageStatus "RAG" 124
+$rowMongo = Add-Row $pageStatus "Mongo" 148
+$rowGym = Add-Row $pageStatus "Gym" 172
+$rowCs2 = Add-Row $pageStatus "CS2" 196
+$rowMouth = Add-Row $pageStatus "Mouth" 220
+$rowGpu = Add-Row $pageStatus "GPU" 244
+$rowRust = Add-Row $pageStatus "RustDesk" 268
+$rowSsh = Add-Row $pageStatus "SSH" 292
+$rowTail = Add-Row $pageStatus "Tailscale" 316
+$rowImage = Add-Row $pageStatus "Image" 340
+$rowWatch = Add-Row $pageStatus "Watch" 364
 
 function Update-Status {
     $mouth = "unread"
     $mf = Join-Path $Repo "logs\mouth-pause.txt"
     if (Test-Path $mf) { $mouth = (Get-Content $mf -Raw).Trim() }
     $rowModel.Text = Get-ModelLine
-    $rowKernel.Text = $(if (Test-Port 8083) { "up" } else { "down" })
-    $rowRag.Text = $(if (Test-Port 8084) { "up" } else { "down" })
+    $rowTok.Text = Get-TokLine
+    Update-MicMark
+    $rowKernel.Text = $(if (Test-Port 8083) { "up" } elseif (Test-DeskPause "kernel") { "paused" } else { "down" })
+    $rowRag.Text = $(if (Test-Port 8084) { "up" } elseif (Test-DeskPause "rag") { "paused" } else { "down" })
     $rowMongo.Text = $(if (Test-Port 27017) { "up" } else { "down" })
     $rowGym.Text = $(if (Test-Port 4177) { "up" } else { "down" })
     $rowCs2.Text = Get-Cs2DeskLine
@@ -528,17 +767,47 @@ function Update-Status {
     $rowSsh.Text = Get-SshLine
     $rowTail.Text = Get-TailscaleLine
     $rowImage.Text = $(if (Test-Port 8871) { "up :8871" } else { "down" })
+    $rowWatch.Text = Get-WatchLine
 }
-Add-Button $pageStatus "Start RustDesk" 20 352 176 {
+Add-Button $pageStatus "Start RustDesk" 20 396 176 {
     Set-HostService "RustDesk" "start"
 } $true
-Add-Button $pageStatus "Stop RustDesk" 208 352 176 {
+Add-Button $pageStatus "Stop RustDesk" 208 396 176 {
     $ask = [System.Windows.Forms.MessageBox]::Show(
         "Stop the RustDesk service? Remote desktop will drop.",
         "RustDesk",
         [System.Windows.Forms.MessageBoxButtons]::YesNo)
     if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return }
     Set-HostService "RustDesk" "stop"
+} $false
+Add-Button $pageStatus "Stop gym" 20 440 176 {
+    if (-not (Confirm-Stop "Stop the gym on :4177? The practice loop and the dashboard both go down." "Gym")) { return }
+    Stop-GymDashboard
+} $false
+Add-Button $pageStatus "Stop Tailscale" 208 440 176 {
+    if (-not (Confirm-Stop "Stop the Tailscale service? This machine leaves the tailnet until you start the service again. This does not log out or reset Tailscale." "Tailscale")) { return }
+    Set-HostService "Tailscale" "stop"
+} $false
+Add-Button $pageStatus "Stop kernel" 20 484 176 {
+    if (-not (Confirm-Stop "Stop the kernel on :8083 so the exe can be rebuilt? Watch leaves it down until Start-GodBrain runs." "Kernel")) { return }
+    if (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") {
+        Set-DeskPause "kernel"
+        Update-Status
+    }
+} $false
+Add-Button $pageStatus "Stop RAG" 208 484 176 {
+    if (-not (Confirm-Stop "Stop rag-service on :8084 so the exe can be rebuilt? Watch leaves it down until Start-GodBrain runs." "RAG")) { return }
+    if (Stop-OwnedListener 8084 "rag-service.exe" "RAG") {
+        Set-DeskPause "rag"
+        Update-Status
+    }
+} $false
+Add-Button $pageStatus "Start Watch" 20 528 176 {
+    Set-WatchTask "ENABLE"
+} $true
+Add-Button $pageStatus "Stop Watch" 208 528 176 {
+    if (-not (Confirm-Stop "Disable GodBrainWatch? Heal will not start the kernel, RAG, or the mouth until you enable Watch again. A Heal that is already running is left alone." "Watch")) { return }
+    Set-WatchTask "DISABLE"
 } $false
 Update-Status
 $timer = New-Object System.Windows.Forms.Timer

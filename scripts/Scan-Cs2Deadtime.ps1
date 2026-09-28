@@ -23,21 +23,48 @@ New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 $instructionsPath = Join-Path $OutDir "instructions.md"
 $indexPath = Join-Path $OutDir "index.json"
 
+function Get-ModelsUrl {
+    $uri = [Uri]$Endpoint
+    $port = if ($uri.Port -gt 0) { ":$($uri.Port)" } else { "" }
+    return "{0}://{1}{2}/v1/models" -f $uri.Scheme, $uri.Host, $port
+}
+
 function Wait-Vl {
+    $modelsUrl = Get-ModelsUrl
     $deadline = (Get-Date).AddMinutes(8)
     while ((Get-Date) -lt $deadline) {
         try {
-            $r = Invoke-RestMethod -UseBasicParsing -TimeoutSec 3 "http://127.0.0.1:8888/v1/models"
-            if ($r.data) { return }
+            $r = Invoke-RestMethod -UseBasicParsing -TimeoutSec 3 $modelsUrl
+            $hit = @($r.data) | Where-Object { [string]$_.id -eq $Model } | Select-Object -First 1
+            if ($hit) {
+                $mods = @($hit.architecture.input_modalities)
+                if ($mods.Count -eq 0 -or ($mods -contains "video")) { return }
+            }
         } catch {}
         Start-Sleep -Seconds 3
     }
-    throw "Qwen-VL on :8888 did not become ready."
+    throw "Model $Model with video input is not ready at $modelsUrl."
 }
 
 function Get-ClipNames {
-    $names = @(rclone lsf $Remote --files-only)
-    $names | Where-Object { $_ -like "*.mp4" }
+    $errFile = Join-Path $scratch "rclone-lsf.err"
+    $names = @(rclone lsf $Remote --files-only 2>$errFile)
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ""
+        if (Test-Path -LiteralPath $errFile) { $detail = (Get-Content -LiteralPath $errFile -Raw) }
+        throw "rclone lsf failed ($LASTEXITCODE) for ${Remote}: $detail"
+    }
+    @($names | Where-Object { $_ -like "*.mp4" })
+}
+
+function Get-ArtifactKey([string]$Name) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Name))
+    } finally {
+        $sha.Dispose()
+    }
+    ([BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant().Substring(0, 16)
 }
 
 function New-ContactSheet([string]$Mp4, [string]$Sheet) {
@@ -75,7 +102,7 @@ function Coalesce-Ranges($items, [double]$Gap = 2) {
         $outt = [double]$item.out
         if ($inn -le $cur.out + $Gap) {
             if ($outt -gt $cur.out) { $cur.out = $outt }
-            if ($item.why -and $cur.why -notlike "*$($item.why)*") {
+            if ($item.why -and -not ([string]$cur.why).Contains([string]$item.why)) {
                 $cur.why = "$($cur.why); $($item.why)"
             }
         } else {
@@ -107,7 +134,6 @@ function Shift-Ranges($items, [double]$Offset) {
 function Split-CopyParts([string]$Src, [string]$Prefix, [int]$PartCount, [double]$Duration) {
     $seg = [math]::Max(1, [math]::Floor($Duration / $PartCount))
     $parts = @()
-    $offset = 0.0
     for ($i = 1; $i -le $PartCount; $i++) {
         $out = "{0}_part{1}.mp4" -f $Prefix, $i
         $ss = ($i - 1) * $seg
@@ -123,10 +149,9 @@ function Split-CopyParts([string]$Src, [string]$Prefix, [int]$PartCount, [double
         $parts += [pscustomobject]@{
             index = $i
             path = $out
-            offset_s = [math]::Round($offset, 2)
+            offset_s = (Read-StartSeconds $out)
             duration_s = $dur
         }
-        $offset += $dur
     }
     $parts
 }
@@ -134,7 +159,22 @@ function Split-CopyParts([string]$Src, [string]$Prefix, [int]$PartCount, [double
 function Read-Duration([string]$Mp4) {
     $ffprobe = Join-Path (Split-Path $Ffmpeg) "ffprobe.exe"
     $raw = & $ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 $Mp4
-    [math]::Round([double]$raw, 1)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) {
+        throw "ffprobe duration failed for $Mp4"
+    }
+    $dur = [math]::Round([double](([string]$raw).Trim()), 1)
+    if ($dur -le 0) { throw "ffprobe duration is $dur for $Mp4" }
+    $dur
+}
+
+function Read-StartSeconds([string]$Mp4) {
+    $ffprobe = Join-Path (Split-Path $Ffmpeg) "ffprobe.exe"
+    $raw = & $ffprobe -v error -select_streams v:0 -show_entries packet=pts_time -read_intervals "%+#1" -of csv=p=0 $Mp4
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) {
+        throw "ffprobe start time failed for $Mp4"
+    }
+    $line = ([string]$raw).Trim().Split([char]10)[0].Trim()
+    [math]::Round([double]$line, 2)
 }
 
 function Get-InstructionBlock([string]$Name) {
@@ -146,10 +186,14 @@ function Get-InstructionBlock([string]$Name) {
     if ($goldAt -ge 0) {
         $rules = $text.Substring(0, $goldAt).Trim()
         $gold = $text.Substring($goldAt)
-        $stem = [IO.Path]::GetFileNameWithoutExtension($Name)
         $block = ""
         foreach ($part in ($gold -split '(?m)^### ')) {
-            if ($part -and $part.Contains($stem)) { $block = '### ' + $part.Trim(); break }
+            if (-not $part) { continue }
+            $heading = (($part -split "`r?`n", 2)[0]).Trim()
+            if ([string]::Equals($heading, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+                $block = '### ' + $part.Trim()
+                break
+            }
         }
         if ($block) { $rules = $rules + "`n`nGOLD FOR THIS FILE ONLY:`n" + $block }
     }
@@ -303,7 +347,7 @@ Write-Output "VL ready. clips=$($all.Count). POV frames ~1152x864. sheet is rece
 
 foreach ($name in $all) {
     if (-not $Force -and $done.Contains($name)) { Write-Output "skip $name"; continue }
-    $safe = ($name -replace '[^a-zA-Z0-9._-]', '_')
+    $safe = Get-ArtifactKey $name
     $local = Join-Path $scratch $safe
     $sheet = Join-Path $OutDir "$safe.sheet.jpg"
     $prefix = Join-Path $OutDir $safe
@@ -316,7 +360,10 @@ foreach ($name in $all) {
     } else {
         Write-Output "copy $name"
         rclone copyto ($Remote + "/" + $name) $local --ignore-checksum
-        if (-not (Test-Path -LiteralPath $local)) { throw "rclone copyto missed $name" }
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $local)) {
+            Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+            throw "rclone copyto failed ($LASTEXITCODE) for $name"
+        }
         $copied = $true
     }
     try {

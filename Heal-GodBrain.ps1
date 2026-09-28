@@ -1,6 +1,7 @@
 # One loop for THIS host: detect → reason (layer) → allowlist patch → verify.
 # TCP ports, then HTTP readiness (rag /health.ready, mouth /health).
 # Allowlist starts: Windows services MongoDB, Dnscache, iphlpsvc, nsi + rag/coli/kernel.
+# logs/kernel-pause.txt or logs/rag-pause.txt = on skips that listener until Start-GodBrain.
 # Allowlist repair: Clear-DnsClientCache only when dns_self fails, Dnscache is
 # up, and icmp_loopback is up. If rag listens but the projection is unready,
 # rag-rebuild.exe once (30 min cooldown, never kills rag-service).
@@ -301,18 +302,26 @@ if (Test-Path -LiteralPath $pauseFile) {
     $mouthPause = ((Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
 }
 
+function Test-DeskPause([string]$FileName) {
+    $path = Join-Path $logDir $FileName
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
+
 $before = Get-Probe
 $needed = @()
 $acted = @()
+$kernelPaused = Test-DeskPause "kernel-pause.txt"
+$ragPaused = Test-DeskPause "rag-pause.txt"
 if (-not $before.mongo) { $needed += "mongo" }
 if (-not $before.dns) { $needed += "dns" }
 if (-not $before.iphlp) { $needed += "iphlp" }
 if (-not $before.nsi) { $needed += "nsi" }
-if (-not $before.rag) { $needed += "rag" }
+if (-not $before.rag -and -not $ragPaused) { $needed += "rag" }
 # "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
 # instead of coli when logs/mouth.txt says llama-server.
 if (-not $before.coli -and -not $coliSleep -and -not $mouthPause) { $needed += "coli" }
-if (-not $before.kernel) { $needed += "kernel" }
+if (-not $before.kernel -and -not $kernelPaused) { $needed += "kernel" }
 
 foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
     if ($needed -contains $key) {
@@ -323,7 +332,7 @@ foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
 
 $processNeeded = @($needed | Where-Object { $_ -notin @("mongo", "dns", "iphlp", "nsi") })
 if ($processNeeded.Count -gt 0) {
-    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15
+    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15 -KeepPause
     Start-Sleep -Seconds 2
     $acted += "start:listeners"
 } elseif ($needed -contains "mongo") {

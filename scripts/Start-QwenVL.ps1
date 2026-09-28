@@ -24,6 +24,9 @@ function Test-LoopbackPort([int]$Port) {
 if (Test-LoopbackPort 8000) {
     throw ":8000 is still listening. Stop llama-server before starting VL. One GPU slot."
 }
+if (Test-LoopbackPort 8871) {
+    throw ":8871 is still listening. Stop the image model before starting VL. One GPU slot."
+}
 if (Test-LoopbackPort 8888) {
     Write-Output "already up http://127.0.0.1:8888/v1 (stop Paper Qwen before swapping to VL)"
     exit 0

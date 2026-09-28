@@ -18,22 +18,22 @@ const ALTERNATIVE_DIRECTIONS = Object.freeze([
   {
     id: 'nordic-editorial',
     title: 'Nordic editorial',
-    direction: 'Spacious editorial composition on warm paper with near-black ink and one bronze accent. No second background.',
+    direction: 'Spacious editorial composition on near-black paper with light type and one copper accent on the button only. No second background.',
   },
   {
     id: 'product-led',
     title: 'Product-led interactive',
-    direction: 'Tighter product panels on the same paper and ink as the hero. One ink button. No cyan and no teal.',
+    direction: 'Tighter product panels on that same dark paper and light type. One copper button. No cyan and no teal.',
   },
   {
     id: 'enterprise-trust',
     title: 'Enterprise trust',
-    direction: 'Calm comparison layout on the same paper as the hero. Thin rules, black ink. No floating navy panel.',
+    direction: 'Calm comparison layout on the same dark paper and light type. Thin rules. No cream field and no floating navy panel.',
   },
   {
     id: 'event-experience',
     title: 'Event experience',
-    direction: 'More air around the same paper and ink. One warm accent. The journey sections stay on that paper.',
+    direction: 'More air around the same dark paper and light type. One copper accent. The journey sections stay on that paper.',
   },
 ]);
 const MAX_ALTERNATIVE_HISTORY = 10;
