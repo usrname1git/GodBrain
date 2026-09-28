@@ -1,6 +1,8 @@
+
 # Project GodBrain
 
-<img width="1024" height="506" alt="image" src="https://github.com/user-attachments/assets/c23c3517-0a40-4b7d-a49c-822a8cdaab40" />
+<img width="1294" height="640" alt="GodBrainHeroBanner" src="https://github.com/user-attachments/assets/6ac731ff-2771-4ff8-a81c-c86ba460e844" />
+
 
 Local-first Jarvis on this Windows machine.
 The mouth is an **OpenAI-compatible loopback** server. Desk generate is **Qwen 3.8 27B EXL3** on `:8888` (`qwen3.8-27b-exl3-3.5bpw`).
