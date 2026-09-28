@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { startDashboard } from './dashboard.mjs';
 import {
-  advanceCampaigns, createCampaign, listCampaigns, requestCampaignAlternatives, validateClientBrief,
+  advanceCampaigns, alternativePrompt, createCampaign, listCampaigns, requestCampaignAlternatives, validateClientBrief,
 } from './coach.mjs';
 import {
   claimObjective, completeObjective, enqueueObjective, listObjectives, validateObjective,
@@ -233,6 +233,21 @@ test('blocked client work can become four staged distinct alternatives', async t
   await completeObjective(workDir, stylesObjective.id, { runId: finalRunId }, 'passed');
   await advanceCampaigns(workDir, contracts);
   assert.equal((await listCampaigns(workDir))[0].alternatives[0].status, 'ready');
+});
+
+test('a hero style prompt stays on one dark surface', () => {
+  const prompt = alternativePrompt(
+    { brief: { name: 'Trippus Next' } },
+    {
+      title: 'Nordic editorial',
+      direction: 'Spacious editorial composition on near-black paper with light type and one copper accent on the button only. No second background.',
+    },
+    'styles',
+  );
+  assert.match(prompt, /near-black paper/);
+  assert.match(prompt, /Do not drop to cream/);
+  assert.doesNotMatch(prompt, /warm paper/);
+  assert.doesNotMatch(prompt, /black ink/);
 });
 
 test('a completed alternative set can be rerun without overwriting its evidence', async t => {

@@ -17,8 +17,9 @@ import torch
 
 WEIGHTS = Path(os.environ.get("QWEN_IMAGE_WEIGHTS", r"C:\nvme\Qwen-Image-2.1"))
 OUT = Path(os.environ.get("QWEN_IMAGE_OUT", r"C:\nvme\godbrain-sites\qwen-image"))
-HOST = os.environ.get("QWEN_IMAGE_HOST", "127.0.0.1")
-PORT = int(os.environ.get("QWEN_IMAGE_PORT", "8871"))
+HOST = "127.0.0.1"
+PORT = 8871
+MAX_BODY = 1_048_576
 MAX_SIDE = int(os.environ.get("QWEN_IMAGE_MAX", "1024"))
 PIPE = None
 GENERATE_LOCK = threading.Lock()
@@ -68,8 +69,15 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/v1/images/generations", "/generate"):
             self._send(404, {"error": "not found"})
             return
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "Invalid Content-Length header."})
+            return
+        if length < 1 or length > MAX_BODY:
+            self._send(400, {"error": f"Request body must be between 1 and {MAX_BODY} bytes."})
+            return
+        raw = self.rfile.read(length)
         try:
             req = json.loads(raw.decode("utf-8") or "{}")
         except json.JSONDecodeError as exc:

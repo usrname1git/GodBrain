@@ -211,10 +211,12 @@ function Get-DiagnoseLayer($probe) {
     if (-not $probe.icmp_loopback) { return "icmp" }
     if (-not $probe.dns -or -not $probe.dns_self) { return "dns" }
     if (-not $probe.nic_tcpip) { return "nic" }
-    if (-not ($probe.mongo -and $probe.rag -and $probe.coli -and $probe.kernel)) {
+    $ragOk = ($probe.rag -and $probe.rag_ready) -or ($ragPaused -and -not $probe.rag)
+    $kernelOk = $probe.kernel -or ($kernelPaused -and -not $probe.kernel)
+    if (-not ($probe.mongo -and $ragOk -and $probe.coli -and $kernelOk)) {
         return "listeners"
     }
-    if (-not $probe.rag_ready) { return "rag" }
+    if (-not $probe.rag_ready -and -not ($ragPaused -and -not $probe.rag)) { return "rag" }
     if (-not $probe.mouth_ready -and -not $coliSleep) { return "mouth" }
     return "ok"
 }
@@ -438,8 +440,10 @@ if ($waitingFiles.Count -gt 0) {
     }
 }
 
+$ragHeld = $ragPaused -and -not $after.rag
+$kernelHeld = $kernelPaused -and -not $after.kernel
 $ok = [bool](
-    $after.mongo -and $after.rag -and $after.rag_ready -and $after.kernel -and
+    $after.mongo -and (($after.rag -and $after.rag_ready) -or $ragHeld) -and ($after.kernel -or $kernelHeld) -and
     $after.dns -and $after.iphlp -and $after.nsi -and
     ($after.mouth_ready -or $coliSleep)
 )

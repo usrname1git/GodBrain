@@ -138,18 +138,20 @@ function Split-CopyParts([string]$Src, [string]$Prefix, [int]$PartCount, [double
         $out = "{0}_part{1}.mp4" -f $Prefix, $i
         $ss = ($i - 1) * $seg
         if ($i -eq $PartCount) {
-            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -i $Src -c copy $out
+            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -i $Src -c copy -copyts $out
         } else {
-            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -t $seg -i $Src -c copy $out
+            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -t $seg -i $Src -c copy -copyts $out
         }
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)) {
             throw "ffmpeg -c copy split failed for part $i"
         }
         $dur = Read-Duration $out
+        $start = Read-StartSeconds $out
+        if ($ss -ge 1 -and $start -lt 0.5) { $start = [math]::Round($ss, 2) }
         $parts += [pscustomobject]@{
             index = $i
             path = $out
-            offset_s = (Read-StartSeconds $out)
+            offset_s = $start
             duration_s = $dur
         }
     }
