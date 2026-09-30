@@ -18,23 +18,28 @@ flags are under Advanced.
    to a hidden host so Windows Terminal does not stay as an empty black
    window. If you only have Windows PowerShell 5.1, the GUI offers the
    official PowerShell 7 MSI (adds PATH). WinPE stays 5.1.
-3. Click **TEST FIRST** (Beginner) or **TEST SELECTED** (Power User).
-   Nothing is deleted. Read the log.
-4. Then pick a door:
-   - **Beginner:** Hide Xbox, telemetry, NIC, BCD/registry/power. No Defender. No killing blows.
-     **RUN ALL FIXES** applies those. Restore from the first screen.
-   - **Power User:** **PREP MEDIA** builds the WinPE ISO if missing, then
-     writes a USB (formats the stick). Boot the ISO or the stick.
-     VM recommended, not required. After Windows is up, SCAN.
+3. Then pick a door:
+   - **Beginner-friendly:** Can hide Xbox, disable telemetry, optimize NIC, BCD/registry/power schedule. It's not touching Defender. No killing blows.
+
+   - **RUN ALL FIXES** applies all possible. Restore from the first screen.
+
+   - *TEST FIRST* will show what would be the result so you can see it before deciding to commit.
+   Nothing is edit or deleted. Read the log.
+
+
+   - **Power User:** **PREP MEDIA** builds the WinPE ISO if missing, then writes a USB (formats the stick).
+   - Boot the ISO or the stick. After Windows is up, SCAN.
      Killing blows / Grim Reaper unlock only after that boot.
+
+   - *TEST SELECTED* will show what would be the result so you can see it before deciding to commit.
 
 Game Mode stays. The Xbox controller driver stays.
 
 ![Door chooser](ui/DoorChooser.jpg)
 
-![Expert panel](ui/ExpertPanel.jpg)
+![Power User UI](ui/Power_User_UI.jpg)
 
-![Noob panel](ui/NoobPanel.jpg)
+![Beginner friendly UI](ui/Beginner_UI.jpg)
 
 ## Advanced
 
