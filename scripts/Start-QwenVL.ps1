@@ -42,7 +42,7 @@ $ptxas = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\ptxas.exe
 if (Test-Path -LiteralPath $ptxas) { $env:TRITON_PTXAS_PATH = $ptxas }
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
-$env:TRITON_CACHE_DIR = Join-Path $Kit "paper-godbrain\triton-cache"
+$env:TRITON_CACHE_DIR = Join-Path $Kit "triton-cache"
 
 try { $Host.UI.RawUI.WindowTitle = "qwen3-vl-8b-exl3" } catch {}
 Write-Output "Starting qwen3-vl-8b-exl3 (vision on, ~110s CS clips: sample 1-2 fps, never full 60fps into VRAM)"

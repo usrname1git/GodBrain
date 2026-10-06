@@ -8,19 +8,46 @@ Index: [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
 
 After logon, `Start-GodBrain.ps1` starts whichever of `rag-service`, the
 configured mouth, and `godbrain-kernel` actually exist. Watch (`GodBrainWatch`)
-calls Heal every five minutes. Heal never kills a process. GodBrain is **not**
+calls Heal `-Afk` every five minutes only when manually enabled. Host Heal
+never kills a process; Qwen/gym maintenance is opt-in. GodBrain is **not**
 an SCM service (CUDA cannot run as LocalSystem). MongoDB is its own Windows
 service named `MongoDB`.
 
 `Test-GodBrainDesk.ps1` fail-closes the no-GPU doors after Start.
 
-## Mouth (`:8000`)
+The desktop panel now launches in its own hidden STA host and returns the
+calling shell; Status and Ask use non-overlapping background runspaces.
+Qwen-Image progress/receipts and disposable workers avoid freezing the GUI
+or retaining native model memory after completion.
 
-One GPU generate slot. Desk default is bartowski Gemma 12B IT **Q6_K_L** via
+## Phone Desk and explicit mobile actions
+
+One static mobile page and a separate read-only listener inside the C++
+kernel (`127.0.0.1:8085`) provide model/profile/VRAM, RustDesk, Tailscale, SSH
+and compact core status. Private Tailscale Serve supplies owner identity over
+a TCP channel verified against its installed SYSTEM service/worker;
+no browser bearer or public Funnel. Opening/refreshing never starts or repairs
+anything, and invalid/stale data cannot be current readiness.
+
+SSH remains the explicit command door on iPhone/Android; RustDesk supplies the
+interactive desktop. `Start-RustDesk.ps1` verifies the enabled SYSTEM backend,
+not just a GUI, and can restore only a missing installed service entry.
+See [`phone-control.md`](../phone-control.md) for commands, iOS success/error
+branching, Android parity, permissions and recovery limits.
+
+## Mouth (`:8888`, legacy `:8000`)
+
+One GPU generate slot. Desk default is Qwen 3.8 27B EXL3 3.5bpw on `:8888`,
+started by `paper-godbrain\Start-Qwen.ps1`; `Stop-Qwen.ps1` and `Ask-Qwen.ps1`
+are the canonical local kit doors. Old PaperQwen filenames forward for
+compatibility; the kit directory/cache have not moved. Drafting is selectable
+(`None` default, `Mtp`, `Ngram`). The paused legacy mouth is bartowski Gemma
+12B IT **Q6_K_L** via
 `llama-server` **with MTP** when the bartowski draft GGUF exists
 (`scripts/Start-LlamaServer.ps1`; `-NoDraft` disables). Hauhau/official QAT
 MTP is not this draft. Soak: `scripts/Invoke-MtpSoak.ps1`.
-Heal/Watch kick that door, not Colibri. `-Obliterated` loads the local
+Ordinary unpaused Heal can kick that door, not Colibri. AFK Heal never starts
+it. `-Obliterated` loads the local
 OBLITERATUS Gemma 4 12B v2 Q8_0 (Q6_K is not on the Hub); named GO, not the
 Watch default. `-Agentic` loads the local yuxinlu1 Gemma 4 12B v2 Q6_K
 coding/tool gym; same rule. A GLM MoE snapshot (5.2-uncensored on
@@ -57,8 +84,9 @@ manual, not an internet majority vote. Coli/GLM stays at 160 bytes.
 `query_constellation` is an alias of `query_recent_thoughts`. There is no
 Node constellation viewer. `*** TOOL` text is a fallback.
 Allowlist: FS under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
-`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
-`C:\Temp\GitHub` (list/read/write/
+`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`,
+`C:\Temp\GitHub`, and the GodBrain repo root with every directory under it
+(list/read/write/
 search/edit/move/mkdir/info/tail), SysInternals console `*64`,
 `reg`/`wevtutil`/`logman`/`schtasks` query, always-on `run_pwsh` /
 `run_python` / `run_node`. Mutate and `run_elevate` need `/yolo`. No Mongo
@@ -107,7 +135,7 @@ projection is unready, drain one `inbox\*.txt` when the mouth is idle,
 quarantine poison files, `POST /api/observe`, `sre_surgeon --diagnose` only
 when layer ≠ ok (15 min cooldown). Remember on act/fail as **candidate**.
 
-Heal may not: kill processes, reboot, `tailscale up`, `--ask`, winsock reset,
+Normal Heal may not: kill processes, reboot, `tailscale up`, `--ask`, winsock reset,
 ip reset, DeviceCleanup, `/release` `/renew`, BIOS, DISM, or registry
 cocktails. Those need an explicit operator GO, one named tool per GO.
 `nic_tcpip` is detect-only.
@@ -169,18 +197,35 @@ or README (Brief, Stack, Run, Check, Not Galaxy), and does not mark the
 skill promotable. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain
 UI stays `galaxy.html`). Not a kernel factory.
 
-`Start-CS2.ps1` pauses the mouth and Tailscale, launches Steam app 730, waits
-until `CS2.exe` exits, waits 10 minutes, then `tailscale up --unattended` and
-Start-GodBrain. Never logout, `--reset`, or uninstall Tailscale. Start/Heal
-skip the mouth while CS2 is running or has been gone under 10 minutes.
+`Start-CS2.ps1` persists a manual hold, pauses gym training, disables
+Watch/Logon/CS2-backup, stops identified EXL3/image/legacy model runtimes
+and their launchers/watchdogs, disconnects Tailscale, launches Steam app
+730 and returns. Nothing restarts after game exit. Desk Model/Gym/Watch
+Start clears the hold after CS2 closes; gym training needs its own Resume.
+Tailscale Start reconnects the existing node. Watch is enabled manually
+for AFK use and installs disabled by default. Never logout, `--reset`, or
+uninstall Tailscale.
+
+AFK Watch is one operator-controlled loop. Host-only Heal `-Afk` can restart
+existing Tailscale/RustDesk service/app, reconnect the existing tailnet node
+with a bounded 10-second `up`, and recover Mongo/RAG/kernel while respecting
+desk hold files. It does not start models or extract inbox text. Qwen/gym
+maintenance is opt-in through the desk checkbox or `-WithGym`; it preserves
+durable crash/CUDA latches and one GPU slot. The old overnight watchdog is a
+forwarding door into the same mutex-protected loop, not another host process.
+AFK skips the legacy status/brief desk check and `/api/brief` refresh because
+those kernel routes can cold-start llama. Host probes/readiness remain its
+verifier. Failed continuous ticks are reported and retried after 15 seconds.
 
 `godbrain_core/reclaim11/` is a WPF kit (Reclaim11), not Heal and not
 Galaxy. Pack A = Defender / PPL / Sense / AppID. `WdBoot` stub is refused
 when Secure Boot is on. Prep media is a WinPE ISO (`scripts\New-Reclaim11WinPeIso.ps1`,
 ADK 10.1.26100.2454) that **parks** catalog `.sys` (does not copy a
 usermode EXE over a driver), stubs usermode images, and writes
-`Windows\reclaim11-winpe.log` plus `C:\reclaim11\`. Killing blows (IFEO +
-`sc delete` pack A) require that receipt.
+`Windows\reclaim11-winpe.log` plus the kit copy `C:\Reclaim11\reclaim11-winpe.log`.
+Scan unlocks Safe cleanse, killing blows, and Grim Reaper when that file is
+JSON and its id starts with `reclaim11-winpe`. Dead services do not unlock
+them. Killing blows (IFEO + `sc delete` pack A) require that receipt.
 Never BFE / `mpssvc` / `FltMgr`. VMware ISO before a
 physical USB. Check: `scripts\Test-Reclaim11.ps1` on a VM.
 

@@ -342,12 +342,6 @@ foreach ($tn in @("GodBrainWatch", "GodBrainLogon", "GodBrainCs2Pause")) {
 }
 $cs2sleep = [bool]($status -and $status.cs2 -and $status.cs2.sleep)
 if (-not $cs2sleep) {
-    foreach ($tn in @("GodBrainWatch", "GodBrainLogon")) {
-        $qv = & schtasks.exe /Query /TN $tn /FO LIST /V 2>$null | Out-String
-        if ($qv -notmatch "Scheduled Task State:\s+Enabled") {
-            $fails.Add("task $tn should be Enabled while CS2 is idle")
-        }
-    }
     $watchTr = (& schtasks.exe /Query /TN GodBrainWatch /FO LIST /V 2>$null | Out-String) -replace "\s+", " "
     if ($watchTr -match "watch\.cmd|\.cmd") {
         $fails.Add("GodBrainWatch TR still launches a .cmd (flashes WT)")
@@ -372,70 +366,35 @@ if (-not $cs2sleep) {
     if ($logonTr -match "\.cmd") {
         $fails.Add("GodBrainLogon TR still launches a .cmd (flashes WT)")
     }
-    if (Test-Path -LiteralPath $briefFile) {
-        $ageMin = ((Get-Date) - (Get-Item -LiteralPath $briefFile).LastWriteTime).TotalMinutes
-        if ($ageMin -gt 20) {
-            $fails.Add(("last-brief.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $ageMin))
-        }
-    }
-    if (Test-Path -LiteralPath $doorsFile) {
-        $doorAge = ((Get-Date) - (Get-Item -LiteralPath $doorsFile).LastWriteTime).TotalMinutes
-        if ($doorAge -gt 20) {
-            $fails.Add(("last-doors.json stale ({0:n0} min; Watch/Heal should refresh)" -f $doorAge))
-        }
-    }
-    if (Test-Path -LiteralPath $pendingFile) {
-        $pendAge = ((Get-Date) - (Get-Item -LiteralPath $pendingFile).LastWriteTime).TotalMinutes
-        if ($pendAge -gt 20) {
-            $fails.Add(("last-pending.json stale ({0:n0} min; Watch/Heal should refresh)" -f $pendAge))
-        }
-    }
-    if (Test-Path -LiteralPath $vramFile) {
-        $vramAge = ((Get-Date) - (Get-Item -LiteralPath $vramFile).LastWriteTime).TotalMinutes
-        if ($vramAge -gt 20) {
-            $fails.Add(("last-vram.json stale ({0:n0} min; Watch/Heal should refresh)" -f $vramAge))
-        }
-    }
-    if (Test-Path -LiteralPath $lastHealFile) {
-        $lastHealAge = ((Get-Date) - (Get-Item -LiteralPath $lastHealFile).LastWriteTime).TotalMinutes
-        if ($lastHealAge -gt 20) {
-            $fails.Add(("last-heal.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastHealAge))
-        }
-    }
-    if (Test-Path -LiteralPath $lastSreFile) {
-        $lastSreAge = ((Get-Date) - (Get-Item -LiteralPath $lastSreFile).LastWriteTime).TotalMinutes
-        if ($lastSreAge -gt 20) {
-            $fails.Add(("last-sre.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastSreAge))
-        }
-    }
-    if (Test-Path -LiteralPath $lastOracleFile) {
-        $lastOracleAge = ((Get-Date) - (Get-Item -LiteralPath $lastOracleFile).LastWriteTime).TotalMinutes
-        if ($lastOracleAge -gt 20) {
-            $fails.Add(("last-oracle.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastOracleAge))
-        }
-    }
-    if (Test-Path -LiteralPath $lastEditFile) {
-        $lastEditAge = ((Get-Date) - (Get-Item -LiteralPath $lastEditFile).LastWriteTime).TotalMinutes
-        if ($lastEditAge -gt 20) {
-            $fails.Add(("last-edit.txt stale ({0:n0} min; Watch/Heal should refresh)" -f $lastEditAge))
-        }
-    }
-    if (Test-Path -LiteralPath $healFile) {
-        $healAge = ((Get-Date) - (Get-Item -LiteralPath $healFile).LastWriteTime).TotalMinutes
-        if ($healAge -gt 20) {
-            $fails.Add(("heal-last.json stale ({0:n0} min; Watch/Heal should refresh)" -f $healAge))
-        }
-    }
-    $watchLog = Join-Path $RepoRoot "logs\watch.log"
-    if (-not (Test-Path -LiteralPath $watchLog)) {
-        $fails.Add("missing logs/watch.log (Watch should append each tick)")
-    } else {
-        $watchAge = ((Get-Date) - (Get-Item -LiteralPath $watchLog).LastWriteTime).TotalMinutes
-        if ($watchAge -gt 20) {
-            $fails.Add(("watch.log stale ({0:n0} min; Watch should append)" -f $watchAge))
-        }
-    }
     $watchXml = & schtasks.exe /Query /TN GodBrainWatch /XML 2>$null | Out-String
+    $watchEnabled = $false
+    try {
+        [xml]$watchDefinition = $watchXml
+        $watchEnabled = [string]$watchDefinition.Task.Settings.Enabled -ne "false"
+    } catch {
+        $fails.Add("GodBrainWatch task definition unreadable")
+    }
+    # Manual Watch-off is healthy; background receipts need not stay fresh.
+    if ($watchEnabled) {
+        foreach ($file in @($briefFile, $doorsFile, $pendingFile, $vramFile, $lastHealFile,
+            $lastSreFile, $lastOracleFile, $lastEditFile, $healFile)) {
+            if (Test-Path -LiteralPath $file) {
+                $age = ((Get-Date) - (Get-Item -LiteralPath $file).LastWriteTime).TotalMinutes
+                if ($age -gt 20) {
+                    $fails.Add(("{0} stale ({1:n0} min; Watch/Heal should refresh)" -f (Split-Path $file -Leaf), $age))
+                }
+            }
+        }
+        $watchLog = Join-Path $RepoRoot "logs\watch.log"
+        if (-not (Test-Path -LiteralPath $watchLog)) {
+            $fails.Add("missing logs/watch.log (Watch should append each tick)")
+        } else {
+            $watchAge = ((Get-Date) - (Get-Item -LiteralPath $watchLog).LastWriteTime).TotalMinutes
+            if ($watchAge -gt 20) {
+                $fails.Add(("watch.log stale ({0:n0} min; Watch should append)" -f $watchAge))
+            }
+        }
+    }
     if ($watchXml -match "DisallowStartIfOnBatteries>\s*true") {
         $fails.Add("GodBrainWatch will not start on batteries")
     }

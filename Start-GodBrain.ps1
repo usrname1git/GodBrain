@@ -2,13 +2,16 @@
 # Not a LocalSystem service: Colibri/CUDA must see an interactive session.
 # MongoDB is the Windows service named MongoDB. Heal/Start may start it if
 # :27017 is down. Never kill it.
+# -Only kernel or -Only rag starts that one listener. The mouth stays untouched.
 
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
     [int]$MongoWaitSeconds = 30,
     [switch]$SelfTestEnv,
-    [switch]$KeepPause
+    [switch]$KeepPause,
+    [ValidateSet("all", "kernel", "rag")]
+    [string]$Only = "all"
 )
 
 # Nested powershell -File can leave $PSScriptRoot empty. Never start with
@@ -71,6 +74,7 @@ function New-GodBrainChildEnvironment {
         "PATH", "PATHEXT", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec",
         "TEMP", "TMP", "USERPROFILE", "USERNAME", "USERDOMAIN",
         "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH", "PUBLIC",
+        "ProgramFiles", "ProgramFiles(x86)",
         "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
         "MONGODB_URI", "MONGODB_DB_NAME", "GODBRAIN_API_TOKEN",
         "GODBRAIN_RAG_PREFERRED_SCHEMA_VERSION",
@@ -197,6 +201,12 @@ if ($SelfTestEnv) {
         if ($names -notcontains "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: WMI list missing token" }
         if ($names -notcontains "PATH") { throw "SelfTestEnv: WMI list missing PATH" }
         if ($names -notcontains "SystemRoot") { throw "SelfTestEnv: WMI list missing SystemRoot" }
+        foreach ($name in @("ProgramFiles", "ProgramFiles(x86)")) {
+            if ([string]::IsNullOrWhiteSpace($map[$name]) -or
+                $map[$name] -ne [Environment]::GetEnvironmentVariable($name, "Process")) {
+                throw "SelfTestEnv: WMI list missing Program Files location"
+            }
+        }
         if ($names -contains "GODBRAIN_RAG_PORT") { throw "SelfTestEnv: WMI list must not copy GODBRAIN_RAG_PORT" }
         if ($cmdSample -match "GODBRAIN_API_TOKEN") { throw "SelfTestEnv: launch.cmd would contain token" }
         if ($map["GODBRAIN_API_TOKEN"] -ne "x-test-token") { throw "SelfTestEnv: Extra token was not applied" }
@@ -220,7 +230,14 @@ if ($SelfTestEnv) {
 
 Write-Log "GodBrain logon start from $RepoRoot"
 
-if (-not (Test-Port "127.0.0.1" 27017)) {
+function Test-DeskPause([string]$FileName) {
+    $path = Join-Path $logDir $FileName
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
+}
+
+if ($Only -eq "all" -and -not (Test-Port "127.0.0.1" 27017) -and
+    -not ($KeepPause -and (Test-DeskPause "mongo-pause.txt"))) {
     $svc = Get-Service -Name "MongoDB" -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne "Running") {
         try {
@@ -232,25 +249,18 @@ if (-not (Test-Port "127.0.0.1" 27017)) {
     } elseif (-not $svc) {
         Write-Log "Windows service MongoDB is not installed"
     }
-}
-
-$mongoDeadline = (Get-Date).AddSeconds($MongoWaitSeconds)
-while (-not (Test-Port "127.0.0.1" 27017)) {
-    if ((Get-Date) -gt $mongoDeadline) {
-        Write-Log "MongoDB :27017 not up after ${MongoWaitSeconds}s; RAG will fail until it is"
-        break
+    $mongoDeadline = (Get-Date).AddSeconds($MongoWaitSeconds)
+    while (-not (Test-Port "127.0.0.1" 27017)) {
+        if ((Get-Date) -gt $mongoDeadline) {
+            Write-Log "MongoDB :27017 not up after ${MongoWaitSeconds}s; RAG will fail until it is"
+            break
+        }
+        Start-Sleep -Seconds 1
     }
-    Start-Sleep -Seconds 1
 }
 
 if (-not $env:MONGODB_URI) {
     $env:MONGODB_URI = "mongodb://127.0.0.1:27017"
-}
-
-function Test-DeskPause([string]$FileName) {
-    $path = Join-Path $logDir $FileName
-    if (-not (Test-Path -LiteralPath $path)) { return $false }
-    return ((Get-Content -LiteralPath $path -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
 }
 
 function Clear-DeskPause([string]$FileName) {
@@ -258,6 +268,7 @@ function Clear-DeskPause([string]$FileName) {
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
 }
 
+if ($Only -eq "all" -or $Only -eq "rag") {
 $rag = Resolve-AlexandriaExe "rag-service.exe"
 if ($KeepPause -and (Test-DeskPause "rag-pause.txt")) {
     Write-Log "skip rag-service (rag-pause.txt=on)"
@@ -270,7 +281,9 @@ if ($KeepPause -and (Test-DeskPause "rag-pause.txt")) {
     Start-LoggedProcess -Name "rag-service" -FilePath $rag `
         -WorkingDirectory (Split-Path $rag -Parent)
 }
+}
 
+if ($Only -eq "all") {
 $coliDir = $env:GODBRAIN_COLIBRI_DIR
 if (-not $coliDir) {
     $sibling = Join-Path (Split-Path $RepoRoot -Parent) "colibri\c"
@@ -352,7 +365,7 @@ if (Test-Path -LiteralPath $pauseFile) {
 if ($mouthPaused) {
     Write-Log "skip mouth (mouth-pause.txt=on; desk generate is EXL3 on :8888)"
 } elseif ($coliSleep) {
-    Write-Log "skip mouth (CS2.exe running or gone < 10 min)"
+    Write-Log "skip mouth (CS2.exe running or manual CS2 hold)"
 } elseif (Test-Port "127.0.0.1" 8000) {
     Write-Log "skip mouth (:8000 already listening)"
 } elseif (Test-LlamaMouth) {
@@ -398,7 +411,9 @@ if ($mouthPaused) {
 } else {
     Write-Log "skip mouth (need $coli and model dir $model)"
 }
+}
 
+if ($Only -eq "all" -or $Only -eq "kernel") {
 $kernel = Join-Path $RepoRoot "godbrain_core\cpp_kernel\godbrain-kernel.exe"
 $kernelHeld = $KeepPause -and (Test-DeskPause "kernel-pause.txt")
 if ($kernelHeld) {
@@ -415,7 +430,9 @@ if ($kernelHeld) {
         -WorkingDirectory (Split-Path $kernel -Parent) `
         -Environment $kernelEnv
 }
+}
 
+if ($Only -eq "all") {
 $kernelDeadline = (Get-Date).AddSeconds(20)
 while (-not $kernelHeld -and -not (Test-Port "127.0.0.1" 8083)) {
     if ((Get-Date) -gt $kernelDeadline) {
@@ -503,3 +520,7 @@ Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`"
 Write-Log "Ask without Galaxy: .\scripts\Ask-GodBrain.ps1 your question"
 Write-Log "Store idea: .\scripts\Ask-GodBrain.ps1 -Idea `"thought`"  or  /idea in chat"
 Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"
+}
+if ($Only -ne "all") {
+    Write-Log "GodBrain -Only $Only finished"
+}

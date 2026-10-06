@@ -16,6 +16,7 @@
 #include <functional>
 #include <atomic>
 #include <mutex>
+#include <memory>
 #include <set>
 #include "rag_client.h"
 #include "coli_sse.h"
@@ -28,6 +29,7 @@
 #include "kernel_request.h"
 #include "memory.h"
 #include "telemetry.h"
+#include "phone_desk.h"
 
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
@@ -5545,6 +5547,14 @@ int main() {
         }
     });
 
+    std::unique_ptr<phone_desk::Server> phone;
+    try {
+        phone = std::make_unique<phone_desk::Server>(
+            g_api_token, get_exe_dir() + "\\..\\frontend\\phone.html");
+        if (phone->start()) std::cout << "[PHONE] Read-only status on 127.0.0.1:8085\n";
+    } catch (const std::exception& error) {
+        std::cerr << "[PHONE] Read-only dashboard unavailable: " << error.what() << '\n';
+    }
     if (maybe_bind_tailscale_door()) {
         std::cout << "[SYS] Tailscale shortcuts door requested" << std::endl;
     } else {
