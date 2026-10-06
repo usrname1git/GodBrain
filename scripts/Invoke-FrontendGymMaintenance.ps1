@@ -130,7 +130,65 @@ function Stop-Qwen {
     Remove-Item -LiteralPath $qwenReceipt -Force -ErrorAction SilentlyContinue
 }
 
+function Test-QwenStartHeld {
+    $pause = Get-FrontendPause
+    $afkHold = Join-Path $RepoRoot "logs\afk-pause.txt"
+    return $pause.paused -or ((Test-Path -LiteralPath $afkHold) -and
+        (Get-Content -LiteralPath $afkHold -Raw -ErrorAction Stop).Trim() -eq "on")
+}
+
+function Stop-QwenStartup($Launcher) {
+    # Retain the created process handle while resolving venv redirector descendants.
+    $null = $Launcher.Handle
+    $born = $Launcher.StartTime
+    $owned = @{ ([int]$Launcher.Id) = @{ Born = $born; Ended = $null } }
+    $snapshot = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $rootStopped = $false
+    $deadline = (Get-Date).AddSeconds(20)
+    do {
+        do {
+            $added = $false
+            foreach ($process in $snapshot) {
+                $parent = $owned[[int]$process.ParentProcessId]
+                if ($parent -and -not $owned.ContainsKey([int]$process.ProcessId) -and
+                    $process.CreationDate -ge $parent.Born -and
+                    (-not $parent.Ended -or $process.CreationDate -le $parent.Ended)) {
+                    $owned[[int]$process.ProcessId] = @{ Born = $process.CreationDate; Ended = $null }
+                    $added = $true
+                }
+            }
+        } while ($added)
+        if (-not $rootStopped) {
+            if (-not $Launcher.HasExited) { $Launcher.Kill() }
+            if (-not $Launcher.WaitForExit(5000)) { throw "Qwen startup launcher did not exit." }
+            $owned[[int]$Launcher.Id].Ended = Get-Date
+            $rootStopped = $true
+        } else {
+            $models = @($snapshot | Where-Object {
+                $identity = $owned[[int]$_.ProcessId]
+                $identity -and $_.CreationDate -eq $identity.Born -and
+                (Test-Cs2ModelProcess $_ $RepoRoot) -and
+                $_.CommandLine -match ('(?:^|\s|")' + [regex]::Escape($qwenModel) + '(?:"|\s|$)')
+            })
+            if (-not $models.Count) { break }
+            foreach ($process in $models) {
+                Stop-Cs2OwnedProcess $process
+                $owned[[int]$process.ProcessId].Ended = Get-Date
+            }
+            if ((Get-Date) -ge $deadline) { throw "Qwen startup descendants did not exit." }
+            Start-Sleep -Milliseconds 100
+        }
+        $snapshot = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    } while ($true)
+    if (Test-Path -LiteralPath $qwenReceipt) {
+        $receipt = Get-Content -LiteralPath $qwenReceipt -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($owned.ContainsKey([int]$receipt.pid)) { Remove-Item -LiteralPath $qwenReceipt -Force }
+    }
+    Write-WatchEvent "qwen_start_cancelled" "Released only this tick's Qwen launch and descendants."
+}
+
 function Start-Qwen {
+    if (Test-QwenStartHeld) { return $false }
     if ((Test-Port 8000) -or (Test-Port 8871)) {
         Write-WatchEvent "qwen_blocked" "Another mouth/image door is listening; gym Qwen was not started."
         return $false
@@ -157,19 +215,35 @@ function Start-Qwen {
         -WorkingDirectory (Split-Path (Split-Path $qwenStart -Parent) -Parent) `
         -WindowStyle Normal `
         -PassThru
-    $deadline = (Get-Date).AddMinutes(4)
-    $process = $null
-    while (-not $process -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-        $process = Get-QwenListenerProcess
-        if ($launcher.HasExited -and -not $process) {
-            throw "Qwen launcher exited before :8888 became ready."
+    $script:qwenStartup = $launcher
+    try {
+        $deadline = (Get-Date).AddMinutes(4)
+        $process = $null
+        while (-not $process -and (Get-Date) -lt $deadline) {
+            if (Test-QwenStartHeld) {
+                Stop-QwenStartup $launcher
+                return $false
+            }
+            Start-Sleep -Milliseconds 500
+            $process = Get-QwenListenerProcess
+            if ($launcher.HasExited -and -not $process) {
+                throw "Qwen launcher exited before :8888 became ready."
+            }
         }
+        if (-not $process) { throw "Qwen did not become ready on :8888 within four minutes." }
+        if (Test-QwenStartHeld) {
+            Stop-QwenStartup $launcher
+            return $false
+        }
+        Set-QwenReceipt $process
+        Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) with the launcher's default drafting."
+        return $true
+    } catch {
+        $failure = $_
+        try { Stop-QwenStartup $launcher }
+        catch { throw "Qwen startup failed ($($failure.Exception.Message)); cleanup failed: $($_.Exception.Message)" }
+        throw $failure
     }
-    if (-not $process) { throw "Qwen did not become ready on :8888 within four minutes." }
-    Set-QwenReceipt $process
-    Write-WatchEvent "qwen_start" "Started qwen3.8-27b-exl3-3.5bpw pid=$($process.ProcessId) with the launcher's default drafting."
-    return $true
 }
 
 function Test-LoopbackPort([int]$Port) {
@@ -202,6 +276,7 @@ $script:gymLaunch = $null
 $script:gymCrashStreak = 0
 $script:gymCrashLatched = $false
 $script:cudaUnsafe = $false
+$script:qwenStartup = $null
 
 function Save-GymCrashLatch {
     @{
@@ -240,13 +315,18 @@ function Send-GymCrashNotice([string]$message) {
     }
 }
 
-function Test-GymProcessAlive([int]$processId) {
-    if ($processId -le 0) { return $false }
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
-    return [bool]($process -and $process.CommandLine -and (
+function Get-GymWorkerProcess([int]$processId) {
+    if ($processId -le 0) { return $null }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
+    if ($process -and $process.CommandLine -and (
         $process.CommandLine -like "*Invoke-FrontendGym.ps1*" -or
         $process.CommandLine -like "*skill_lab\gym.mjs*" -or
-        $process.CommandLine -like "*skill_lab/gym.mjs*"))
+        $process.CommandLine -like "*skill_lab/gym.mjs*")) { return $process }
+    return $null
+}
+
+function Test-GymProcessAlive([int]$processId) {
+    return [bool](Get-GymWorkerProcess $processId)
 }
 
 function Start-Dashboard {
@@ -268,6 +348,22 @@ function Start-Dashboard {
 }
 
 function Start-Gym {
+    $glance = Read-GymGlance
+    $worker = if ($glance -and $glance.pid) { Get-GymWorkerProcess ([int]$glance.pid) } else { $null }
+    if ($worker) {
+        if (-not $worker.CreationDate) { throw "Live gym worker creation time is unavailable." }
+        if (-not $script:gymLaunch -or [int]$script:gymLaunch.Pid -ne [int]$worker.ProcessId -or
+            $script:gymLaunch.At -ne [datetime]$worker.CreationDate) {
+            $script:gymLaunch = @{ Pid = [int]$glance.pid; At = [datetime]$worker.CreationDate }
+            $script:gymLaunch | ConvertTo-Json -Compress | Set-Content -LiteralPath $gymReceipt
+        }
+        if (((Get-Date) - $script:gymLaunch.At).TotalSeconds -ge 120) {
+            $script:gymCrashStreak = 0
+            $script:gymCrashLatched = $false
+            Save-GymCrashLatch
+        }
+        return
+    }
     if ($script:gymCrashLatched) { return }
     if ($script:gymLaunch) {
         $ageSeconds = ((Get-Date) - $script:gymLaunch.At).TotalSeconds
@@ -281,6 +377,8 @@ function Start-Gym {
             return
         }
         $script:gymCrashStreak++
+        $script:gymLaunch = $null
+        if (Test-Path -LiteralPath $gymReceipt) { Remove-Item -LiteralPath $gymReceipt -Force }
         $tail = Get-GymCrashTail
         Write-WatchEvent "gym_crash" "Observed gym worker loss; last launch $([int]$ageSeconds)s ago. Streak $($script:gymCrashStreak)/10. $tail"
         Save-GymCrashLatch
@@ -295,10 +393,6 @@ function Start-Gym {
         }
         $script:gymLaunch = $null
     }
-    $alive = $false
-    $glance = Read-GymGlance
-    if ($glance -and $glance.pid) { $alive = Test-GymProcessAlive ([int]$glance.pid) }
-    if ($alive) { return }
     Start-Dashboard
     $started = Start-Process -FilePath $pwsh `
         -ArgumentList @(
@@ -347,6 +441,8 @@ try {
         Write-WatchEvent "cs2_hold" "CS2 hold appeared during maintenance; no dashboard, model or worker start."
         return
     }
+    if ($script:gymCrashLatched -and $state -and $state.pid -and
+        (Test-GymProcessAlive ([int]$state.pid))) { Start-Gym }
     $gymBusy = $state -and @(
         'generating', 'evaluating', 'consulting_tutor', 'learning'
     ) -contains [string]$state.status
@@ -362,11 +458,9 @@ try {
         }
     } elseif (-not $script:cudaUnsafe -and -not $script:gymCrashLatched) {
         if (Start-Qwen) {
-            $pauseAfterStart = Get-FrontendPause
-            $afkHold = Join-Path $RepoRoot "logs\afk-pause.txt"
-            $watchStopped = (Test-Path -LiteralPath $afkHold) -and
-                (Get-Content -LiteralPath $afkHold -Raw -ErrorAction Stop).Trim() -eq "on"
-            if (-not $pauseAfterStart.paused -and -not $watchStopped) { Start-Gym }
+            if (Test-QwenStartHeld) {
+                if ($script:qwenStartup) { Stop-QwenStartup $script:qwenStartup }
+            } else { Start-Gym }
         }
     }
     if ([bool]$pause.paused -ne $lastPauseState) {
@@ -421,4 +515,6 @@ try {
 } catch {
     Write-WatchEvent "watchdog_error" $_.Exception.Message
     throw
+} finally {
+    if ($script:qwenStartup) { $script:qwenStartup.Dispose(); $script:qwenStartup = $null }
 }

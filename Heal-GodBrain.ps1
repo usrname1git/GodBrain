@@ -106,15 +106,24 @@ function Test-ServiceUp([string]$Name) {
 function Start-AllowlistedService([string]$Name) {
     $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if (-not $svc) {
-        Write-Host "heal: Windows service $Name is not installed"
-        return
+        Write-Warning "heal: Windows service $Name is not installed"
+        return $false
     }
-    if ($svc.Status -eq "Running") { return }
+    if ($svc.Status -eq "Running") { return $false }
     try {
         Start-Service -Name $Name -ErrorAction Stop
-        Write-Host "heal: started Windows service $Name"
+        $deadline = (Get-Date).AddSeconds(10)
+        do {
+            if (Test-ServiceUp $Name) {
+                Write-Host "heal: started Windows service $Name"
+                return $true
+            }
+            if ((Get-Date) -ge $deadline) { throw "Service did not reach Running within ten seconds." }
+            Start-Sleep -Milliseconds 400
+        } while ($true)
     } catch {
-        Write-Host "heal: could not start ${Name}: $_"
+        Write-Warning "heal: could not start ${Name}: $_"
+        return $false
     }
 }
 
@@ -368,8 +377,9 @@ if ($Afk -and -not $coliSleep) {
 
 foreach ($key in $ServiceAllowlist.Keys) {
     if ($needed -contains $key) {
-        Start-AllowlistedService $ServiceAllowlist[$key]
-        $acted += ("start:" + $ServiceAllowlist[$key])
+        if (Start-AllowlistedService $ServiceAllowlist[$key]) {
+            $acted += ("start:" + $ServiceAllowlist[$key])
+        }
     }
 }
 

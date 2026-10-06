@@ -205,21 +205,28 @@ function Get-WatchLine {
 
 function Set-WatchTask([string]$Action) {
     if ($Action -eq "ENABLE" -and -not (Enable-DeskAfterCs2)) { return }
-    $proc = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
-        "/Change", "/TN", "GodBrainWatch", "/$Action"
-    ) -WindowStyle Hidden -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        [System.Windows.Forms.MessageBox]::Show("Could not $Action GodBrainWatch (exit $($proc.ExitCode)).")
-    } else {
-        $text = if ($Action -eq "ENABLE") { "off" } else { "on" }
-        Set-Content -LiteralPath (Join-Path $Repo "logs\afk-pause.txt") -Value $text
-        if ($Action -eq "ENABLE") {
-            $run = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
-                "/Run", "/TN", "GodBrainWatch"
-            ) -WindowStyle Hidden -Wait -PassThru
-            if ($run.ExitCode -ne 0) {
-                [System.Windows.Forms.MessageBox]::Show("Watch enabled, but the immediate AFK tick could not start (exit $($run.ExitCode)).")
-            }
+    $tasks = @("GodBrainWatch")
+    if ($Action -eq "ENABLE" -and (Test-GodBrainTaskExists "GodBrainLogon")) {
+        $tasks = @("GodBrainLogon") + $tasks
+    }
+    foreach ($task in $tasks) {
+        $proc = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
+            "/Change", "/TN", $task, "/$Action"
+        ) -WindowStyle Hidden -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+            [System.Windows.Forms.MessageBox]::Show("Could not $Action $task (exit $($proc.ExitCode)).")
+            Update-Status
+            return
+        }
+    }
+    $text = if ($Action -eq "ENABLE") { "off" } else { "on" }
+    Set-Content -LiteralPath (Join-Path $Repo "logs\afk-pause.txt") -Value $text
+    if ($Action -eq "ENABLE") {
+        $run = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
+            "/Run", "/TN", "GodBrainWatch"
+        ) -WindowStyle Hidden -Wait -PassThru
+        if ($run.ExitCode -ne 0) {
+            [System.Windows.Forms.MessageBox]::Show("Watch enabled, but the immediate AFK tick could not start (exit $($run.ExitCode)).")
         }
     }
     Update-Status
@@ -938,8 +945,11 @@ function Stop-MouthHold {
     } else {
         Set-DeskPause "mouth"
     }
-    foreach ($p in @(Get-Process -Name "llama-server" -ErrorAction SilentlyContinue)) {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction Stop)) {
+        if ($process.Name -eq "llama-server.exe" -and
+            $process.CommandLine -match '(?:^|\s)--port(?:\s+|=)8000(?:\s|$)') {
+            Stop-Cs2OwnedProcess $process
+        }
     }
     Update-Status
 }

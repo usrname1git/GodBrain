@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <sddl.h>
 
 using phone_desk::json;
 void check(bool value, const char* message) {
@@ -9,6 +10,47 @@ void check(bool value, const char* message) {
 }
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--rustdesk-status") {
+            std::cout << phone_desk::read_rustdesk_status().dump() << '\n';
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--rustdesk-status-limited") {
+            const json normal = phone_desk::read_rustdesk_status();
+            HANDLE original = nullptr, restricted = nullptr;
+            PSID admin = nullptr, medium = nullptr;
+            try {
+                check(OpenProcessToken(GetCurrentProcess(),
+                      TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_IMPERSONATE, &original),
+                      "Process token query failed");
+                check(ConvertStringSidToSidW(L"S-1-5-32-544", &admin) &&
+                      ConvertStringSidToSidW(L"S-1-16-8192", &medium), "Test SID creation failed");
+                SID_AND_ATTRIBUTES disabled{admin, 0};
+                check(CreateRestrictedToken(original, DISABLE_MAX_PRIVILEGE, 1, &disabled, 0, nullptr,
+                      0, nullptr, &restricted), "Restricted token creation failed");
+                TOKEN_MANDATORY_LABEL integrity{{medium, SE_GROUP_INTEGRITY}};
+                check(SetTokenInformation(restricted, TokenIntegrityLevel, &integrity,
+                      sizeof(integrity) + GetLengthSid(medium)), "Medium-integrity setup failed");
+                check(ImpersonateLoggedOnUser(restricted), "Restricted-token impersonation failed");
+                const json limited = phone_desk::read_rustdesk_status();
+                check(RevertToSelf(), "Restricted-token cleanup failed");
+                CloseHandle(restricted); restricted = nullptr;
+                CloseHandle(original); original = nullptr;
+                LocalFree(admin); admin = nullptr;
+                LocalFree(medium); medium = nullptr;
+                if (normal["state"] == "ready" || normal["state"] == "unready" || normal["state"] == "running")
+                    check(limited["state"] != "unknown" && limited["state"] != "missing",
+                          "Limited observation lost installed running service state");
+                std::cout << limited.dump() << '\n';
+                return 0;
+            } catch (...) {
+                RevertToSelf();
+                if (restricted) CloseHandle(restricted);
+                if (original) CloseHandle(original);
+                if (admin) LocalFree(admin);
+                if (medium) LocalFree(medium);
+                throw;
+            }
+        }
         if (argc == 3 && std::string(argv[1]) == "--image-health-fixture") {
             std::ifstream input(argv[2]);
             const json health = json::parse(input);
@@ -69,6 +111,13 @@ int main(int argc, char** argv) {
         check(phone_desk::owner_login(status) == "operator@example.invalid", "Owner extraction failed");
         check(phone_desk::owner_login(json::object()).empty(), "Missing owner defaulted");
         check(phone_desk::tailscale_status(status)["state"] == "ready", "Running daemon not ready");
+        check(phone_desk::rustdesk_status("running", true)["state"] == "ready", "Observed server not ready");
+        check(phone_desk::rustdesk_status("running", false)["state"] == "unready", "Missing server became ready");
+        const json limited = phone_desk::rustdesk_status("running", false, "Access denied");
+        check(limited["state"] == "running", "Server privilege failure erased known service state");
+        check(limited["detail"].get<std::string>().find("Access denied") != std::string::npos, "Probe error was hidden");
+        check(phone_desk::rustdesk_status("stopped", true)["state"] == "stopped", "GUI overrode stopped service");
+        check(phone_desk::rustdesk_status("missing", false)["state"] == "missing", "Missing service misreported");
         check(phone_desk::tailscale_status(json::object())["state"] == "unknown", "Invalid daemon became ready");
         json offline = status;
         offline["Self"]["Online"] = false;

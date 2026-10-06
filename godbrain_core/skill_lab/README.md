@@ -92,6 +92,14 @@ The durable `work\gym\watchdog\crash-latch.json` blocks automatic recovery after
 ten observed worker losses or a CUDA illegal-address error; AFK Resume does
 not clear that safety latch. Unreadable training/state/control files fail
 closed rather than hiding CUDA errors or loading another model.
+Cold starts recheck CS2, training pause and Watch Stop while waiting for the
+listener. A new hold cancels only that tick's launcher and identity-checked
+Qwen descendants, including venv children; it does not stop a pre-existing
+warm model. Failed starts are cleaned up and never publish a success receipt.
+A healthy worker reported by the current gym state supersedes an old launch
+receipt before crash accounting. Its actual process creation time controls the
+two-minute stable-run reset, not its latest heartbeat. An already-running stable
+replacement can clear a worker-loss latch; CUDA safety remains separately latched.
 Completion requests use bounded OpenAI event streams so stopping can disconnect
 an active generation, including runners whose non-streaming route cannot cancel.
 An unavailable model is reported and retried in continuous mode. A finite run

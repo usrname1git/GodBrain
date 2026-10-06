@@ -84,6 +84,47 @@ if (-not $global:AfkTest.retried) { $global:AfkTest.retried=$true; exit 1 }
     "off" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
 
     $heal = Read-Ast (Join-Path $repo "Heal-GodBrain.ps1")
+    & {
+        foreach ($name in @("Start-AllowlistedService", "Test-ServiceUp")) {
+            $definition = $heal.Find({ param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $script:serviceState = "Stopped"; $script:serviceFails = $true
+        $script:serviceStarts = 0; $script:servicePending = $false
+        $script:clock = Get-Date
+        function Get-Date { return $script:clock }
+        function Start-Sleep { param($Milliseconds); $script:clock = $script:clock.AddSeconds(11) }
+        function Get-Service { param($Name, $ErrorAction)
+            if ($script:serviceState -eq "missing") { return $null }
+            return @{ Status = $script:serviceState }
+        }
+        function Start-Service { param($Name, $ErrorAction)
+            $script:serviceStarts++
+            if ($script:serviceFails) { throw "SCM access denied" }
+            if (-not $script:servicePending) { $script:serviceState = "Running" }
+        }
+        Assert-Equal (Start-AllowlistedService "Fixture" -WarningAction SilentlyContinue) $false
+        $script:serviceFails = $false
+        Assert-Equal (Start-AllowlistedService "Fixture") $true
+        Assert-Equal (Start-AllowlistedService "Fixture") $false
+        Assert-Equal $script:serviceStarts 2
+        $script:serviceState = "missing"
+        Assert-Equal (Start-AllowlistedService "Fixture" -WarningAction SilentlyContinue) $false
+        $script:serviceState = "Stopped"; $script:servicePending = $true
+        Assert-Equal (Start-AllowlistedService "Fixture" -WarningAction SilentlyContinue) $false
+        $repair = $heal.Find({ param($node)
+            $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+            $node.Extent.Text.Contains('Start-AllowlistedService $ServiceAllowlist[$key]')
+        }, $true)
+        $needed = @("fixture"); $ServiceAllowlist = @{ fixture = "Fixture" }; $acted = @()
+        . ([scriptblock]::Create($repair.Extent.Text))
+        Assert-Equal $acted.Count 0
+        $script:servicePending = $false
+        . ([scriptblock]::Create($repair.Extent.Text))
+        Assert-Equal ($acted -join ",") "start:Fixture"
+    }
     $services = @($heal.EndBlock.Statements | Where-Object {
         $_.Extent.Text.StartsWith('if ($Afk -and -not $coliSleep)')
     })[0]
@@ -230,6 +271,8 @@ $global:AfkTest.calls.Add("start:$Only/keep:$KeepPause")
         $script:gymLaunch = @{ Pid = 42; At = [datetime]::UtcNow.AddMinutes(-10) }
         $script:notices = 0
         function Test-GymProcessAlive { param($processId); return $false }
+        function Read-GymGlance { return $null }
+        $gymReceipt = Join-Path $fixture "gym-runtime.json"
         function Get-GymCrashTail { return "" }
         function Save-GymCrashLatch {}
         function Write-WatchEvent { param($kind, $message) }
@@ -243,25 +286,142 @@ $global:AfkTest.calls.Add("start:$Only/keep:$KeepPause")
         Assert-Equal $script:notices 1
     }
     & {
+        . ([scriptblock]::Create($startGym.Extent.Text))
+        $gymReceipt = Join-Path $fixture "adopted-gym.json"
+        $script:gymCrashLatched = $true; $script:gymCrashStreak = 10
+        $script:gymLaunch = @{ Pid = 42; At = (Get-Date).AddMinutes(-10) }
+        $script:adoptClock = Get-Date
+        function Get-Date { return $script:adoptClock }
+        $script:workerBorn = (Get-Date).AddSeconds(-120)
+        $script:savedLatch = $null
+        function Read-GymGlance { return @{ pid = 84; updatedAt = (Get-Date).ToString("o") } }
+        function Test-GymProcessAlive { param($processId); return $processId -eq 84 }
+        function Get-GymWorkerProcess { param($processId)
+            return @{ ProcessId = 84; CreationDate = $script:workerBorn }
+        }
+        function Save-GymCrashLatch { $script:savedLatch = "$script:gymCrashStreak/$script:gymCrashLatched" }
+        function Start-Process { throw "A healthy replacement must not be restarted." }
+        Start-Gym
+        Assert-Equal $script:gymCrashStreak 0
+        Assert-Equal $script:gymCrashLatched $false
+        Assert-Equal $script:gymLaunch.At $script:workerBorn
+        Assert-Equal ((Get-Content -LiteralPath $gymReceipt -Raw | ConvertFrom-Json).Pid) 84
+        Assert-Equal $script:savedLatch "0/False"
+        $script:gymCrashStreak = 9; $script:gymLaunch = @{ Pid = 42; At = (Get-Date).AddMinutes(-10) }
+        $script:workerBorn = (Get-Date).AddSeconds(-119)
+        Start-Gym
+        Assert-Equal $script:gymCrashStreak 9
+        Assert-Equal $script:gymCrashLatched $false
+        $script:workerBorn = (Get-Date).AddSeconds(-120)
+        Start-Gym
+        Assert-Equal $script:gymCrashStreak 0
+    }
+    & {
+        . ([scriptblock]::Create($startGym.Extent.Text))
+        $gymReceipt = Join-Path $fixture "consumed-gym.json"
+        $script:gymLaunch = @{ Pid = 42; At = (Get-Date).AddMinutes(-10) }
+        $script:gymLaunch | ConvertTo-Json | Set-Content -LiteralPath $gymReceipt
+        $script:gymCrashStreak = 2; $script:gymCrashLatched = $false
+        function Read-GymGlance { return $null }
+        function Test-GymProcessAlive { param($processId); return $false }
+        function Save-GymCrashLatch {}
+        function Get-GymCrashTail { return "" }
+        function Write-WatchEvent { param($kind, $message) }
+        function Start-Dashboard {}
+        function Start-Process { throw "Fixture launch failed" }
+        Assert-Throws { Start-Gym } "*Fixture launch failed*"
+        Assert-Equal $script:gymCrashStreak 3
+        Assert-Equal (Test-Path -LiteralPath $gymReceipt) $false
+        Assert-Throws { Start-Gym } "*Fixture launch failed*"
+        Assert-Equal $script:gymCrashStreak 3
+    }
+    & {
+        foreach ($name in @("Start-Qwen", "Stop-QwenStartup", "Test-QwenStartHeld")) {
+            $definition = $gym.Find({ param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+            }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $RepoRoot = $fixture; $qwenReceipt = Join-Path $fixture "qwen-runtime.json"
+        $qwenStart = Join-Path $fixture "Start-Qwen.ps1"; $qwenModel = "C:\fixture\model"
+        $pwsh = "fixture-pwsh"; $script:ready = $false; $script:holdMode = "cs2"
+        $script:qwenStartup = $null; $script:receipts = 0; $script:stopped = @()
+        $script:models = @(); $script:census = 0
+        $script:launcher = [pscustomobject]@{ Id = 71; Handle = 1; StartTime = (Get-Date).AddSeconds(-2); HasExited = $false }
+        $script:launcher | Add-Member ScriptMethod Kill { $this.HasExited = $true }
+        $script:launcher | Add-Member ScriptMethod WaitForExit { param($Milliseconds); return $true }
+        $script:launcher | Add-Member ScriptMethod Dispose {}
+        function Get-FrontendPause { return @{ paused = $script:held } }
+        function Test-Port { param($port); return $false }
+        function Get-QwenProcess { return $null }
+        function Get-QwenListenerProcess { if ($script:ready) { return @{ ProcessId = 73 } } }
+        function Set-QwenReceipt { param($process); $script:receipts++ }
+        function Write-WatchEvent { param($kind, $message) }
+        function Test-Cs2ScriptProcess { param($process, $path, [switch]$PowerShell); return $false }
+        function Test-Cs2ModelProcess { param($process, $root); return $true }
+        function Get-CimInstance { param($ClassName, $Filter, $ErrorAction)
+            $script:census++
+            if ($script:census -eq 1) { return @() }
+            return $script:models
+        }
+        function Stop-Cs2OwnedProcess { param($process)
+            $script:stopped += $process.ProcessId
+            if ($process.ProcessId -eq 72) {
+                $script:models += [pscustomobject]@{
+                    ProcessId = 74; ParentProcessId = 72; CreationDate = Get-Date
+                    CommandLine = "python --model C:\fixture\model"
+                }
+            }
+            $script:models = @($script:models | Where-Object ProcessId -ne $process.ProcessId)
+        }
+        function Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$PassThru)
+            $script:models = @(
+                [pscustomobject]@{ ProcessId = 72; ParentProcessId = 71; CreationDate = Get-Date; CommandLine = "python --model C:\fixture\model" },
+                [pscustomobject]@{ ProcessId = 73; ParentProcessId = 72; CreationDate = Get-Date; CommandLine = "python --model C:\fixture\model" },
+                [pscustomobject]@{ ProcessId = 99; ParentProcessId = 999; CreationDate = Get-Date; CommandLine = "python --model C:\fixture\model" }
+            )
+            return $script:launcher
+        }
+        function Start-Sleep { param($Milliseconds)
+            if ($script:holdMode -eq "cs2") { $script:held = $true }
+            else { "on" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt") }
+        }
+        foreach ($mode in @("cs2", "watch", "ready-watch")) {
+            "off" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
+            $script:holdMode = $mode; $script:held = $false; $script:ready = $mode -eq "ready-watch"
+            $script:census = 0; $script:stopped = @(); $script:launcher.HasExited = $false
+            Assert-Equal (Start-Qwen) $false
+            Assert-Equal ($script:stopped -join ",") "72,73,74"
+            Assert-Equal $script:models[0].ProcessId 99
+            Assert-Equal $script:launcher.HasExited $true
+            Assert-Equal $script:receipts 0
+        }
+        "off" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
+    }
+    & {
         $RepoRoot = $fixture; $runtimeDir = $fixture; $heartbeat = "fixture-heartbeat"; $task = ""
         $script:cudaUnsafe = $false
         $script:gymCrashLatched = $false
         $script:tickCalls = @()
         $script:modelAllowed = $true
         $script:pauseDuringStart = $false
+        $script:ownColdStart = $false
         $script:pause = @{ paused = $false; cs2_sleep = $false; stop_qwen = $false; manual_pause = $false }
         $script:state = @{ status = "idle"; lastError = "" }
         $lastHandledIma = ""; $lastPauseState = $false; $lastHostLine = ""; $quietBeats = 0
         function Read-GymGlance { return $script:state }
         function Get-FrontendPause { return $script:pause }
+        function Test-QwenStartHeld { return $script:pause.paused }
         function Start-Qwen {
             $script:tickCalls += "qwen"
+            if ($script:ownColdStart) { $script:qwenStartup = $script:launcher }
             if ($script:pauseDuringStart) { $script:pause.paused = $true }
             return $script:modelAllowed
         }
         function Start-Gym { $script:tickCalls += "gym" }
         function Start-Dashboard { $script:tickCalls += "dashboard" }
         function Stop-Qwen { $script:tickCalls += "stop-qwen" }
+        function Stop-QwenStartup { param($Launcher); $script:tickCalls += "stop-start" }
         function Save-GymCrashLatch { $script:tickCalls += "cuda-latch" }
         function Write-WatchEvent { param($kind, $message) }
         function Get-QwenProcess { return $null }
@@ -274,6 +434,11 @@ $global:AfkTest.calls.Add("start:$Only/keep:$KeepPause")
         $script:tickCalls = @(); $script:pauseDuringStart = $true
         . ([scriptblock]::Create($tick.Extent.Text))
         Assert-Equal ($script:tickCalls -join ",") "qwen"
+        $script:tickCalls = @(); $script:ownColdStart = $true
+        $script:pause.paused = $false
+        . ([scriptblock]::Create($tick.Extent.Text))
+        Assert-Equal ($script:tickCalls -join ",") "qwen,stop-start"
+        $script:ownColdStart = $false
         $script:pauseDuringStart = $false; $script:pause.paused = $false
         $script:tickCalls = @(); $script:gymCrashLatched = $true
         . ([scriptblock]::Create($tick.Extent.Text))

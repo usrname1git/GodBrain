@@ -97,6 +97,13 @@ listener does not call them. Do not enable public Funnel.
 
 ## RustDesk: one command, then open the client
 
+Phone Desk observes SCM state and the installed service's live server child;
+it does not run RustDesk's administrator-only option query. If the kernel cannot
+inspect the server, the card keeps **running** and explains the unavailable
+observation instead of hiding known service state or claiming **ready**.
+An observed server is not an end-to-end remote connection test. Phone Desk's
+Tailscale transport authentication still requires the strict process-owner check.
+
 The remote command is the same on either phone platform:
 
 ```powershell
@@ -155,6 +162,16 @@ Use existing desktop/scheduled-task doors for persistent work, with their
 actual permissions, rather than inventing a second watcher or elevated task.
 Launching a Windows GUI from an SSH session also does not guarantee it
 appears in the logged-in desktop; use RustDesk for the interactive panel.
+
+After CS2, explicitly selecting desktop **Watch Start** re-enables installed
+`GodBrainLogon` and `GodBrainWatch`, then runs the host Watch tick. It does not
+re-enable legacy gym, model or Creation Lab tasks. Merely clearing the CS2 hold
+starts nothing. **Mouth Stop** targets only identity-rechecked legacy
+`llama-server --port 8000`; other llama ports and the desk's `:8888` model remain.
+CS2 shutdown repeats launcher and model censuses before declaring suspension,
+so a late starter cannot survive merely because its maintenance parent exited.
+Heal records `start:<service>` only after a requested start is observed Running;
+permission failures, missing services and readiness timeouts are not successes.
 
 ## Native Shortcut API (separate from Phone Desk)
 

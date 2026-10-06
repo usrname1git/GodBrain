@@ -15,6 +15,9 @@ bool authorized(const httplib::Request& request, const std::string& token,
 bool trusted_serve_peer(const httplib::Request& request);
 json model_status(int port, const json& models, const json& health);
 json tailscale_status(const json& status);
+json rustdesk_status(const std::string& service_state, bool server_observed,
+                    const std::string& probe_error = {});
+json read_rustdesk_status();
 std::string owner_login(const json& status);
 
 class Server {

@@ -156,26 +156,31 @@ function Stop-Cs2GpuRuntimes([string]$RepoRoot) {
         "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-Qwen.ps1",
         "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-UncensoredQwen.ps1"
     )
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-    foreach ($process in $processes) {
-        if ([int]$process.ProcessId -eq $PID) { continue }
-        foreach ($path in $launcherPaths) {
-            if (Test-Cs2ScriptProcess $process $path -PowerShell) {
-                Stop-Cs2OwnedProcess $process
-                break
-            }
-        }
-    }
-    # Take a fresh census after stopping launchers so late-spawned children
-    # cannot keep the GPU occupied. The image API's Job releases its worker.
-    foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
-        if (Test-Cs2ModelProcess $process $RepoRoot) { Stop-Cs2OwnedProcess $process }
-    }
     $deadline = (Get-Date).AddSeconds(20)
     do {
         $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-        $remaining = @($processes |
-            Where-Object { Test-Cs2ModelProcess $_ $RepoRoot })
+        foreach ($process in $processes) {
+            if ([int]$process.ProcessId -eq $PID) { continue }
+            foreach ($path in $launcherPaths) {
+                if (Test-Cs2ScriptProcess $process $path -PowerShell) {
+                    Stop-Cs2OwnedProcess $process
+                    break
+                }
+            }
+        }
+        # Repeat both censuses: a stopped maintenance parent can leave a late launcher.
+        foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
+            if (Test-Cs2ModelProcess $process $RepoRoot) { Stop-Cs2OwnedProcess $process }
+        }
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $remaining = @($processes | Where-Object {
+            $candidate = $_
+            if (Test-Cs2ModelProcess $candidate $RepoRoot) { return $true }
+            if ([int]$candidate.ProcessId -eq $PID) { return $false }
+            return @($launcherPaths | Where-Object {
+                Test-Cs2ScriptProcess $candidate $_ -PowerShell
+            }).Count -gt 0
+        })
         $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
             Where-Object {
                 if ($_.LocalPort -notin @(8888, 8871, 8000)) { return $false }

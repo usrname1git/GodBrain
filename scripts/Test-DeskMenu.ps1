@@ -54,6 +54,49 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
     throw "Expected failure: $Expected"
 }
 
+& {
+    foreach ($name in @("Stop-MouthHold", "Set-WatchTask")) {
+        $definition = $ast.Find({ param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+    }
+    $Repo = "fixture"; $script:controlCalls = @(); $script:logonInstalled = $true; $script:taskFails = ""
+    function Update-Status {}
+    function Confirm-Stop { param($Message, $Title); return $true }
+    function Set-DeskPause { param($Name); $script:controlCalls += "hold:on" }
+    function Set-GodBrainMouthPaused { param($RepoRoot, $On); $script:controlCalls += "hold:on" }
+    function Enable-DeskAfterCs2 { return $true }
+    function Test-GodBrainTaskExists { param($TaskName); return $script:logonInstalled }
+    function Set-Content { param($LiteralPath, $Value); $script:controlCalls += "hold:$Value" }
+    function Stop-Process { throw "Image-name-wide termination must not run." }
+    function Stop-Cs2OwnedProcess { param($Process); $script:controlCalls += "stop:$($Process.ProcessId)" }
+    function Get-CimInstance { param($ClassName, $Filter, $ErrorAction)
+        return @(
+            @{ Name = "llama-server.exe"; ProcessId = 10; CommandLine = "llama-server.exe --port 8000" },
+            @{ Name = "llama-server.exe"; ProcessId = 11; CommandLine = "llama-server.exe --port 8001" },
+            @{ Name = "llama-server.exe"; ProcessId = 12; CommandLine = "llama-server.exe --port 80001" },
+            @{ Name = "llama-server.exe"; ProcessId = 13; CommandLine = "llama-server.exe --port=8000" },
+            @{ Name = "python.exe"; ProcessId = 14; CommandLine = "python.exe --port 8888" }
+        )
+    }
+    function Start-Process { param($FilePath, $ArgumentList, $WindowStyle, [switch]$Wait, [switch]$PassThru)
+        $script:controlCalls += ($ArgumentList -join " ")
+        return @{ ExitCode = $(if ($script:taskFails -and $ArgumentList -contains $script:taskFails) { 5 } else { 0 }) }
+    }
+    Stop-MouthHold
+    Assert-Equal ($script:controlCalls -join ",") "hold:on,stop:10,stop:13"
+    $script:controlCalls = @()
+    Set-WatchTask "ENABLE"
+    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainLogon /ENABLE,/Change /TN GodBrainWatch /ENABLE,hold:off,/Run /TN GodBrainWatch"
+    $script:controlCalls = @(); $script:logonInstalled = $false
+    Set-WatchTask "ENABLE"
+    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainWatch /ENABLE,hold:off,/Run /TN GodBrainWatch"
+    $script:controlCalls = @(); $script:logonInstalled = $true; $script:taskFails = "GodBrainLogon"
+    Set-WatchTask "ENABLE" | Out-Null
+    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainLogon /ENABLE"
+}
+
 $script:ports = @()
 $script:httpFails = $false
 Assert-Equal (Get-ModelLine) "No model: :8888 / :8871 down"

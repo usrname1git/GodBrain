@@ -87,6 +87,24 @@ json service(const wchar_t* name) {
     return {{"state", state}, {"pid", status.dwProcessId}};
 }
 
+struct ServiceConfig {
+    std::wstring binary_path;
+    std::wstring account;
+};
+
+ServiceConfig service_config(SC_HANDLE handle) {
+    DWORD bytes = 0;
+    QueryServiceConfigW(handle, nullptr, 0, &bytes);
+    if (bytes < sizeof(QUERY_SERVICE_CONFIGW) || bytes > 65536)
+        throw std::runtime_error("Service configuration size is invalid");
+    std::vector<unsigned char> data(bytes);
+    auto* config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(data.data());
+    if (!QueryServiceConfigW(handle, config, bytes, &bytes))
+        throw win_error("Service configuration query failed");
+    return {config->lpBinaryPathName ? config->lpBinaryPathName : L"",
+            config->lpServiceStartName ? config->lpServiceStartName : L""};
+}
+
 std::wstring image_path(HANDLE process) {
     wchar_t path[32768] = {};
     DWORD size = 32768;
@@ -132,16 +150,32 @@ bool system_owned(HANDLE process) {
 }
 
 bool rustdesk_backend(DWORD parent) {
+    ServiceHandle manager{OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager.value) throw win_error("RustDesk service manager query failed");
+    ServiceHandle service_handle{OpenServiceW(manager.value, L"RustDesk",
+        SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG)};
+    if (!service_handle.value) throw win_error("RustDesk service query failed");
+    const std::wstring expected = program_files() + L"\\RustDesk\\rustdesk.exe";
+    const ServiceConfig config = service_config(service_handle.value);
+    const std::wstring expected_command = L"\"" + expected + L"\" --service";
+    if (_wcsicmp(config.account.c_str(), L"LocalSystem") ||
+        _wcsicmp(config.binary_path.c_str(), expected_command.c_str())) return false;
+    Handle parent_process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, parent)};
+    if (!parent_process.value) throw win_error("RustDesk service process query failed");
+    if (_wcsicmp(image_path(parent_process.value).c_str(), expected.c_str()) ||
+        WaitForSingleObject(parent_process.value, 0) != WAIT_TIMEOUT) return false;
+    FILETIME parent_created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(parent_process.value, &parent_created, &exited, &kernel, &user))
+        throw win_error("RustDesk service lifetime query failed");
     Handle list{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
     if (list.value == INVALID_HANDLE_VALUE) throw win_error("Process snapshot failed");
-    const std::wstring expected = program_files() + L"\\RustDesk\\rustdesk.exe";
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
     if (!Process32FirstW(list.value, &entry)) throw win_error("Process snapshot is unreadable");
     do {
         if (entry.th32ParentProcessID != parent ||
             _wcsicmp(entry.szExeFile, L"rustdesk.exe")) continue;
-        Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID)};
+        Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, entry.th32ProcessID)};
         if (!process.value) throw win_error("Backend process query failed");
         if (_wcsicmp(image_path(process.value).c_str(), expected.c_str())) continue;
         const std::wstring command = command_line(process.value);
@@ -149,17 +183,24 @@ bool rustdesk_backend(DWORD parent) {
         if (at == std::wstring::npos) continue;
         const auto end = at + 9;
         if (end < command.size() && command[end] != L' ' && command[end] != L'\t') continue;
-        if (system_owned(process.value)) return true;
+        FILETIME created{};
+        if (!GetProcessTimes(process.value, &created, &exited, &kernel, &user))
+            throw win_error("RustDesk server lifetime query failed");
+        if (CompareFileTime(&created, &parent_created) < 0 ||
+            WaitForSingleObject(process.value, 0) != WAIT_TIMEOUT) continue;
+        SERVICE_STATUS_PROCESS current{};
+        DWORD bytes = 0;
+        if (!QueryServiceStatusEx(service_handle.value, SC_STATUS_PROCESS_INFO,
+            reinterpret_cast<BYTE*>(&current), sizeof(current), &bytes))
+            throw win_error("RustDesk service recheck failed");
+        return current.dwCurrentState == SERVICE_RUNNING && current.dwProcessId == parent;
     } while (Process32NextW(list.value, &entry));
     return false;
 }
 
-enum class ReadProbe { Tailscale, RustDesk };
-std::string read_probe(ReadProbe probe) {
-    const std::wstring executable = program_files() + (probe == ReadProbe::Tailscale
-        ? L"\\Tailscale\\tailscale.exe" : L"\\RustDesk\\rustdesk.exe");
-    std::wstring command = L"\"" + executable + (probe == ReadProbe::Tailscale
-        ? L"\" status --json" : L"\" --option stop-service");
+std::string read_probe() {
+    const std::wstring executable = program_files() + L"\\Tailscale\\tailscale.exe";
+    std::wstring command = L"\"" + executable + L"\" status --json";
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     Handle reader, writer;
     if (!CreatePipe(&reader.value, &writer.value, &attributes, 0))
@@ -228,7 +269,7 @@ std::string read_probe(ReadProbe probe) {
 }
 
 json read_tailscale() {
-    const json parsed = json::parse(read_probe(ReadProbe::Tailscale), nullptr, false);
+    const json parsed = json::parse(read_probe(), nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object())
         throw std::runtime_error("Tailscale status response is invalid");
     return parsed;
@@ -319,20 +360,7 @@ json collect() {
             models.push_back(unknown);
         }
     }
-    json rust;
-    try {
-        const json status = service(L"RustDesk");
-        if (status["state"] == "running") {
-            std::string option = read_probe(ReadProbe::RustDesk);
-            option.erase(std::remove_if(option.begin(), option.end(),
-                [](unsigned char ch) { return ch == ' ' || ch == '\r' || ch == '\n' || ch == '\t'; }), option.end());
-            if (option != "" && option != "N" && option != "Y")
-                throw std::runtime_error("RustDesk option probe denied or invalid");
-            const bool ready = option != "Y" && rustdesk_backend(status["pid"].get<DWORD>());
-            rust = card("RustDesk", ready ? "ready" : "unready",
-                        ready ? "Windows service + enabled SYSTEM server" : "Service running; backend missing or disabled");
-        } else rust = card("RustDesk", status["state"], "Windows service; GUI alone is not readiness");
-    } catch (const std::runtime_error& error) { rust = card("RustDesk", "unknown", error.what()); }
+    const json rust = read_rustdesk_status();
     json tail;
     try { tail = tailscale_status(read_tailscale()); }
     catch (const std::runtime_error& error) { tail = card("Tailscale", "unknown", error.what()); }
@@ -403,16 +431,11 @@ bool trusted_serve_peer(const httplib::Request& request) {
             throw win_error("Proxy service status query failed");
         if (status.dwCurrentState != SERVICE_RUNNING || !status.dwProcessId) return false;
         const DWORD pid = status.dwProcessId;
-        QueryServiceConfigW(handle.value, nullptr, 0, &bytes);
-        if (!bytes || bytes > 65536) throw std::runtime_error("Proxy service configuration size is invalid");
-        std::vector<unsigned char> config_data(bytes);
-        auto* config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(config_data.data());
-        if (!QueryServiceConfigW(handle.value, config, bytes, &bytes))
-            throw win_error("Proxy service configuration query failed");
+        const ServiceConfig config = service_config(handle.value);
         const std::wstring expected = program_files() + L"\\Tailscale\\tailscaled.exe";
         const std::wstring prefix = L"\"" + expected + L"\"";
-        const std::wstring path = config->lpBinaryPathName ? config->lpBinaryPathName : L"";
-        if (!config->lpServiceStartName || _wcsicmp(config->lpServiceStartName, L"LocalSystem") ||
+        const std::wstring& path = config.binary_path;
+        if (_wcsicmp(config.account.c_str(), L"LocalSystem") ||
             path.size() < prefix.size() || _wcsnicmp(path.c_str(), prefix.c_str(), prefix.size()) ||
             (path.size() != prefix.size() && path[prefix.size()] != L' ')) return false;
         // Pin the live process while resolving the exact client-side TCP tuple.
@@ -482,6 +505,32 @@ std::string owner_login(const json& status) {
     const json& user = status["User"][id];
     if (!user.contains("LoginName") || !user["LoginName"].is_string()) return {};
     return user["LoginName"].get<std::string>();
+}
+
+json rustdesk_status(const std::string& service_state, bool server_observed,
+                    const std::string& probe_error) {
+    if (service_state != "running")
+        return card("RustDesk", service_state, "Windows service; GUI alone is not readiness");
+    if (!probe_error.empty())
+        return card("RustDesk", "running", "Service running; server observation unavailable: " + probe_error);
+    return card("RustDesk", server_observed ? "ready" : "unready",
+                server_observed ? "Installed Windows service + observed server; remote connectivity not tested"
+                                : "Service running; installed server not observed");
+}
+
+json read_rustdesk_status() {
+    try {
+        const json status = service(L"RustDesk");
+        const std::string state = status["state"];
+        if (state != "running") return rustdesk_status(state, false);
+        try {
+            return rustdesk_status(state, rustdesk_backend(status["pid"].get<DWORD>()));
+        } catch (const std::runtime_error& error) {
+            return rustdesk_status(state, false, error.what());
+        }
+    } catch (const std::runtime_error& error) {
+        return card("RustDesk", "unknown", error.what());
+    }
 }
 
 json tailscale_status(const json& status) {

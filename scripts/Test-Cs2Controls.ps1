@@ -160,8 +160,13 @@ try {
             ProcessId = 123; Name = "python.exe"; CommandLine = "fixture"; CreationDate = "original"
         }
         $script:stopped = @()
-        function Get-CimInstance { param($ClassName, $Filter, $ErrorAction); return $script:existing }
-        function Stop-Process { param($Id, [switch]$Force, $ErrorAction); $script:stopped += $Id }
+        $script:existingAlive = $true
+        function Get-CimInstance { param($ClassName, $Filter, $ErrorAction)
+            if ($script:existingAlive) { return $script:existing }
+        }
+        function Stop-Process { param($Id, [switch]$Force, $ErrorAction)
+            $script:stopped += $Id; $script:existingAlive = $false
+        }
         $snapshot = [pscustomobject]@{ ProcessId = 123; CommandLine = "fixture"; CreationDate = "older" }
         Assert-Throws { Stop-Cs2OwnedProcess $snapshot } "*changed identity*"
         Assert-Equal $script:stopped.Count 0
@@ -173,10 +178,12 @@ try {
             ProcessId = 456; Name = "pwsh.exe"; CreationDate = "original"
             CommandLine = "pwsh.exe -File `"$repo\Start-GodBrain.ps1`" -Only mouth"
         }
+        $script:existingAlive = $true
         function Get-NetTCPConnection { param($State, $ErrorAction); return @() }
         Stop-Cs2GpuRuntimes $repo
         Assert-Equal ($script:stopped -join ",") "123,456"
         $script:existing.CommandLine = "pwsh.exe -File `"$repo\Start-GodBrain.ps1.backup`""
+        $script:existingAlive = $true
         Stop-Cs2GpuRuntimes $repo
         Assert-Equal ($script:stopped -join ",") "123,456"
         $script:existing.Name = "python.exe"
@@ -194,6 +201,29 @@ try {
         function Start-Sleep { param($Milliseconds) }
         Assert-Throws { Stop-Cs2GpuRuntimes $repo } "*unknown listeners are never killed*"
         Assert-Equal ($script:stopped -join ",") "123,456"
+    }
+
+    & {
+        . $helper
+        $script:census = 0; $script:lateStopped = @()
+        $script:lateLauncher = [pscustomobject]@{
+            ProcessId = 610; Name = "pwsh.exe"
+            CommandLine = 'pwsh.exe -File "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-Qwen.ps1"'
+            CreationDate = Get-Date
+        }
+        function Get-CimInstance { param($ClassName, $Filter, $ErrorAction)
+            $script:census++
+            if ($script:census -ge 2 -and $script:lateLauncher) { return $script:lateLauncher }
+            return @()
+        }
+        function Stop-Cs2OwnedProcess { param($process)
+            $script:lateStopped += $process.ProcessId
+            $script:lateLauncher = $null
+        }
+        function Get-NetTCPConnection { param($State, $ErrorAction); return @() }
+        function Start-Sleep { param($Milliseconds) }
+        Stop-Cs2GpuRuntimes $repo
+        Assert-Equal ($script:lateStopped -join ",") "610"
     }
 
     & {

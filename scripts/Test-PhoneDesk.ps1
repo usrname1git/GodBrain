@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$Live, [switch]$ServeTransport, [string]$ImageHealthFixture = '')
+param([switch]$Live, [switch]$ServeTransport, [switch]$RustDeskStatus, [string]$ImageHealthFixture = '')
 
 $ErrorActionPreference = 'Stop'
 function Get-ServiceIdentity {
@@ -34,6 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Phone Desk C++ test build failed.' }
     & (Join-Path $build 'phone-desk-test.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Phone Desk C++ tests failed.' }
+    if ($RustDeskStatus) {
+        & (Join-Path $build 'phone-desk-test.exe') --rustdesk-status-limited
+        if ($LASTEXITCODE -ne 0) { throw 'Limited-token read-only RustDesk status probe failed.' }
+    }
     if ($ImageHealthFixture) {
         & (Join-Path $build 'phone-desk-test.exe') --image-health-fixture $ImageHealthFixture
         if ($LASTEXITCODE -ne 0) { throw 'Actual image endpoint contract test failed.' }
