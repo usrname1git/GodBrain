@@ -24,7 +24,8 @@ or retaining native model memory after completion.
 
 One static mobile page and a separate read-only listener inside the C++
 kernel (`127.0.0.1:8085`) provide model/profile/VRAM, RustDesk, Tailscale, SSH
-and compact core status. Private Tailscale Serve supplies owner identity;
+and compact core status. Private Tailscale Serve supplies owner identity over
+a TCP channel verified against its installed SYSTEM service/worker;
 no browser bearer or public Funnel. Opening/refreshing never starts or repairs
 anything, and invalid/stale data cannot be current readiness.
 

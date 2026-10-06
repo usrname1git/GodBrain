@@ -99,6 +99,9 @@ try {
         Assert-Equal (Test-Cs2ModelProcess $process $repo) $true
         $process.CommandLine = 'python.exe -m http.server 8000'
         Assert-Equal (Test-Cs2ModelProcess $process $repo) $false
+        Assert-Equal (Test-Cs2CpuWebProcess $process) $true
+        $process.CommandLine = 'python.exe -c "load_model(); # -m http.server"'
+        Assert-Equal (Test-Cs2CpuWebProcess $process) $false
         $process.CommandLine = 'python.exe lyrics_loop.py'
         Assert-Equal (Test-Cs2ModelProcess $process $repo) $false
         $process.Name = "llama-server.exe"
@@ -129,6 +132,11 @@ try {
         Assert-Equal $control.reason "cs2_manual_pause"
         "{broken" | Set-Content -LiteralPath (Get-Cs2PauseStatePath $fixture)
         Assert-Throws { Test-GodBrainColiShouldSleep $fixture } "*pause state is invalid*"
+        Assert-Equal (Read-Cs2PauseState $fixture -ForShutdown).suspended $false
+        '{"paused":"false"}' | Set-Content -LiteralPath (Get-Cs2PauseStatePath $fixture)
+        Assert-Throws { Test-GodBrainColiShouldSleep $fixture } "*pause state is invalid*"
+        '{"paused":true,"last_action":"legacy"}' | Set-Content -LiteralPath (Get-Cs2PauseStatePath $fixture)
+        Assert-Equal (Read-Cs2PauseState $fixture).suspended $false
     }
 
     & {
@@ -161,13 +169,31 @@ try {
         Stop-Cs2OwnedProcess $snapshot
         Assert-Equal ($script:stopped -join ",") "123"
 
+        $script:existing = [pscustomobject]@{
+            ProcessId = 456; Name = "pwsh.exe"; CreationDate = "original"
+            CommandLine = "pwsh.exe -File `"$repo\Start-GodBrain.ps1`" -Only mouth"
+        }
+        function Get-NetTCPConnection { param($State, $ErrorAction); return @() }
+        Stop-Cs2GpuRuntimes $repo
+        Assert-Equal ($script:stopped -join ",") "123,456"
+        $script:existing.CommandLine = "pwsh.exe -File `"$repo\Start-GodBrain.ps1.backup`""
+        Stop-Cs2GpuRuntimes $repo
+        Assert-Equal ($script:stopped -join ",") "123,456"
+        $script:existing.Name = "python.exe"
+        $script:existing.CommandLine = 'python.exe -m http.server 8000 --bind 127.0.0.1'
+        function Get-NetTCPConnection { param($State, $ErrorAction); return @{ LocalPort = 8000; OwningProcess = 456 } }
+        Stop-Cs2GpuRuntimes $repo
+        $script:existing.CommandLine = 'python.exe unknown_model.py --port 8000'
+        Assert-Throws { Stop-Cs2GpuRuntimes $repo } "*:8000*unknown listeners are never killed*"
+        Assert-Equal ($script:stopped -join ",") "123,456"
+
         $script:now = [datetime]"2026-01-01T00:00:00Z"
         function Get-CimInstance { param($ClassName, $Filter, $ErrorAction); return @() }
         function Get-NetTCPConnection { param($State, $ErrorAction); return @{ LocalPort = 8888 } }
         function Get-Date { $script:now = $script:now.AddSeconds(30); return $script:now }
         function Start-Sleep { param($Milliseconds) }
         Assert-Throws { Stop-Cs2GpuRuntimes $repo } "*unknown listeners are never killed*"
-        Assert-Equal ($script:stopped -join ",") "123"
+        Assert-Equal ($script:stopped -join ",") "123,456"
     }
 
     & {
@@ -194,8 +220,62 @@ try {
             $script:events += "tail-down"
         }
         Suspend-GodBrainForCs2 $fake
-        Assert-Equal ($script:events -join ",") "gym,disable:GodBrainWatch,disable:GodBrainLogon,disable:GodBrainCs2Pause,disable:GodBrainGymWatch,disable:GodBrainGymWorker,disable:GodBrainQwen38,disable:GodBrainCreationLab,stop,tail-down"
+        Assert-Equal ($script:events -join ",") "gym,disable:GodBrainWatch,disable:GodBrainLogon,disable:GodBrainGymWatch,disable:GodBrainGymWorker,disable:GodBrainQwen38,disable:GodBrainCreationLab,stop,tail-down,disable:GodBrainCs2Pause"
         Assert-Equal (Read-Cs2PauseState $fake).last_action "pause-manual"
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $true
+        "{broken" | Set-Content -LiteralPath (Get-Cs2PauseStatePath $fake)
+        Suspend-GodBrainForCs2 $fake
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $true
+        $script:events = @()
+        function Set-GodBrainTaskEnabled {
+            param($Name, $Enable)
+            $script:events += "disable:$Name"
+            if ($Name -eq "GodBrainWatch") { throw "fixture disable denied" }
+        }
+        Assert-Throws { Suspend-GodBrainForCs2 $fake } "*incomplete*fixture disable denied*"
+        Assert-Equal (Read-Cs2PauseState $fake).paused $true
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $false
+        Assert-Equal ($script:events -contains "stop") $true
+        Assert-Equal ($script:events -contains "tail-down") $true
+        Assert-Equal ($script:events -contains "disable:GodBrainCs2Pause") $false
+        function Set-GodBrainTaskEnabled {
+            param($Name, $Enable)
+            $script:events += "disable:$Name"
+        }
+        function Stop-Cs2GpuRuntimes { param($RepoRoot); throw "fixture GPU remains" }
+        $script:events = @()
+        Assert-Throws { Suspend-GodBrainForCs2 $fake } "*incomplete*GPU remains*"
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $false
+        Assert-Equal ($script:events -contains "disable:GodBrainCs2Pause") $false
+        function Stop-Cs2GpuRuntimes { param($RepoRoot); $script:events += "stop" }
+        function Set-TailscaleForCs2 { param($Up); throw "fixture tail failed" }
+        Assert-Throws { Suspend-GodBrainForCs2 $fake } "*incomplete*tail failed*"
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $false
+        function Set-TailscaleForCs2 { param($Up); $script:events += "tail-down" }
+        function Set-GodBrainTaskEnabled {
+            param($Name, $Enable)
+            if ($Name -eq "GodBrainCs2Pause") {
+                Assert-Equal (Read-Cs2PauseState $fake).suspended $true
+                throw "fixture backup disable failed"
+            }
+        }
+        Assert-Throws { Suspend-GodBrainForCs2 $fake } "*incomplete*backup disable failed*"
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $false
+        function Set-GodBrainTaskEnabled { param($Name, $Enable); $script:events += "disable:$Name" }
+        $watchAst = Read-TestAst (Join-Path $repo "Watch-Cs2Pause.ps1")
+        $shutdown = $watchAst.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('if ($cs2)') }
+        # Run the real backup branch without its process-level exit.
+        $branch = [scriptblock]::Create(($shutdown.Extent.Text -replace '\bexit 0\b', 'return'))
+        $cs2 = $true
+        $RepoRoot = $fake
+        . $branch
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $true
+        $script:events = @()
+        . $branch
+        Assert-Equal $script:events.Count 0
+        "{broken" | Set-Content -LiteralPath (Get-Cs2PauseStatePath $fake)
+        . $branch
+        Assert-Equal (Read-Cs2PauseState $fake).suspended $true
     }
 
     & {
@@ -209,7 +289,7 @@ function Suspend-GodBrainForCs2($RepoRoot) {
 }
 function Test-Cs2Running { return $global:Cs2TestControl.gameRunning }
 function Read-Cs2PauseState($RepoRoot) {
-    return @{paused=$true;last_seen="2000-01-01T00:00:00Z"}
+    return @{paused=$true;suspended=$true;last_seen="2000-01-01T00:00:00Z"}
 }
 function Start-Process {
     param($FilePath, $ArgumentList)

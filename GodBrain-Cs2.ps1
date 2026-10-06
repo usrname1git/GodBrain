@@ -13,11 +13,13 @@ function Get-Cs2PauseStatePath([string]$RepoRoot) {
     return (Join-Path $RepoRoot "logs\cs2-pause.json")
 }
 
-function Read-Cs2PauseState([string]$RepoRoot) {
+function Read-Cs2PauseState([string]$RepoRoot, [switch]$ForShutdown) {
     $path = Get-Cs2PauseStatePath $RepoRoot
     $blank = [ordered]@{
-        version    = 1
+        version    = 2
         paused     = $false
+        suspended  = $false
+        last_error = $null
         last_seen  = $null
         last_action = "none"
         at         = $null
@@ -26,12 +28,22 @@ function Read-Cs2PauseState([string]$RepoRoot) {
     try {
         $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
         $obj = $raw | ConvertFrom-Json
-        $blank.paused = [bool]$obj.paused
+        if ($obj.paused -isnot [bool] -or
+            ($null -ne $obj.suspended -and $obj.suspended -isnot [bool])) {
+            throw "Pause/completion flags must be booleans."
+        }
+        $blank.paused = $obj.paused
+        if ($null -ne $obj.suspended) { $blank.suspended = $obj.suspended }
+        $blank.last_error = $obj.last_error
         $blank.last_seen = $obj.last_seen
         $blank.last_action = $obj.last_action
         $blank.at = $obj.at
         return $blank
     } catch {
+        if ($ForShutdown) {
+            Write-Warning "CS2 pause state is invalid; replacing it with a shutdown hold: $($_.Exception.Message)"
+            return $blank
+        }
         throw "CS2 pause state is invalid: $($_.Exception.Message)"
     }
 }
@@ -114,6 +126,11 @@ function Test-Cs2ModelProcess($Process, [string]$RepoRoot) {
     return $false
 }
 
+function Test-Cs2CpuWebProcess($Process) {
+    return ($Process -and $Process.Name -match '^python(?:w)?\.exe$' -and
+        $Process.CommandLine -match '^\s*(?:"[^"]+"|\S+)\s+(?:-(?:u|B|E|I|s|S)\s+)*-m\s+http\.server(?:\s|$)')
+}
+
 function Stop-Cs2OwnedProcess($Process) {
     $current = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$Process.ProcessId) -ErrorAction Stop
     if (-not $current) { return }
@@ -126,6 +143,7 @@ function Stop-Cs2OwnedProcess($Process) {
 
 function Stop-Cs2GpuRuntimes([string]$RepoRoot) {
     $launcherPaths = @(
+        (Join-Path $RepoRoot "Start-GodBrain.ps1"),
         (Join-Path $RepoRoot "Watch-GodBrain.ps1"),
         (Join-Path $RepoRoot "Heal-GodBrain.ps1"),
         (Join-Path $RepoRoot "Watch-Cs2Pause.ps1"),
@@ -155,14 +173,21 @@ function Stop-Cs2GpuRuntimes([string]$RepoRoot) {
     }
     $deadline = (Get-Date).AddSeconds(20)
     do {
-        $remaining = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $remaining = @($processes |
             Where-Object { Test-Cs2ModelProcess $_ $RepoRoot })
         $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
-            Where-Object { $_.LocalPort -in @(8888, 8871) })
+            Where-Object {
+                if ($_.LocalPort -notin @(8888, 8871, 8000)) { return $false }
+                if ($_.LocalPort -ne 8000) { return $true }
+                $ownerId = $_.OwningProcess
+                $owner = $processes | Where-Object ProcessId -eq $ownerId | Select-Object -First 1
+                return -not (Test-Cs2CpuWebProcess $owner)
+            })
         if ($remaining.Count -eq 0 -and $listeners.Count -eq 0) { return }
         Start-Sleep -Milliseconds 400
     } while ((Get-Date) -lt $deadline)
-    throw "cs2: a model process or :8888/:8871 listener remains. Steam was not launched; unknown listeners are never killed."
+    throw "cs2: a model process or :8888/:8871/:8000 listener remains. Steam was not launched; unknown listeners are never killed."
 }
 
 function Suspend-Cs2GymTraining([string]$RepoRoot) {
@@ -231,19 +256,33 @@ function Set-TailscaleForCs2([bool]$Up) {
 }
 
 function Suspend-GodBrainForCs2([string]$RepoRoot) {
-    $state = Read-Cs2PauseState $RepoRoot
+    $state = Read-Cs2PauseState $RepoRoot -ForShutdown
     $state.last_seen = (Get-Date).ToUniversalTime().ToString("o")
     $state.paused = $true
+    $state.suspended = $false
+    $state.last_error = $null
     $state.last_action = "pause-manual"
     Write-Cs2PauseState $RepoRoot $state
     . (Join-Path $RepoRoot "scripts\GodBrain-Mouth.ps1")
     Set-GodBrainMouthPaused -RepoRoot $RepoRoot -On $true
-    Suspend-Cs2GymTraining $RepoRoot
-    foreach ($name in Get-GodBrainCs2PauseTasks) {
-        Set-GodBrainTaskEnabled $name $false
+    $failures = [System.Collections.Generic.List[string]]::new()
+    try { Suspend-Cs2GymTraining $RepoRoot } catch { $failures.Add("gym pause: $($_.Exception.Message)") }
+    foreach ($name in (Get-GodBrainCs2PauseTasks | Where-Object { $_ -ne "GodBrainCs2Pause" })) {
+        try { Set-GodBrainTaskEnabled $name $false } catch { $failures.Add($_.Exception.Message) }
     }
-    Stop-Cs2GpuRuntimes $RepoRoot
-    Set-TailscaleForCs2 $false
+    try { Stop-Cs2GpuRuntimes $RepoRoot } catch { $failures.Add("GPU shutdown: $($_.Exception.Message)") }
+    try { Set-TailscaleForCs2 $false } catch { $failures.Add("Tailscale shutdown: $($_.Exception.Message)") }
+    if ($failures.Count -eq 0) {
+        $state.suspended = $true
+        Write-Cs2PauseState $RepoRoot $state
+        try { Set-GodBrainTaskEnabled "GodBrainCs2Pause" $false } catch { $failures.Add($_.Exception.Message) }
+    }
+    if ($failures.Count) {
+        $state.suspended = $false
+        $state.last_error = $failures -join "; "
+        Write-Cs2PauseState $RepoRoot $state
+        throw "cs2: suspension incomplete; backup remains retryable: $($state.last_error)"
+    }
     Write-Host "cs2: models stopped; gym training and Watch/Logon/CS2 backup held for manual resume; Tailscale down"
 }
 
@@ -252,6 +291,8 @@ function Clear-GodBrainCs2Pause([string]$RepoRoot) {
     $state = Read-Cs2PauseState $RepoRoot
     if (-not $state.paused) { return }
     $state.paused = $false
+    $state.suspended = $false
+    $state.last_error = $null
     $state.last_action = "resume-now"
     Write-Cs2PauseState $RepoRoot $state
 }

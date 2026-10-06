@@ -77,9 +77,19 @@ The page refreshes every ten seconds while visible, uses a short server
 cache and clearly marks invalid/failed/stale data. There are no Start,
 Stop, Repair or Generate buttons. The exact untagged device-owner identity
 from Serve is checked; shared users are denied. No bearer is embedded in
-HTML, URLs or browser storage. If owner lookup fails at kernel boot, Serve
+HTML, URLs or browser storage. The kernel authenticates the live TCP peer as
+the installed SYSTEM-owned Tailscale service or its immediate SYSTEM worker
+before trusting identity headers. Other direct loopback clients require the
+bearer; copying the owner's header does not grant access. If the service,
+worker identity or connection ownership cannot be verified, proxy access is
+denied (no permissive fallback). If owner lookup fails at kernel boot, Serve
 access remains closed until identity is available and the kernel is explicitly
 reloaded.
+
+`scripts\Test-PhoneDesk.ps1 -ServeTransport` checks direct-header rejection
+and a real HTTPS proxy request using a temporary, random Serve path. It
+removes only that test handler and verifies existing Serve configuration is
+unchanged; it never restarts the running kernel or model.
 
 **Never proxy the whole `:8083` listener through Serve.** It contains chat
 and legacy status/brief routes that can start a paused model. The read-only

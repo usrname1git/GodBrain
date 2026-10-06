@@ -95,7 +95,9 @@ POST: `/api/remember`, `/api/librarian`, `/api/observe`, `/api/truth`,
 `GET/HEAD /` serves the page; `GET/HEAD /api/phone/status` returns the
 bounded cached status snapshot. Requires configured `GODBRAIN_API_TOKEN`;
 accepts a local bearer or the exact device-owner identity added by the
-loopback-only private Serve proxy. Bodies, body framing and query parameters
+private Serve proxy, authenticated by live TCP ownership and the installed
+SYSTEM Tailscale service/worker identity (not headers alone). Direct clients
+need bearer authentication. Bodies, body framing and query parameters
 are denied. Never proxy `:8083` or enable Funnel. No service/model starts,
 generation, command dispatch or vault writes. Mobile setup and actions:
 [`phone-control.md`](../phone-control.md).

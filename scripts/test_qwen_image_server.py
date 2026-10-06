@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 import random
 import sys
 import subprocess
@@ -18,6 +19,15 @@ from PIL import Image
 import qwen_image_server as server
 real_load_pipe = server.load_pipe
 real_run_worker = server.run_worker
+
+
+def export_phone_health(phase, health):
+    destination = os.environ.get("GODBRAIN_PHONE_IMAGE_HEALTH_FIXTURE")
+    if destination:
+        path = Path(destination)
+        samples = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        samples[phase] = health
+        path.write_text(json.dumps(samples), encoding="utf-8")
 
 
 def encoded_image(fmt="PNG", size=(32, 32)):
@@ -79,6 +89,16 @@ class ImageServerTests(unittest.TestCase):
         self.assertIs(self.pipe.call_args.kwargs["callback_on_step_end"], server.step_progress)
         self.assertEqual(self.pipe.call_args.kwargs["callback_on_step_end_tensor_inputs"], [])
         self.assertEqual(self.request("/health")[1]["progress"]["phase"], "done")
+
+    def test_idle_health_reports_image_identity_without_loading_weights(self):
+        status, health = self.request("/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(health["model"], "Qwen-Image-2.1")
+        self.assertIs(health["ready"], True)
+        self.assertIs(health["busy"], False)
+        self.assertIs(health["loaded"], False)
+        server.load_pipe.assert_not_called()
+        export_phone_health("idle", health)
 
     def test_image_edit_forwards_decoded_pixels_and_prompt(self):
         status, receipt = self.request(
@@ -144,6 +164,9 @@ class ImageServerTests(unittest.TestCase):
             status, health = self.request("/health")
             self.assertEqual(status, 200)
             self.assertTrue(health["busy"])
+            self.assertEqual(health["model"], "Qwen-Image-2.1")
+            self.assertIs(health["loaded"], True)
+            export_phone_health("busy", health)
             self.assertEqual(health["progress"]["phase"], "preparing")
             self.assertEqual(health["progress"]["completed_steps"], 0)
             self.assertEqual(health["progress"]["total_steps"], 40)

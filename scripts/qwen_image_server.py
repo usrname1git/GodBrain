@@ -27,6 +27,7 @@ WEIGHTS = Path(os.environ.get("QWEN_IMAGE_WEIGHTS", r"C:\nvme\Qwen-Image-2.1"))
 OUT = Path(os.environ.get("QWEN_IMAGE_OUT", r"C:\nvme\godbrain-sites\qwen-image"))
 HOST = "127.0.0.1"
 PORT = 8871
+MODEL = "Qwen-Image-2.1"
 MAX_BODY = 15 * 1_048_576
 MAX_IMAGE_BYTES = 10 * 1_048_576
 MAX_IMAGE_PIXELS = 16_777_216
@@ -365,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         progress = progress_snapshot()
         loaded = GENERATE_LOCK.locked() and progress["phase"] in ("preparing", "denoising", "decoding", "saving", "unloading")
-        self._send(200, {"ok": True, "ready": READY, "loaded": loaded, "busy": GENERATE_LOCK.locked(),
+        self._send(200, {"ok": True, "model": MODEL, "ready": READY, "loaded": loaded, "busy": GENERATE_LOCK.locked(),
                          "max_side": MAX_SIDE, "weights": str(WEIGHTS), "progress": progress})
 
     def do_POST(self):

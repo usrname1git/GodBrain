@@ -317,6 +317,61 @@ Start-Sleep -Seconds 3
             if ($child.HasExited -or (Get-Date) -gt $deadline) { throw "Mutex fixture failed to enter Heal." }
             Start-Sleep -Milliseconds 50
         }
+        $hash = [Security.Cryptography.SHA256]::Create()
+        try {
+            $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($fixture.ToLowerInvariant()))).Replace("-", "")
+        } finally { $hash.Dispose() }
+        $name = "Global\GodBrainAfk-" + $key
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class AfkMutexAccess {
+    [StructLayout(LayoutKind.Sequential)] struct Sid { public IntPtr Value; public uint Attributes; }
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenMutex(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool ConvertStringSidToSid(string text, out IntPtr sid);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool CreateRestrictedToken(IntPtr token, uint flags, uint disableCount, ref Sid disable, uint deleteCount, IntPtr deleted, uint restrictCount, IntPtr restricted, out IntPtr result);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetTokenInformation(IntPtr token, int kind, ref Sid value, uint size);
+    [DllImport("advapi32.dll")] static extern uint GetLengthSid(IntPtr sid);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool ImpersonateLoggedOnUser(IntPtr token);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool RevertToSelf();
+    [DllImport("ntdll.dll")] static extern int NtQueryObject(IntPtr handle, int kind, IntPtr buffer, uint size, out uint needed);
+    public static void Verify(string name) {
+        IntPtr original = IntPtr.Zero, restricted = IntPtr.Zero, admin = IntPtr.Zero, medium = IntPtr.Zero, mutex = IntPtr.Zero, buffer = IntPtr.Zero;
+        bool impersonating = false;
+        try {
+            if (!OpenProcessToken(GetCurrentProcess(), 0x8A, out original) || !ConvertStringSidToSid("S-1-5-32-544", out admin)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Limited-token preparation failed");
+            Sid disabled = new Sid { Value = admin };
+            if (!CreateRestrictedToken(original, 1, 1, ref disabled, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted) ||
+                !ConvertStringSidToSid("S-1-16-8192", out medium)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Restricted-token creation failed");
+            Sid integrity = new Sid { Value = medium, Attributes = 0x20 };
+            if (!SetTokenInformation(restricted, 25, ref integrity, (uint)Marshal.SizeOf<Sid>() + GetLengthSid(medium))) throw new Win32Exception(Marshal.GetLastWin32Error(), "Medium-integrity token setup failed");
+            if (!ImpersonateLoggedOnUser(restricted)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Limited-token impersonation failed");
+            impersonating = true;
+            mutex = OpenMutex(0x00100001, false, name);
+            if (mutex == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Limited token cannot open Global mutex");
+            buffer = Marshal.AllocHGlobal(8192);
+            uint needed;
+            if (NtQueryObject(mutex, 1, buffer, 8192, out needed) < 0) throw new Exception("Mutex namespace query failed.");
+            string resolved = Marshal.PtrToStringUni(Marshal.ReadIntPtr(buffer, IntPtr.Size == 8 ? 8 : 4), (ushort)Marshal.ReadInt16(buffer) / 2);
+            if (!resolved.StartsWith(@"\BaseNamedObjects\GodBrainAfk-", StringComparison.Ordinal)) throw new Exception("Mutex is session-local: " + resolved);
+        } finally {
+            if (impersonating && !RevertToSelf()) throw new Win32Exception();
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (mutex != IntPtr.Zero) CloseHandle(mutex);
+            if (restricted != IntPtr.Zero) CloseHandle(restricted);
+            if (original != IntPtr.Zero) CloseHandle(original);
+            if (admin != IntPtr.Zero) LocalFree(admin);
+            if (medium != IntPtr.Zero) LocalFree(medium);
+        }
+    }
+}
+'@
+        [AfkMutexAccess]::Verify($name)
         & $watch -RepoRoot ($fixture + "\")
         Assert-Equal @(Get-Content -LiteralPath $marker).Count 1
         if (-not $child.WaitForExit(8000) -or $child.ExitCode -ne 0) {
@@ -326,7 +381,7 @@ Start-Sleep -Seconds 3
         if (-not $child.HasExited) { Stop-Process -Id $child.Id -Force }
         $child.Dispose()
     }
-    Write-Output "PASS: AFK host-only default, gym opt-in, pause gates, service allowlist, core-only recovery and CUDA latch."
+    Write-Output "PASS: AFK policy, global mutex contention and same-user medium-integrity admin-disabled token access without ACL changes."
 } finally {
     Remove-Variable -Name AfkTest -Scope Global -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $fixture -Recurse -Force

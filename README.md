@@ -137,7 +137,8 @@ matches `GODBRAIN_API_TOKEN`. Ordinary loopback read/chat routes (no
 `command_type`) stay unauthenticated for the local UI. Every route on the
 existing Tailscale shortcuts listener needs the bearer, including GETs.
 The separate read-only Phone Desk accepts the exact device-owner identity
-from its loopback-only Tailscale Serve proxy; it exposes no chat/control routes.
+from its authenticated Tailscale service/worker TCP connection; spoofed local
+headers are denied. It exposes no chat/control routes.
 
 ## The bigger picture
 

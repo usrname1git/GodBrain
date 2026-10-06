@@ -51,7 +51,7 @@ if ($Resume) {
 $hash = [System.Security.Cryptography.SHA256]::Create()
 $key = [BitConverter]::ToString($hash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($RepoRoot.ToLowerInvariant()))).Replace("-", "")
 $hash.Dispose()
-$mutex = New-Object System.Threading.Mutex($false, ("Local\GodBrainAfk-" + $key))
+$mutex = New-Object System.Threading.Mutex($false, ("Global\GodBrainAfk-" + $key))
 $ownsMutex = $false
 try {
     try { $ownsMutex = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsMutex = $true }

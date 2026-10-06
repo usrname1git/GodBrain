@@ -27,10 +27,9 @@ if (-not (Test-Path -LiteralPath $helper)) {
 . $helper
 
 $cs2 = Test-Cs2Running
-$state = Read-Cs2PauseState $RepoRoot
-
 if ($cs2) {
-    if (-not $state.paused) {
+    $state = Read-Cs2PauseState $RepoRoot -ForShutdown
+    if (-not $state.paused -or -not $state.suspended) {
         Suspend-GodBrainForCs2 $RepoRoot
     } else {
         $state.last_seen = (Get-Date).ToUniversalTime().ToString("o")
@@ -39,5 +38,6 @@ if ($cs2) {
     exit 0
 }
 
+$state = Read-Cs2PauseState $RepoRoot
 Write-Host ("cs2-pause: idle cs2={0} paused={1}; resume is manual" -f $cs2, $state.paused)
 exit 0

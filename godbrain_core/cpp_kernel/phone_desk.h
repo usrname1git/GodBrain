@@ -11,7 +11,8 @@ namespace phone_desk {
 using json = nlohmann::json;
 
 bool authorized(const httplib::Request& request, const std::string& token,
-                const std::string& owner_login);
+                const std::string& owner_login, bool trusted_proxy = false);
+bool trusted_serve_peer(const httplib::Request& request);
 json model_status(int port, const json& models, const json& health);
 json tailscale_status(const json& status);
 std::string owner_login(const json& status);

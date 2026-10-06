@@ -2,7 +2,9 @@
 #include "telemetry.h"
 #include <windows.h>
 #include <tlhelp32.h>
+#include <iphlpapi.h>
 #include <algorithm>
+#include <cstddef>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -370,7 +372,7 @@ json collect() {
 }
 
 bool authorized(const httplib::Request& request, const std::string& token,
-                const std::string& login) {
+                const std::string& login, bool trusted_proxy) {
     if (token.find_first_not_of(" \t\r\n") == std::string::npos ||
         request.remote_addr != "127.0.0.1" || !request.body.empty() ||
         !request.params.empty() || (request.method != "GET" && request.method != "HEAD") ||
@@ -382,8 +384,93 @@ bool authorized(const httplib::Request& request, const std::string& token,
             difference |= static_cast<unsigned char>(header[i + 7] ^ token[i]);
         if (difference == 0) return true;
     }
-    // This listener is loopback-only. Serve strips client-supplied identity headers.
-    return !login.empty() && request.get_header_value("Tailscale-User-Login") == login;
+    return trusted_proxy && !login.empty() && request.get_header_value("Tailscale-User-Login") == login;
+}
+
+bool trusted_serve_peer(const httplib::Request& request) {
+    if (request.remote_addr != "127.0.0.1" || request.local_addr != "127.0.0.1" ||
+        request.remote_port < 1 || request.remote_port > 65535 ||
+        request.local_port < 1 || request.local_port > 65535) return false;
+    try {
+        ServiceHandle manager{OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)};
+        if (!manager.value) throw win_error("Proxy service manager query failed");
+        ServiceHandle handle{OpenServiceW(manager.value, L"Tailscale", SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG)};
+        if (!handle.value) throw win_error("Proxy service query failed");
+        SERVICE_STATUS_PROCESS status{};
+        DWORD bytes = 0;
+        if (!QueryServiceStatusEx(handle.value, SC_STATUS_PROCESS_INFO,
+            reinterpret_cast<BYTE*>(&status), sizeof(status), &bytes))
+            throw win_error("Proxy service status query failed");
+        if (status.dwCurrentState != SERVICE_RUNNING || !status.dwProcessId) return false;
+        const DWORD pid = status.dwProcessId;
+        QueryServiceConfigW(handle.value, nullptr, 0, &bytes);
+        if (!bytes || bytes > 65536) throw std::runtime_error("Proxy service configuration size is invalid");
+        std::vector<unsigned char> config_data(bytes);
+        auto* config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(config_data.data());
+        if (!QueryServiceConfigW(handle.value, config, bytes, &bytes))
+            throw win_error("Proxy service configuration query failed");
+        const std::wstring expected = program_files() + L"\\Tailscale\\tailscaled.exe";
+        const std::wstring prefix = L"\"" + expected + L"\"";
+        const std::wstring path = config->lpBinaryPathName ? config->lpBinaryPathName : L"";
+        if (!config->lpServiceStartName || _wcsicmp(config->lpServiceStartName, L"LocalSystem") ||
+            path.size() < prefix.size() || _wcsnicmp(path.c_str(), prefix.c_str(), prefix.size()) ||
+            (path.size() != prefix.size() && path[prefix.size()] != L' ')) return false;
+        // Pin the live process while resolving the exact client-side TCP tuple.
+        Handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid)};
+        if (!process.value) throw win_error("Proxy process query failed");
+        if (_wcsicmp(image_path(process.value).c_str(), expected.c_str()) ||
+            WaitForSingleObject(process.value, 0) != WAIT_TIMEOUT) return false;
+        bytes = 0;
+        if (GetExtendedTcpTable(nullptr, &bytes, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != ERROR_INSUFFICIENT_BUFFER ||
+            bytes < sizeof(MIB_TCPTABLE_OWNER_PID) || bytes > 4 * 1024 * 1024)
+            throw std::runtime_error("Proxy connection table size is invalid");
+        std::vector<unsigned char> data(bytes);
+        if (GetExtendedTcpTable(data.data(), &bytes, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR)
+            throw std::runtime_error("Proxy connection ownership query failed");
+        const auto* table = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID*>(data.data());
+        if (table->dwNumEntries > (bytes - offsetof(MIB_TCPTABLE_OWNER_PID, table)) / sizeof(MIB_TCPROW_OWNER_PID))
+            throw std::runtime_error("Proxy connection table is invalid");
+        DWORD peer_pid = 0;
+        for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+            const auto& row = table->table[i];
+            if (row.dwState == MIB_TCP_STATE_ESTAB &&
+                row.dwLocalAddr == htonl(INADDR_LOOPBACK) && row.dwRemoteAddr == htonl(INADDR_LOOPBACK) &&
+                row.dwLocalPort == htons(static_cast<u_short>(request.remote_port)) &&
+                row.dwRemotePort == htons(static_cast<u_short>(request.local_port))) {
+                if (peer_pid && peer_pid != row.dwOwningPid) return false;
+                peer_pid = row.dwOwningPid;
+            }
+        }
+        if (!peer_pid || WaitForSingleObject(process.value, 0) != WAIT_TIMEOUT) return false;
+        Handle peer{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, peer_pid)};
+        if (!peer.value) throw win_error("Proxy peer process query failed");
+        if (_wcsicmp(image_path(peer.value).c_str(), expected.c_str()) || !system_owned(peer.value)) return false;
+        if (peer_pid != pid) {
+            // Tailscale's Windows service runs Serve in an immediate SYSTEM worker.
+            Handle list{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
+            if (list.value == INVALID_HANDLE_VALUE) throw win_error("Proxy worker snapshot failed");
+            PROCESSENTRY32W entry{};
+            entry.dwSize = sizeof(entry);
+            if (!Process32FirstW(list.value, &entry)) throw win_error("Proxy worker snapshot unreadable");
+            bool child = false;
+            do {
+                if (entry.th32ProcessID == peer_pid && entry.th32ParentProcessID == pid) child = true;
+            } while (Process32NextW(list.value, &entry));
+            FILETIME parent_created{}, peer_created{}, exited{}, kernel{}, user{};
+            if (!GetProcessTimes(process.value, &parent_created, &exited, &kernel, &user) ||
+                !GetProcessTimes(peer.value, &peer_created, &exited, &kernel, &user))
+                throw win_error("Proxy worker lifetime query failed");
+            if (!child || CompareFileTime(&peer_created, &parent_created) < 0) return false;
+        }
+        if (WaitForSingleObject(peer.value, 0) != WAIT_TIMEOUT) return false;
+        if (!QueryServiceStatusEx(handle.value, SC_STATUS_PROCESS_INFO,
+            reinterpret_cast<BYTE*>(&status), sizeof(status), &bytes))
+            throw win_error("Proxy service recheck failed");
+        return status.dwCurrentState == SERVICE_RUNNING && status.dwProcessId == pid;
+    } catch (const std::runtime_error& error) {
+        std::cerr << "[PHONE] Proxy channel denied: " << error.what() << '\n';
+        return false;
+    }
 }
 
 std::string owner_login(const json& status) {
@@ -486,6 +573,8 @@ Server::Server(std::string token, const std::string& path) : token_(std::move(to
         {"Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}});
     auto gate = [this](const httplib::Request& request, httplib::Response& response) {
         if (authorized(request, token_, owner_login_)) return true;
+        if (!owner_login_.empty() && request.get_header_value("Tailscale-User-Login") == owner_login_ &&
+            trusted_serve_peer(request) && authorized(request, token_, owner_login_, true)) return true;
         response.status = 403;
         response.set_content(R"({"error":"Open Phone Desk through private Tailscale Serve as the device owner."})", "application/json");
         return false;

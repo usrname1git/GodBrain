@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$Live)
+param([switch]$Live, [switch]$ServeTransport, [string]$ImageHealthFixture = '')
 
 $ErrorActionPreference = 'Stop'
 function Get-ServiceIdentity {
@@ -29,11 +29,78 @@ try {
     $sources = @('phone_desk_test.cpp', 'phone_desk.cpp', 'telemetry.cpp') |
         ForEach-Object { '"' + (Join-Path $source $_) + '"' }
     $command = $prefix + 'cd /d "' + $build + '" && cl /nologo /std:c++17 /EHsc /W4 /Fe:phone-desk-test.exe ' +
-        ($sources -join ' ') + ' /link advapi32.lib pdh.lib dxgi.lib'
+        ($sources -join ' ') + ' /link advapi32.lib pdh.lib dxgi.lib iphlpapi.lib'
     & (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') /c $command
     if ($LASTEXITCODE -ne 0) { throw 'Phone Desk C++ test build failed.' }
     & (Join-Path $build 'phone-desk-test.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Phone Desk C++ tests failed.' }
+    if ($ImageHealthFixture) {
+        & (Join-Path $build 'phone-desk-test.exe') --image-health-fixture $ImageHealthFixture
+        if ($LASTEXITCODE -ne 0) { throw 'Actual image endpoint contract test failed.' }
+    }
+    if ($ServeTransport) {
+        $transportIdentities = Get-ServiceIdentity
+        $exe = 'C:\Program Files\Tailscale\tailscale.exe'
+        $tail = & $exe status --json | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Tailscale owner query failed.' }
+        $owner = $tail.User.PSObject.Properties[$tail.Self.UserID.ToString()].Value.LoginName
+        if (-not $owner) { throw 'Tailscale device owner is missing.' }
+        $beforeConfig = & $exe serve status --json
+        if ($LASTEXITCODE -ne 0) { throw 'Serve status query failed.' }
+        $config = ($beforeConfig -join "`n") | ConvertFrom-Json
+        if (-not $config.TCP.'443'.HTTPS -or -not $config.Web) { throw 'Existing private HTTPS Serve is required.' }
+        $hostName = @($config.Web.PSObject.Properties.Name | Where-Object { $_.EndsWith(':443') })[0] -replace ':443$', ''
+        if (-not $hostName) { throw 'Private HTTPS host is missing.' }
+        $portReservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $portReservation.Start()
+        $port = $portReservation.LocalEndpoint.Port
+        $portReservation.Stop()
+        $route = '/phone-test-' + [guid]::NewGuid().ToString('N')
+        $child = Start-Process -FilePath (Join-Path $build 'phone-desk-test.exe') -ArgumentList @(
+            '--proxy-fixture', $port, ('"' + $owner + '"')
+        ) -WindowStyle Hidden -RedirectStandardError (Join-Path $build 'proxy-error.txt') -PassThru
+        $installed = $false
+        try {
+            $url = "http://127.0.0.1:$port"
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+                if ($child.HasExited) { throw 'Proxy fixture exited before readiness.' }
+                try {
+                    $result = Invoke-WebRequest "$url/" -Headers @{Authorization='Bearer fixture'} -TimeoutSec 1
+                    $ready = [int]$result.StatusCode -eq 200
+                } catch [Net.Http.HttpRequestException] { }
+                if ($ready) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (-not $ready) { throw 'Proxy fixture was not ready.' }
+            $spoof = Invoke-WebRequest "$url/" -Headers @{'Tailscale-User-Login'=$owner} -SkipHttpErrorCheck -TimeoutSec 5
+            if ([int]$spoof.StatusCode -ne 403 -or ($spoof.Content | ConvertFrom-Json).authenticated_proxy) {
+                throw 'Direct client impersonated the Serve transport.'
+            }
+            $installed = $true
+            & $exe serve --bg --https=443 --set-path=$route --yes "http://127.0.0.1:$port" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Scoped Serve fixture registration failed.' }
+            $proxied = Invoke-WebRequest ("https://" + $hostName + $route + '/') -TimeoutSec 12
+            if ([int]$proxied.StatusCode -ne 200 -or -not ($proxied.Content | ConvertFrom-Json).authenticated_proxy) {
+                throw 'Actual Tailscale-owned proxy transport was not authenticated.'
+            }
+            Write-Host 'PASS: direct owner-header spoof denied; actual private HTTPS Tailscale transport authenticated'
+        } finally {
+            if (-not $child.HasExited) { Stop-Process -Id $child.Id -Force }
+            $child.Dispose()
+            if ($installed) {
+                & $exe serve --bg --https=443 --set-path=$route off | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw 'Scoped Serve fixture cleanup failed.' }
+                $afterConfig = & $exe serve status --json
+                if ($LASTEXITCODE -ne 0 -or ($beforeConfig -join "`n") -cne ($afterConfig -join "`n")) {
+                    throw 'Serve configuration was not preserved after fixture cleanup.'
+                }
+            }
+            if (@(Compare-Object $transportIdentities (Get-ServiceIdentity)).Count) {
+                throw 'Service or model identities changed during proxy transport checks.'
+            }
+        }
+    }
 
     $previous = $env:GODBRAIN_PHONE_LIVE_TEST
     if ($Live) { $before = Get-ServiceIdentity }
@@ -50,12 +117,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Tailscale owner query failed.' }
         $owner = $tail.User.PSObject.Properties[$tail.Self.UserID.ToString()].Value.LoginName
         if (-not $owner) { throw 'Tailscale device owner is missing.' }
-        $ownerResult = Invoke-WebRequest "$url/" -Headers @{'Tailscale-User-Login'=$owner} -TimeoutSec 12
-        if ([int]$ownerResult.StatusCode -ne 200) { throw 'Device-owner proxy identity rejected.' }
         foreach ($case in @(
             @{ Path='/api/phone/status'; Headers=@{}; Method='GET'; Expected=403 },
             @{ Path='/api/phone/status'; Headers=@{Authorization='Bearer fixture-invalid'}; Method='GET'; Expected=403 },
             @{ Path='/api/phone/status'; Headers=@{'Tailscale-User-Login'='other@example.invalid'}; Method='GET'; Expected=403 },
+            @{ Path='/api/phone/status'; Headers=@{'Tailscale-User-Login'=$owner}; Method='GET'; Expected=403 },
             @{ Path='/api/chat'; Headers=$headers; Method='POST'; Expected=404 },
             @{ Path='/api/status'; Headers=$headers; Method='GET'; Expected=404 },
             @{ Path='/api/phone/status'; Headers=$headers; Method='POST'; Expected=404 },

@@ -333,13 +333,20 @@ clears it with `last_action=resume-now` (refused while CS2 runs). Gym training
 still needs its own Resume. Gemma's mouth-pause remains on. Tailscale Start
 in the desk starts its service if needed and reconnects the existing node.
 Never logout, `--reset`, or uninstall Tailscale.
+`paused` is the early startup hold, not proof of shutdown. `suspended=true`
+is persisted only after shutdown succeeds. Corrupt state fails closed for
+startup but may be replaced by a shutdown hold. The Steam Play backup retries
+incomplete shutdown and is disabled last; task failures cannot skip GPU or
+Tailscale shutdown attempts. Unknown `:8000/:8888/:8871` owners block launch;
+only an identified Python `-m http.server` on `:8000` is exempt.
 
 Watch is operator-controlled for AFK use. `Install-GodBrainWatch.ps1`
 registers it disabled by default (`-Enable` opts in); CS2 never enables it.
 The desk's AFK Watch Start enables/runs the task; Stop sets `afk-pause.txt`
 and disables it. Host-only is default. The desk's Qwen/gym recovery checkbox
 writes `afk-gym.txt`; `-WithGym` is an explicit CLI opt-in. One root-scoped
-mutex excludes competing scheduled/continuous Watch instances.
+`Global\` mutex excludes competing scheduled/continuous Watch instances
+across Windows sessions, using the same-account Windows object permissions.
 Watch remains a Limited current-user task. Windows SCM service query/start
 permissions must already exist or be separately approved; the installer
 does not grant them. Do not elevate the learner/gym to work around this.
@@ -605,12 +612,17 @@ Phone Desk is a separate in-process **read-only** loopback listener on
 `127.0.0.1:8085` (`phone_desk.cpp`, `frontend\phone.html`). It exposes only
 the page and `/api/phone/status` via GET/HEAD, requires configured
 `GODBRAIN_API_TOKEN`, and accepts a local bearer or the exact device-owner
-identity supplied by private Tailscale Serve. Bodies, body framing and query
+identity supplied by private Tailscale Serve. Owner headers are trusted only
+after matching the live client TCP tuple to the installed SYSTEM Tailscale
+service/worker;
+direct loopback header spoofing is denied. Bodies, body framing and query
 parameters are rejected. No chat, command dispatch, generation, service
 recovery or vault writes; failed/invalid/stale probes cannot be readiness.
 Never proxy the full `:8083` listener through Serve or enable Funnel.
 Keep existing Serve configuration intact. `scripts\Test-PhoneDesk.ps1`
 is offline C++ + mobile UI; `-Live` adds passive loopback/auth/identity checks.
+`-ServeTransport` proves the native proxy channel with one temporary HTTPS
+handler and restores the previous Serve configuration, without a model restart.
 
 `/observe` persists stable host inventory including
 `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
@@ -763,7 +775,7 @@ It does not start the kernel. Equivalent Developer-shell one-liner from
 `godbrain_core\cpp_kernel`:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp phone_desk.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp phone_desk.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib iphlpapi.lib
 ```
 
 Starting the kernel is an integration action: it may talk to Mongo via
