@@ -78,6 +78,24 @@ try {
         Assert-Equal (Test-GodBrainColiShouldSleep $fixture) $false
         Clear-GodBrainCs2Pause $fixture
 
+        $script:enabled = @()
+        function Set-GodBrainTaskEnabled {
+            param($Name, $Enable)
+            if ($Name -ne "GodBrainLogon" -or -not $Enable) {
+                throw "Resume may enable only GodBrainLogon."
+            }
+            $script:enabled += $Name
+        }
+        $state = Read-Cs2PauseState $fixture
+        $state.paused = $true
+        $state.last_action = "pause-manual"
+        Write-Cs2PauseState $fixture $state
+        Clear-GodBrainCs2Pause $fixture
+        Assert-Equal ($script:enabled -join ",") ""
+        Assert-Equal (Read-Cs2PauseState $fixture).last_action "resume-now"
+        Enable-InstalledGodBrainLogon
+        Assert-Equal ($script:enabled -join ",") "GodBrainLogon"
+
         $kit = "C:\nvme\Qwen3.8-27B-16gb"
         $python = "$kit\.venv\Scripts\python.exe"
         $process = [pscustomobject]@{

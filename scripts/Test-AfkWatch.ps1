@@ -24,6 +24,10 @@ try {
     @'
 function Test-GodBrainColiShouldSleep($RepoRoot) { return $global:AfkTest.held }
 function Clear-GodBrainCs2Pause($RepoRoot) { $global:AfkTest.held = $false }
+function Enable-InstalledGodBrainLogon {
+    $global:AfkTest.calls.Add("logon")
+    if ($global:AfkTest.logonFails) { throw "fixture logon enable failed" }
+}
 '@ | Set-Content -LiteralPath (Join-Path $fixture "GodBrain-Cs2.ps1")
     @'
 param($RepoRoot,[switch]$Afk,[string]$Only,[int]$MongoWaitSeconds,[switch]$KeepPause)
@@ -63,7 +67,15 @@ $global:AfkTest.calls.Add("gym")
     & $watch -RepoRoot $fixture -WithGym
     Assert-Equal $global:AfkTest.calls.Count 0
     & $watch -RepoRoot $fixture -Resume
-    Assert-Equal ($global:AfkTest.calls -join ",") "heal:True,gym"
+    Assert-Equal ($global:AfkTest.calls -join ",") "logon,heal:True,gym"
+    $global:AfkTest.calls.Clear()
+    $global:AfkTest.logonFails = $true
+    "on" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
+    Assert-Throws { & $watch -RepoRoot $fixture -Resume } "*logon enable failed*"
+    Assert-Equal ($global:AfkTest.calls -join ",") "logon"
+    Assert-Equal ((Get-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt") -Raw).Trim()) "on"
+    $global:AfkTest.logonFails = $false
+    "off" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
     $global:AfkTest.calls.Clear()
     $global:AfkTest.healFails = $true
     Assert-Throws { & $watch -RepoRoot $fixture -WithGym } "*Heal failed*"

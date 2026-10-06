@@ -163,10 +163,12 @@ actual permissions, rather than inventing a second watcher or elevated task.
 Launching a Windows GUI from an SSH session also does not guarantee it
 appears in the logged-in desktop; use RustDesk for the interactive panel.
 
-After CS2, explicitly selecting desktop **Watch Start** re-enables installed
-`GodBrainLogon` and `GodBrainWatch`, then runs the host Watch tick. It does not
-re-enable legacy gym, model or Creation Lab tasks. Merely clearing the CS2 hold
-starts nothing. **Mouth Stop** targets only identity-rechecked legacy
+After CS2, desktop Model, Gym, and Watch Start, and `Watch-GodBrain.ps1 -Resume`,
+clear the hold and re-enable only an installed `GodBrainLogon` task. That enable
+does not run Logon, start a model, or restore Watch or the gym tasks. Watch
+Start then enables and runs only `GodBrainWatch`. It does not re-enable legacy
+gym, model, or Creation Lab tasks. Merely clearing the CS2 hold starts nothing
+and enables nothing. **Mouth Stop** targets only identity-rechecked legacy
 `llama-server --port 8000`; other llama ports and the desk's `:8888` model remain.
 CS2 shutdown repeats launcher and model censuses before declaring suspension,
 so a late starter cannot survive merely because its maintenance parent exited.

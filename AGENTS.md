@@ -329,8 +329,11 @@ listeners fail the launch rather than being killed.
 `Watch-Cs2Pause` (task `GodBrainCs2Pause`) is the optional Steam Play backup;
 it applies the same manual hold, never an automatic resume. Start/Heal/gym
 honor `cs2-pause.json.paused` until an explicit desk Model/Gym/Watch Start
-clears it with `last_action=resume-now` (refused while CS2 runs). Gym training
-still needs its own Resume. Gemma's mouth-pause remains on. Tailscale Start
+clears it with `last_action=resume-now` (refused while CS2 runs). Those starts
+and `Watch-GodBrain.ps1 -Resume` re-enable only an installed GodBrainLogon
+task: no `/Run`, no model start from that enable, and no gym or Watch task.
+Watch Start then enables and runs only GodBrainWatch. Gym training still
+needs its own Resume. Gemma's mouth-pause remains on. Tailscale Start
 in the desk starts its service if needed and reconnects the existing node.
 Never logout, `--reset`, or uninstall Tailscale.
 `paused` is the early startup hold, not proof of shutdown. `suspended=true`

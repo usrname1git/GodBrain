@@ -177,8 +177,11 @@ Build `run_hidden.exe` once by running Watch install (it compiles if missing):
 `Start-CS2.cmd` / `Start-CS2.ps1` pause before launching Steam app 730 and
 return immediately. They leave Watch/Logon/CS2-backup disabled, gym training
 paused and Tailscale disconnected. Desk Model/Gym/Watch Start clears the CS2
-hold only after the game closes; gym training still requires Resume.
-Desk Tailscale Start reconnects the existing node without logout or reset.
+hold only after the game closes and re-enables only an installed GodBrainLogon
+task, with no `/Run` and no Watch or gym task. Watch Start then changes only
+GodBrainWatch. `Watch-GodBrain.ps1 -Resume` does the same Logon restore.
+Gym training still requires Resume. Desk Tailscale Start reconnects the
+existing node without logout or reset.
 
 Remove with the same scripts `-Unregister`. Never register these as
 LocalSystem.

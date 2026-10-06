@@ -46,6 +46,7 @@ function Write-WatchLog([string]$Message) {
 $pauseFile = Join-Path $logDir "afk-pause.txt"
 if ($Resume) {
     Clear-GodBrainCs2Pause $RepoRoot
+    Enable-InstalledGodBrainLogon
     [System.IO.File]::WriteAllText($pauseFile, "off`n", $utf8)
 }
 $hash = [System.Security.Cryptography.SHA256]::Create()

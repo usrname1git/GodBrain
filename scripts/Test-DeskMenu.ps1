@@ -61,13 +61,12 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
         }, $true)
         . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
     }
-    $Repo = "fixture"; $script:controlCalls = @(); $script:logonInstalled = $true; $script:taskFails = ""
+    $Repo = "fixture"; $script:controlCalls = @()
     function Update-Status {}
     function Confirm-Stop { param($Message, $Title); return $true }
     function Set-DeskPause { param($Name); $script:controlCalls += "hold:on" }
     function Set-GodBrainMouthPaused { param($RepoRoot, $On); $script:controlCalls += "hold:on" }
     function Enable-DeskAfterCs2 { return $true }
-    function Test-GodBrainTaskExists { param($TaskName); return $script:logonInstalled }
     function Set-Content { param($LiteralPath, $Value); $script:controlCalls += "hold:$Value" }
     function Stop-Process { throw "Image-name-wide termination must not run." }
     function Stop-Cs2OwnedProcess { param($Process); $script:controlCalls += "stop:$($Process.ProcessId)" }
@@ -82,19 +81,40 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
     }
     function Start-Process { param($FilePath, $ArgumentList, $WindowStyle, [switch]$Wait, [switch]$PassThru)
         $script:controlCalls += ($ArgumentList -join " ")
-        return @{ ExitCode = $(if ($script:taskFails -and $ArgumentList -contains $script:taskFails) { 5 } else { 0 }) }
+        return @{ ExitCode = 0 }
     }
     Stop-MouthHold
     Assert-Equal ($script:controlCalls -join ",") "hold:on,stop:10,stop:13"
     $script:controlCalls = @()
     Set-WatchTask "ENABLE"
-    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainLogon /ENABLE,/Change /TN GodBrainWatch /ENABLE,hold:off,/Run /TN GodBrainWatch"
-    $script:controlCalls = @(); $script:logonInstalled = $false
-    Set-WatchTask "ENABLE"
     Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainWatch /ENABLE,hold:off,/Run /TN GodBrainWatch"
-    $script:controlCalls = @(); $script:logonInstalled = $true; $script:taskFails = "GodBrainLogon"
-    Set-WatchTask "ENABLE" | Out-Null
-    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainLogon /ENABLE"
+    $script:controlCalls = @()
+    Set-WatchTask "DISABLE"
+    Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainWatch /DISABLE,hold:on"
+}
+
+& {
+    $definition = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Enable-DeskAfterCs2"
+    }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+    $Repo = "fixture"
+    $script:resumeCalls = @()
+    function Clear-GodBrainCs2Pause { param($RepoRoot); $script:resumeCalls += "clear" }
+    function Enable-InstalledGodBrainLogon { $script:resumeCalls += "logon" }
+    if (-not (Enable-DeskAfterCs2)) { throw "Explicit resume should clear the hold and re-enable Logon." }
+    Assert-Equal ($script:resumeCalls -join ",") "clear,logon"
+    $script:resumeCalls = @()
+    function Clear-GodBrainCs2Pause { param($RepoRoot); throw "CS2 is running. Close the game before starting models or Watch." }
+    $running = @(Enable-DeskAfterCs2)
+    Assert-Equal $running[-1] $false
+    Assert-Equal ($script:resumeCalls -join ",") ""
+    $script:resumeCalls = @()
+    function Clear-GodBrainCs2Pause { param($RepoRoot); $script:resumeCalls += "clear" }
+    function Enable-InstalledGodBrainLogon { throw "fixture logon denied" }
+    $denied = @(Enable-DeskAfterCs2)
+    Assert-Equal $denied[-1] $false
+    Assert-Equal ($script:resumeCalls -join ",") "clear"
 }
 
 $script:ports = @()

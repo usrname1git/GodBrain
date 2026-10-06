@@ -205,19 +205,13 @@ function Get-WatchLine {
 
 function Set-WatchTask([string]$Action) {
     if ($Action -eq "ENABLE" -and -not (Enable-DeskAfterCs2)) { return }
-    $tasks = @("GodBrainWatch")
-    if ($Action -eq "ENABLE" -and (Test-GodBrainTaskExists "GodBrainLogon")) {
-        $tasks = @("GodBrainLogon") + $tasks
-    }
-    foreach ($task in $tasks) {
-        $proc = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
-            "/Change", "/TN", $task, "/$Action"
-        ) -WindowStyle Hidden -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
-            [System.Windows.Forms.MessageBox]::Show("Could not $Action $task (exit $($proc.ExitCode)).")
-            Update-Status
-            return
-        }
+    $proc = Start-Process -FilePath "$env:SystemRoot\System32\schtasks.exe" -ArgumentList @(
+        "/Change", "/TN", "GodBrainWatch", "/$Action"
+    ) -WindowStyle Hidden -Wait -PassThru
+    if ($proc.ExitCode -ne 0) {
+        [System.Windows.Forms.MessageBox]::Show("Could not $Action GodBrainWatch (exit $($proc.ExitCode)).")
+        Update-Status
+        return
     }
     $text = if ($Action -eq "ENABLE") { "off" } else { "on" }
     Set-Content -LiteralPath (Join-Path $Repo "logs\afk-pause.txt") -Value $text
@@ -235,6 +229,7 @@ function Set-WatchTask([string]$Action) {
 function Enable-DeskAfterCs2 {
     try {
         Clear-GodBrainCs2Pause $Repo
+        Enable-InstalledGodBrainLogon
         return $true
     } catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CS2")

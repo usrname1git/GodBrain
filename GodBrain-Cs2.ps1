@@ -87,6 +87,10 @@ function Set-GodBrainTaskEnabled([string]$Name, [bool]$Enable) {
     if ($LASTEXITCODE -ne 0) { throw "cs2: task $Name $flag failed: $($out -join ' ')" }
 }
 
+function Enable-InstalledGodBrainLogon {
+    Set-GodBrainTaskEnabled "GodBrainLogon" $true
+}
+
 function Test-Cs2ScriptProcess($Process, [string]$Path, [switch]$PowerShell) {
     $escaped = [regex]::Escape($Path)
     if ($PowerShell) {
