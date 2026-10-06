@@ -259,7 +259,7 @@ int main() {
                      MAX_PATH, yolo_file, nullptr);
     {
         std::ofstream plant(yolo_file, std::ios::binary | std::ios::trunc);
-        plant << "{\"until\":1}";
+        plant << "{\"until\":4102444800}";
     }
     pass &= expect(!local_tools::yolo_active(), "planted receipt is not approval");
     const std::string yolo_on = local_tools::set_yolo_minutes(1);
@@ -277,7 +277,7 @@ int main() {
     pass &= expect(!local_tools::yolo_active(), "yolo clear is memory");
     {
         std::ofstream plant(yolo_file, std::ios::binary | std::ios::trunc);
-        plant << "{\"until\":1}";
+        plant << "{\"until\":4102444800}";
     }
     pass &= expect(!local_tools::yolo_active(), "later receipt cannot enable yolo");
     DeleteFileA(yolo_file);

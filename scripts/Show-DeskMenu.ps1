@@ -599,10 +599,12 @@ function Invoke-DeskAsk($Request) {
     if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
     $writeSlash = Test-DeskWriteSlash $text
     $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
-    if ($path) {
+    if ($yoloOrJudge) {
+        $text = $text.Trim()
+    } elseif ($path) {
         if ([string]::IsNullOrWhiteSpace($text)) { $text = "Read this path and say what the file or folder is." }
         $text = "Path: $path`n`n$text"
-    } elseif (-not $yoloOrJudge -and -not (Test-DeskPathToken $text)) {
+    } elseif (-not (Test-DeskPathToken $text)) {
         if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
     }
     $body = @{ message = $text } | ConvertTo-Json -Compress

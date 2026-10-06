@@ -343,6 +343,7 @@ Assert-Equal (Test-DeskWriteSlash "/yolo ?") $false
 Assert-Equal (Test-DeskWriteSlash "/YOLO off") $true
 Assert-Equal (Test-DeskWriteSlash "/verify last because") $true
 $savedAsk = $request.Message
+$savedPath = $request.Path
 $savedToken = $env:GODBRAIN_API_TOKEN
 try {
     $env:GODBRAIN_API_TOKEN = "fixture-desk-token"
@@ -358,13 +359,31 @@ try {
     Invoke-DeskAsk $request | Out-Null
     Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
     Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Path = "C:\Temp\GitHub"
+    $request.Message = "/verify last the probe matched"
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/verify last the probe matched"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "/yolo off`r`n"
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "what is in here"
+    Invoke-DeskAsk $request | Out-Null
+    $ordinary = ($script:lastBody | ConvertFrom-Json).message
+    if ($ordinary -notmatch '(?s)^Path: .+what is in here$') { throw "Ordinary Ask with a path lost its path prefix." }
+    if ($script:lastAuthorization) { throw "Ordinary path Ask sent a bearer." }
+    $request.Path = ""
+    $request.Message = "/yolo 15"
     Remove-Item Env:GODBRAIN_API_TOKEN
     Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
     if ($script:lastAuthorization) { throw "Unset token still sent a bearer." }
 } finally {
     if ([string]::IsNullOrEmpty($savedToken)) { Remove-Item Env:GODBRAIN_API_TOKEN -ErrorAction SilentlyContinue }
     else { $env:GODBRAIN_API_TOKEN = $savedToken }
     $request.Message = $savedAsk
+    $request.Path = $savedPath
 }
 $askAst = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "Ask-GodBrain.ps1"), [ref]$tokens, [ref]$errors)
