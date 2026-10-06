@@ -133,8 +133,9 @@ The mouth can emit these tool calls, but `execute_godbrain_script`,
 `propose_sovereign_architect_change`, `record_godbrain_skill_run`, and
 `promote_godbrain_skill` are high-risk: the kernel rejects them unless the
 payload carries a non-blank `reasoning` string *and* `Authorization: Bearer`
-matches `GODBRAIN_API_TOKEN`. Ordinary loopback read/chat routes (no
-`command_type`) stay unauthenticated for the local UI. Every route on the
+matches `GODBRAIN_API_TOKEN`. Ordinary loopback GET glances stay
+unauthenticated. Chat writes fail closed until `GODBRAIN_API_TOKEN` is set.
+Every route on the
 existing Tailscale shortcuts listener needs the bearer, including GETs.
 The separate read-only Phone Desk accepts the exact device-owner identity
 from its authenticated Tailscale service/worker TCP connection; spoofed local

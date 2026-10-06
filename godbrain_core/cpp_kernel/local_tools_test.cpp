@@ -4,12 +4,30 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <unordered_set>
 
 #include <windows.h>
 
 static bool expect(bool ok, const char* msg) {
     if (!ok) std::cerr << "FAIL " << msg << std::endl;
     return ok;
+}
+
+static std::unordered_set<std::string> schema_names(bool full) {
+    std::unordered_set<std::string> names;
+    for (const auto& def : local_tools::openai_tool_defs(full)) {
+        names.insert(def.at("function").at("name").get<std::string>());
+    }
+    return names;
+}
+
+static unsigned long long file_size_or_zero(const char* path) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad)) return 0;
+    ULARGE_INTEGER sz;
+    sz.LowPart = fad.nFileSizeLow;
+    sz.HighPart = fad.nFileSizeHigh;
+    return sz.QuadPart;
 }
 
 static std::string env_var(const char* name) {
@@ -231,6 +249,38 @@ int main() {
                        gres.find("GodBrain") != std::string::npos,
                    "godbrain task delete blocked");
 
+    char module_path[MAX_PATH];
+    GetModuleFileNameA(nullptr, module_path, MAX_PATH);
+    std::string module_dir(module_path);
+    const size_t module_slash = module_dir.find_last_of("\\/");
+    if (module_slash != std::string::npos) module_dir.resize(module_slash);
+    char yolo_file[MAX_PATH];
+    GetFullPathNameA((module_dir + "\\..\\..\\logs\\tool-yolo.json").c_str(),
+                     MAX_PATH, yolo_file, nullptr);
+    {
+        std::ofstream plant(yolo_file, std::ios::binary | std::ios::trunc);
+        plant << "{\"until\":1}";
+    }
+    pass &= expect(!local_tools::yolo_active(), "planted receipt is not approval");
+    const std::string yolo_on = local_tools::set_yolo_minutes(1);
+    pass &= expect(local_tools::yolo_active(), "yolo latches");
+    pass &= expect(yolo_on.find("kernel exits") != std::string::npos,
+                   "yolo says it ends with the kernel");
+    pass &= expect(GetFileAttributesA(yolo_file) == INVALID_FILE_ATTRIBUTES,
+                   "yolo set deletes the receipt");
+    {
+        std::ofstream plant(yolo_file, std::ios::binary | std::ios::trunc);
+        plant << "{\"until\":1}";
+    }
+    pass &= expect(local_tools::yolo_active(), "later receipt cannot clear yolo");
+    local_tools::set_yolo_minutes(0);
+    pass &= expect(!local_tools::yolo_active(), "yolo clear is memory");
+    {
+        std::ofstream plant(yolo_file, std::ios::binary | std::ios::trunc);
+        plant << "{\"until\":1}";
+    }
+    pass &= expect(!local_tools::yolo_active(), "later receipt cannot enable yolo");
+    DeleteFileA(yolo_file);
     local_tools::set_yolo_minutes(1);
     const std::string ti =
         "*** TOOL\nname: run_elevate\n<<<<\nwsudo --ti cmd\n>>>>\n*** END\n";
@@ -273,6 +323,77 @@ int main() {
                        .find("unknown tool") != std::string::npos,
                    "bare icacls is not takeover");
     local_tools::set_yolo_minutes(0);
+
+    {
+        const auto jail = schema_names(false);
+        pass &= expect(jail.count("list_granted_roots") == 1,
+                       "file jail advertises roots");
+        pass &= expect(jail.count("run_pwsh") == 0, "file jail omits pwsh");
+        local_tools::Call roots;
+        roots.name = "list_granted_roots";
+        bool roots_ok = false;
+        const std::string roots_out =
+            local_tools::execute_calls({roots}, &roots_ok, &jail);
+        pass &= expect(roots_ok, "advertised roots stays ok");
+        pass &= expect(roots_out.find("Kernel jail") != std::string::npos,
+                       "advertised roots lists the jail");
+        pass &= expect(roots_out.find("exit=") == std::string::npos,
+                       "advertised roots starts no process");
+
+        char audit_file[MAX_PATH];
+        GetFullPathNameA((module_dir + "\\..\\..\\logs\\tool-audit.jsonl").c_str(),
+                         MAX_PATH, audit_file, nullptr);
+        const unsigned long long before = file_size_or_zero(audit_file);
+        local_tools::Call denied;
+        denied.name = "run_pwsh";
+        denied.content = "Write-Output AUTHORITY_RAN";
+        bool denied_ok = true;
+        const std::string denied_out =
+            local_tools::execute_calls({denied}, &denied_ok, &jail);
+        pass &= expect(!denied_ok, "omitted pwsh fails the hop");
+        pass &= expect(denied_out.find("not advertised") != std::string::npos,
+                       "omitted pwsh is denied");
+        pass &= expect(denied_out.find("AUTHORITY_RAN") == std::string::npos,
+                       "omitted pwsh does not run");
+        pass &= expect(denied_out.find("exit=") == std::string::npos,
+                       "omitted pwsh has no process receipt");
+        local_tools::Call alias;
+        alias.name = "execute_command";
+        alias.content = "Write-Output AUTHORITY_RAN";
+        bool alias_ok = true;
+        const std::string alias_out =
+            local_tools::execute_calls({alias}, &alias_ok, &jail);
+        pass &= expect(alias_out.find("run_pwsh denied: not advertised") !=
+                           std::string::npos,
+                       "execute_command follows the pwsh allow");
+        pass &= expect(alias_out.find("AUTHORITY_RAN") == std::string::npos,
+                       "aliased pwsh does not run");
+        pass &= expect(file_size_or_zero(audit_file) == before,
+                       "omitted tools write no audit");
+
+        const auto full = schema_names(true);
+        pass &= expect(full.count("run_pwsh") == 1, "full schema advertises pwsh");
+        local_tools::Call empty_cmd;
+        empty_cmd.name = "execute_command";
+        bool empty_ok = true;
+        const std::string empty_out =
+            local_tools::execute_calls({empty_cmd}, &empty_ok, &full);
+        pass &= expect(empty_out.find("command body required") != std::string::npos,
+                       "advertised empty pwsh stops before launch");
+        pass &= expect(empty_out.find("exit=") == std::string::npos,
+                       "advertised empty pwsh starts no process");
+        pass &= expect(empty_out.find("not advertised") == std::string::npos,
+                       "advertised empty pwsh is in the schema");
+
+        const std::unordered_set<std::string> none;
+        bool none_ok = true;
+        const std::string none_out =
+            local_tools::execute_calls({roots}, &none_ok, &none);
+        pass &= expect(none_out.find("not advertised") != std::string::npos,
+                       "empty schema denies every model tool");
+        pass &= expect(none_out.find("Kernel jail") == std::string::npos,
+                       "empty schema does not list roots");
+    }
 
     const std::string pwsh_ti =
         "*** TOOL\nname: run_pwsh\n<<<<\nwsudo -T cmd\n>>>>\n*** END\n";

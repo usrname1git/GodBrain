@@ -5,6 +5,7 @@
 #include <tlhelp32.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <fstream>
@@ -1567,49 +1568,33 @@ bool path_is_granted(const std::string& path, std::string* err) {
     return false;
 }
 
+namespace {
+std::atomic<long long> g_yolo_until{0};
+}
+
 bool yolo_active() {
-    std::ifstream in(yolo_path());
-    if (!in) return false;
-    try {
-        json j;
-        in >> j;
-        if (!j.contains("until")) return false;
-        long long ts = 0;
-        if (j["until"].is_number()) {
-            ts = j["until"].get<long long>();
-        } else if (j["until"].is_string()) {
-            try {
-                ts = std::stoll(j["until"].get<std::string>());
-            } catch (...) {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        const auto now = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
-        return ts > static_cast<long long>(now);
-    } catch (...) {
-        return false;
-    }
+    const long long until = g_yolo_until.load(std::memory_order_acquire);
+    const auto now = std::chrono::system_clock::to_time_t(
+        std::chrono::system_clock::now());
+    return until > static_cast<long long>(now);
 }
 
 std::string set_yolo_minutes(int minutes) {
-    CreateDirectoryA(logs_dir().c_str(), nullptr);
+    // The receipt is not authority. A mouth write or an interpreter can
+    // replace a JSON file under the repo root.
+    DeleteFileA(yolo_path().c_str());
     if (minutes <= 0) {
-        DeleteFileA(yolo_path().c_str());
+        g_yolo_until.store(0, std::memory_order_release);
         return "YOLO off.";
     }
     const auto now = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());
     const long long until = static_cast<long long>(now) + minutes * 60LL;
-    json j = {{"until", until}, {"minutes", minutes}};
-    std::ofstream out(yolo_path(), std::ios::binary | std::ios::trunc);
-    out << j.dump();
+    g_yolo_until.store(until, std::memory_order_release);
     return "YOLO on for " + std::to_string(minutes) +
            " min (elevate, reg/schtasks/etw mutate). FS and pwsh are already "
            "on. Not --ti, not kill, not MFIT, not GodBrain task delete. "
-           "/yolo off to clear.";
+           "Clears when this kernel exits. /yolo off to clear.";
 }
 
 std::string yolo_status_line() {
@@ -1702,7 +1687,8 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
     return calls;
 }
 
-std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
+std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
+                          const std::unordered_set<std::string>* allowed) {
     std::ostringstream out;
     bool ok = true;
     auto take_proc = [&](const ProcessResult& r, int max_ok_exit) {
@@ -1767,6 +1753,13 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok) {
         } else if (host_tool(strip_exe(c.name))) {
             if (c.exe.empty()) c.exe = strip_exe(c.name);
             c.name = "run_host";
+        }
+        // nullptr keeps kernel self-reads and offline fixtures unrestricted.
+        // An empty set is a speak-only hop: the schema was off, so deny.
+        if (allowed != nullptr && allowed->find(c.name) == allowed->end()) {
+            out << c.name << " denied: not advertised this turn.\n";
+            ok = false;
+            continue;
         }
         audit_append(c);
 

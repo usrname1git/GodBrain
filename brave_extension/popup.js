@@ -129,9 +129,43 @@ document.addEventListener('DOMContentLoaded', () => {
         appendMessage('user-msg', '[USER]', text);
         input.value = '';
 
+        function writeSlash(value) {
+            if (/^\/(?:verify|reject)\b/i.test(value)) return true;
+            const yolo = String(value).match(/^\/yolo\s+(\S+)/i);
+            if (!yolo) return false;
+            return !/^(?:status|\?)$/i.test(yolo[1]);
+        }
+
         const evidence = await collectEvidence();
         const body = { message: text };
         if (evidence) body.browser_evidence = evidence;
+        const headers = { 'Content-Type': 'application/json' };
+        if (writeSlash(text)) {
+            let needToken = false;
+            try {
+                const statusRes = await fetch('http://127.0.0.1:8083/api/status');
+                if (statusRes.ok) {
+                    const statusBody = await statusRes.json();
+                    needToken = !!statusBody.writes_need_token;
+                }
+            } catch (e) {
+                needToken = false;
+            }
+            if (needToken) {
+                let token = sessionStorage.getItem('godbrain_write_token') || '';
+                if (!token) {
+                    const entered = window.prompt(
+                        'Paste GODBRAIN_API_TOKEN once (this popup only). Cancel leaves this write closed.');
+                    if (!entered || !entered.trim()) {
+                        appendMessage('err-msg', '[ERR]', 'Bearer required. This write was not sent.');
+                        return;
+                    }
+                    token = entered.trim();
+                    sessionStorage.setItem('godbrain_write_token', token);
+                }
+                headers.Authorization = 'Bearer ' + token;
+            }
+        }
 
         appendMessage('sys-msg', '[SYS]', 'Asking GodBrain', 'loading');
 
@@ -139,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             response = await fetch('http://127.0.0.1:8083/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify(body)
             });
         } catch (err) {
@@ -152,7 +186,18 @@ document.addEventListener('DOMContentLoaded', () => {
         removeLoadingIndicator();
 
         if (!response.ok) {
-            appendMessage('err-msg', '[ERR]', `API returned ${response.status} ${response.statusText}`.trim());
+            let detail = '';
+            try {
+                const errBody = await response.json();
+                if (errBody && errBody.error) detail = String(errBody.error);
+            } catch (e) {
+                detail = '';
+            }
+            if ((response.status === 401 || response.status === 403) &&
+                detail.indexOf('not configured') < 0) {
+                sessionStorage.removeItem('godbrain_write_token');
+            }
+            appendMessage('err-msg', '[ERR]', detail || (`API returned ${response.status} ${response.statusText}`.trim()));
             return;
         }
 

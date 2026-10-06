@@ -530,13 +530,13 @@ Windows env; POSIX jail later):
 Desktop Commander aliases (`read_file`, `edit_block`, `execute_command`,
 `start_process`, `create_directory`, `move_file`, `list_processes`) map
 onto those. No `kill_process`, no interactive SSH/DB, no Mongo, no Remote
-MCP. Calls append `logs/tool-audit.jsonl`. Always-on host inspect
+MCP. Calls append `logs/tool-audit.jsonl`. A name omitted from that turn's advertised schema, including an alias that normalizes onto it, is denied before the audit append and before any process. Always-on host inspect
 (no YOLO): console SysInternals `*64` from `C:\Tools\SysInternals`
 (`run_sysint` / `handle64` / `tcpvcon64` / `psping64` / `whois64` /
 `pslist64` / `autorunsc64` / …), `run_reg query`, `run_wevtutil qe|gl`,
 `run_logman query`, `run_schtasks /Query`, `run_host` (`tasklist` `whoami`
 `netstat` `fltmc` `ipconfig` show / `sc query`).
-`/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
+`/yolo` minutes and `/yolo off` require the configured bearer, as do `/verify` and `/reject`. YOLO is process memory: the kernel deletes `logs\tool-yolo.json` and does not read it back. An empty `GODBRAIN_API_TOKEN` fail-closes those writes. `/yolo 60` (max 240, `/yolo off` clears) adds mutate/elevate:
 `run_elevate` (MinSudo / `wsudo -A -w`, never `--ti` / `-T`),
 `acl_takeover` / `acl_release` (the one TI door: `wsudo -T -w pwsh -NoProfile`
 then `takeown /F /R /A /D Y /SKIPSL` and
@@ -635,8 +635,9 @@ posts `/api/observe` once the kernel is listening; unchanged inventory
 is an idempotent no-op.
 
 WMI process start passes `GODBRAIN_API_TOKEN` in the child environment
-so Heal/Watch/logon cannot boot a kernel that fail-opens loopback writes.
-The token is never written to `*.launch.cmd`.
+so Heal/Watch/logon boot a kernel that can authorize loopback writes.
+An empty token fail-closes those writes. The token is never written to
+`*.launch.cmd`.
 
 `POST /api/truth` writes host_fact / doc_fact / playbook claims: host
 probes and Learn quotes can promote; playbooks stay candidate. Kernel
@@ -859,6 +860,10 @@ not be treated as baseline validation.
   configured `GODBRAIN_API_TOKEN`. Its `Authorization` header must use the
   `Bearer` scheme and carry that configured token. Missing server configuration
   must fail closed. Never log the token.
+- Loopback chat writes that call `write_authorized`, including `/yolo`
+  duration and off, `/verify`, and `/reject`, fail closed when
+  `GODBRAIN_API_TOKEN` is unset. GET glances stay open. The token is not
+  embedded in served HTML.
 - The bearer token is the current authorization gate; a `reasoning` string is an
   additional intent check, not authentication or proof of safety. New
   side-effecting command types must not bypass either the HTTP authorization

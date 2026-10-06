@@ -325,7 +325,7 @@ the Tailscale door, non-empty reasoning for high-risk commands, exact-child
 process timeouts, text nodes in the UI (not raw HTML), Heal never kills and
 never runs the repair cocktail.
 
-Known limitations: bearer is coarse; ordinary loopback chat is unauthenticated;
+Known limitations: bearer is coarse; ordinary loopback GET glances stay open and chat writes fail closed without a configured token;
 raw PowerShell exists behind the privileged boundary; Galaxy links are
 provenance stars; Rust router graph/node is `410`; structured audit belongs to
 Factory and is required *before* anyone enables autonomous privileged

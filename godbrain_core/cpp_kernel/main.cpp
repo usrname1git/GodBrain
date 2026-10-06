@@ -18,6 +18,7 @@
 #include <mutex>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include "rag_client.h"
 #include "coli_sse.h"
 #include "local_edit.h"
@@ -892,7 +893,13 @@ static std::string extract_bearer_token(const httplib::Request& req) {
 }
 
 static bool write_authorized(const httplib::Request& req, httplib::Response& res) {
-    if (g_api_token.empty()) return true;
+    if (g_api_token.empty()) {
+        res.status = 401;
+        res.set_content(
+            json({{"error", "write token is not configured"}}).dump(),
+            "application/json");
+        return false;
+    }
     if (token_matches(extract_bearer_token(req))) return true;
     res.status = extract_bearer_token(req).empty() ? 401 : 403;
     res.set_content(
@@ -3577,6 +3584,17 @@ std::string run_colibri_serve(
         spoken && spoken->find("tool_call") != std::string::npos) {
         assembled = *spoken;
     }
+    std::unordered_set<std::string> advertised;
+    if (use_tools && tool_defs.is_array()) {
+        for (const auto& def : tool_defs) {
+            if (!def.is_object() || !def.contains("function") ||
+                !def["function"].is_object()) {
+                continue;
+            }
+            const std::string name = def["function"].value("name", "");
+            if (!name.empty()) advertised.insert(name);
+        }
+    }
     if (had_native) {
         json tcs = json::array();
         for (size_t i = 0; i < tool_acc.size(); ++i) {
@@ -3606,7 +3624,8 @@ std::string run_colibri_serve(
             bool one_ok = true;
             const std::string one =
                 one_calls.empty() ? std::string("unknown tool\n")
-                                  : local_tools::execute_calls(one_calls, &one_ok);
+                                  : local_tools::execute_calls(one_calls, &one_ok,
+                                                               &advertised);
             if (one_calls.empty()) one_ok = false;
             hop_ok = hop_ok && one_ok;
             tool_out += one;
@@ -3641,7 +3660,7 @@ std::string run_colibri_serve(
     bool hop_ok = true;
     const std::string tool_out =
         local_tools::execute_calls(local_tools::parse_tool_blocks(assembled),
-                                   &hop_ok);
+                                   &hop_ok, &advertised);
     hops_ok = hops_ok && hop_ok;
     if (tool_out.empty()) break;
     flatten_tool_turn(tool_out);
@@ -3905,8 +3924,9 @@ int main() {
         g_api_token = token_env;
         std::cout << "[SYS] GODBRAIN_API_TOKEN loaded. Privileged commands require 'Authorization: Bearer <token>'." << std::endl;
     } else {
-        std::cout << "[SYS] WARNING: GODBRAIN_API_TOKEN is not set. Requests carrying 'command_type' will be rejected (403) "
-                     "until a token is configured in the environment." << std::endl;
+        std::cout << "[SYS] WARNING: GODBRAIN_API_TOKEN is not set. command_type and "
+                     "loopback writes stay closed until a token is configured. "
+                     "GET glances stay open." << std::endl;
     }
 
     local_edit::set_receipt_sink([](const std::string& body) {
@@ -4248,7 +4268,7 @@ int main() {
                               : "down")
                       << " writes="
                       << (st.value("writes_need_token", false) ? "need bearer"
-                                                              : "open on loopback")
+                                                              : "closed")
                       << "\n";
                 if (coli.contains("experts_disk")) {
                     reply << "experts vram=" << coli.value("experts_vram", 0)
@@ -4476,6 +4496,7 @@ int main() {
                     reply = local_tools::yolo_status_line();
                 } else if (ascii_lower_copy(rest) == "off" ||
                            ascii_lower_copy(rest) == "0") {
+                    if (!write_authorized(req, res)) return;
                     reply = local_tools::set_yolo_minutes(0);
                 } else {
                     int minutes = 0;
@@ -4487,6 +4508,7 @@ int main() {
                     if (minutes <= 0) {
                         reply = "Usage: /yolo 60  or  /yolo off  or  /yolo";
                     } else {
+                        if (!write_authorized(req, res)) return;
                         if (minutes > 240) minutes = 240;
                         reply = local_tools::set_yolo_minutes(minutes);
                     }
@@ -4836,12 +4858,14 @@ int main() {
             if (starts_with_ignore_case(user_msg, "/verify") &&
                 (user_msg.size() == 7 ||
                  std::isspace(static_cast<unsigned char>(user_msg[7])) != 0)) {
+                if (!write_authorized(req, res)) return;
                 handle_judgment("verify", "verified", user_msg.substr(7));
                 return;
             }
             if (starts_with_ignore_case(user_msg, "/reject") &&
                 (user_msg.size() == 7 ||
                  std::isspace(static_cast<unsigned char>(user_msg[7])) != 0)) {
+                if (!write_authorized(req, res)) return;
                 handle_judgment("reject", "rejected", user_msg.substr(7));
                 return;
             }

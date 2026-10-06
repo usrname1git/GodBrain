@@ -71,7 +71,7 @@ Records from `:8084`, talks to the mouth, and dispatches `command_type`
 requests that carry `Authorization: Bearer` plus, for high-risk commands, a
 non-empty `reasoning` string.
 
-Ordinary loopback chat and GET glances are unauthenticated. Privileged
+Ordinary loopback GET glances stay unauthenticated. Chat writes fail closed when no API token is configured. `/yolo` duration and off, `/verify`, and `/reject` use that bearer when a token is set. YOLO lives in process memory and ignores `logs\tool-yolo.json`. A tool omitted from that turn's schema, including an alias, is not executed and writes no audit line. Privileged
 PowerShell (`execute_godbrain_script`, `propose_sovereign_architect_change`) is
 an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` with a
 60s wait, capped concurrent pipes, and explicit job/process kill on timeout.
