@@ -39,11 +39,5 @@ if ($cs2) {
     exit 0
 }
 
-$gone = Get-Cs2GoneMinutes $RepoRoot
-if ($state.paused -and ($null -ne $gone) -and $gone -ge (Get-Cs2ResumeDelayMinutes)) {
-    Resume-GodBrainAfterCs2 $RepoRoot
-    exit 0
-}
-
-Write-Host ("cs2-pause: idle cs2={0} paused={1} gone_min={2}" -f $cs2, $state.paused, $gone)
+Write-Host ("cs2-pause: idle cs2={0} paused={1}; resume is manual" -f $cs2, $state.paused)
 exit 0

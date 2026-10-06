@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#10171e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Phone Desk">
+<title>Phone Desk</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif;background:#10171e;color:#edf3f7}
+*{box-sizing:border-box}body{margin:0;padding:calc(22px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))}
+main{max-width:740px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:14px}
+h1{font-size:27px;margin:0;letter-spacing:-.7px}h2{font-size:16px;margin:0 0 16px}p{margin:8px 0;line-height:1.5}
+.sub,.muted{color:#9eafbd;font-size:13px}.sub{margin-top:6px}
+button{font:inherit;font-size:14px;color:#edf3f7;background:#243341;border:1px solid #425565;border-radius:12px;min-height:44px;padding:10px 16px;cursor:pointer}
+button:disabled{opacity:.55}.stamp{margin:20px 0 14px;font-size:13px;color:#9eafbd;min-height:20px}
+.banner{padding:14px;border:1px solid #815e2e;border-radius:14px;background:#2b2319;color:#ffd59a;margin:12px 0}.banner[hidden]{display:none}
+.card{background:#17222b;border:1px solid #2d3e4b;border-radius:18px;padding:19px;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.value{font-size:19px;font-weight:650;overflow-wrap:anywhere;margin:12px 0 8px}.detail{font-size:13px;color:#a8bbc9;overflow-wrap:anywhere}
+.badge{display:inline-flex;align-items:center;gap:7px;color:#b5c2cc;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.badge:before{content:"";width:8px;height:8px;border-radius:50%;background:#8193a2}.ready,.running{color:#8bdfb3}.ready:before,.running:before{background:#63ca93}
+.busy,.starting,.stopping,.unready,.transitioning{color:#f2cd87}.busy:before,.starting:before,.stopping:before,.unready:before,.transitioning:before{background:#efbb66}
+.unknown,.missing{color:#f0a4a4}.unknown:before,.missing:before{background:#e18686}.stale .badge{color:#c3b7a8}.stale .badge:before{background:#a28f76}
+.model-row+.model-row{padding-top:16px;border-top:1px solid #2d3e4b;margin-top:16px}.memory{margin-top:18px;padding-top:14px;border-top:1px solid #2d3e4b}
+.meter{height:7px;background:#0e1820;border-radius:5px;margin-top:10px;overflow:hidden}.meter>span{display:block;height:100%;background:#7bafce;width:0}
+.core{margin-top:20px}.core-row{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:13px 0;border-top:1px solid #2d3e4b}.core-row .detail{max-width:75%}
+footer{font-size:12px;color:#8298a8;margin-top:22px;line-height:1.6}.empty{font-size:15px;color:#9eafbd}
+@media(max-width:370px){.grid{grid-template-columns:1fr}body{padding-left:14px;padding-right:14px}h1{font-size:24px}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>Phone Desk</h1><div class="sub">GodBrain / live status</div></div><button id="refresh" type="button">Refresh</button></header>
+<div class="stamp" id="stamp" role="status">Connecting to this PC...</div>
+<div class="banner" id="error" role="alert" hidden></div>
+<section class="card" aria-labelledby="model-title"><h2 id="model-title">Model / one GPU slot</h2><div id="models"><p class="empty">No status received yet.</p></div>
+<div class="memory"><div class="detail" id="gpu">VRAM not checked yet</div><div class="meter" aria-hidden="true"><span id="gpu-bar"></span></div></div></section>
+<div class="grid" id="services"></div>
+<section class="card core"><h2>Core services</h2><div id="core"><p class="empty">Waiting for live probes.</p></div></section>
+<footer>Read-only. Opening or refreshing this page never starts, repairs or restarts a service or model.<br>Recovery stays in your explicit SSH Shortcuts. Private HTTPS access requires Tailscale.</footer>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let inFlight = false, lastSample = null;
+const labels = {ready:'Ready',running:'Running',busy:'Busy',stopped:'Stopped',missing:'Missing',unknown:'Unknown',unready:'Not ready',starting:'Starting',stopping:'Stopping',paused:'Paused',transitioning:'Changing'};
+function element(tag, className, text) {
+  const node = document.createElement(tag); node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function badge(state) { return element('span', 'badge ' + state, labels[state] || 'Unknown'); }
+function validCard(card) {
+  return card && typeof card.name === 'string' && card.name.trim().length > 0 && typeof card.detail === 'string' &&
+    Object.prototype.hasOwnProperty.call(labels, card.state);
+}
+function validate(data) {
+  if (!data || data.schema_version !== 1 || data.read_only !== true ||
+      typeof data.sampled_at !== 'string' || !Number.isFinite(Date.parse(data.sampled_at)) ||
+      !Array.isArray(data.models) || data.models.length !== 3 || !data.models.every(validCard) ||
+      new Set(data.models.map(model => model.port)).size !== 3 || !data.models.every(model => [8888,8871,8000].includes(model.port)) ||
+      !Array.isArray(data.services) || data.services.length !== 3 || !data.services.every(validCard) ||
+      new Set(data.services.map(card => card.name)).size !== 3 || !data.services.every(card => ['RustDesk','Tailscale','SSH'].includes(card.name)) ||
+      !Array.isArray(data.core) || data.core.length !== 3 || !data.core.every(validCard) ||
+      new Set(data.core.map(card => card.name)).size !== 3 || !data.core.every(card => ['Kernel','Alexandria / RAG','MongoDB'].includes(card.name)) ||
+      !data.gpu || !['ready','unknown'].includes(data.gpu.state) ||
+      (data.gpu.state === 'ready' && (!Number.isFinite(data.gpu.used_mib) || data.gpu.used_mib < 0 ||
+        !Number.isFinite(data.gpu.total_mib) || data.gpu.total_mib <= 0 || data.gpu.used_mib > data.gpu.total_mib)))
+    throw new Error('The PC returned an invalid status snapshot.');
+  if (Date.now() - Date.parse(data.sampled_at) > 20000 || Date.parse(data.sampled_at) > Date.now() + 5000)
+    throw new Error('The PC returned stale or incorrectly dated status.');
+}
+function render(data) {
+  const models = document.createDocumentFragment();
+  const visible = data.models.filter(model => model.state !== 'stopped');
+  if (!visible.length) models.append(element('p','empty','No model endpoint is running.'));
+  for (const model of visible) {
+    const row = element('div','model-row'); row.append(badge(model.state));
+    row.append(element('div','value',model.name),element('div','detail',model.detail)); models.append(row);
+  }
+  $('models').replaceChildren(models);
+  const services = document.createDocumentFragment();
+  for (const service of data.services) {
+    const node = element('section','card'); node.append(element('h2','',service.name),badge(service.state),
+      element('p','detail',service.detail)); services.append(node);
+  }
+  $('services').replaceChildren(services);
+  const core = document.createDocumentFragment();
+  for (const service of data.core) {
+    const row = element('div','core-row'), text = element('div','detail');
+    text.append(element('div','',service.name),element('div','muted',service.detail));
+    row.append(text,badge(service.state)); core.append(row);
+  }
+  $('core').replaceChildren(core);
+  const gpu = data.gpu;
+  const measured = gpu.state === 'ready' && Number.isFinite(gpu.used_mib) && Number.isFinite(gpu.total_mib) && gpu.total_mib > 0;
+  $('gpu').textContent = measured ? `VRAM ${(gpu.used_mib/1024).toFixed(1)} / ${(gpu.total_mib/1024).toFixed(1)} GiB` : (gpu.detail || 'VRAM sensor unavailable');
+  $('gpu-bar').style.width = measured ? Math.min(100, Math.max(0, gpu.used_mib / gpu.total_mib * 100)) + '%' : '0%';
+  document.body.classList.remove('stale'); $('error').hidden = true;
+  lastSample = data.sampled_at; updateStamp();
+}
+function updateStamp() {
+  if (!lastSample) return;
+  const age = Math.max(0, Math.floor((Date.now() - Date.parse(lastSample))/1000));
+  $('stamp').textContent = `Checked ${age}s ago / ${new Date(lastSample).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+  if (Date.now() - Date.parse(lastSample) > 20000) {
+    document.body.classList.add('stale'); $('error').hidden = false;
+    $('error').textContent = 'Status is stale. These are last-known values, not current readiness.';
+  }
+}
+async function refresh() {
+  if (inFlight || document.hidden) return;
+  inFlight = true; $('refresh').disabled = true;
+  try {
+    const response = await fetch('./api/phone/status', {cache:'no-store',signal:AbortSignal.timeout(12000)});
+    if (!response.ok) throw new Error(response.status === 403 ? 'Access denied. Use this PC’s private Serve URL with its owner Tailscale account.' : `Status unavailable (HTTP ${response.status}).`);
+    const data = await response.json(); validate(data); render(data);
+  } catch (error) {
+    document.body.classList.add('stale'); $('error').hidden = false;
+    $('error').textContent = error.name === 'TimeoutError' ? 'The PC did not answer in time. Last-known values are not current readiness.' : error.message;
+    if (!lastSample) $('stamp').textContent = 'Live status unavailable';
+  } finally { inFlight = false; $('refresh').disabled = false; }
+}
+$('refresh').addEventListener('click', refresh);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+setInterval(() => { updateStamp(); if (!document.hidden) refresh(); }, 10000);
+setInterval(updateStamp, 1000);
+refresh();
+</script>
+</body>
+</html>

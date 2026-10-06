@@ -317,18 +317,40 @@ push from the mouth.
 
 ### CS2 pause
 
-Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: pause the mouth (coli
-and `llama-server`) and `tailscale down` first, launch Steam app 730,
-wait until `CS2.exe` exits. The Start-CS2 window then asks: **Y** = done
-for today (start llama now, `last_action=resume-now` so Start/Heal do not
-keep skipping the mouth), **N** or 60s timeout = wait 10 minutes. Then
-`tailscale up --unattended` and Start-GodBrain. Never logout,
-`--reset`, or uninstall Tailscale.
+Play CS2 via `Start-CS2.ps1` / `Start-CS2.cmd`: persist the CS2/mouth hold,
+pause gym training, disable Watch/Logon/CS2-backup tasks, stop identified
+EXL3 (`:8888`), image (`:8871`, including its disposable worker), legacy
+mouths and their launchers/watchdogs, then `tailscale down` and launch
+Steam app 730. The launcher returns immediately. It never waits for game
+exit, starts a model, reconnects Tailscale or re-enables tasks afterward.
+Kernel/RAG/Mongo and unrelated processes are left alone. Unknown model-port
+listeners fail the launch rather than being killed.
 
-`Watch-Cs2Pause` (task `GodBrainCs2Pause`) is only the backup if CS2 is
-started from Steam Play (no prompt; always 10 min). Start/Heal skip the
-mouth while CS2 is running or has been gone under 10 minutes, unless
-`last_action` is `resume-now`.
+`Watch-Cs2Pause` (task `GodBrainCs2Pause`) is the optional Steam Play backup;
+it applies the same manual hold, never an automatic resume. Start/Heal/gym
+honor `cs2-pause.json.paused` until an explicit desk Model/Gym/Watch Start
+clears it with `last_action=resume-now` (refused while CS2 runs). Gym training
+still needs its own Resume. Gemma's mouth-pause remains on. Tailscale Start
+in the desk starts its service if needed and reconnects the existing node.
+Never logout, `--reset`, or uninstall Tailscale.
+
+Watch is operator-controlled for AFK use. `Install-GodBrainWatch.ps1`
+registers it disabled by default (`-Enable` opts in); CS2 never enables it.
+The desk's AFK Watch Start enables/runs the task; Stop sets `afk-pause.txt`
+and disables it. Host-only is default. The desk's Qwen/gym recovery checkbox
+writes `afk-gym.txt`; `-WithGym` is an explicit CLI opt-in. One root-scoped
+mutex excludes competing scheduled/continuous Watch instances.
+Watch remains a Limited current-user task. Windows SCM service query/start
+permissions must already exist or be separately approved; the installer
+does not grant them. Do not elevate the learner/gym to work around this.
+This host's scheduled service-restart capability remains unverified.
+`Watch-FrontendGymOvernight.ps1` is a compatibility door into this same loop,
+not another watchdog. Its maintenance tick preserves durable crash/CUDA
+latches and never trains through CS2/manual gym pause or a conflicting model.
+Independent GymWatch/GymWorker/Qwen38 tasks must remain disabled; the CS2
+hold also disables those and CreationLab rather than restoring them.
+`scripts\Test-Cs2Controls.ps1` is the offline launch/hold/process-identity
+regression suite; it does not launch Steam or change host tasks.
 
 - **Volume vs depth.** Routine extract/cross-ref uses the cheap local
   mouth (desk default EXL3 on `:8888`; Colibri is interchangeable;
@@ -426,7 +448,7 @@ The Galaxy node panel and `POST /api/judge` are the same judgment path.
 ### Mouth (EXL3 Qwen 3.8 / paused llama-server)
 
 Desk generate is Qwen 3.8 27B **EXL3 3.5bpw** on `:8888`
-(`C:\nvme\Qwen3.8-27B-16gb`, `paper-godbrain\Start-PaperQwen.ps1`). One GPU
+(`C:\nvme\Qwen3.8-27B-16gb`, `paper-godbrain\Start-Qwen.ps1`). One GPU
 slot. GGUF and `llama-server` are not the desk format. Gemma stays paused
 (`logs/mouth-pause.txt=on`) because that door CUDA-aborts. While it is
 paused and `:8888` is up, Galaxy chat and tool rounds POST there and do
@@ -452,8 +474,12 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 (`--jinja` is already on; `--no-cache-prompt` so a dead slot cannot
 unused49 the next chat; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
-**file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO
-or the ask is host inspect (SysInternals/reg/events/schtasks). Non-YOLO
+**file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO,
+the ask is host inspect (SysInternals/reg/events/schtasks), or the message
+contains an `https://` / `http://` URL or `github.com/`. That URL hop also
+gets `fetch_url` (HTTPS page text, or GitHub README plus the top tree; a
+`/blob/` URL is the raw file). Fetched text is untrusted. No localhost,
+link-local, or private hosts. Not `git clone`. Not `git push`. Non-YOLO
 `list` / r/w / jail asks never start the mouth: the kernel lists the
 granted path. A question that *contains* a granted path but asks what
 is wrong (Jarvis/fix/review) keeps tools. After each execute the kernel
@@ -469,7 +495,8 @@ Observe/conclude buffer: `logs/last-chain.json`. Continue reloads it. If Gemma l
 path, the kernel appends a list of that path. YOLO still loops (cap 8,
 same flatten). A granted-root
 path token (`%USERPROFILE%` / `%APPDATA%` / `%LOCALAPPDATA%` / `%ProgramData%` /
-`%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub`) or an
+`%ProgramFiles%` / `%ProgramFiles(x86)%` / `C:\Tools` / `C:\Temp\GitHub` /
+the GodBrain repo root and every directory under it) or an
 explicit r/w / jail ask skips RAG and session dump
 so Gemma can `get_file_info` instead of unused49. Bare `C:\Windows` and
 “read the Heal file” still RTFM. A message that starts with `No tools` skips RAG,
@@ -481,8 +508,9 @@ llama.cpp folds `role:tool` into Gemma's `tool_responses`. llama-server is
 a swappable mouth, not the product. A GodBrain llama fork is later, only
 if stock ggml gimp or sunsets the tool path. `*** TOOL` text blocks still work as a
 fallback. Sticky under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
-`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and
-`C:\Temp\GitHub` (Windows env; POSIX jail later):
+`%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`,
+`C:\Temp\GitHub`, and the GodBrain repo root (every directory under it;
+Windows env; POSIX jail later):
 `list_local_dir` (depth), `read_local_file` (offset/limit/tail),
 `write_local_file` (append; dest unread fail-closed), `create_local_dir`, `move_local_file`,
 `get_file_info`, `list_granted_roots` (kernel jail, not Mongo), `host_snap`
@@ -550,17 +578,39 @@ auto-GLM.
 Each Heal tick POSTs `/api/observe` (idempotent host pin) and, when the
 kernel is up, refreshes `logs/last-brief.txt`, `logs/last-pending.json`,
 and `logs/last-vram.json` (no GPU). `/brief` and Galaxy show live
-`inbox=N`. Heal does not `tailscale up`.
+`inbox=N`. Normal Heal does not `tailscale up`. Operator-enabled AFK Watch
+calls Heal `-Afk`: start installed Tailscale/RustDesk services (or the known
+RustDesk app when no service exists), reconnect the existing Tailscale node
+with `up --unattended --timeout=10s`, then probe again. No install/logout/reset.
+Tailscale/RustDesk/Mongo Stop in the desk persists a hold respected by recovery.
+AFK Heal starts only RAG/kernel listener scopes, not models, and skips GPU
+inbox extraction. Optional gym maintenance requires the explicit opt-in.
+AFK skips `/api/brief` and the status/brief-based desk check because those
+legacy routes can kick llama; the service/listener/readiness probes verify
+that tick. Continuous Watch reports failed ticks and retries after 15 seconds.
 
-Watch-GodBrain runs Heal-GodBrain.ps1; it never kills a process. Watch
+Watch-GodBrain runs Heal-GodBrain.ps1; host Heal never kills a process. Optional
+gym maintenance can release only its identified Qwen after an idle, explicitly
+requested Pause & Stop; CUDA faults latch instead of triggering a restart. Watch
 and Cs2Pause tasks launch `run_hidden` + `pwsh -File` (never a `.cmd`:
 `cmd.exe` flashes Windows Terminal). Register-ScheduledTask so the line
 is not truncated. Watch infers RepoRoot from `-File`. Watch/Cs2Pause
 allow start on batteries. Cs2Pause runs `cs2_gate.exe` (no console);
 pwsh starts only if CS2.exe is up or `logs/cs2-pause.json` is paused.
-Watch/Heal is the 24/7 loop.
+Watch/Heal is the AFK loop when the operator enables Watch.
 
 ### Observe, truth, Tailscale
+
+Phone Desk is a separate in-process **read-only** loopback listener on
+`127.0.0.1:8085` (`phone_desk.cpp`, `frontend\phone.html`). It exposes only
+the page and `/api/phone/status` via GET/HEAD, requires configured
+`GODBRAIN_API_TOKEN`, and accepts a local bearer or the exact device-owner
+identity supplied by private Tailscale Serve. Bodies, body framing and query
+parameters are rejected. No chat, command dispatch, generation, service
+recovery or vault writes; failed/invalid/stale probes cannot be readiness.
+Never proxy the full `:8083` listener through Serve or enable Funnel.
+Keep existing Serve configuration intact. `scripts\Test-PhoneDesk.ps1`
+is offline C++ + mobile UI; `-Live` adds passive loopback/auth/identity checks.
 
 `/observe` persists stable host inventory including
 `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
@@ -713,7 +763,7 @@ It does not start the kernel. Equivalent Developer-shell one-liner from
 `godbrain_core\cpp_kernel`:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp phone_desk.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib
 ```
 
 Starting the kernel is an integration action: it may talk to Mongo via

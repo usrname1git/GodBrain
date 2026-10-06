@@ -134,8 +134,10 @@ The mouth can emit these tool calls, but `execute_godbrain_script`,
 `promote_godbrain_skill` are high-risk: the kernel rejects them unless the
 payload carries a non-blank `reasoning` string *and* `Authorization: Bearer`
 matches `GODBRAIN_API_TOKEN`. Ordinary loopback read/chat routes (no
-`command_type`) stay unauthenticated for the local UI. Every Tailscale route
-needs the bearer, including GETs.
+`command_type`) stay unauthenticated for the local UI. Every route on the
+existing Tailscale shortcuts listener needs the bearer, including GETs.
+The separate read-only Phone Desk accepts the exact device-owner identity
+from its loopback-only Tailscale Serve proxy; it exposes no chat/control routes.
 
 ## The bigger picture
 
@@ -164,12 +166,39 @@ Shipped on this desk, not slideware:
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
-- **Desk panel** — `scripts\Show-DeskMenu.ps1`. Tray icon, one GPU model on `:8888`, kernel, RAG, Mongo, gym, lyrics. X hides. The power glyph quits.
+- **Desk panel** — `scripts\Show-DeskMenu.ps1` returns the caller's shell and opens its own hidden STA GUI host. Status and Ask run asynchronously without overlapping requests. Pick text/vision on `:8888` or Qwen-Image-2.1 on `:8871`; image editing uses a bounded, final-handle-jail-checked input file. Progress shows real diffusion steps and saved request-specific receipts. Disposable image workers exit before completion so Windows releases native RAM/VRAM. Existing file/folder Ask stays available. X hides; the power glyph quits.
+- **Phone Desk** — A small read-only iPhone/Android overview: model/profile, global VRAM, RustDesk, Tailscale, SSH and core listeners. One static page and a separate `127.0.0.1:8085` listener inside the C++ kernel, privately proxied by Tailscale Serve. Refresh never starts or repairs anything; stale/error data cannot look ready. No Node production backend, phone app build, browser token or public Funnel.
+- **RustDesk phone button** — `scripts\Start-RustDesk.ps1` explicitly restores a missing installed service entry (LocalSystem, Manual), starts it and verifies the enabled SYSTEM `--server` child. Existing startup settings are preserved. It avoids the native installer's logon shortcut and image-name kills. iOS Shortcuts or an Android SSH client can invoke it; open RustDesk only after the success receipt, then select the PC.
+- **Manual CS2 / AFK policy** — CS2 releases the identified model slot, pauses gym/automation, disconnects Tailscale, launches Steam and returns; no automatic post-game resume. AFK Watch is operator-enabled, host-only by default, with optional Qwen/gym recovery behind the same loop and crash/CUDA latches. Explicit Stop holds are preserved; no new service ACLs or task elevation.
 - **Lyrics** — `scripts\lyrics_loop.py` through `scripts\Invoke-LyricsLoop.ps1`. Two CPU Whisper passes, lock the lines that agree, redo only the draft. Recordings stay on `C:\nvme\stt\lyrics`. The 4080 is not used.
 - **Autonomous frontend practice** — `scripts\Invoke-FrontendGym.ps1 -Continuous` runs local learner/tutor attempts against a protected browser evaluator.
 - Failures feed repairs; passing source and evidence become reusable gym examples without operator code review. This is not authority to modify Windows.
 
 The verifier is still the bottleneck. Privileged doors existing is not "the hard part is done."
+
+## Your iPhone or Android can be the remote desk
+
+**The phone is the control surface; the models, files and compute stay on
+the Windows PC.** Tailscale supplies private reachability, SSH runs your
+existing PowerShell commands under your authenticated Windows account,
+and RustDesk supplies the full interactive desktop when you need it.
+
+| From your phone | Door |
+|---|---|
+| Glance at model/profile, VRAM and service readiness | Read-only Phone Desk over private Serve HTTPS |
+| Start RustDesk's actual remote-desktop backend | One SSH command / iOS Shortcut, then the mobile RustDesk client |
+| Bring back only the kernel or RAG listener | SSH + `Start-GodBrain.ps1 -Only kernel` / `-Only rag` |
+| Read logs, inspect processes/services and query local health | SSH + PowerShell; ordinary Windows permissions still apply |
+| Ask the local model, ingest text or use existing model/gym launchers | Explicit SSH scripts; one GPU slot and setup/permission gates still apply |
+| Save an idea or review/judge pending records | Existing bearer-authenticated tailnet API, or explicit SSH scripts |
+| Use the PC's full control panel and desktop applications | RustDesk after backend readiness; not the read-only web page |
+
+See **[Phone control: iPhone and Android](docs/phone-control.md)** for
+setup, copyable commands, Shortcuts success/error handling, private HTTPS,
+token/key handling, long-running process caveats and honest recovery limits.
+No router port-forward, public SSH or exit node is needed for ordinary
+tailnet access. A dead PC/Tailscale/SSH path still needs an independent
+recovery channel; neither a web page nor a domain name creates one.
 
 ## The end goal
 

@@ -24,7 +24,7 @@ if (-not (Test-Path -LiteralPath $watch)) {
 $tools = Join-Path $repo "godbrain_core\cpp_tools"
 $hidden = Join-Path $tools "run_hidden.exe"
 if (-not (Test-Path -LiteralPath $hidden)) {
-    throw "Missing $hidden — run Install-GodBrainWatch.ps1 once to build it"
+    throw "Missing $hidden - run Install-GodBrainWatch.ps1 once to build it"
 }
 $gate = Join-Path $tools "cs2_gate.exe"
 $gateSrc = Join-Path $tools "cs2_gate.cpp"
@@ -50,6 +50,6 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Host "Registered $taskName for $env:USERNAME every 1 minute."
-Write-Host "Pauses mouth (coli/llama) + Tailscale + Watch/Logon while CS2.exe is running."
-Write-Host "Resumes 10 minutes after CS2.exe exits. Does not uninstall Tailscale."
+Write-Host "Stops EXL3/image/legacy mouths; pauses gym + Tailscale + Watch/Logon while CS2.exe is running."
+Write-Host "Leaves models and tasks down after CS2 exits. Resume manually from the desk."
 Write-Host "Remove with: .\Install-GodBrainCs2Pause.ps1 -Unregister"

@@ -32,6 +32,7 @@ never changes; only status does.
 |---|---|---|---|---|
 | Mouth (`llama-server` or `coli serve`) | Implemented | `scripts/Start-LlamaServer.ps1`, `LLM/colibri_LLM/c/` | OpenAI chat on `127.0.0.1:8000` | One GPU generate slot. Desk default is bartowski Gemma 12B IT Q6_K_L **with MTP** when the bartowski draft GGUF exists (`-NoDraft` to disable). Colibri is the interchangeable engine, not the protocol. |
 | C++ Kernel | Implemented, canonical privileged boundary | `godbrain_core/cpp_kernel/` | HTTP on `127.0.0.1:8083` | Galaxy hosting, Golden Record RAG via `:8084`, mouth invocation, built-in chat tools (`local_tools.cpp`, not MCP), privileged `command_type` dispatch, no-GPU GET doors |
+| Phone Desk | Implemented read-only overview | `godbrain_core/cpp_kernel/phone_desk.cpp`, `godbrain_core/frontend/phone.html` | Loopback `:8085`, private Tailscale Serve HTTPS | Model/profile/VRAM and service status; exact owner proxy identity or local bearer; no recovery/control routes |
 | Root Go router | Experimental alternative | `main.go` | HTTP on `127.0.0.1:8082` | Golden Record RAG via `:8084` and mouth invocation |
 | Rust router | Experimental alternative | `godbrain_core/rust_router/` | HTTP on `127.0.0.1:8082` | Golden Record chat via `:8084`; graph/node still `410` |
 | MongoDB knowledge store | Implemented dependency | Local MongoDB | MongoDB protocol on `localhost:27017` | Source documents and RAG records |
@@ -43,7 +44,7 @@ never changes; only status does.
 | Brave extension | Implemented client | `brave_extension/` | HTTP to `127.0.0.1:8083` | Page-context-assisted local chat |
 | Native ingestors and SRE tools | Experimental | `godbrain_core/cpp_ingestors/`, `godbrain_core/cpp_tools/`, `godbrain_core/sre_agent/` | Standalone executables | Ingestors plus `sre_surgeon --toolkit` / `--diagnose`. Gated repairs need an operator GO. Heal never `--ask`. |
 | Heal / Watch | Implemented host loop | `Heal-GodBrain.ps1`, `Watch-GodBrain.ps1` | schtasks / `/api/heal` | Detect TCP then HTTP ready, start missing allowlist, diagnose icmp/dns/nic, flushdns once after a DNS miss, `rag-rebuild` if unready, drain one inbox file, verify, remember on act/fail. Never kills. |
-| CS2 pause | Implemented host loop | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1` | launch script + schtask backup | Pause mouth and Tailscale, launch Steam app 730, resume 10 minutes after `CS2.exe` exits. |
+| CS2 pause | Implemented manual hold | `Start-CS2.ps1`, `Watch-Cs2Pause.ps1` | launch script + optional schtask backup | Stop EXL3/image/legacy model runtimes, pause gym/tasks and Tailscale, launch Steam app 730 and return. Resume only through explicit desk controls. |
 | Agent Factory control plane | Planned, **not next** | `docs/AGENT_FACTORY_ROSTER.md` | Versioned job/evidence contracts | Do not staff this to grow the wiki. |
 
 ## C++ Kernel HTTP (`127.0.0.1:8083`)
@@ -88,6 +89,16 @@ GET: `/api/brief`, `/api/vram`, `/api/heal`, `/api/sre`, `/api/status`,
 
 POST: `/api/remember`, `/api/librarian`, `/api/observe`, `/api/truth`,
 `/api/judge`.
+
+### Read-only Phone Desk (`127.0.0.1:8085`)
+
+`GET/HEAD /` serves the page; `GET/HEAD /api/phone/status` returns the
+bounded cached status snapshot. Requires configured `GODBRAIN_API_TOKEN`;
+accepts a local bearer or the exact device-owner identity added by the
+loopback-only private Serve proxy. Bodies, body framing and query parameters
+are denied. Never proxy `:8083` or enable Funnel. No service/model starts,
+generation, command dispatch or vault writes. Mobile setup and actions:
+[`phone-control.md`](../phone-control.md).
 
 ### Galaxy slash commands (loopback)
 

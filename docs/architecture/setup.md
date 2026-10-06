@@ -115,7 +115,7 @@ That compiles without starting GodBrain. Backups go outside git. Equivalent
 Developer-shell one-liner from `godbrain_core\cpp_kernel`:
 
 ```powershell
-cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib
+cl /std:c++17 /EHsc /W4 /Fe:godbrain-kernel.exe main.cpp kernel.cpp surgery.cpp telemetry.cpp memory.cpp local_edit.cpp local_tools.cpp phone_desk.cpp /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib
 ```
 
 Starting the kernel is an integration action. Do not use startup as a
@@ -161,7 +161,24 @@ Build `run_hidden.exe` once by running Watch install (it compiles if missing):
   Starts rag / mouth / kernel if the binaries exist. Does not install Mongo.
 - **GodBrainWatch** — every 5 minutes, current-user, batteries allowed. Only
   calls Heal. Never kills. Uses `run_hidden` + `pwsh -File` (never a `.cmd`).
-- **GodBrainCs2Pause** — backup if CS2 starts from Steam Play.
+  Installs **disabled**; enable manually from the desk for AFK use, or pass
+  `-Enable` to the installer. Host-only is default; select Qwen/gym recovery
+  in the desk (or installer `-WithGym`) to opt in. The root-scoped mutex also
+  excludes a competing foreground `Watch-GodBrain.ps1 -Continuous` loop.
+  Heal `-Afk` restores installed Tailscale/RustDesk service/app and core
+  listeners, respecting desk Stop holds. It never starts a model.
+  The scheduled task remains Limited. Service recovery needs existing SCM
+  query/start rights or an explicitly approved narrow permission grant;
+  neither installation nor this AFK refactor silently grants/elevates them.
+- **GodBrainCs2Pause** — optional backup if CS2 starts from Steam Play.
+  Stops identified EXL3/image/legacy model runtimes and leaves automation
+  held for manual resume; never starts GodBrain after the game.
+
+`Start-CS2.cmd` / `Start-CS2.ps1` pause before launching Steam app 730 and
+return immediately. They leave Watch/Logon/CS2-backup disabled, gym training
+paused and Tailscale disconnected. Desk Model/Gym/Watch Start clears the CS2
+hold only after the game closes; gym training still requires Resume.
+Desk Tailscale Start reconnects the existing node without logout or reset.
 
 Remove with the same scripts `-Unregister`. Never register these as
 LocalSystem.
@@ -209,6 +226,10 @@ If Tailscale has a 100.x and `GODBRAIN_API_TOKEN` is set, `/api/doors` lists
 the phone URLs. Those routes need the bearer. Chat stays loopback.
 
 ## Replication notes
+
+For private iPhone/Android status and explicit SSH/RustDesk actions, see
+[`phone-control.md`](../phone-control.md). Tailscale Serve proxies only the
+read-only `127.0.0.1:8085` listener, never the whole kernel API on `:8083`.
 
 - Same Windows shape: user-level tasks, Mongo as its own service, one GPU
   mouth, kernel on loopback `:8083`.

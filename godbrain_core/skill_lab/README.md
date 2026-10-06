@@ -49,7 +49,7 @@ The loop uses an already-running local OpenAI endpoint, preferring `:8888`,
 then `:8000`. It never downloads weights, starts a competing model, or touches a
 cloud inference service. `-WithMouth` is the desk llama only: resume
 `Start-LlamaServer.ps1`, run, then `Stop-LlamaServer.ps1` so Watch does not
-leave Gemma parked. The gym mouth on `:8888` is `qwen3.8-27b-exl3-3.5bpw` via `Start-PaperQwen.ps1` (historical filename). Set `-Endpoint` and `-Model` to select a local runner.
+leave Gemma parked. The gym mouth on `:8888` is `qwen3.8-27b-exl3-3.5bpw` via `Start-Qwen.ps1`. Set `-Endpoint` and `-Model` to select a local runner.
 Literal loopback addresses only; optional authentication is supplied through
 `GODBRAIN_GYM_TOKEN`, never a command-line token. Browser discovery uses a
 separate headless Chromium/Brave/Edge instance, not the operator's profile.
@@ -71,14 +71,27 @@ Use `-Browser` for an explicit executable.
 .\scripts\Invoke-FrontendGym.ps1 -Continuous
 ```
 
-Overnight keep-alive (Qwen `:8888` + gym worker, one GPU slot, honors CS2/pause):
+AFK host recovery is operator-enabled from the desk. Models are manual by
+default. Select **Recover Qwen + gym while AFK** for the same loop to maintain
+the 27B EXL3 model and training worker, honoring CS2/manual pause and durable
+crash/CUDA latches. No independent GymWatch/GymWorker/Qwen logon tasks.
+
+Equivalent explicit foreground loop:
 
 ```powershell
-.\scripts\Watch-FrontendGymOvernight.ps1
+.\Watch-GodBrain.ps1 -Continuous -WithGym -Resume
 ```
 
-The command runs in the foreground. Leave that terminal/session running for
-continuous practice; this does not install a scheduled task or startup service.
+The legacy `Watch-FrontendGymOvernight.ps1` forwards to that same command.
+The command runs in the foreground and shares a mutex with scheduled AFK
+ticks; this does not install another task or startup service.
+`Invoke-FrontendGymMaintenance.ps1` is one maintenance tick, not a second loop.
+Host recovery is Heal `-Afk` (no GPU extraction); gym recovery never manages
+llama-server and will not launch Qwen beside a conflicting model door.
+The durable `work\gym\watchdog\crash-latch.json` blocks automatic recovery after
+ten observed worker losses or a CUDA illegal-address error; AFK Resume does
+not clear that safety latch. Unreadable training/state/control files fail
+closed rather than hiding CUDA errors or loading another model.
 Completion requests use bounded OpenAI event streams so stopping can disconnect
 an active generation, including runners whose non-streaming route cannot cancel.
 An unavailable model is reported and retried in continuous mode. A finite run

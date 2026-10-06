@@ -14,15 +14,19 @@
 # nic_tcpip is detect-only. Do not start NICs or firewall from here.
 # When layer is not ok, run sre_surgeon --diagnose (read-only, 15 min
 # cooldown). Never --ask (GPU). GO tools stay GO.
-# Skip coli / inbox while CS2.exe is running or has been gone under 10 minutes.
+# Skip coli / inbox while CS2.exe is running or the manual CS2 hold is set.
 # The verifier is the probe, not the model. Do not add extra nodes here.
+# -Afk adds existing Tailscale/RustDesk recovery, respects service hold files,
+# and never starts models or performs GPU inbox extraction.
 
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = $PSScriptRoot
+    [string]$RepoRoot = $PSScriptRoot,
+    [switch]$Afk
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "scripts\GodBrain-HostServices.ps1")
 if ([string]::IsNullOrWhiteSpace($RepoRoot) -and $MyInvocation.MyCommand.Path) {
     $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
@@ -176,6 +180,8 @@ function Get-InboxFailed {
 }
 
 function Get-Probe {
+    $tailService = Get-Service -Name "Tailscale" -ErrorAction SilentlyContinue
+    $rustService = Get-Service -Name "RustDesk" -ErrorAction SilentlyContinue
     $llama = Test-Port "127.0.0.1" 8000
     $exl3 = Test-Port "127.0.0.1" 8888
     $mouth = if ($mouthPause) { $exl3 } else { $llama }
@@ -185,6 +191,14 @@ function Get-Probe {
         [bool]($llama -and (Test-HttpOk "http://127.0.0.1:8000/health"))
     }
     $rag = Test-Port "127.0.0.1" 8084
+    $kernel = Test-Port "127.0.0.1" 8083
+    $kernelReady = $kernel
+    if ($Afk -and $kernel) {
+        try {
+            $doors = Invoke-RestMethod -TimeoutSec 3 -Uri "http://127.0.0.1:8083/api/doors"
+            $kernelReady = [bool]($doors.slots -eq 1 -and $doors.loopback.brief -and $doors.loopback.pending)
+        } catch { $kernelReady = $false }
+    }
     $ragHealth = $null
     if ($rag) { $ragHealth = Get-RagHealth }
     return [ordered]@{
@@ -196,8 +210,15 @@ function Get-Probe {
         mouth         = $mouth
         exl3          = $exl3
         mouth_ready   = [bool]$mouthReady
-        kernel        = Test-Port "127.0.0.1" 8083
+        kernel        = $kernel
+        kernel_ready  = $kernelReady
         tailscale     = Test-TailscaleCgNat
+        tailscale_installed = [bool]$tailService
+        tailscale_service = [bool]($tailService -and $tailService.Status -eq "Running")
+        rustdesk_installed = [bool]$rustService
+        rustdesk_service = [bool]($rustService -and $rustService.Status -eq "Running")
+        rustdesk_app_installed = [bool](Get-GodBrainRustDeskExe)
+        rustdesk_app = [bool](@(Get-GodBrainRustDeskProcesses).Count -gt 0)
         dns           = Test-ServiceUp "Dnscache"
         iphlp         = Test-ServiceUp "iphlpsvc"
         nsi           = Test-ServiceUp "nsi"
@@ -213,11 +234,14 @@ function Get-DiagnoseLayer($probe) {
     if (-not $probe.nic_tcpip) { return "nic" }
     $ragOk = ($probe.rag -and $probe.rag_ready) -or ($ragPaused -and -not $probe.rag)
     $kernelOk = $probe.kernel -or ($kernelPaused -and -not $probe.kernel)
-    if (-not ($probe.mongo -and $ragOk -and $probe.coli -and $kernelOk)) {
+    if ($Afk -and $probe.kernel) { $kernelOk = [bool]$probe.kernel_ready }
+    $mouthOk = $mouthOptional -or $coliSleep -or $probe.coli
+    $mongoOk = $probe.mongo -or (Test-DeskPause "mongo-pause.txt")
+    if (-not ($mongoOk -and $ragOk -and $mouthOk -and $kernelOk)) {
         return "listeners"
     }
     if (-not $probe.rag_ready -and -not ($ragPaused -and -not $probe.rag)) { return "rag" }
-    if (-not $probe.mouth_ready -and -not $coliSleep) { return "mouth" }
+    if (-not $probe.mouth_ready -and -not $coliSleep -and -not $mouthOptional) { return "mouth" }
     return "ok"
 }
 
@@ -303,6 +327,7 @@ $pauseFile = Join-Path $RepoRoot "logs\mouth-pause.txt"
 if (Test-Path -LiteralPath $pauseFile) {
     $mouthPause = ((Get-Content -LiteralPath $pauseFile -Raw -ErrorAction SilentlyContinue).Trim() -eq "on")
 }
+$mouthOptional = [bool]$Afk -or $mouthPause
 
 function Test-DeskPause([string]$FileName) {
     $path = Join-Path $logDir $FileName
@@ -315,26 +340,50 @@ $needed = @()
 $acted = @()
 $kernelPaused = Test-DeskPause "kernel-pause.txt"
 $ragPaused = Test-DeskPause "rag-pause.txt"
-if (-not $before.mongo) { $needed += "mongo" }
+if (-not $before.mongo -and -not (Test-DeskPause "mongo-pause.txt")) { $needed += "mongo" }
 if (-not $before.dns) { $needed += "dns" }
 if (-not $before.iphlp) { $needed += "iphlp" }
 if (-not $before.nsi) { $needed += "nsi" }
 if (-not $before.rag -and -not $ragPaused) { $needed += "rag" }
 # "coli" here means the :8000 mouth. Start-GodBrain starts llama-server
 # instead of coli when logs/mouth.txt says llama-server.
-if (-not $before.coli -and -not $coliSleep -and -not $mouthPause) { $needed += "coli" }
+if (-not $before.coli -and -not $coliSleep -and -not $mouthPause -and -not $Afk) { $needed += "coli" }
 if (-not $before.kernel -and -not $kernelPaused) { $needed += "kernel" }
 
-foreach ($key in @("mongo", "dns", "iphlp", "nsi")) {
+if ($Afk -and -not $coliSleep) {
+    foreach ($entry in @(
+        @{ Key = "tailscale_service"; Installed = "tailscale_installed"; Service = "Tailscale"; Hold = "tailscale" },
+        @{ Key = "rustdesk_service"; Installed = "rustdesk_installed"; Service = "RustDesk"; Hold = "rustdesk" }
+    )) {
+        if (-not $before[$entry.Installed] -and
+            -not ($entry.Service -eq "RustDesk" -and $before.rustdesk_app_installed)) {
+            Write-Host "heal afk: optional service $($entry.Service) is not installed"
+        } elseif ($before[$entry.Installed] -and -not $before[$entry.Key] -and
+            -not (Test-DeskPause "$($entry.Hold)-pause.txt")) {
+            $ServiceAllowlist[$entry.Key] = $entry.Service
+            $needed += $entry.Key
+        }
+    }
+}
+
+foreach ($key in $ServiceAllowlist.Keys) {
     if ($needed -contains $key) {
         Start-AllowlistedService $ServiceAllowlist[$key]
         $acted += ("start:" + $ServiceAllowlist[$key])
     }
 }
 
-$processNeeded = @($needed | Where-Object { $_ -notin @("mongo", "dns", "iphlp", "nsi") })
+$processNeeded = @($needed | Where-Object { -not $ServiceAllowlist.Contains($_) })
 if ($processNeeded.Count -gt 0) {
-    & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15 -KeepPause
+    if ($Afk) {
+        foreach ($listener in @("rag", "kernel")) {
+            if ($processNeeded -contains $listener) {
+                & $starter -RepoRoot $RepoRoot -Only $listener -MongoWaitSeconds 15 -KeepPause
+            }
+        }
+    } else {
+        & $starter -RepoRoot $RepoRoot -MongoWaitSeconds 15 -KeepPause
+    }
     Start-Sleep -Seconds 2
     $acted += "start:listeners"
 } elseif ($needed -contains "mongo") {
@@ -353,6 +402,46 @@ if (-not $mid.dns_self -and $mid.dns -and $mid.icmp_loopback) {
 }
 
 $after = Get-Probe
+if ($Afk -and -not $coliSleep -and -not $after.rustdesk_installed -and
+    $after.rustdesk_app_installed -and -not $after.rustdesk_app -and
+    -not (Test-DeskPause "rustdesk-pause.txt")) {
+    try {
+        Start-GodBrainRustDeskApp
+        $acted += "start:rustdesk-app"
+        Start-Sleep -Milliseconds 400
+        $after = Get-Probe
+        if (-not $after.rustdesk_app) { Write-Host "heal afk: RustDesk app is not running after its launch request." }
+    } catch {
+        Write-Host "heal afk: RustDesk app start failed: $($_.Exception.Message)"
+    }
+}
+$tailReconnect = "skip:not-afk"
+if ($Afk) {
+    $tailReconnect = "skip:ready-or-held"
+    if (-not $coliSleep -and $after.tailscale_service -and -not $after.tailscale -and
+        -not (Test-DeskPause "tailscale-pause.txt")) {
+        $tailExe = Get-TailscaleExe
+        if (-not $tailExe) {
+            $tailReconnect = "failed:cli-missing"
+            Write-Host "heal afk: Tailscale CLI missing; cannot reconnect."
+        } else {
+            try {
+                Invoke-TailscaleCs2 $tailExe @("up", "--unattended", "--timeout=10s")
+                $after = Get-Probe
+                if ($after.tailscale) {
+                    $tailReconnect = "ok"
+                    $acted += "tailscale:reconnect"
+                } else {
+                    $tailReconnect = "failed:no-tailnet-address"
+                    Write-Host "heal afk: Tailscale reconnect returned but no tailnet address is present."
+                }
+            } catch {
+                $tailReconnect = "failed"
+                Write-Host "heal afk: Tailscale reconnect failed: $($_.Exception.Message)"
+            }
+        }
+    }
+}
 $ragRebuild = ""
 if ($after.mongo -and $after.rag -and -not $after.rag_ready -and -not $after.rag_building) {
     $ragRebuild = Invoke-AllowlistedRagRebuild
@@ -377,7 +466,9 @@ $inbox.waiting = $waitingFiles.Count
 $inbox.failed = @(Get-InboxFailed).Count
 $inboxLock = Join-Path $logDir "heal-inbox.lock"
 if ($waitingFiles.Count -gt 0) {
-    if ($coliSleep) {
+    if ($Afk) {
+        $inbox.skip = "afk-host-only"
+    } elseif ($coliSleep) {
         $inbox.skip = "cs2"
     } elseif ($mouthPause -and -not $after.exl3) {
         $inbox.skip = "mouth-paused"
@@ -442,11 +533,22 @@ if ($waitingFiles.Count -gt 0) {
 
 $ragHeld = $ragPaused -and -not $after.rag
 $kernelHeld = $kernelPaused -and -not $after.kernel
+$kernelReady = $after.kernel -and (-not $Afk -or $after.kernel_ready)
 $ok = [bool](
-    $after.mongo -and (($after.rag -and $after.rag_ready) -or $ragHeld) -and ($after.kernel -or $kernelHeld) -and
+    ($after.mongo -or (Test-DeskPause "mongo-pause.txt")) -and (($after.rag -and $after.rag_ready) -or $ragHeld) -and ($kernelReady -or $kernelHeld) -and
     $after.dns -and $after.iphlp -and $after.nsi -and
-    ($after.mouth_ready -or $coliSleep)
+    ($after.mouth_ready -or $coliSleep -or $mouthOptional)
 )
+if ($Afk -and -not $coliSleep) {
+    if ($after.tailscale_installed -and -not (Test-DeskPause "tailscale-pause.txt")) {
+        $ok = $ok -and $after.tailscale_service -and $after.tailscale
+    }
+    if ($after.rustdesk_installed -and -not (Test-DeskPause "rustdesk-pause.txt")) {
+        $ok = $ok -and $after.rustdesk_service
+    } elseif ($after.rustdesk_app_installed -and -not (Test-DeskPause "rustdesk-pause.txt")) {
+        $ok = $ok -and $after.rustdesk_app
+    }
+}
 $diagnose = [ordered]@{
     icmp_loopback = [bool]$after.icmp_loopback
     dns_self      = [bool]$after.dns_self
@@ -463,6 +565,8 @@ if ($diagnose.layer -ne "ok") {
 }
 $result = [ordered]@{
     version     = 4
+    afk         = [bool]$Afk
+    models_manual = [bool]$Afk
     at          = (Get-Date).ToUniversalTime().ToString("o")
     playbook    = "host-listeners"
     needed      = @($needed)
@@ -481,6 +585,7 @@ $result = [ordered]@{
     inbox        = $inbox
     sre_diagnose = $sreDiagnose
     tailscale    = [bool]$after.tailscale
+    tailscale_reconnect = $tailReconnect
 }
 
 $json = $result | ConvertTo-Json -Depth 6
@@ -575,6 +680,10 @@ if ($after.kernel) {
             @{ Name = "oracle"; Path = "/api/last" },
             @{ Name = "edit"; Path = "/api/last-edit" }
         )) {
+        if ($Afk -and $pair.Name -eq "brief") {
+            Write-Host "heal afk: skipped /api/brief (legacy model autostart); host probes are the verifier."
+            continue
+        }
         try {
             Invoke-RestMethod -Uri ("http://127.0.0.1:8083" + $pair.Path) -TimeoutSec 3 | Out-Null
             Write-Host ("heal wrote last-{0}" -f $pair.Name)
@@ -583,7 +692,7 @@ if ($after.kernel) {
         }
     }
     $desk = Join-Path $RepoRoot "Test-GodBrainDesk.ps1"
-    if (Test-Path -LiteralPath $desk) {
+    if (-not $Afk -and (Test-Path -LiteralPath $desk)) {
         try {
             & $desk -RepoRoot $RepoRoot
             if ($LASTEXITCODE -ne 0) {

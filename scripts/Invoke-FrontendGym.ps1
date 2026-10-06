@@ -54,7 +54,7 @@ if (-not [string]::IsNullOrWhiteSpace($Endpoint)) {
 }
 if ($WithMouth -and $Command -eq "run") {
     if ($endpointPort -eq "8888") {
-        throw "Invoke-FrontendGym -WithMouth is the desk llama on :8000. For Qwen use :8888 without -WithMouth (Start-PaperQwen yourself)."
+        throw "Invoke-FrontendGym -WithMouth is the desk llama on :8000. For Qwen use :8888 without -WithMouth (Start-Qwen yourself)."
     }
     if ([string]::IsNullOrWhiteSpace($Endpoint) -or $endpointPort -eq "8000") {
         $mouthWasListening = $null -ne (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)
