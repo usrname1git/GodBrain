@@ -119,6 +119,66 @@ int main() {
     pass &= expect(rolled.lesson_trust == "candidate", "failure lesson is candidate");
     pass &= expect(read_text(fail_dir + "\\fixture.txt") == "alpha-before", "restored file");
 
+    const std::string tamper_dir = make_dir("tamper");
+    const std::string tamper =
+        "param([string]$Fixture)\r\n"
+        "[System.IO.File]::WriteAllText($Fixture, 'tampered')\r\n"
+        "exit 0\r\n";
+    pass &= expect(!tamper_dir.empty() && write_text(tamper_dir + "\\fixture.txt", "alpha-before") &&
+                       write_text(tamper_dir + "\\check.ps1", tamper),
+                   "tamper dir");
+    const jarvis_job::Outcome tampered = jarvis_job::run(base_request(tamper_dir));
+    pass &= expect(!tampered.ok && tampered.status == "rolled_back", "zero exit mismatch rolls back");
+    pass &= expect(tampered.verifier_exit == 0, "tamper exit stays 0");
+    pass &= expect(tampered.lesson_trust == "candidate", "tamper lesson");
+    pass &= expect(read_text(tamper_dir + "\\fixture.txt") == "alpha-before", "tamper restored");
+
+    const std::string drop_dir = make_dir("drop");
+    const std::string drop =
+        "param([string]$Fixture)\r\n"
+        "Remove-Item -LiteralPath $Fixture -Force\r\n"
+        "exit 0\r\n";
+    pass &= expect(!drop_dir.empty() && write_text(drop_dir + "\\fixture.txt", "alpha-before") &&
+                       write_text(drop_dir + "\\check.ps1", drop),
+                   "drop dir");
+    const jarvis_job::Outcome dropped = jarvis_job::run(base_request(drop_dir));
+    pass &= expect(!dropped.ok && dropped.status == "rolled_back", "deleted fixture rolls back");
+    pass &= expect(dropped.verifier_exit == 0, "delete exit stays 0");
+    pass &= expect(read_text(drop_dir + "\\fixture.txt") == "alpha-before", "deleted fixture restored");
+
+    const std::string abort_dir = make_dir("abort");
+    pass &= expect(!abort_dir.empty() && plant(abort_dir, "pass"), "abort dir");
+    jarvis_job::Request abort = base_request(abort_dir);
+    abort.stop_after = "applied";
+    const jarvis_job::Outcome abort_applied = jarvis_job::run(abort);
+    pass &= expect(abort_applied.ok && abort_applied.status == "applied" && abort_applied.writes == 1,
+                   "abort applied");
+    const jarvis_job::Outcome abort_cancel = jarvis_job::cancel(abort_dir);
+    pass &= expect(!abort_cancel.ok && abort_cancel.status == "cancelled", "cancel applied");
+    pass &= expect(abort_cancel.writes == 1, "cancel does not count restore");
+    pass &= expect(read_text(abort_dir + "\\fixture.txt") == "alpha-before", "cancel restored");
+    const jarvis_job::Outcome abort_resume = jarvis_job::resume(abort_dir);
+    pass &= expect(!abort_resume.ok && abort_resume.status == "cancelled" && abort_resume.writes == 1,
+                   "cancelled stays cancelled");
+
+    const std::string wide_dir = make_dir("wide");
+    std::string big(200 * 1024, 'x');
+    big.replace(0, 12, "alpha-before");
+    pass &= expect(!wide_dir.empty() && write_text(wide_dir + "\\fixture.txt", big) &&
+                       write_text(wide_dir + "\\check.ps1",
+                                  "param([string]$Fixture)\r\nexit 4\r\n"),
+                   "wide dir");
+    jarvis_job::Request wide = base_request(wide_dir);
+    wide.stop_after = "applied";
+    const jarvis_job::Outcome wide_applied = jarvis_job::run(wide);
+    pass &= expect(wide_applied.ok && wide_applied.status == "applied" && wide_applied.writes == 1,
+                   "wide applied");
+    pass &= expect(read_text(wide_dir + "\\jarvis-job.json").size() > 256 * 1024, "state past fixture cap");
+    const jarvis_job::Outcome wide_resume = jarvis_job::resume(wide_dir);
+    pass &= expect(!wide_resume.ok && wide_resume.status == "rolled_back", "wide resume loaded");
+    pass &= expect(wide_resume.writes == 1 && wide_resume.before_hash.size() == 64, "wide receipt");
+    pass &= expect(read_text(wide_dir + "\\fixture.txt") == big, "wide restored");
+
     if (!pass) return 1;
     std::cout << "jarvis_job_test ok" << std::endl;
     return 0;

@@ -26,6 +26,8 @@ namespace {
 using json = nlohmann::json;
 
 constexpr size_t kMaxBytes = 256 * 1024;
+// original, patched, and both replacement strings, after JSON escaping.
+constexpr size_t kMaxState = 8 * 1024 * 1024;
 constexpr DWORD kVerifyMs = 20000;
 
 struct State {
@@ -78,14 +80,19 @@ std::string state_path(const std::string& work_dir) {
     return work_dir + "\\jarvis-job.json";
 }
 
-bool read_all(const std::string& path, std::string* body) {
+bool read_all(const std::string& path, std::string* body, size_t max_bytes = kMaxBytes) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
-    std::ostringstream out;
-    out << in.rdbuf();
-    if (!in && !in.eof()) return false;
-    *body = out.str();
-    return body->size() <= kMaxBytes;
+    body->clear();
+    char buf[8192];
+    while (in) {
+        in.read(buf, sizeof(buf));
+        const std::streamsize got = in.gcount();
+        if (got <= 0) break;
+        if (body->size() + static_cast<size_t>(got) > max_bytes) return false;
+        body->append(buf, static_cast<size_t>(got));
+    }
+    return !in.bad();
 }
 
 bool write_all(const std::string& path, const std::string& body) {
@@ -120,12 +127,14 @@ json state_json(const State& st) {
 }
 
 bool save_state(const std::string& work_dir, const State& st) {
-    return write_all(state_path(work_dir), state_json(st).dump());
+    const std::string body = state_json(st).dump();
+    if (body.size() > kMaxState) return false;
+    return write_all(state_path(work_dir), body);
 }
 
 bool load_state(const std::string& work_dir, State* st) {
     std::string body;
-    if (!read_all(state_path(work_dir), &body)) return false;
+    if (!read_all(state_path(work_dir), &body, kMaxState)) return false;
     json doc;
     try {
         doc = json::parse(body);
@@ -273,12 +282,8 @@ Outcome verify_and_close(const std::string& work_dir, State* st) {
     const std::string path = file_path(work_dir, st->file_name);
     const std::string script = file_path(work_dir, st->verifier_name);
     st->verifier_exit = run_verifier(work_dir, script, path);
-    if (st->verifier_exit == 0) {
-        std::string now;
-        if (!read_all(path, &now) || content_hash(now) != st->after_hash) {
-            st->status = "failed";
-            return finish_saved(work_dir, st, false);
-        }
+    std::string now;
+    if (st->verifier_exit == 0 && read_all(path, &now) && content_hash(now) == st->after_hash) {
         st->status = "verified";
         set_lesson(st);
         return finish_saved(work_dir, st, false);
@@ -430,6 +435,12 @@ Outcome cancel(const std::string& work_dir) {
         return out;
     }
     if (terminal(st.status)) return from_state(st, false);
+    if (st.status == "applied") {
+        if (!restore_original(file_path(work, st.file_name), st)) {
+            st.status = "failed";
+            return finish_saved(work, &st, false);
+        }
+    }
     st.status = "cancelled";
     return finish_saved(work, &st, false);
 }
