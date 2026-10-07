@@ -101,7 +101,45 @@ function Invoke-SurgeryOutcomeTest {
     )
 }
 
+function Invoke-MouthSelectTest {
+    $build = Join-Path $env:TEMP "GodBrain-mouth-select"
+    if (-not (Test-Path -LiteralPath $build)) {
+        New-Item -ItemType Directory -Path $build | Out-Null
+    }
+    $prefix = ""
+    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path -LiteralPath $vswhere)) {
+            Add-Task "mouth_select_test" $false 0 "cl.exe is not on PATH"
+            return
+        }
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ([string]::IsNullOrWhiteSpace($vsPath)) {
+            Add-Task "mouth_select_test" $false 0 "Visual Studio x64 tools were not found"
+            return
+        }
+        $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+        $prefix = "call `"$vcvars`" >nul && "
+    }
+    $testSrc = Join-Path $kernelDir "mouth_select_test.cpp"
+    $exe = Join-Path $build "mouth_select_test.exe"
+    $command = $prefix + "cl /nologo /std:c++17 /EHsc /W4 /Fo`"$build\\`" /Fe:`"$exe`" `"$testSrc`""
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    & (Join-Path $env:SystemRoot "System32\cmd.exe") /c $command
+    if ($LASTEXITCODE -ne 0) {
+        $sw.Stop()
+        Add-Task "mouth_select_test" $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
+        return
+    }
+    $p = Start-Process -FilePath $exe -WorkingDirectory $build -Wait -PassThru -NoNewWindow
+    $sw.Stop()
+    Add-Task "mouth_select_test" ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
+        if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
+    )
+}
+
 Invoke-SurgeryOutcomeTest
+Invoke-MouthSelectTest
 Invoke-KernelTest "local_tools_test" "local_tools_test.exe"
 Invoke-KernelTest "tool_round_test" "tool_round_test.exe"
 Invoke-KernelTest "local_edit_test" "local_edit_test.exe"

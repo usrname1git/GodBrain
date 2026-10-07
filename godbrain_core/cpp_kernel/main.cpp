@@ -31,6 +31,7 @@
 #include "memory.h"
 #include "telemetry.h"
 #include "phone_desk.h"
+#include "mouth_select.h"
 
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
@@ -1172,6 +1173,50 @@ static std::string safe_session_id(std::string value) {
     return value;
 }
 
+static std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) return L"";
+    const int n = MultiByteToWideChar(
+        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (n <= 0) return L"";
+    std::wstring wide(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), n);
+    return wide;
+}
+
+static std::vector<wchar_t> env_with(
+    const std::vector<std::pair<std::wstring, std::wstring>>& set) {
+    std::wstring block;
+    wchar_t* src = GetEnvironmentStringsW();
+    if (src) {
+        for (const wchar_t* p = src; *p != L'\0';) {
+            const std::wstring line = p;
+            p += line.size() + 1;
+            const size_t eq = line.find(L'=');
+            const std::wstring key = eq == std::wstring::npos ? line : line.substr(0, eq);
+            bool drop = false;
+            for (const auto& item : set) {
+                if (_wcsicmp(key.c_str(), item.first.c_str()) == 0) {
+                    drop = true;
+                    break;
+                }
+            }
+            if (drop) continue;
+            block.append(line);
+            block.push_back(L'\0');
+        }
+        FreeEnvironmentStringsW(src);
+    }
+    for (const auto& item : set) {
+        block.append(item.first);
+        block.push_back(L'=');
+        block.append(item.second);
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return std::vector<wchar_t>(block.begin(), block.end());
+}
+
 static void handle_librarian(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -1184,8 +1229,24 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
                 "application/json");
             return;
         }
-        const json coli = coli_serve_status();
-        if (coli.value("busy", false)) {
+        json ex = json::object();
+        mouth_select::Probes probes;
+        probes.paused = mouth_paused();
+        const bool slot = g_coli_job_started_ms.load(std::memory_order_relaxed) != 0;
+        if (probes.paused) {
+            ex = exl3_desk();
+            probes.exl3_up = ex.value("up", false);
+            probes.exl3_busy = slot;
+        } else {
+            const json coli = coli_serve_status();
+            probes.llama_up = coli.value("up", false);
+            probes.llama_busy = coli.value("busy", false) || slot;
+            if (!probes.llama_up) {
+                probes.slot_held = telemetry::tcp_loopback_open(8888, 300);
+            }
+        }
+        const mouth_select::Choice choice = mouth_select::select(probes);
+        if (choice.busy) {
             res.status = 503;
             res.set_content(
                 json({{"error",
@@ -1194,15 +1255,17 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
                 "application/json");
             return;
         }
-        if (!coli.value("up", false)) {
-            maybe_restart_mouth();
+        if (choice.kind == mouth_select::Kind::None) {
+            if (choice.start_runner) maybe_restart_mouth();
             res.status = 503;
-            res.set_content(
-                json({{"error",
-                       "mouth is down on :8000. Starting it if llama. "
-                       "Ask Librarian again in a minute."}})
-                    .dump(),
-                "application/json");
+            const char* err = probes.paused
+                                  ? "mouth is paused and EXL3 is down on :8888."
+                                  : (choice.start_runner
+                                         ? "mouth is down on :8000. Starting it if llama. "
+                                           "Ask Librarian again in a minute."
+                                         : "mouth is down on :8000. :8888 holds the slot, "
+                                           "not starting another runner.");
+            res.set_content(json({{"error", err}}).dump(), "application/json");
             return;
         }
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
@@ -1242,24 +1305,60 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
             if (!out) throw std::runtime_error("cannot write temp transcript");
             out << text;
         }
-        std::string cmd = "\"" + exe + "\" \"" + session + "\" \"" + tmp + "\"";
-        std::vector<char> cmdline(cmd.begin(), cmd.end());
-        cmdline.push_back('\0');
-        STARTUPINFOA si{};
+        struct SlotHold {
+            bool on = false;
+            bool try_acquire() {
+                DWORD expected = 0;
+                const DWORD now = GetTickCount();
+                const DWORD stamp = now == 0 ? 1 : now;
+                on = g_coli_job_started_ms.compare_exchange_strong(
+                    expected, stamp, std::memory_order_acq_rel);
+                return on;
+            }
+            ~SlotHold() {
+                if (on) g_coli_job_started_ms.store(0, std::memory_order_release);
+            }
+        } slot_hold;
+        if (!slot_hold.try_acquire()) {
+            DeleteFileA(tmp.c_str());
+            res.status = 503;
+            res.set_content(
+                json({{"error",
+                       "mouth is generating (one GPU slot). Wait for serve."}})
+                    .dump(),
+                "application/json");
+            return;
+        }
+        std::vector<std::pair<std::wstring, std::wstring>> mouth_env = {
+            {L"GODBRAIN_MOUTH_PORT", std::to_wstring(choice.port)},
+        };
+        if (choice.port == 8888) {
+            const std::string id = ex.value("id", "");
+            if (!id.empty()) {
+                mouth_env.push_back({L"GODBRAIN_LIBRARIAN_MODEL", utf8_to_wide(id)});
+            }
+        }
+        std::vector<wchar_t> env = env_with(mouth_env);
+        const std::wstring cmd = L"\"" + utf8_to_wide(exe) + L"\" \"" +
+                                 utf8_to_wide(session) + L"\" \"" + utf8_to_wide(tmp) + L"\"";
+        std::vector<wchar_t> cmdline(cmd.begin(), cmd.end());
+        cmdline.push_back(L'\0');
+        STARTUPINFOW si{};
         si.cb = sizeof(si);
         si.dwFlags = STARTF_USESHOWWINDOW;
         si.wShowWindow = SW_HIDE;
         PROCESS_INFORMATION pi{};
-        HANDLE job = CreateJobObjectA(nullptr, nullptr);
+        HANDLE job = CreateJobObjectW(nullptr, nullptr);
         if (job) {
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
             jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             SetInformationJobObject(
                 job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
         }
-        const BOOL started = CreateProcessA(
+        const BOOL started = CreateProcessW(
             nullptr, cmdline.data(), nullptr, nullptr, FALSE,
-            CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi);
+            CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            env.data(), nullptr, &si, &pi);
         if (!started) {
             DeleteFileA(tmp.c_str());
             if (job) CloseHandle(job);
@@ -3858,15 +3957,18 @@ std::string run_colibri(
     } clear_generate;
     if (mouth_paused()) {
         const json ex = exl3_desk();
-        if (ex.value("up", false)) {
+        mouth_select::Probes probes;
+        probes.paused = true;
+        probes.exl3_up = ex.value("up", false);
+        const mouth_select::Choice choice = mouth_select::select(probes);
+        if (choice.kind == mouth_select::Kind::Exl3) {
             std::string id = ex.value("id", "");
             if (id.empty()) id = "qwen3.8-27b-exl3-3.5bpw";
-            const int port = ex.value("port", 8888);
-            std::cout << "[EXL3] chat at 127.0.0.1:" << port
+            std::cout << "[EXL3] chat at 127.0.0.1:" << choice.port
                       << " model=" << id << " (llama stays paused)" << std::endl;
             return run_colibri_serve(
                 system, user, on_token, on_ping, prior_user, prior_assistant,
-                spoken, tool_hint, "127.0.0.1", port, id, true);
+                spoken, tool_hint, "127.0.0.1", choice.port, id, true);
         }
         return "Error: mouth is paused (logs/mouth-pause.txt) and EXL3 "
                "is down on :8888. "
@@ -3874,13 +3976,20 @@ std::string run_colibri(
                "only if this slot is free. Do not Continue.";
     }
     const json coli = coli_serve_status();
-    if (coli.value("up", false)) {
-        if (coli.value("busy", false)) {
-            std::cout << "[COLIBRI] Serve is busy; refusing to stack a second slot"
-                      << std::endl;
-            return "Error: Colibri is still generating the previous answer "
-                   "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
-        }
+    mouth_select::Probes probes;
+    probes.llama_up = coli.value("up", false);
+    probes.llama_busy = coli.value("busy", false);
+    if (!probes.llama_up) {
+        probes.slot_held = telemetry::tcp_loopback_open(8888, 300);
+    }
+    const mouth_select::Choice choice = mouth_select::select(probes);
+    if (choice.busy) {
+        std::cout << "[COLIBRI] Serve is busy; refusing to stack a second slot"
+                  << std::endl;
+        return "Error: Colibri is still generating the previous answer "
+               "(one GPU slot). Wait until /status shows coli=serve, then ask again.";
+    }
+    if (choice.kind == mouth_select::Kind::Llama) {
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
         return run_colibri_serve(
             system, user, on_token, on_ping, prior_user, prior_assistant,
@@ -3889,7 +3998,7 @@ std::string run_colibri(
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
     const std::string mouth = load_mouth().value("label", "coli");
-    const bool starting = maybe_restart_mouth();
+    const bool starting = choice.start_runner && maybe_restart_mouth();
     if (starting) {
         return "Error: " + mouth +
                " is down on 127.0.0.1:8000. Starting it. "
