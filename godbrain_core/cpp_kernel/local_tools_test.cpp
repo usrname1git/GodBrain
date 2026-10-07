@@ -8,6 +8,10 @@
 
 #include <windows.h>
 
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
+#endif
+
 static bool expect(bool ok, const char* msg) {
     if (!ok) std::cerr << "FAIL " << msg << std::endl;
     return ok;
@@ -28,6 +32,101 @@ static unsigned long long file_size_or_zero(const char* path) {
     sz.LowPart = fad.nFileSizeLow;
     sz.HighPart = fad.nFileSizeHigh;
     return sz.QuadPart;
+}
+
+static bool file_absent(const char* path) {
+    return GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES;
+}
+
+static HMODULE load_winsqlite3() {
+    return LoadLibraryExW(L"winsqlite3.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+}
+
+struct SqliteFnProbe {
+    bool ready = false;
+    bool hex_in_b = false;
+    bool hex_in_a = false;
+    bool writefile_seen = false;
+    bool load_extension_seen = false;
+};
+
+static SqliteFnProbe g_fn_probe;
+
+static bool probe_eq(const char* s, const char* lit) {
+    return s && std::string(s) == lit;
+}
+
+static int __cdecl probe_sqlite_auth(void*, int code, const char* a, const char* b,
+                                     const char*, const char*) {
+    if (code != 31) return 0;
+    if (probe_eq(b, "hex")) g_fn_probe.hex_in_b = true;
+    if (probe_eq(a, "hex")) g_fn_probe.hex_in_a = true;
+    if (probe_eq(b, "writefile") || probe_eq(a, "writefile")) {
+        g_fn_probe.writefile_seen = true;
+        return 1;
+    }
+    if (probe_eq(b, "load_extension") || probe_eq(a, "load_extension")) {
+        g_fn_probe.load_extension_seen = true;
+        return 1;
+    }
+    return 0;
+}
+
+static SqliteFnProbe probe_sqlite_function_args() {
+    g_fn_probe = SqliteFnProbe{};
+    const HMODULE mod = load_winsqlite3();
+    if (!mod) return g_fn_probe;
+    using open_fn = int(__cdecl*)(const char*, void**, int, const char*);
+    using exec_fn = int(__cdecl*)(void*, const char*, void*, void*, char**);
+    using close_fn = int(__cdecl*)(void*);
+    using free_fn = void(__cdecl*)(void*);
+    using auth_fn = int(__cdecl*)(
+        void*, int(__cdecl*)(void*, int, const char*, const char*, const char*, const char*),
+        void*);
+    const auto open = reinterpret_cast<open_fn>(GetProcAddress(mod, "sqlite3_open_v2"));
+    const auto exec = reinterpret_cast<exec_fn>(GetProcAddress(mod, "sqlite3_exec"));
+    const auto close = reinterpret_cast<close_fn>(GetProcAddress(mod, "sqlite3_close"));
+    const auto sql_free = reinterpret_cast<free_fn>(GetProcAddress(mod, "sqlite3_free"));
+    const auto set_auth = reinterpret_cast<auth_fn>(GetProcAddress(mod, "sqlite3_set_authorizer"));
+    if (!open || !exec || !close || !set_auth) return g_fn_probe;
+    void* db = nullptr;
+    if (open(":memory:", &db, 2 | 4, nullptr) != 0 || !db) return g_fn_probe;
+    g_fn_probe.ready = true;
+    set_auth(db, probe_sqlite_auth, nullptr);
+    auto run = [&](const char* sql) {
+        char* err = nullptr;
+        exec(db, sql, nullptr, nullptr, &err);
+        if (err && sql_free) sql_free(err);
+    };
+    run("SELECT hex(1);");
+    run("SELECT writefile('C:/Temp/GitHub/godbrain-sqlite-writefile.txt','pwned');");
+    run("SELECT load_extension('x');");
+    close(db);
+    return g_fn_probe;
+}
+
+static bool write_sqlite_fixture(const char* path) {
+    DeleteFileA(path);
+    const HMODULE mod = load_winsqlite3();
+    if (!mod) return false;
+    using open_fn = int(__cdecl*)(const char*, void**, int, const char*);
+    using exec_fn = int(__cdecl*)(void*, const char*, void*, void*, char**);
+    using close_fn = int(__cdecl*)(void*);
+    const auto open =
+        reinterpret_cast<open_fn>(GetProcAddress(mod, "sqlite3_open_v2"));
+    const auto exec =
+        reinterpret_cast<exec_fn>(GetProcAddress(mod, "sqlite3_exec"));
+    const auto close =
+        reinterpret_cast<close_fn>(GetProcAddress(mod, "sqlite3_close"));
+    if (!open || !exec || !close) return false;
+    void* db = nullptr;
+    if (open(path, &db, 2 | 4, nullptr) != 0 || !db) return false;
+    char* err = nullptr;
+    const int rc = exec(
+        db, "CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('hello-sql');",
+        nullptr, nullptr, &err);
+    close(db);
+    return rc == 0;
 }
 
 static std::string env_var(const char* name) {
@@ -190,6 +289,181 @@ int main() {
         "*** TOOL\nname: run_reg\nargs: add HKCU\\Software\\GodBrainToolTest /f\n*** END\n";
     const std::string mres = local_tools::run_tools_from_text(mutate_reg);
     pass &= expect(mres.find("YOLO required") != std::string::npos, "reg add needs yolo");
+
+    const char* kSqlDb = "C:\\Temp\\GitHub\\godbrain-sqlite-contain.db";
+    const char* kSqlAttach = "C:\\Temp\\GitHub\\godbrain-sqlite-attach.db";
+    const char* kSqlWrite = "C:\\Temp\\GitHub\\godbrain-sqlite-writefile.txt";
+    const char* kSqlShell = "C:\\Temp\\GitHub\\godbrain-sqlite-shell.txt";
+    const char* kRegFile = "C:\\Temp\\GitHub\\godbrain-reg-export.reg";
+    const char* kRegOutside = "C:\\Windows\\Temp\\godbrain-reg-export.reg";
+    DeleteFileA(kSqlAttach);
+    DeleteFileA(kSqlWrite);
+    DeleteFileA(kSqlShell);
+    DeleteFileA(kRegFile);
+    DeleteFileA(kRegOutside);
+    pass &= expect(write_sqlite_fixture(kSqlDb), "sqlite fixture");
+    const SqliteFnProbe fn_probe = probe_sqlite_function_args();
+    pass &= expect(fn_probe.ready, "sqlite probe loaded");
+    pass &= expect(fn_probe.hex_in_b && !fn_probe.hex_in_a,
+                   "sqlite function name is the second authorizer arg");
+    const std::string sql_read =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: SELECT v FROM t\n*** END\n";
+    const std::string sql_read_res = local_tools::run_tools_from_text(sql_read);
+    pass &= expect(sql_read_res.find("hello-sql") != std::string::npos,
+                   "sqlite select");
+    pass &= expect(sql_read_res.find("exit=") == std::string::npos,
+                   "sqlite select launches no shell");
+    const std::string sql_write =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: INSERT INTO t VALUES ('nope')\n*** END\n";
+    const std::string sql_write_res = local_tools::run_tools_from_text(sql_write);
+    pass &= expect(sql_write_res.find("denied") != std::string::npos,
+                   "sqlite insert denied");
+    const std::string sql_after = local_tools::run_tools_from_text(sql_read);
+    pass &= expect(sql_after.find("hello-sql") != std::string::npos &&
+                       sql_after.find("nope") == std::string::npos,
+                   "sqlite insert wrote nothing");
+    const std::string sql_attach =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: ATTACH DATABASE 'C:/Temp/GitHub/godbrain-sqlite-attach.db' AS extra\n*** END\n";
+    const std::string sql_attach_res = local_tools::run_tools_from_text(sql_attach);
+    pass &= expect(sql_attach_res.find("denied: attach") != std::string::npos,
+                   "sqlite attach denied");
+    pass &= expect(file_absent(kSqlAttach), "sqlite attach created nothing");
+    const std::string sql_fn =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: SELECT writefile('C:/Temp/GitHub/godbrain-sqlite-writefile.txt','pwned')\n*** END\n";
+    const std::string sql_fn_res = local_tools::run_tools_from_text(sql_fn);
+    if (fn_probe.writefile_seen) {
+        pass &= expect(sql_fn_res.find("denied: writefile") != std::string::npos,
+                       "sqlite writefile denied");
+    } else {
+        pass &= expect(sql_fn_res.find("no such function") != std::string::npos,
+                       "sqlite writefile absent");
+    }
+    pass &= expect(file_absent(kSqlWrite), "sqlite writefile created nothing");
+    const std::string sql_load =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: SELECT load_extension('x')\n*** END\n";
+    const std::string sql_load_res = local_tools::run_tools_from_text(sql_load);
+    if (fn_probe.load_extension_seen) {
+        pass &= expect(sql_load_res.find("denied: load_extension") != std::string::npos,
+                       "sqlite load_extension denied");
+    } else {
+        pass &= expect(sql_load_res.find("no such function") != std::string::npos,
+                       "sqlite load_extension absent");
+    }
+    const std::string sql_small =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: SELECT length(randomblob(8))\n*** END\n";
+    const std::string sql_small_res = local_tools::run_tools_from_text(sql_small);
+    pass &= expect(sql_small_res.find("\n8\n") != std::string::npos, "sqlite small blob");
+    const std::string sql_huge =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: SELECT randomblob(500000000)\n*** END\n";
+    const std::string sql_huge_res = local_tools::run_tools_from_text(sql_huge);
+    pass &= expect(sql_huge_res.size() < 4096, "sqlite huge blob stays small");
+    pass &= expect(sql_huge_res.find("too big") != std::string::npos,
+                   "sqlite huge blob rejected");
+    if (sql_huge_res.size() >= 4096 ||
+        sql_huge_res.find("too big") == std::string::npos) {
+        std::cerr << "HUGE " << sql_huge_res.substr(0, 400) << std::endl;
+    }
+    const std::string sql_dot =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: .shell cmd /c echo pwned\n*** END\n";
+    const std::string sql_dot_res = local_tools::run_tools_from_text(sql_dot);
+    pass &= expect(sql_dot_res.find("denied: dot command") != std::string::npos,
+                   "sqlite dot command denied");
+    pass &= expect(file_absent(kSqlShell), "sqlite shell created nothing");
+    const std::string sql_pragma =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: PRAGMA writable_schema=ON\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(sql_pragma).find("denied") !=
+                       std::string::npos,
+                   "sqlite pragma setter denied");
+    const std::string sql_info =
+        std::string("*** TOOL\nname: run_sqlite3\npath: ") + kSqlDb +
+        "\nsql: PRAGMA table_info(t)\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(sql_info).find("v") !=
+                       std::string::npos,
+                   "sqlite table_info");
+    const std::string sql_out =
+        "*** TOOL\nname: run_sqlite3\npath: C:\\Windows\\Temp\\nope.db\n"
+        "sql: SELECT 1\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(sql_out).find("denied") !=
+                       std::string::npos,
+                   "sqlite outside jail denied");
+
+    const std::string reg_export =
+        std::string("*** TOOL\nname: run_reg\nargs: export HKCU\\Environment ") +
+        kRegFile + "\n*** END\n";
+    const std::string reg_off = local_tools::run_tools_from_text(reg_export);
+    pass &= expect(reg_off.find("YOLO required") != std::string::npos,
+                   "reg export needs yolo");
+    pass &= expect(file_absent(kRegFile), "reg export without yolo wrote nothing");
+    local_tools::set_yolo_minutes(1);
+    const std::string reg_outside =
+        std::string("*** TOOL\nname: run_reg\nargs: export HKCU\\Environment ") +
+        kRegOutside + "\n*** END\n";
+    const std::string reg_out_res = local_tools::run_tools_from_text(reg_outside);
+    pass &= expect(reg_out_res.find("denied") != std::string::npos,
+                   "reg export outside jail denied");
+    pass &= expect(file_absent(kRegOutside), "reg export outside wrote nothing");
+    const std::string reg_flag =
+        std::string("*** TOOL\nname: run_reg\nargs: export HKCU\\Environment ") +
+        kRegFile + " /f\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(reg_flag).find("denied") !=
+                       std::string::npos,
+                   "reg export rejects unknown flags");
+    pass &= expect(file_absent(kRegFile), "bad reg export wrote nothing");
+    const std::string reg_sam =
+        std::string("*** TOOL\nname: run_reg\nargs: export HKLM\\SAM ") + kRegFile +
+        "\n*** END\n";
+    pass &= expect(local_tools::run_tools_from_text(reg_sam).find("SAM") !=
+                       std::string::npos,
+                   "reg export sam denied");
+    pass &= expect(file_absent(kRegFile), "sam export wrote nothing");
+    const std::string reg_add =
+        "*** TOOL\nname: run_reg\nargs: add HKCU\\Software\\GodBrainToolRegExport "
+        "/v Sample /t REG_SZ /d hello-reg /f\n*** END\n";
+    const std::string reg_add_res = local_tools::run_tools_from_text(reg_add);
+    pass &= expect(reg_add_res.find("exit=0") != std::string::npos, "reg sample key");
+    const std::string reg_sample =
+        std::string("*** TOOL\nname: run_reg\nargs: export "
+                    "HKCU\\Software\\GodBrainToolRegExport ") +
+        kRegFile + "\n*** END\n";
+    const std::string reg_ok = local_tools::run_tools_from_text(reg_sample);
+    pass &= expect(reg_ok.find("exit=0") != std::string::npos, "reg export granted");
+    {
+        std::ifstream in(kRegFile, std::ios::binary);
+        std::string body((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+        const char wide_hello[] = {'h', '\0', 'e', '\0', 'l', '\0', 'l', '\0',
+                                   'o', '\0', '-', '\0', 'r', '\0', 'e', '\0',
+                                   'g', '\0'};
+        const bool ascii = body.find("hello-reg") != std::string::npos;
+        const bool utf16 =
+            body.find(std::string(wide_hello, sizeof(wide_hello))) != std::string::npos;
+        pass &= expect(ascii || utf16, "reg export file");
+    }
+    const std::string reg_del =
+        "*** TOOL\nname: run_reg\nargs: delete HKCU\\Software\\GodBrainToolRegExport "
+        "/f\n*** END\n";
+    const std::string reg_del_res = local_tools::run_tools_from_text(reg_del);
+    pass &= expect(reg_del_res.find("exit=0") != std::string::npos,
+                   "reg sample key deleted");
+    if (reg_del_res.find("exit=0") == std::string::npos) {
+        system("reg.exe delete HKCU\\Software\\GodBrainToolRegExport /f >nul 2>nul");
+    }
+    local_tools::set_yolo_minutes(0);
+    DeleteFileA(kSqlDb);
+    DeleteFileA(kSqlAttach);
+    DeleteFileA(kSqlWrite);
+    DeleteFileA(kSqlShell);
+    DeleteFileA(kRegFile);
+    DeleteFileA(kRegOutside);
 
     const std::string pwsh_inline =
         "*** TOOL\nname: run_pwsh\n<<<<\nWrite-Output 'desk-ok'\n>>>>\n*** END\n";

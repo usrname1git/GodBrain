@@ -1687,6 +1687,292 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
     return calls;
 }
 
+// winsqlite3, read-only. The sqlite3.exe shell still runs dot-commands and
+// file functions under -readonly, so this path never launches it.
+constexpr int kSqliteOk = 0;
+constexpr int kSqliteDeny = 1;
+constexpr int kSqliteOpenReadonly = 0x1;
+constexpr int kSqliteOpenUri = 0x40;
+constexpr int kSqliteAuthRead = 20;
+constexpr int kSqliteAuthSelect = 21;
+constexpr int kSqliteAuthTransaction = 22;
+constexpr int kSqliteAuthPragma = 19;
+constexpr int kSqliteAuthAttach = 24;
+constexpr int kSqliteAuthDetach = 25;
+constexpr int kSqliteAuthFunction = 31;
+constexpr int kSqliteAuthSavepoint = 32;
+constexpr int kSqliteAuthRecursive = 33;
+constexpr int kSqliteDbconfigFts3Tokenizer = 1004;
+constexpr int kSqliteDbconfigLoadExtension = 1005;
+constexpr int kSqliteDbconfigDefensive = 1010;
+constexpr int kSqliteDbconfigTrustedSchema = 1017;
+constexpr int kSqliteDbconfigAttachCreate = 1020;
+constexpr int kSqliteDbconfigAttachWrite = 1021;
+constexpr int kSqliteLimitLength = 0;
+constexpr int kSqliteLimitSqlLength = 1;
+constexpr int kSqliteLimitColumn = 2;
+constexpr int kSqliteLimitExprDepth = 3;
+constexpr int kSqliteLimitCompoundSelect = 4;
+constexpr int kSqliteLimitAttached = 7;
+constexpr size_t kSqliteMaxSql = 64 * 1024;
+constexpr size_t kSqliteMaxOut = 256 * 1024;
+constexpr size_t kSqliteMaxRows = 200;
+constexpr long long kSqliteHeapBytes = 32LL * 1024 * 1024;
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
+#endif
+
+struct SqliteApi {
+    HMODULE mod = nullptr;
+    int (__cdecl* open_v2)(const char*, void**, int, const char*) = nullptr;
+    int (__cdecl* close)(void*) = nullptr;
+    int (__cdecl* exec)(void*, const char*,
+                        int (__cdecl*)(void*, int, char**, char**), void*,
+                        char**) = nullptr;
+    void (__cdecl* sql_free)(void*) = nullptr;
+    const char* (__cdecl* errmsg)(void*) = nullptr;
+    int (__cdecl* set_authorizer)(void*,
+                                  int (__cdecl*)(void*, int, const char*,
+                                                 const char*, const char*,
+                                                 const char*),
+                                  void*) = nullptr;
+    int (__cdecl* db_config)(void*, int, int, int*) = nullptr;
+    int (__cdecl* limit)(void*, int, int) = nullptr;
+    long long (__cdecl* hard_heap)(long long) = nullptr;
+    void (__cdecl* progress)(void*, int, int (__cdecl*)(void*), void*) = nullptr;
+    bool ok() const {
+        return open_v2 && close && exec && sql_free && errmsg &&
+               set_authorizer && db_config && limit && progress;
+    }
+};
+
+struct SqliteQuery {
+    std::string text;
+    size_t row_count = 0;
+    bool denied = false;
+    bool timed_out = false;
+    bool truncated = false;
+    std::string deny_why;
+    ULONGLONG deadline = 0;
+};
+
+SqliteApi& sqlite_api() {
+    static SqliteApi api = [] {
+        SqliteApi a;
+        a.mod = LoadLibraryExW(L"winsqlite3.dll", nullptr,
+                               LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!a.mod) return a;
+        a.open_v2 = reinterpret_cast<decltype(a.open_v2)>(
+            GetProcAddress(a.mod, "sqlite3_open_v2"));
+        a.close = reinterpret_cast<decltype(a.close)>(
+            GetProcAddress(a.mod, "sqlite3_close"));
+        a.exec = reinterpret_cast<decltype(a.exec)>(
+            GetProcAddress(a.mod, "sqlite3_exec"));
+        a.sql_free = reinterpret_cast<decltype(a.sql_free)>(
+            GetProcAddress(a.mod, "sqlite3_free"));
+        a.errmsg = reinterpret_cast<decltype(a.errmsg)>(
+            GetProcAddress(a.mod, "sqlite3_errmsg"));
+        a.set_authorizer = reinterpret_cast<decltype(a.set_authorizer)>(
+            GetProcAddress(a.mod, "sqlite3_set_authorizer"));
+        a.db_config = reinterpret_cast<decltype(a.db_config)>(
+            GetProcAddress(a.mod, "sqlite3_db_config"));
+        a.limit = reinterpret_cast<decltype(a.limit)>(
+            GetProcAddress(a.mod, "sqlite3_limit"));
+        a.hard_heap = reinterpret_cast<decltype(a.hard_heap)>(
+            GetProcAddress(a.mod, "sqlite3_hard_heap_limit64"));
+        a.progress = reinterpret_cast<decltype(a.progress)>(
+            GetProcAddress(a.mod, "sqlite3_progress_handler"));
+        return a;
+    }();
+    return api;
+}
+
+bool pragma_arg_is_read(const std::string& name) {
+    static const char* kRead[] = {
+        "table_info",        "table_xinfo",     "index_list",
+        "index_info",        "index_xinfo",     "foreign_key_list",
+        "foreign_key_check", "integrity_check", "quick_check",
+        "database_list",     "collation_list",  "function_list",
+        "module_list",       "pragma_list",     "compile_options",
+        "stats",             nullptr};
+    for (int i = 0; kRead[i]; ++i) {
+        if (name == kRead[i]) return true;
+    }
+    return false;
+}
+
+bool sqlite_file_function(const std::string& name) {
+    return name == "writefile" || name == "readfile" || name == "edit" ||
+           name == "load_extension" || name == "fts3_tokenizer" ||
+           name == "sqlite3_load_extension";
+}
+
+int __cdecl sqlite_authorizer(void* user, int code, const char* a, const char* b,
+                              const char*, const char*) {
+    auto* q = static_cast<SqliteQuery*>(user);
+    auto deny = [&](const std::string& why) {
+        q->denied = true;
+        if (q->deny_why.empty()) q->deny_why = why;
+        return kSqliteDeny;
+    };
+    switch (code) {
+    case kSqliteAuthRead:
+    case kSqliteAuthSelect:
+    case kSqliteAuthTransaction:
+    case kSqliteAuthSavepoint:
+    case kSqliteAuthRecursive:
+        return kSqliteOk;
+    case kSqliteAuthPragma: {
+        const std::string name = ascii_lower(a ? a : "");
+        if (b && b[0] && !pragma_arg_is_read(name)) return deny("pragma setter");
+        return kSqliteOk;
+    }
+    case kSqliteAuthFunction: {
+        // sqlite3AuthCheck passes the function name in the second argument.
+        const std::string from_b = ascii_lower(b ? b : "");
+        const std::string from_a = ascii_lower(a ? a : "");
+        if (sqlite_file_function(from_b)) return deny(from_b);
+        if (!from_a.empty() && sqlite_file_function(from_a)) return deny(from_a);
+        return kSqliteOk;
+    }
+    case kSqliteAuthAttach:
+        return deny("attach");
+    case kSqliteAuthDetach:
+        return deny("detach");
+    default:
+        return deny("not a read");
+    }
+}
+
+int __cdecl sqlite_progress(void* user) {
+    auto* q = static_cast<SqliteQuery*>(user);
+    if (GetTickCount64() >= q->deadline) {
+        q->timed_out = true;
+        return 1;
+    }
+    return 0;
+}
+
+int __cdecl sqlite_row(void* user, int ncol, char** vals, char** names) {
+    auto* q = static_cast<SqliteQuery*>(user);
+    if (q->text.size() >= kSqliteMaxOut || q->row_count >= kSqliteMaxRows) {
+        q->truncated = true;
+        return 1;
+    }
+    auto append_cell = [&](const char* cell) {
+        if (q->text.size() >= kSqliteMaxOut) {
+            q->truncated = true;
+            return;
+        }
+        const std::string bit = cell ? cell : "";
+        const size_t room = kSqliteMaxOut - q->text.size();
+        q->text.append(bit, 0, (std::min)(bit.size(), room));
+    };
+    if (q->row_count == 0) {
+        for (int i = 0; i < ncol; ++i) {
+            if (i) q->text.push_back('|');
+            append_cell(names ? names[i] : "");
+        }
+        q->text.push_back('\n');
+    }
+    ++q->row_count;
+    for (int i = 0; i < ncol; ++i) {
+        if (i) q->text.push_back('|');
+        append_cell(vals ? vals[i] : "");
+    }
+    q->text.push_back('\n');
+    return q->truncated ? 1 : 0;
+}
+
+bool sqlite_dot_command(const std::string& sql) {
+    size_t i = 0;
+    while (i < sql.size()) {
+        while (i < sql.size() &&
+               (sql[i] == ' ' || sql[i] == '\t' || sql[i] == '\r')) {
+            ++i;
+        }
+        if (i < sql.size() && sql[i] == '.') return true;
+        while (i < sql.size() && sql[i] != '\n') ++i;
+        if (i < sql.size()) ++i;
+    }
+    return false;
+}
+
+std::string acp_to_utf8(const std::string& acp) {
+    if (acp.empty()) return "";
+    const int wn = MultiByteToWideChar(CP_ACP, 0, acp.c_str(), -1, nullptr, 0);
+    if (wn <= 0) return acp;
+    std::wstring wide(static_cast<size_t>(wn), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, acp.c_str(), -1, &wide[0], wn);
+    const int un = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0,
+                                       nullptr, nullptr);
+    if (un <= 0) return acp;
+    std::string utf(static_cast<size_t>(un), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, &utf[0], un, nullptr, nullptr);
+    if (!utf.empty() && utf.back() == '\0') utf.pop_back();
+    return utf;
+}
+
+std::string sqlite_uri(const std::string& full) {
+    std::string path = acp_to_utf8(full);
+    for (char& ch : path) {
+        if (ch == '\\') ch = '/';
+    }
+    static const char* kHex = "0123456789ABCDEF";
+    std::string enc;
+    enc.reserve(path.size() * 3);
+    for (unsigned char ch : path) {
+        const bool plain = std::isalnum(ch) || ch == '/' || ch == ':' ||
+                           ch == '.' || ch == '_' || ch == '-';
+        if (plain) {
+            enc.push_back(static_cast<char>(ch));
+        } else {
+            enc.push_back('%');
+            enc.push_back(kHex[ch >> 4]);
+            enc.push_back(kHex[ch & 0x0f]);
+        }
+    }
+    return "file:///" + enc + "?mode=ro";
+}
+
+bool sqlite_config(SqliteApi& api, void* db, int op, int on) {
+    return api.db_config(db, op, on, nullptr) == kSqliteOk;
+}
+
+bool split_reg_tokens(const std::string& args, std::vector<std::string>* tok,
+                      std::string* err) {
+    tok->clear();
+    size_t i = 0;
+    while (i < args.size()) {
+        while (i < args.size() &&
+               std::isspace(static_cast<unsigned char>(args[i]))) {
+            ++i;
+        }
+        if (i >= args.size()) break;
+        std::string cur;
+        if (args[i] == '"') {
+            ++i;
+            while (i < args.size() && args[i] != '"') {
+                cur.push_back(args[i]);
+                ++i;
+            }
+            if (i >= args.size() || args[i] != '"') {
+                if (err) *err = "unterminated quote";
+                return false;
+            }
+            ++i;
+        } else {
+            while (i < args.size() &&
+                   !std::isspace(static_cast<unsigned char>(args[i]))) {
+                cur.push_back(args[i]);
+                ++i;
+            }
+        }
+        tok->push_back(cur);
+    }
+    return true;
+}
+
 std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                           const std::unordered_set<std::string>* allowed) {
     std::ostringstream out;
@@ -1940,26 +2226,98 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_strings " << full << "\n"
                     << runp(exe, args, kToolTimeoutMs) << "\n";
             } else if (c.name == "run_sqlite3") {
-                if (c.sql.empty()) {
+                if (c.sql.empty() || trim(c.sql).empty()) {
                     out << "run_sqlite3: sql required\n";
+                    ok = false;
                     continue;
                 }
-                const std::string sql_l = ascii_lower(c.sql);
-                if (sql_l.find("attach") != std::string::npos ||
-                    sql_l.find(".shell") != std::string::npos ||
-                    sql_l.find("load_extension") != std::string::npos) {
-                    out << "run_sqlite3: sql not allowed\n";
+                if (c.sql.size() > kSqliteMaxSql ||
+                    c.sql.find('\0') != std::string::npos) {
+                    out << "run_sqlite3 denied: sql is too large\n";
+                    ok = false;
                     continue;
                 }
-                const std::string exe = find_exe("sqlite3");
-                if (exe.empty()) {
-                    out << "run_sqlite3: sqlite3.exe not found\n";
+                if (sqlite_dot_command(c.sql)) {
+                    out << "run_sqlite3 denied: dot command\n";
+                    ok = false;
                     continue;
                 }
-                const std::string args =
-                    "-readonly " + quote_path(full) + " " + quote_path(c.sql);
-                out << "run_sqlite3 " << full << "\n"
-                    << runp(exe, args, kToolTimeoutMs) << "\n";
+                SqliteApi& api = sqlite_api();
+                if (!api.ok()) {
+                    out << "run_sqlite3: winsqlite3.dll is not usable\n";
+                    ok = false;
+                    continue;
+                }
+                void* db = nullptr;
+                const std::string uri = sqlite_uri(full);
+                const int orc = api.open_v2(uri.c_str(), &db,
+                                            kSqliteOpenReadonly | kSqliteOpenUri,
+                                            nullptr);
+                if (orc != kSqliteOk || !db) {
+                    const char* why = db ? api.errmsg(db) : "open failed";
+                    out << "run_sqlite3: " << (why ? why : "open failed") << "\n";
+                    if (db) api.close(db);
+                    ok = false;
+                    continue;
+                }
+                const bool configured =
+                    sqlite_config(api, db, kSqliteDbconfigDefensive, 1) &&
+                    sqlite_config(api, db, kSqliteDbconfigLoadExtension, 0) &&
+                    sqlite_config(api, db, kSqliteDbconfigFts3Tokenizer, 0) &&
+                    sqlite_config(api, db, kSqliteDbconfigTrustedSchema, 0);
+                // Attach locks arrived in SQLite 3.49. An older winsqlite
+                // returns an error for an unknown opcode. ATTACH is already
+                // denied and the file is opened read-only.
+                sqlite_config(api, db, kSqliteDbconfigAttachCreate, 0);
+                sqlite_config(api, db, kSqliteDbconfigAttachWrite, 0);
+                char* setup_err = nullptr;
+                const int qrc =
+                    configured ? api.exec(db, "PRAGMA query_only=ON;", nullptr,
+                                          nullptr, &setup_err)
+                               : 1;
+                if (setup_err) {
+                    api.sql_free(setup_err);
+                    setup_err = nullptr;
+                }
+                if (!configured || qrc != kSqliteOk) {
+                    out << "run_sqlite3: read-only setup failed\n";
+                    api.close(db);
+                    ok = false;
+                    continue;
+                }
+                api.limit(db, kSqliteLimitLength, static_cast<int>(kSqliteMaxOut));
+                api.limit(db, kSqliteLimitSqlLength, static_cast<int>(kSqliteMaxSql));
+                api.limit(db, kSqliteLimitColumn, 100);
+                api.limit(db, kSqliteLimitExprDepth, 64);
+                api.limit(db, kSqliteLimitCompoundSelect, 32);
+                api.limit(db, kSqliteLimitAttached, 0);
+                const long long heap_before =
+                    api.hard_heap ? api.hard_heap(kSqliteHeapBytes) : 0;
+                SqliteQuery query;
+                query.deadline = GetTickCount64() + kToolTimeoutMs;
+                api.set_authorizer(db, sqlite_authorizer, &query);
+                api.progress(db, 4096, sqlite_progress, &query);
+                char* exec_err = nullptr;
+                const int erc = api.exec(db, c.sql.c_str(), sqlite_row, &query,
+                                         &exec_err);
+                std::string exec_why = exec_err ? exec_err : "";
+                if (exec_err) api.sql_free(exec_err);
+                api.close(db);
+                if (api.hard_heap) api.hard_heap(heap_before);
+                if (query.timed_out) {
+                    out << "run_sqlite3 denied: timeout\n";
+                    ok = false;
+                } else if (query.denied) {
+                    out << "run_sqlite3 denied: " << query.deny_why << "\n";
+                    ok = false;
+                } else if (erc != kSqliteOk && !query.truncated) {
+                    out << "run_sqlite3: "
+                        << (exec_why.empty() ? "query failed" : exec_why) << "\n";
+                    ok = false;
+                } else {
+                    out << "run_sqlite3 " << full << "\n" << query.text;
+                    if (query.truncated) out << "[truncated]\n";
+                }
             } else if (c.name == "search_local") {
                 std::string needle = c.args;
                 if (needle.empty()) needle = c.sql;
@@ -2128,17 +2486,78 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_reg: args required (query HKLM\\...)\n";
                 continue;
             }
-            const bool query =
-                w == "query" || w == "compare" || w == "export" || w == "flags";
+            const bool query = w == "query" || w == "compare" || w == "flags";
             const bool mutate = w == "add" || w == "delete" || w == "copy" ||
                                 w == "import" || w == "restore" || w == "load" ||
                                 w == "unload" || w == "save";
             if (w == "save" || w == "load" || w == "restore" || w == "unload") {
                 out << "run_reg denied: hive save/load/restore/unload is operator GO.\n";
+                ok = false;
                 continue;
             }
             if (contains_ci(args, "\\sam") || contains_ci(args, "\\security")) {
                 out << "run_reg denied: SAM/SECURITY hives are operator GO.\n";
+                ok = false;
+                continue;
+            }
+            if (w == "export") {
+                std::vector<std::string> tok;
+                std::string perr;
+                if (!split_reg_tokens(args, &tok, &perr)) {
+                    out << "run_reg export denied: " << perr << "\n";
+                    ok = false;
+                    continue;
+                }
+                if (tok.size() < 3 || tok[1].empty() || tok[2].empty()) {
+                    out << "run_reg export denied: key and filename required\n";
+                    ok = false;
+                    continue;
+                }
+                const std::string& key = tok[1];
+                const std::string& file = tok[2];
+                if (key.find('"') != std::string::npos ||
+                    file.find('"') != std::string::npos) {
+                    out << "run_reg export denied: bad key or filename\n";
+                    ok = false;
+                    continue;
+                }
+                std::string flags;
+                bool flags_ok = true;
+                for (size_t ti = 3; ti < tok.size(); ++ti) {
+                    const std::string flag = ascii_lower(tok[ti]);
+                    if (flag != "/y" && flag != "/reg:32" && flag != "/reg:64") {
+                        flags_ok = false;
+                        break;
+                    }
+                    flags += " " + flag;
+                }
+                if (!flags_ok) {
+                    out << "run_reg export denied: only /y /reg:32 /reg:64\n";
+                    ok = false;
+                    continue;
+                }
+                std::string jerr;
+                if (!path_is_granted(file, &jerr)) {
+                    out << "run_reg export denied: " << jerr << "\n";
+                    ok = false;
+                    continue;
+                }
+                const std::string dest = final_path(expand_env(file));
+                const DWORD attr = GetFileAttributesA(dest.c_str());
+                if (attr != INVALID_FILE_ATTRIBUTES &&
+                    (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                    out << "run_reg export denied: filename is a directory\n";
+                    ok = false;
+                    continue;
+                }
+                if (yolo_required_msg(out, "run_reg export")) {
+                    ok = false;
+                    continue;
+                }
+                const std::string built =
+                    "export " + quote_path(key) + " " + quote_path(dest) + flags;
+                const std::string exe = system32("reg.exe");
+                out << "run_reg export\n" << runp(exe, built, kToolTimeoutMs) << "\n";
                 continue;
             }
             if (!query && !mutate) {
@@ -2825,7 +3244,8 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "run_strings, run_sqlite3, run_pwsh, run_python, run_node, "
             "run_sysint, run_reg query, run_wevtutil, run_logman, "
             "run_schtasks /Query, run_host. "
-            "YOLO only: run_elevate (MinSudo/wsudo -A, not --ti); "
+            "YOLO only: reg export (output file must be a granted path); "
+            "run_elevate (MinSudo/wsudo -A, not --ti); "
             "acl_takeover / acl_release (wsudo -T TI, then takeown /R /A /SKIPSL "
             "and icacls Administrators:(OI)(CI)F, then restore the saved ACL). "
             "Never pskill/git push/DISM/reboot/Mongo. "
@@ -2958,7 +3378,9 @@ nlohmann::json openai_tool_defs(bool full) {
     tools.push_back(tool_fn(
         "run_strings", "strings64 on a granted file.", {{"path", path}}, {"path"}));
     tools.push_back(tool_fn(
-        "run_sqlite3", "Read-only sqlite3 SELECT/PRAGMA on a granted db.",
+        "run_sqlite3",
+        "Read-only SQL on a granted database. SELECT and read PRAGMA only. "
+        "No attach, writes, dot-commands, or file functions.",
         {{"path", path},
          {"sql", {{"type", "string"}, {"description", "SELECT or PRAGMA."}}}},
         {"path", "sql"}));
@@ -2971,7 +3393,9 @@ nlohmann::json openai_tool_defs(bool full) {
          {"args", args}},
         {"exe"}));
     tools.push_back(tool_fn(
-        "run_reg", "reg.exe. query always; add/delete need YOLO. No SAM/SECURITY.",
+        "run_reg",
+        "reg.exe. query, compare, and flags always. export needs YOLO and a "
+        "granted output file. add/delete need YOLO. No SAM/SECURITY.",
         {{"args", args}}, {"args"}));
     tools.push_back(tool_fn(
         "run_wevtutil", "wevtutil. qe/gl always; cl needs YOLO.",
