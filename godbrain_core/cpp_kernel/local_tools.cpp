@@ -1708,9 +1708,19 @@ constexpr int kSqliteDbconfigDefensive = 1010;
 constexpr int kSqliteDbconfigTrustedSchema = 1017;
 constexpr int kSqliteDbconfigAttachCreate = 1020;
 constexpr int kSqliteDbconfigAttachWrite = 1021;
+constexpr int kSqliteLimitLength = 0;
+constexpr int kSqliteLimitSqlLength = 1;
+constexpr int kSqliteLimitColumn = 2;
+constexpr int kSqliteLimitExprDepth = 3;
+constexpr int kSqliteLimitCompoundSelect = 4;
+constexpr int kSqliteLimitAttached = 7;
 constexpr size_t kSqliteMaxSql = 64 * 1024;
 constexpr size_t kSqliteMaxOut = 256 * 1024;
 constexpr size_t kSqliteMaxRows = 200;
+constexpr long long kSqliteHeapBytes = 32LL * 1024 * 1024;
+#ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
+#define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
+#endif
 
 struct SqliteApi {
     HMODULE mod = nullptr;
@@ -1727,10 +1737,12 @@ struct SqliteApi {
                                                  const char*),
                                   void*) = nullptr;
     int (__cdecl* db_config)(void*, int, int, int*) = nullptr;
+    int (__cdecl* limit)(void*, int, int) = nullptr;
+    long long (__cdecl* hard_heap)(long long) = nullptr;
     void (__cdecl* progress)(void*, int, int (__cdecl*)(void*), void*) = nullptr;
     bool ok() const {
         return open_v2 && close && exec && sql_free && errmsg &&
-               set_authorizer && db_config && progress;
+               set_authorizer && db_config && limit && progress;
     }
 };
 
@@ -1747,7 +1759,8 @@ struct SqliteQuery {
 SqliteApi& sqlite_api() {
     static SqliteApi api = [] {
         SqliteApi a;
-        a.mod = LoadLibraryA("winsqlite3.dll");
+        a.mod = LoadLibraryExW(L"winsqlite3.dll", nullptr,
+                               LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!a.mod) return a;
         a.open_v2 = reinterpret_cast<decltype(a.open_v2)>(
             GetProcAddress(a.mod, "sqlite3_open_v2"));
@@ -1763,6 +1776,10 @@ SqliteApi& sqlite_api() {
             GetProcAddress(a.mod, "sqlite3_set_authorizer"));
         a.db_config = reinterpret_cast<decltype(a.db_config)>(
             GetProcAddress(a.mod, "sqlite3_db_config"));
+        a.limit = reinterpret_cast<decltype(a.limit)>(
+            GetProcAddress(a.mod, "sqlite3_limit"));
+        a.hard_heap = reinterpret_cast<decltype(a.hard_heap)>(
+            GetProcAddress(a.mod, "sqlite3_hard_heap_limit64"));
         a.progress = reinterpret_cast<decltype(a.progress)>(
             GetProcAddress(a.mod, "sqlite3_progress_handler"));
         return a;
@@ -1811,8 +1828,11 @@ int __cdecl sqlite_authorizer(void* user, int code, const char* a, const char* b
         return kSqliteOk;
     }
     case kSqliteAuthFunction: {
-        const std::string name = ascii_lower(a ? a : "");
-        if (sqlite_file_function(name)) return deny(name);
+        // sqlite3AuthCheck passes the function name in the second argument.
+        const std::string from_b = ascii_lower(b ? b : "");
+        const std::string from_a = ascii_lower(a ? a : "");
+        if (sqlite_file_function(from_b)) return deny(from_b);
+        if (!from_a.empty() && sqlite_file_function(from_a)) return deny(from_a);
         return kSqliteOk;
     }
     case kSqliteAuthAttach:
@@ -2244,9 +2264,12 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     sqlite_config(api, db, kSqliteDbconfigDefensive, 1) &&
                     sqlite_config(api, db, kSqliteDbconfigLoadExtension, 0) &&
                     sqlite_config(api, db, kSqliteDbconfigFts3Tokenizer, 0) &&
-                    sqlite_config(api, db, kSqliteDbconfigTrustedSchema, 0) &&
-                    sqlite_config(api, db, kSqliteDbconfigAttachCreate, 0) &&
-                    sqlite_config(api, db, kSqliteDbconfigAttachWrite, 0);
+                    sqlite_config(api, db, kSqliteDbconfigTrustedSchema, 0);
+                // Attach locks arrived in SQLite 3.49. An older winsqlite
+                // returns an error for an unknown opcode. ATTACH is already
+                // denied and the file is opened read-only.
+                sqlite_config(api, db, kSqliteDbconfigAttachCreate, 0);
+                sqlite_config(api, db, kSqliteDbconfigAttachWrite, 0);
                 char* setup_err = nullptr;
                 const int qrc =
                     configured ? api.exec(db, "PRAGMA query_only=ON;", nullptr,
@@ -2262,6 +2285,14 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     ok = false;
                     continue;
                 }
+                api.limit(db, kSqliteLimitLength, static_cast<int>(kSqliteMaxOut));
+                api.limit(db, kSqliteLimitSqlLength, static_cast<int>(kSqliteMaxSql));
+                api.limit(db, kSqliteLimitColumn, 100);
+                api.limit(db, kSqliteLimitExprDepth, 64);
+                api.limit(db, kSqliteLimitCompoundSelect, 32);
+                api.limit(db, kSqliteLimitAttached, 0);
+                const long long heap_before =
+                    api.hard_heap ? api.hard_heap(kSqliteHeapBytes) : 0;
                 SqliteQuery query;
                 query.deadline = GetTickCount64() + kToolTimeoutMs;
                 api.set_authorizer(db, sqlite_authorizer, &query);
@@ -2272,6 +2303,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 std::string exec_why = exec_err ? exec_err : "";
                 if (exec_err) api.sql_free(exec_err);
                 api.close(db);
+                if (api.hard_heap) api.hard_heap(heap_before);
                 if (query.timed_out) {
                     out << "run_sqlite3 denied: timeout\n";
                     ok = false;
