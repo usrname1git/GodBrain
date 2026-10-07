@@ -121,5 +121,9 @@ int main() {
     const int snapshot = godbrain::memory::run_snapshot_self_test();
     const int identity = run_identity_fixture();
     const int bson = godbrain::memory::run_bson_text_self_test();
-    return (protocol == 0 && snapshot == 0 && identity == 0 && bson == 0) ? 0 : 1;
+    const int projected = godbrain::memory::run_projected_text_self_test();
+    const int rag = godbrain::memory::run_rag_text_self_test();
+    return (protocol == 0 && snapshot == 0 && identity == 0 && bson == 0 && projected == 0 && rag == 0)
+               ? 0
+               : 1;
 }

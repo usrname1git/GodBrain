@@ -2,6 +2,7 @@
 #include "godbrain/memory_store/embedding.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -75,6 +76,11 @@ bool iter_utf8(const bson_t* doc, const char* key, std::string* out) {
     if (s == nullptr) return false;
     out->assign(s, s + len);
     return true;
+}
+
+bool append_text(bson_t* doc, const char* key, const std::string& value) {
+    if (value.size() > static_cast<size_t>(INT_MAX)) return false;
+    return bson_append_utf8(doc, key, -1, value.data(), static_cast<int>(value.size()));
 }
 
 bool iter_oid(const bson_t* doc, const char* key, bson_oid_t* out) {
@@ -396,7 +402,12 @@ static bool upsert_document(
     BSON_APPEND_OID(&set, "node_id", &node_id);
     BSON_APPEND_UTF8(&set, "stable_id", stable.c_str());
     BSON_APPEND_UTF8(&set, "node_version", version.c_str());
-    BSON_APPEND_UTF8(&set, "content", content.c_str());
+    if (!append_text(&set, "content", content)) {
+        bson_destroy(&filter);
+        bson_destroy(&set);
+        if (err) *err = "rag content is too large";
+        return false;
+    }
     BSON_APPEND_UTF8(&set, "kind", kind.c_str());
     BSON_APPEND_UTF8(&set, "sector", sector.c_str());
     BSON_APPEND_UTF8(&set, "status", status.c_str());
@@ -1420,6 +1431,21 @@ bool rag_latest_time(
     bson_destroy(&proj);
     bson_destroy(&opts);
     return true;
+}
+
+int run_projected_text_self_test() {
+    std::string value = "a";
+    value.push_back('\0');
+    value.push_back('b');
+    bson_t doc = BSON_INITIALIZER;
+    if (!append_text(&doc, "content", value)) {
+        bson_destroy(&doc);
+        return 1;
+    }
+    std::string back;
+    const bool ok = iter_utf8(&doc, "content", &back);
+    bson_destroy(&doc);
+    return (ok && back == value) ? 0 : 1;
 }
 
 }  // namespace godbrain::memory

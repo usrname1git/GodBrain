@@ -187,6 +187,8 @@ bool store_query_skills(StoreHandle*, const QuerySkillsRequest&, QuerySkillsRece
     return false;
 }
 int run_bson_text_self_test() { return 0; }
+int run_projected_text_self_test() { return 0; }
+int run_rag_text_self_test() { return 0; }
 
 #else
 
@@ -216,6 +218,8 @@ static bool bson_ok(bool ok, const bson_error_t& error, std::string* err, const 
     return false;
 }
 
+static std::string trim_store(std::string s);
+
 static bool append_text(bson_t* doc, const char* key, const std::string& value) {
     if (value.size() > static_cast<size_t>(INT_MAX)) return false;
     return bson_append_utf8(doc, key, -1, value.data(), static_cast<int>(value.size()));
@@ -231,7 +235,8 @@ static bool iter_utf8(const bson_t* doc, const char* key, std::string* out) {
     return true;
 }
 
-static void append_node_lookup(bson_t* query, const std::string& id) {
+static void append_node_lookup(bson_t* query, const std::string& raw) {
+    const std::string id = trim_store(raw);
     if (looks_like_object_id(id)) {
         bson_oid_t oid;
         bson_oid_init_from_string(&oid, id.c_str());
@@ -1738,7 +1743,26 @@ int run_bson_text_self_test() {
     std::string back;
     const bool ok = iter_utf8(&doc, "content", &back);
     bson_destroy(&doc);
-    return (ok && back == value) ? 0 : 1;
+
+    bson_t padded_stable = BSON_INITIALIZER;
+    append_node_lookup(&padded_stable, "  " + std::string(64, 'a') + "\t");
+    std::string stable_back;
+    const bool stable_ok = iter_utf8(&padded_stable, "stable_id", &stable_back);
+    bson_iter_t id_it;
+    const bool stable_not_oid = !bson_iter_init_find(&id_it, &padded_stable, "_id");
+    bson_destroy(&padded_stable);
+
+    bson_t padded_oid = BSON_INITIALIZER;
+    append_node_lookup(&padded_oid, " 507f1f77bcf86cd799439011 ");
+    const bool oid_ok = bson_iter_init_find(&id_it, &padded_oid, "_id") && BSON_ITER_HOLDS_OID(&id_it);
+    std::string unexpected;
+    const bool oid_not_stable = !iter_utf8(&padded_oid, "stable_id", &unexpected);
+    bson_destroy(&padded_oid);
+
+    return (ok && back == value && stable_ok && stable_back == std::string(64, 'a') && stable_not_oid &&
+            oid_ok && oid_not_stable)
+               ? 0
+               : 1;
 }
 
 #endif

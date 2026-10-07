@@ -510,14 +510,30 @@ int main() {
 
     const std::string elev =
         "*** TOOL\nname: run_elevate\n<<<<\nwhoami\n>>>>\n*** END\n";
-    const std::string eres = local_tools::run_tools_from_text(elev);
+    bool elev_ok = true;
+    const std::string eres = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(elev), &elev_ok);
     pass &= expect(eres.find("YOLO required") != std::string::npos, "elevate needs yolo");
+    pass &= expect(!elev_ok, "elevate denial is not ok");
     const std::string acl_need =
         "*** TOOL\nname: acl_takeover\npath: C:\\Temp\\GitHub\\godbrain-acl-test\n"
         "*** END\n";
-    pass &= expect(local_tools::run_tools_from_text(acl_need).find("YOLO required") !=
-                       std::string::npos,
+    bool acl_ok = true;
+    const std::string acl_res = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(acl_need), &acl_ok);
+    pass &= expect(acl_res.find("YOLO required") != std::string::npos,
                    "acl takeover needs yolo");
+    pass &= expect(!acl_ok, "acl denial is not ok");
+    bool host_ok = true;
+    const std::string host_deny = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(
+            "*** TOOL\nname: run_wevtutil\nargs: cl System\n*** END\n"
+            "*** TOOL\nname: run_logman\nargs: start\n*** END\n"
+            "*** TOOL\nname: run_schtasks\nargs: /Run /TN GodBrainWatch\n*** END\n"
+            "*** TOOL\nname: run_host\nargs: ipconfig /flushdns\n*** END\n"),
+        &host_ok);
+    pass &= expect(host_deny.find("YOLO required") != std::string::npos, "host mutate needs yolo");
+    pass &= expect(!host_ok, "host mutate denial is not ok");
 
     const std::string gb_del =
         "*** TOOL\nname: run_schtasks\nargs: /Delete /TN GodBrainWatch /F\n*** END\n";
