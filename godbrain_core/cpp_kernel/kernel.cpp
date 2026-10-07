@@ -35,10 +35,23 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
     }
 
     try {
+        if (command_type == "execute_godbrain_script" ||
+            command_type == "propose_sovereign_architect_change") {
+            const std::string script = command_type == "execute_godbrain_script"
+                                           ? payload.value("command", "")
+                                           : payload.value("proposal_script", "");
+            const surgery::Outcome outcome = surgery::execute_self_command(script);
+            if (!outcome.ok) {
+                return {{"status", "error"},
+                        {"message", outcome.text},
+                        {"exit_code", outcome.exit_code}};
+            }
+            return {{"status", "success"},
+                    {"data", outcome.text},
+                    {"exit_code", outcome.exit_code}};
+        }
         json result;
-        if (command_type == "execute_godbrain_script") {
-            result = surgery::execute_self_command(payload.value("command", ""));
-        } else if (command_type == "save_godbrain_thought") {
+        if (command_type == "save_godbrain_thought") {
             result = memory::save_thought(payload);
         } else if (command_type == "query_recent_thoughts" ||
                    command_type == "query_constellation") {
@@ -62,8 +75,6 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
             result = memory::observe_host();
         } else if (command_type == "promote_godbrain_claim") {
             result = memory::promote_claim(payload);
-        } else if (command_type == "propose_sovereign_architect_change") {
-            result = surgery::execute_self_command(payload.value("proposal_script", ""));
         } else {
             return {{"status", "error"}, {"message", "Unknown command: " + command_type}};
         }

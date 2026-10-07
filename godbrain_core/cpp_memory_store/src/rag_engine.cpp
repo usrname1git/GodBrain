@@ -292,7 +292,10 @@ mongoc_collection_t* coll(RagEngine* e, const char* name) {
 bool iter_utf8(const bson_t* doc, const char* key, std::string* out) {
     bson_iter_t it;
     if (!bson_iter_init_find(&it, doc, key) || !BSON_ITER_HOLDS_UTF8(&it)) return false;
-    *out = bson_iter_utf8(&it, nullptr);
+    uint32_t len = 0;
+    const char* s = bson_iter_utf8(&it, &len);
+    if (s == nullptr) return false;
+    out->assign(s, s + len);
     return true;
 }
 
@@ -812,7 +815,11 @@ void iter_string_array(const bson_t* doc, const char* key, std::vector<std::stri
         return;
     }
     while (bson_iter_next(&sub)) {
-        if (BSON_ITER_HOLDS_UTF8(&sub)) out->push_back(bson_iter_utf8(&sub, nullptr));
+        if (BSON_ITER_HOLDS_UTF8(&sub)) {
+            uint32_t len = 0;
+            const char* s = bson_iter_utf8(&sub, &len);
+            if (s != nullptr) out->push_back(std::string(s, s + len));
+        }
     }
 }
 
@@ -1713,6 +1720,21 @@ HttpResponse rag_handle_request(RagEngine* engine, const HttpRequest& req) {
         return handle_skills(engine, req);
     }
     return api_error(404, "not_found");
+}
+
+int run_rag_text_self_test() {
+    std::string value = "a";
+    value.push_back('\0');
+    value.push_back('b');
+    bson_t doc = BSON_INITIALIZER;
+    if (!bson_append_utf8(&doc, "content", -1, value.data(), static_cast<int>(value.size()))) {
+        bson_destroy(&doc);
+        return 1;
+    }
+    std::string back;
+    const bool ok = iter_utf8(&doc, "content", &back);
+    bson_destroy(&doc);
+    return (ok && back == value) ? 0 : 1;
 }
 
 }  // namespace godbrain::memory

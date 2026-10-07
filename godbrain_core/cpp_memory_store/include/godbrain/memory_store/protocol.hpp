@@ -197,6 +197,8 @@ bool validate_promote_skill(const PromoteSkillRequest& r, std::string* err);
 bool validate_query_skills(const QuerySkillsRequest& r, std::string* err);
 bool allowed_status_transition(const std::string& from, const std::string& to);
 bool safe_extractor_id(const std::string& id);
+// 24 hex characters, the shape of a Mongo ObjectId. A 64-hex stable id is not.
+bool looks_like_object_id(const std::string& id);
 bool skill_profile_allowed(const std::string& profile);
 bool skill_profile_apply_only(const std::string& profile);
 bool skill_profile_suite_required(const std::string& profile);

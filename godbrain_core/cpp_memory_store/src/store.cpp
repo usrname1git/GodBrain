@@ -186,6 +186,9 @@ bool store_query_skills(StoreHandle*, const QuerySkillsRequest&, QuerySkillsRece
     if (err) *err = "mongo-c-driver not linked";
     return false;
 }
+int run_bson_text_self_test() { return 0; }
+int run_projected_text_self_test() { return 0; }
+int run_rag_text_self_test() { return 0; }
 
 #else
 
@@ -215,11 +218,32 @@ static bool bson_ok(bool ok, const bson_error_t& error, std::string* err, const 
     return false;
 }
 
+static std::string trim_store(std::string s);
+
+static bool append_text(bson_t* doc, const char* key, const std::string& value) {
+    if (value.size() > static_cast<size_t>(INT_MAX)) return false;
+    return bson_append_utf8(doc, key, -1, value.data(), static_cast<int>(value.size()));
+}
+
 static bool iter_utf8(const bson_t* doc, const char* key, std::string* out) {
     bson_iter_t it;
     if (!bson_iter_init_find(&it, doc, key) || !BSON_ITER_HOLDS_UTF8(&it)) return false;
-    *out = bson_iter_utf8(&it, nullptr);
+    uint32_t len = 0;
+    const char* s = bson_iter_utf8(&it, &len);
+    if (s == nullptr) return false;
+    out->assign(s, s + len);
     return true;
+}
+
+static void append_node_lookup(bson_t* query, const std::string& raw) {
+    const std::string id = trim_store(raw);
+    if (looks_like_object_id(id)) {
+        bson_oid_t oid;
+        bson_oid_init_from_string(&oid, id.c_str());
+        BSON_APPEND_OID(query, "_id", &oid);
+        return;
+    }
+    append_text(query, "stable_id", id);
 }
 
 static int64_t reply_matched(const bson_t* reply) {
@@ -724,7 +748,7 @@ bool store_ingest(
         BSON_APPEND_UTF8(&src_set, "source_hash", source_hash.c_str());
         BSON_APPEND_UTF8(&src_set, "source_type", payload.provenance.source_type.c_str());
         BSON_APPEND_UTF8(&src_set, "language", payload.provenance.language.c_str());
-        BSON_APPEND_UTF8(&src_set, "content", payload.raw_transcript.c_str());
+        append_text(&src_set, "content", payload.raw_transcript);
         BSON_APPEND_DATE_TIME(&src_set, "created_at", now);
         bson_t src_upd = BSON_INITIALIZER;
         BSON_APPEND_DOCUMENT(&src_upd, "$setOnInsert", &src_set);
@@ -778,7 +802,7 @@ bool store_ingest(
                 BSON_APPEND_INT32(&setc, "chunk_index", ch.index);
                 BSON_APPEND_INT32(&setc, "start_byte", ch.start_byte);
                 BSON_APPEND_INT32(&setc, "end_byte", ch.end_byte);
-                BSON_APPEND_UTF8(&setc, "text", ch.text.c_str());
+                append_text(&setc, "text", ch.text);
                 BSON_APPEND_INT32(&setc, "chunk_count", ch.count);
                 if (ch.has_confidence) BSON_APPEND_DOUBLE(&setc, "confidence", ch.confidence);
                 bson_t cupd = BSON_INITIALIZER;
@@ -922,7 +946,7 @@ bool store_ingest(
             BSON_APPEND_UTF8(&doc, "version", "v1");
             BSON_APPEND_UTF8(&doc, "kind", "claim");
             BSON_APPEND_UTF8(&doc, "sector", claim.type.c_str());
-            BSON_APPEND_UTF8(&doc, "content", claim.content.c_str());
+            append_text(&doc, "content", claim.content);
             BSON_APPEND_UTF8(&doc, "schema_version", payload.schema_version.c_str());
             BSON_APPEND_UTF8(&doc, "status", payload.trust_tier.c_str());
             BSON_APPEND_DOUBLE(&doc, "confidence", claim.confidence);
@@ -952,7 +976,7 @@ bool store_ingest(
             BSON_APPEND_UTF8(&doc, "version", "v1");
             BSON_APPEND_UTF8(&doc, "kind", "concept");
             BSON_APPEND_UTF8(&doc, "sector", "general");
-            BSON_APPEND_UTF8(&doc, "content", concept_text.c_str());
+            append_text(&doc, "content", concept_text);
             BSON_APPEND_UTF8(&doc, "schema_version", payload.schema_version.c_str());
             BSON_APPEND_UTF8(&doc, "status", payload.trust_tier.c_str());
             BSON_APPEND_DOUBLE(&doc, "confidence", 1.0);
@@ -973,7 +997,7 @@ bool store_ingest(
             BSON_APPEND_UTF8(&doc, "version", "v1");
             BSON_APPEND_UTF8(&doc, "kind", "opsec_candidate");
             BSON_APPEND_UTF8(&doc, "sector", "security");
-            BSON_APPEND_UTF8(&doc, "content", opsec.c_str());
+            append_text(&doc, "content", opsec);
             BSON_APPEND_UTF8(&doc, "schema_version", payload.schema_version.c_str());
             BSON_APPEND_UTF8(&doc, "status", payload.trust_tier.c_str());
             BSON_APPEND_DOUBLE(&doc, "confidence", 1.0);
@@ -996,7 +1020,7 @@ bool store_ingest(
             BSON_APPEND_UTF8(&doc, "version", "v1");
             BSON_APPEND_UTF8(&doc, "kind", "skill");
             BSON_APPEND_UTF8(&doc, "sector", sector.c_str());
-            BSON_APPEND_UTF8(&doc, "content", content.c_str());
+            append_text(&doc, "content", content);
             BSON_APPEND_UTF8(&doc, "skill_name", skill.name.c_str());
             BSON_APPEND_UTF8(&doc, "verification_profile", skill.verification_profile.c_str());
             BSON_APPEND_UTF8(&doc, "framework", skill.framework.c_str());
@@ -1107,13 +1131,7 @@ bool store_set_status(
     }
     mongoc_collection_t* nodes = coll(h, "knowledge_nodes");
     bson_t q = BSON_INITIALIZER;
-    bson_oid_t oid;
-    if (judgment.id.size() == 24 && bson_oid_is_valid(judgment.id.c_str(), 24)) {
-        bson_oid_init_from_string(&oid, judgment.id.c_str());
-        BSON_APPEND_OID(&q, "_id", &oid);
-    } else {
-        BSON_APPEND_UTF8(&q, "stable_id", judgment.id.c_str());
-    }
+    append_node_lookup(&q, judgment.id);
     mongoc_cursor_t* cur = mongoc_collection_find_with_opts(nodes, &q, nullptr, nullptr);
     const bson_t* found = nullptr;
     if (!mongoc_cursor_next(cur, &found)) {
@@ -1458,13 +1476,7 @@ bool store_promote_skill(
     if (!ensure_indexes(h, err)) return false;
     std::string origin = trim_store(request.origin_node_id);
     bson_t node_q = BSON_INITIALIZER;
-    if (origin.size() == 24 && bson_oid_is_valid(origin.c_str(), 24)) {
-        bson_oid_t oid;
-        bson_oid_init_from_string(&oid, origin.c_str());
-        BSON_APPEND_OID(&node_q, "_id", &oid);
-    } else {
-        BSON_APPEND_UTF8(&node_q, "_id", origin.c_str());
-    }
+    append_node_lookup(&node_q, origin);
     mongoc_collection_t* nodes = coll(h, "knowledge_nodes");
     mongoc_cursor_t* ncur = mongoc_collection_find_with_opts(nodes, &node_q, nullptr, nullptr);
     const bson_t* node = nullptr;
@@ -1566,7 +1578,7 @@ bool store_promote_skill(
     BSON_APPEND_UTF8(&filter, "name", request.name.c_str());
     bson_t set = BSON_INITIALIZER;
     BSON_APPEND_UTF8(&set, "version", "v1");
-    BSON_APPEND_UTF8(&set, "content", content.c_str());
+    append_text(&set, "content", content);
     BSON_APPEND_UTF8(&set, "origin_node_id", origin.c_str());
     BSON_APPEND_UTF8(&set, "origin_version", trim_store(request.origin_version).c_str());
     BSON_APPEND_UTF8(&set, "origin_hash", trim_store(request.origin_hash).c_str());
@@ -1717,6 +1729,40 @@ bool store_rebuild(StoreHandle* h, std::string* json_out, std::string* err) {
     if (!rebuild_rag_projection(h->client, h->db_name, &report, err)) return false;
     *json_out = rag_rebuild_report_json(report);
     return true;
+}
+
+int run_bson_text_self_test() {
+    std::string value = "a";
+    value.push_back('\0');
+    value.push_back('b');
+    bson_t doc = BSON_INITIALIZER;
+    if (!append_text(&doc, "content", value)) {
+        bson_destroy(&doc);
+        return 1;
+    }
+    std::string back;
+    const bool ok = iter_utf8(&doc, "content", &back);
+    bson_destroy(&doc);
+
+    bson_t padded_stable = BSON_INITIALIZER;
+    append_node_lookup(&padded_stable, "  " + std::string(64, 'a') + "\t");
+    std::string stable_back;
+    const bool stable_ok = iter_utf8(&padded_stable, "stable_id", &stable_back);
+    bson_iter_t id_it;
+    const bool stable_not_oid = !bson_iter_init_find(&id_it, &padded_stable, "_id");
+    bson_destroy(&padded_stable);
+
+    bson_t padded_oid = BSON_INITIALIZER;
+    append_node_lookup(&padded_oid, " 507f1f77bcf86cd799439011 ");
+    const bool oid_ok = bson_iter_init_find(&id_it, &padded_oid, "_id") && BSON_ITER_HOLDS_OID(&id_it);
+    std::string unexpected;
+    const bool oid_not_stable = !iter_utf8(&padded_oid, "stable_id", &unexpected);
+    bson_destroy(&padded_oid);
+
+    return (ok && back == value && stable_ok && stable_back == std::string(64, 'a') && stable_not_oid &&
+            oid_ok && oid_not_stable)
+               ? 0
+               : 1;
 }
 
 #endif

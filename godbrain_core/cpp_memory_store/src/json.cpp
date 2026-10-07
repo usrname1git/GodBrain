@@ -40,6 +40,45 @@ struct Parser {
 
     bool parse_value(Json* out);
 
+    static void append_utf8(std::string* dest, unsigned cp) {
+        if (cp < 0x80) {
+            dest->push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            dest->push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            dest->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            dest->push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            dest->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            dest->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            dest->push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            dest->push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            dest->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            dest->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+
+    bool read_u4(unsigned* cp) {
+        if (i + 4 > t.size()) {
+            fail("bad unicode escape");
+            return false;
+        }
+        unsigned v = 0;
+        for (int n = 0; n < 4; ++n) {
+            const char h = t[i++];
+            v <<= 4;
+            if (h >= '0' && h <= '9') v |= static_cast<unsigned>(h - '0');
+            else if (h >= 'a' && h <= 'f') v |= static_cast<unsigned>(h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') v |= static_cast<unsigned>(h - 'A' + 10);
+            else {
+                fail("bad unicode escape");
+                return false;
+            }
+        }
+        *cp = v;
+        return true;
+    }
+
     bool parse_string(std::string* out) {
         skip_ws();
         if (i >= t.size() || t[i] != '"') {
@@ -83,32 +122,29 @@ struct Parser {
                         out->push_back('\t');
                         break;
                     case 'u': {
-                        if (i + 4 > t.size()) {
-                            fail("bad unicode escape");
-                            return false;
-                        }
                         unsigned cp = 0;
-                        for (int n = 0; n < 4; ++n) {
-                            char h = t[i++];
-                            cp <<= 4;
-                            if (h >= '0' && h <= '9') cp |= static_cast<unsigned>(h - '0');
-                            else if (h >= 'a' && h <= 'f') cp |= static_cast<unsigned>(h - 'a' + 10);
-                            else if (h >= 'A' && h <= 'F') cp |= static_cast<unsigned>(h - 'A' + 10);
-                            else {
-                                fail("bad unicode escape");
-                                return false;
+                        if (!read_u4(&cp)) return false;
+                        // A surrogate is one UTF-16 unit. A valid pair is one
+                        // scalar; a lone unit is U+FFFD, matching encoding/json.
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            if (i + 6 <= t.size() && t[i] == '\\' && t[i + 1] == 'u') {
+                                const std::size_t save = i;
+                                i += 2;
+                                unsigned low = 0;
+                                if (!read_u4(&low)) return false;
+                                if (low >= 0xDC00 && low <= 0xDFFF) {
+                                    cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
+                                } else {
+                                    i = save;
+                                    cp = 0xFFFD;
+                                }
+                            } else {
+                                cp = 0xFFFD;
                             }
+                        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                            cp = 0xFFFD;
                         }
-                        if (cp < 0x80) {
-                            out->push_back(static_cast<char>(cp));
-                        } else if (cp < 0x800) {
-                            out->push_back(static_cast<char>(0xC0 | (cp >> 6)));
-                            out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-                        } else {
-                            out->push_back(static_cast<char>(0xE0 | (cp >> 12)));
-                            out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-                            out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-                        }
+                        append_utf8(out, cp);
                         break;
                     }
                     default:

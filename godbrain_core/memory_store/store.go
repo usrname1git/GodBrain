@@ -944,10 +944,7 @@ func (s *Store) SetNodeStatus(ctx context.Context, id, status, reasoning string)
 	}
 	reasoning = strings.Join(strings.Fields(reasoning), " ")
 
-	filter := bson.M{"stable_id": strings.TrimSpace(id)}
-	if objectID, err := primitive.ObjectIDFromHex(strings.TrimSpace(id)); err == nil {
-		filter = bson.M{"_id": objectID}
-	}
+	filter := knowledgeNodeFilter(id)
 
 	var node KnowledgeNode
 	if err := s.db.Collection("knowledge_nodes").FindOne(ctx, filter).Decode(&node); err != nil {
@@ -1052,18 +1049,24 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 	return ids, cursor.Err()
 }
 
+// knowledgeNodeFilter matches judgment lookup: a 24-hex ObjectId hits _id,
+// and any other id, including a 64-hex stable_id, hits stable_id.
+func knowledgeNodeFilter(id string) bson.M {
+	id = strings.TrimSpace(id)
+	if objectID, err := primitive.ObjectIDFromHex(id); err == nil {
+		return bson.M{"_id": objectID}
+	}
+	return bson.M{"stable_id": id}
+}
+
 // Ensures that the origin node exists, is verified, and the hash matches exactly.
 func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, originVer, originHash, schemaVer, expectedProfile string) (*Skill, error) {
 	nodesColl := s.db.Collection("knowledge_nodes")
+	originNodeID = strings.TrimSpace(originNodeID)
 
 	// 1. Fetch the origin node
 	var node KnowledgeNode
-
-	// Handle ObjectID vs string lookup gracefully
-	filter := bson.M{"_id": originNodeID}
-	if objID, parseErr := primitive.ObjectIDFromHex(originNodeID); parseErr == nil {
-		filter = bson.M{"_id": objID}
-	}
+	filter := knowledgeNodeFilter(originNodeID)
 
 	err := nodesColl.FindOne(ctx, filter).Decode(&node)
 	if err != nil {

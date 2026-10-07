@@ -2455,10 +2455,14 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 const bool mutate =
                     w == "stop" || w == "start" || w == "restart" ||
                     w == "pause" || w == "cont" || w == "setconfig";
-                if (mutate && yolo_required_msg(out, "psservice")) continue;
+                if (mutate && yolo_required_msg(out, "psservice")) {
+                    ok = false;
+                    continue;
+                }
             }
             if (sys_stem == "streams" && contains_ci(args, "-d") &&
                 yolo_required_msg(out, "streams -d")) {
+                ok = false;
                 continue;
             }
             const std::string want = c.exe.empty() ? (c.name == "run_sysint" ? c.path : c.name)
@@ -2564,7 +2568,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_reg denied: first word must be query/add/delete/...\n";
                 continue;
             }
-            if (mutate && yolo_required_msg(out, "run_reg " + w)) continue;
+            if (mutate && yolo_required_msg(out, "run_reg " + w)) {
+                ok = false;
+                continue;
+            }
             const std::string exe = system32("reg.exe");
             out << "run_reg " << w << "\n"
                 << runp(exe, args, kToolTimeoutMs) << "\n";
@@ -2589,7 +2596,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_wevtutil denied: use qe/gl/el (query) or cl (YOLO).\n";
                 continue;
             }
-            if (mutate && yolo_required_msg(out, "run_wevtutil " + w)) continue;
+            if (mutate && yolo_required_msg(out, "run_wevtutil " + w)) {
+                ok = false;
+                continue;
+            }
             const std::string exe = system32("wevtutil.exe");
             out << "run_wevtutil " << w << "\n"
                 << runp(exe, args, kToolTimeoutMs) << "\n";
@@ -2611,7 +2621,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_logman denied: query always; start/stop/create YOLO.\n";
                 continue;
             }
-            if (mutate && yolo_required_msg(out, "run_logman " + w)) continue;
+            if (mutate && yolo_required_msg(out, "run_logman " + w)) {
+                ok = false;
+                continue;
+            }
             const std::string exe = system32("logman.exe");
             out << "run_logman " << w << "\n"
                 << runp(exe, args, kToolTimeoutMs) << "\n";
@@ -2631,10 +2644,14 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_schtasks denied: /Query always; /Create /Change /Delete /Run YOLO.\n";
                 continue;
             }
-            if (!query && yolo_required_msg(out, "run_schtasks " + w)) continue;
+            if (!query && yolo_required_msg(out, "run_schtasks " + w)) {
+                ok = false;
+                continue;
+            }
             if (schtasks_destroys(w) && mentions_godbrain_task(args)) {
                 out << "run_schtasks denied: GodBrain* tasks are not deleted/disabled "
                        "from the mouth. Operator GO.\n";
+                ok = false;
                 continue;
             }
             const std::string exe = system32("schtasks.exe");
@@ -2685,10 +2702,12 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
             if (host == "ipconfig") {
                 if (contains_ci(args, "/release") || contains_ci(args, "/renew")) {
                     out << "run_host denied: ipconfig /release /renew needs operator GO.\n";
+                    ok = false;
                     continue;
                 }
                 if (contains_ci(args, "/flushdns") &&
                     yolo_required_msg(out, "ipconfig /flushdns")) {
+                    ok = false;
                     continue;
                 }
             }
@@ -2704,10 +2723,14 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     out << "run_host sc denied: query always; start/stop YOLO.\n";
                     continue;
                 }
-                if (mutate && yolo_required_msg(out, "sc " + w)) continue;
+                if (mutate && yolo_required_msg(out, "sc " + w)) {
+                    ok = false;
+                    continue;
+                }
                 if (mutate && protected_service(args)) {
                     out << "run_host denied: BFE/mpssvc/Dnscache/MongoDB/RPC stay up. "
                            "Operator GO.\n";
+                    ok = false;
                     continue;
                 }
             }
@@ -2821,7 +2844,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
         }
 
         if (c.name == "acl_takeover" || c.name == "acl_release") {
-            if (yolo_required_msg(out, c.name)) continue;
+            if (yolo_required_msg(out, c.name)) {
+                ok = false;
+                continue;
+            }
             if (c.path.empty()) {
                 out << c.name << ": path required\n";
                 continue;
@@ -2925,7 +2951,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
         }
 
         if (c.name == "run_elevate") {
-            if (yolo_required_msg(out, "run_elevate")) continue;
+            if (yolo_required_msg(out, "run_elevate")) {
+                ok = false;
+                continue;
+            }
             if (c.content.empty() && c.args.empty() && c.path.empty()) {
                 out << "run_elevate: command body or path required\n";
                 continue;

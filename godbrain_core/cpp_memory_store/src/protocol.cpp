@@ -332,6 +332,59 @@ std::string kind_stable_id(const std::string& prefix, const std::string& content
     return keccak256_hex(prefix + content);
 }
 
+bool looks_like_object_id(const std::string& id) {
+    if (id.size() != 24) return false;
+    for (unsigned char c : id) {
+        if (std::isxdigit(c) == 0) return false;
+    }
+    return true;
+}
+
+namespace {
+
+bool utf8_rune_start(unsigned char c) { return (c & 0xC0) != 0x80; }
+
+bool utf8_span_ok(const std::string& s, int start, int end) {
+    if (start < 0 || end > static_cast<int>(s.size()) || end <= start) return false;
+    if (start > 0 && !utf8_rune_start(static_cast<unsigned char>(s[static_cast<size_t>(start)]))) {
+        return false;
+    }
+    if (end < static_cast<int>(s.size()) &&
+        !utf8_rune_start(static_cast<unsigned char>(s[static_cast<size_t>(end)]))) {
+        return false;
+    }
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data() + start);
+    const unsigned char* last = reinterpret_cast<const unsigned char*>(s.data() + end);
+    while (p < last) {
+        if (*p < 0x80) {
+            ++p;
+            continue;
+        }
+        int need = 0;
+        if ((*p & 0xE0) == 0xC0 && *p >= 0xC2) need = 1;
+        else if ((*p & 0xF0) == 0xE0) need = 2;
+        else if ((*p & 0xF8) == 0xF0) need = 3;
+        else return false;
+        if (p + need >= last) return false;
+        const unsigned cp_lead = *p;
+        for (int n = 1; n <= need; ++n) {
+            if ((p[n] & 0xC0) != 0x80) return false;
+        }
+        if (need == 2) {
+            const unsigned cp = ((cp_lead & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+            if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
+        } else if (need == 3) {
+            const unsigned cp = ((cp_lead & 0x07) << 18) | ((p[1] & 0x3F) << 12) |
+                                ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+            if (cp < 0x10000 || cp > 0x10FFFF) return false;
+        }
+        p += static_cast<std::size_t>(need) + 1;
+    }
+    return true;
+}
+
+}  // namespace
+
 bool parse_evidence_span(const std::string& span, int* start, int* end) {
     if (span.size() < 5 || span.front() != '[' || span.back() != ']') return false;
     const std::string inner = span.substr(1, span.size() - 2);
@@ -370,7 +423,8 @@ bool validate_evidence_spans(
             return false;
         }
         int start = 0, end = 0;
-        if (!parse_evidence_span(span, &start, &end) || end > static_cast<int>(source.size())) {
+        if (!parse_evidence_span(span, &start, &end) || end > static_cast<int>(source.size()) ||
+            !utf8_span_ok(source, start, end)) {
             if (err) *err = "evidence_spans must be [start:end] byte ranges on the source";
             return false;
         }
@@ -1109,6 +1163,11 @@ int run_self_test() {
     check(!read_capped("", &capped, &err), "empty");
     err.clear();
     check(!read_capped(std::string(kMaxInputBytes + 1, 'a'), &capped, &err), "oversize");
+
+    check(looks_like_object_id("507f1f77bcf86cd799439011"), "oid-shape");
+    check(!looks_like_object_id(std::string(64, 'a')), "stable-id-not-oid");
+    check(!looks_like_object_id("507f1f77bcf86cd79943901"), "oid-short");
+    check(!looks_like_object_id("507f1f77bcf86cd79943901g"), "oid-nonhex");
 
     check(allowed_status_transition("candidate", "verified"), "cand-ver");
     check(allowed_status_transition("verified", "rejected"), "ver-rej");
