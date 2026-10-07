@@ -997,6 +997,26 @@ static json exl3_desk() {
     return out;
 }
 
+// Occupancy of an already-up EXL3 door. Call only after /v1/models said up,
+// so a down :8888 does not pay this timeout. /api/status stays on exl3_desk().
+// HTTP 200 with busy absent or false is idle. Unreadable, non-200, or a
+// non-boolean busy means the slot may be taken.
+static bool exl3_health_busy() {
+    httplib::Client client("127.0.0.1", 8888);
+    client.set_connection_timeout(0, 300000);
+    client.set_read_timeout(1, 0);
+    const auto probe = client.Get("/health");
+    if (!probe || probe->status != 200) return true;
+    try {
+        const json body = json::parse(probe->body);
+        if (!body.contains("busy")) return false;
+        if (!body["busy"].is_boolean()) return true;
+        return body["busy"].get<bool>();
+    } catch (const json::exception&) {
+        return true;
+    }
+}
+
 static json kernel_status_body() {
     json rag_health = json::object();
     httplib::Client health("127.0.0.1", 8084);
@@ -1173,15 +1193,19 @@ static std::string safe_session_id(std::string value) {
     return value;
 }
 
-static std::wstring utf8_to_wide(const std::string& text) {
+static std::wstring codepage_to_wide(const std::string& text, UINT cp) {
     if (text.empty()) return L"";
     const int n = MultiByteToWideChar(
-        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+        cp, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (n <= 0) return L"";
     std::wstring wide(static_cast<size_t>(n), L'\0');
     MultiByteToWideChar(
-        CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), n);
+        cp, 0, text.data(), static_cast<int>(text.size()), wide.data(), n);
     return wide;
+}
+
+static std::wstring utf8_to_wide(const std::string& text) {
+    return codepage_to_wide(text, CP_UTF8);
 }
 
 static std::vector<wchar_t> env_with(
@@ -1236,7 +1260,7 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
         if (probes.paused) {
             ex = exl3_desk();
             probes.exl3_up = ex.value("up", false);
-            probes.exl3_busy = slot;
+            probes.exl3_busy = slot || (probes.exl3_up && exl3_health_busy());
         } else {
             const json coli = coli_serve_status();
             probes.llama_up = coli.value("up", false);
@@ -1339,8 +1363,18 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
             }
         }
         std::vector<wchar_t> env = env_with(mouth_env);
-        const std::wstring cmd = L"\"" + utf8_to_wide(exe) + L"\" \"" +
-                                 utf8_to_wide(session) + L"\" \"" + utf8_to_wide(tmp) + L"\"";
+        // exe and tmp come from the ANSI APIs. The model id above is JSON UTF-8.
+        // Session is sanitized ASCII, so either code page matches.
+        const std::wstring exe_w = codepage_to_wide(exe, CP_ACP);
+        const std::wstring session_w = codepage_to_wide(session, CP_ACP);
+        const std::wstring tmp_w = codepage_to_wide(tmp, CP_ACP);
+        if (exe_w.empty() || session_w.empty() || tmp_w.empty()) {
+            DeleteFileA(tmp.c_str());
+            throw std::runtime_error(
+                "librarian path is not valid in the ANSI code page");
+        }
+        const std::wstring cmd = L"\"" + exe_w + L"\" \"" + session_w +
+                                 L"\" \"" + tmp_w + L"\"";
         std::vector<wchar_t> cmdline(cmd.begin(), cmd.end());
         cmdline.push_back(L'\0');
         STARTUPINFOW si{};
@@ -3960,7 +3994,16 @@ std::string run_colibri(
         mouth_select::Probes probes;
         probes.paused = true;
         probes.exl3_up = ex.value("up", false);
+        // This function already holds g_coli_job_started_ms. Do not OR that
+        // slot into exl3_busy or every paused chat looks busy.
+        probes.exl3_busy = probes.exl3_up && exl3_health_busy();
         const mouth_select::Choice choice = mouth_select::select(probes);
+        if (choice.busy) {
+            std::cout << "[EXL3] :8888 is generating; refusing to stack a second slot"
+                      << std::endl;
+            return "Error: EXL3 on :8888 is generating (one GPU slot). "
+                   "Wait, then ask again.";
+        }
         if (choice.kind == mouth_select::Kind::Exl3) {
             std::string id = ex.value("id", "");
             if (id.empty()) id = "qwen3.8-27b-exl3-3.5bpw";
