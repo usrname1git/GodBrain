@@ -2564,7 +2564,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "run_reg denied: first word must be query/add/delete/...\n";
                 continue;
             }
-            if (mutate && yolo_required_msg(out, "run_reg " + w)) continue;
+            if (mutate && yolo_required_msg(out, "run_reg " + w)) {
+                ok = false;
+                continue;
+            }
             const std::string exe = system32("reg.exe");
             out << "run_reg " << w << "\n"
                 << runp(exe, args, kToolTimeoutMs) << "\n";

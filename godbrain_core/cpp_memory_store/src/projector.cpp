@@ -70,7 +70,10 @@ bool create_index(
 bool iter_utf8(const bson_t* doc, const char* key, std::string* out) {
     bson_iter_t it;
     if (!bson_iter_init_find(&it, doc, key) || !BSON_ITER_HOLDS_UTF8(&it)) return false;
-    *out = bson_iter_utf8(&it, nullptr);
+    uint32_t len = 0;
+    const char* s = bson_iter_utf8(&it, &len);
+    if (s == nullptr) return false;
+    out->assign(s, s + len);
     return true;
 }
 

@@ -51,11 +51,19 @@ bool is_blank(const std::string& text) {
     return text.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
+Outcome failed(const std::string& text) {
+    Outcome out;
+    out.ok = false;
+    out.exit_code = -1;
+    out.text = text;
+    return out;
+}
+
 }  // namespace
 
-std::string execute_self_command(const std::string& command) {
+Outcome execute_self_command(const std::string& command) {
     if (is_blank(command)) {
-        return "CRITICAL FAILURE: surgery command is empty.";
+        return failed("CRITICAL FAILURE: surgery command is empty.");
     }
     std::cout << "[SURGERY] Executing self-command bytes=" << command.size() << std::endl;
 
@@ -78,7 +86,7 @@ std::string execute_self_command(const std::string& command) {
         close_handle(err_wr);
         close_handle(in_rd);
         close_handle(in_wr);
-        return "Error: Failed to create surgery pipes.";
+        return failed("Error: Failed to create surgery pipes.");
     }
     SetHandleInformation(out_rd, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(err_rd, HANDLE_FLAG_INHERIT, 0);
@@ -125,7 +133,7 @@ std::string execute_self_command(const std::string& command) {
         close_handle(err_rd);
         close_handle(in_wr);
         close_handle(job);
-        return "CRITICAL FAILURE executing command: CreateProcess failed.";
+        return failed("CRITICAL FAILURE executing command: CreateProcess failed.");
     }
     if (job && !AssignProcessToJobObject(job, pi.hProcess)) {
         TerminateProcess(pi.hProcess, 1);
@@ -136,7 +144,7 @@ std::string execute_self_command(const std::string& command) {
         close_handle(err_rd);
         close_handle(in_wr);
         close_handle(job);
-        return "CRITICAL FAILURE executing command: Job Object assign failed.";
+        return failed("CRITICAL FAILURE executing command: Job Object assign failed.");
     }
     ResumeThread(pi.hThread);
 
@@ -187,7 +195,7 @@ std::string execute_self_command(const std::string& command) {
         close_handle(err_rd);
         close_handle(in_wr);
         close_handle(job);
-        return "CRITICAL FAILURE: surgery timed out (60s).";
+        return failed("CRITICAL FAILURE: surgery timed out (60s).");
     }
 
     DWORD exit_code = 1;
@@ -222,7 +230,11 @@ std::string execute_self_command(const std::string& command) {
     if (out_msg.empty() && err_msg.empty()) {
         response << "(Command executed silently with no output)";
     }
-    return response.str();
+    Outcome out;
+    out.exit_code = static_cast<int>(exit_code);
+    out.ok = exit_code == 0;
+    out.text = response.str();
+    return out;
 }
 
 }  // namespace surgery

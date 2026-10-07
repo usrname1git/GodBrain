@@ -287,8 +287,11 @@ int main() {
 
     const std::string mutate_reg =
         "*** TOOL\nname: run_reg\nargs: add HKCU\\Software\\GodBrainToolTest /f\n*** END\n";
-    const std::string mres = local_tools::run_tools_from_text(mutate_reg);
+    bool mutate_ok = true;
+    const std::string mres = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(mutate_reg), &mutate_ok);
     pass &= expect(mres.find("YOLO required") != std::string::npos, "reg add needs yolo");
+    pass &= expect(!mutate_ok, "reg add denial is not ok");
 
     const char* kSqlDb = "C:\\Temp\\GitHub\\godbrain-sqlite-contain.db";
     const char* kSqlAttach = "C:\\Temp\\GitHub\\godbrain-sqlite-attach.db";
