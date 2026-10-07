@@ -1754,6 +1754,13 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
             if (c.exe.empty()) c.exe = strip_exe(c.name);
             c.name = "run_host";
         }
+        if (c.name != "run_sysint") {
+            const std::string stem = sysint_base(c.name);
+            if (sysint_allowed(stem) || sysint_banned(stem)) {
+                if (c.exe.empty()) c.exe = strip_exe(c.name);
+                c.name = "run_sysint";
+            }
+        }
         // nullptr keeps kernel self-reads and offline fixtures unrestricted.
         // An empty set is a speak-only hop: the schema was off, so deny.
         if (allowed != nullptr && allowed->find(c.name) == allowed->end()) {

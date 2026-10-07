@@ -370,6 +370,20 @@ int main() {
                        "aliased pwsh does not run");
         pass &= expect(file_size_or_zero(audit_file) == before,
                        "omitted tools write no audit");
+        const unsigned long long before_sys = file_size_or_zero(audit_file);
+        local_tools::Call sys_alias;
+        sys_alias.name = "clockres64";
+        bool sys_ok = true;
+        const std::string sys_out =
+            local_tools::execute_calls({sys_alias}, &sys_ok, &jail);
+        pass &= expect(!sys_ok, "file jail rejects clockres64");
+        pass &= expect(sys_out.find("run_sysint denied: not advertised") !=
+                           std::string::npos,
+                       "clockres64 follows the sysint allow");
+        pass &= expect(sys_out.find("exit=") == std::string::npos,
+                       "file-jail clockres64 starts no process");
+        pass &= expect(file_size_or_zero(audit_file) == before_sys,
+                       "file-jail clockres64 writes no audit");
 
         const auto full = schema_names(true);
         pass &= expect(full.count("run_pwsh") == 1, "full schema advertises pwsh");
@@ -384,6 +398,18 @@ int main() {
                        "advertised empty pwsh starts no process");
         pass &= expect(empty_out.find("not advertised") == std::string::npos,
                        "advertised empty pwsh is in the schema");
+        local_tools::Call sys_full;
+        sys_full.name = "clockres64";
+        sys_full.args = "\n";
+        bool sys_full_ok = true;
+        const std::string sys_full_out =
+            local_tools::execute_calls({sys_full}, &sys_full_ok, &full);
+        pass &= expect(sys_full_out.find("args must be one line") != std::string::npos,
+                       "full schema accepts clockres64");
+        pass &= expect(sys_full_out.find("not advertised") == std::string::npos,
+                       "advertised clockres64 is not an omit");
+        pass &= expect(sys_full_out.find("exit=") == std::string::npos,
+                       "newline clockres64 starts no process");
 
         const std::unordered_set<std::string> none;
         bool none_ok = true;

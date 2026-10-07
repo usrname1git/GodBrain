@@ -373,6 +373,19 @@ try {
     $ordinary = ($script:lastBody | ConvertFrom-Json).message
     if ($ordinary -notmatch '(?s)^Path: .+what is in here$') { throw "Ordinary Ask with a path lost its path prefix." }
     if ($script:lastAuthorization) { throw "Ordinary path Ask sent a bearer." }
+    $script:fixtureBusy = $true
+    $request.Path = ""
+    $request.Message = "/yolo off"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "what is in here"
+    Assert-Throws { Invoke-DeskAsk $request } "*already running*"
+    $script:fixtureBusy = $null
+    $request.Message = "/yolo off"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    $script:fixtureBusy = $false
     $request.Path = ""
     $request.Message = "/yolo 15"
     Remove-Item Env:GODBRAIN_API_TOKEN

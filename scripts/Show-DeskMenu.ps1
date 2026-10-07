@@ -594,11 +594,13 @@ function Invoke-DeskAsk($Request) {
         if ($res.cleanup_error) { $answer += "`r`nWarning: model memory cleanup failed: $($res.cleanup_error)" }
         return $answer
     }
-    $busy = Test-GenerateBusy
-    if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
-    if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
     $writeSlash = Test-DeskWriteSlash $text
     $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
+    if (-not $yoloOrJudge) {
+        $busy = Test-GenerateBusy
+        if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
+        if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
+    }
     if ($yoloOrJudge) {
         $text = $text.Trim()
     } elseif ($path) {
