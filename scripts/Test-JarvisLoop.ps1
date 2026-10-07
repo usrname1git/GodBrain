@@ -1,4 +1,7 @@
 # Jarvis loop score. Default is no GPU (tools + hop + edit + browser evidence).
+# Each offline test is compiled from the current sources. Objects go to
+# %TEMP%. The exe runs from cpp_kernel so repo_root() is this repo, then
+# the exe is removed. A leftover exe is not the score.
 # -LiveMouth is the shredder gauntlet: a small prompt must get a real reply.
 # -LiveJarvis is the analysis ask (one GPU slot, ~10s).
 #
@@ -49,141 +52,78 @@ function Test-BadReply([string]$Text) {
 }
 
 $kernelDir = Join-Path $RepoRoot "godbrain_core\cpp_kernel"
-function Invoke-KernelTest([string]$Name, [string]$ExeName) {
-    $exe = Join-Path $kernelDir $ExeName
-    if (-not (Test-Path -LiteralPath $exe)) {
-        Add-Task $Name $false 0 "missing $exe (build it)"
-        return
+
+function Get-ClPrefix([string]$TaskName) {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        return ""
     }
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath $exe -WorkingDirectory $kernelDir -Wait -PassThru -NoNewWindow
-    $sw.Stop()
-    Add-Task $Name ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
-        if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
-    )
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere)) {
+        Add-Task $TaskName $false 0 "cl.exe is not on PATH"
+        return $null
+    }
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ([string]::IsNullOrWhiteSpace($vsPath)) {
+        Add-Task $TaskName $false 0 "Visual Studio x64 tools were not found"
+        return $null
+    }
+    $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+    return "call `"$vcvars`" >nul && "
 }
 
-function Invoke-SurgeryOutcomeTest {
-    $build = Join-Path $env:TEMP "GodBrain-surgery-outcome"
-    if (-not (Test-Path -LiteralPath $build)) {
-        New-Item -ItemType Directory -Path $build | Out-Null
+function Invoke-CompiledTest([string]$Name, [string[]]$Sources) {
+    $objDir = Join-Path $env:TEMP ("GodBrain-" + $Name)
+    if (-not (Test-Path -LiteralPath $objDir)) {
+        New-Item -ItemType Directory -Path $objDir | Out-Null
     }
-    $prefix = ""
-    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path -LiteralPath $vswhere)) {
-            Add-Task "surgery_outcome_test" $false 0 "cl.exe is not on PATH"
-            return
-        }
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ([string]::IsNullOrWhiteSpace($vsPath)) {
-            Add-Task "surgery_outcome_test" $false 0 "Visual Studio x64 tools were not found"
-            return
-        }
-        $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-        $prefix = "call `"$vcvars`" >nul && "
+    $prefix = Get-ClPrefix $Name
+    if ($null -eq $prefix) { return }
+    $quoted = @(foreach ($src in $Sources) {
+        '"' + (Join-Path $kernelDir $src) + '"'
+    })
+    # repo_root() is two directories above the module. local_edit writes its
+    # fixture beside the exe and applies godbrain_core\cpp_kernel\<file>.
+    # The exe therefore runs from cpp_kernel, then this function removes it.
+    $exe = Join-Path $kernelDir ($Name + ".exe")
+    $fixture = Join-Path $kernelDir "local_edit_fixture.txt"
+    $savedFixture = $null
+    if ($Name -eq "local_edit_test" -and (Test-Path -LiteralPath $fixture)) {
+        $savedFixture = [System.IO.File]::ReadAllBytes($fixture)
     }
-    $testSrc = Join-Path $kernelDir "surgery_outcome_test.cpp"
-    $surgerySrc = Join-Path $kernelDir "surgery.cpp"
-    $exe = Join-Path $build "surgery_outcome_test.exe"
-    $command = $prefix + "cl /nologo /std:c++17 /EHsc /W4 /Fo`"$build\\`" /Fe:`"$exe`" `"$testSrc`" `"$surgerySrc`""
+    $command = $prefix + "cl /nologo /std:c++17 /EHsc /W4 /Fo`"$objDir\\`" /Fe:`"$exe`" " + ($quoted -join " ")
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    & (Join-Path $env:SystemRoot "System32\cmd.exe") /c $command
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        & (Join-Path $env:SystemRoot "System32\cmd.exe") /c $command
+        if ($LASTEXITCODE -ne 0) {
+            $sw.Stop()
+            Add-Task $Name $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
+            return
+        }
+        $p = Start-Process -FilePath $exe -WorkingDirectory $kernelDir -Wait -PassThru -NoNewWindow
         $sw.Stop()
-        Add-Task "surgery_outcome_test" $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
-        return
+        Add-Task $Name ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
+            if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
+        )
+    } finally {
+        Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+        foreach ($ext in @(".ilk", ".pdb")) {
+            $side = [System.IO.Path]::ChangeExtension($exe, $ext)
+            Remove-Item -LiteralPath $side -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $savedFixture) {
+            [System.IO.File]::WriteAllBytes($fixture, $savedFixture)
+        }
     }
-    $p = Start-Process -FilePath $exe -WorkingDirectory $build -Wait -PassThru -NoNewWindow
-    $sw.Stop()
-    Add-Task "surgery_outcome_test" ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
-        if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
-    )
 }
 
-function Invoke-JarvisJobTest {
-    $build = Join-Path $env:TEMP "GodBrain-jarvis-job"
-    if (-not (Test-Path -LiteralPath $build)) {
-        New-Item -ItemType Directory -Path $build | Out-Null
-    }
-    $prefix = ""
-    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path -LiteralPath $vswhere)) {
-            Add-Task "jarvis_job_test" $false 0 "cl.exe is not on PATH"
-            return
-        }
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ([string]::IsNullOrWhiteSpace($vsPath)) {
-            Add-Task "jarvis_job_test" $false 0 "Visual Studio x64 tools were not found"
-            return
-        }
-        $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-        $prefix = "call `"$vcvars`" >nul && "
-    }
-    $testSrc = Join-Path $kernelDir "jarvis_job_test.cpp"
-    $jobSrc = Join-Path $kernelDir "jarvis_job.cpp"
-    $exe = Join-Path $build "jarvis_job_test.exe"
-    $command = $prefix + "cl /nologo /std:c++17 /EHsc /W4 /Fo`"$build\\`" /Fe:`"$exe`" `"$testSrc`" `"$jobSrc`""
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    & (Join-Path $env:SystemRoot "System32\cmd.exe") /c $command
-    if ($LASTEXITCODE -ne 0) {
-        $sw.Stop()
-        Add-Task "jarvis_job_test" $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
-        return
-    }
-    $p = Start-Process -FilePath $exe -WorkingDirectory $build -Wait -PassThru -NoNewWindow
-    $sw.Stop()
-    Add-Task "jarvis_job_test" ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
-        if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
-    )
-}
-
-function Invoke-MouthSelectTest {
-    $build = Join-Path $env:TEMP "GodBrain-mouth-select"
-    if (-not (Test-Path -LiteralPath $build)) {
-        New-Item -ItemType Directory -Path $build | Out-Null
-    }
-    $prefix = ""
-    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path -LiteralPath $vswhere)) {
-            Add-Task "mouth_select_test" $false 0 "cl.exe is not on PATH"
-            return
-        }
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ([string]::IsNullOrWhiteSpace($vsPath)) {
-            Add-Task "mouth_select_test" $false 0 "Visual Studio x64 tools were not found"
-            return
-        }
-        $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-        $prefix = "call `"$vcvars`" >nul && "
-    }
-    $testSrc = Join-Path $kernelDir "mouth_select_test.cpp"
-    $exe = Join-Path $build "mouth_select_test.exe"
-    $command = $prefix + "cl /nologo /std:c++17 /EHsc /W4 /Fo`"$build\\`" /Fe:`"$exe`" `"$testSrc`""
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    & (Join-Path $env:SystemRoot "System32\cmd.exe") /c $command
-    if ($LASTEXITCODE -ne 0) {
-        $sw.Stop()
-        Add-Task "mouth_select_test" $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
-        return
-    }
-    $p = Start-Process -FilePath $exe -WorkingDirectory $build -Wait -PassThru -NoNewWindow
-    $sw.Stop()
-    Add-Task "mouth_select_test" ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
-        if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
-    )
-}
-
-Invoke-SurgeryOutcomeTest
-Invoke-JarvisJobTest
-Invoke-MouthSelectTest
-Invoke-KernelTest "local_tools_test" "local_tools_test.exe"
-Invoke-KernelTest "tool_round_test" "tool_round_test.exe"
-Invoke-KernelTest "local_edit_test" "local_edit_test.exe"
-Invoke-KernelTest "browser_evidence_test" "browser_evidence_test.exe"
-Invoke-KernelTest "unused49_test" "unused49_test.exe"
+Invoke-CompiledTest "surgery_outcome_test" @("surgery_outcome_test.cpp", "surgery.cpp")
+Invoke-CompiledTest "jarvis_job_test" @("jarvis_job_test.cpp", "jarvis_job.cpp")
+Invoke-CompiledTest "mouth_select_test" @("mouth_select_test.cpp")
+Invoke-CompiledTest "local_tools_test" @("local_tools_test.cpp", "local_tools.cpp")
+Invoke-CompiledTest "tool_round_test" @("tool_round_test.cpp")
+Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")
+Invoke-CompiledTest "browser_evidence_test" @("browser_evidence_test.cpp")
+Invoke-CompiledTest "unused49_test" @("unused49_test.cpp")
 
 if ($LiveMouth) {
     $ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"
