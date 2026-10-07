@@ -550,6 +550,15 @@ function Wait-DeskImageResult([string]$RequestId) {
     throw "Image request $RequestId exceeded the two-hour wait. It was not cancelled or resubmitted; outputs are saved under C:\nvme\godbrain-sites\qwen-image."
 }
 
+function Test-DeskWriteSlash([string]$Text) {
+    $trimmed = $Text.Trim()
+    if ($trimmed -match '^(?i)/(?:verify|reject)\b') { return $true }
+    if ($trimmed -match '^(?i)/yolo\s+(\S+)') {
+        return $Matches[1] -notmatch '^(?i)(?:status|\?)$'
+    }
+    return $false
+}
+
 function Invoke-DeskAsk($Request) {
     $text = [string]$Request.Message
     $path = ConvertTo-DeskAskPath ([string]$Request.Path)
@@ -585,18 +594,33 @@ function Invoke-DeskAsk($Request) {
         if ($res.cleanup_error) { $answer += "`r`nWarning: model memory cleanup failed: $($res.cleanup_error)" }
         return $answer
     }
-    $busy = Test-GenerateBusy
-    if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
-    if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
-    if ($path) {
+    $writeSlash = Test-DeskWriteSlash $text
+    $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
+    if (-not $yoloOrJudge) {
+        $busy = Test-GenerateBusy
+        if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
+        if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
+    }
+    if ($yoloOrJudge) {
+        $text = $text.Trim()
+    } elseif ($path) {
         if ([string]::IsNullOrWhiteSpace($text)) { $text = "Read this path and say what the file or folder is." }
         $text = "Path: $path`n`n$text"
     } elseif (-not (Test-DeskPathToken $text)) {
         if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
     }
     $body = @{ message = $text } | ConvertTo-Json -Compress
-    $res = Invoke-RestMethod "http://127.0.0.1:8083/api/chat" -Method Post `
-        -Body $body -ContentType "application/json; charset=utf-8" -TimeoutSec 180
+    $chat = @{
+        Uri = "http://127.0.0.1:8083/api/chat"
+        Method = "Post"
+        Body = $body
+        ContentType = "application/json; charset=utf-8"
+        TimeoutSec = 180
+    }
+    if ($writeSlash -and -not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
+        $chat.Headers = @{ Authorization = "Bearer " + $env:GODBRAIN_API_TOKEN }
+    }
+    $res = Invoke-RestMethod @chat
     if ($res.response) { return [string]$res.response }
     if ($res.error) { throw ([string]$res.error) }
     throw "Kernel returned no chat response."

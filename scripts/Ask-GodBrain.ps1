@@ -31,10 +31,28 @@ if ([string]::IsNullOrWhiteSpace($message)) {
 $timeout = 180
 if ($message.StartsWith("/")) { $timeout = 20 }
 
+function Test-GodBrainWriteSlash([string]$Text) {
+    $trimmed = $Text.Trim()
+    if ($trimmed -match '^(?i)/(?:verify|reject)\b') { return $true }
+    if ($trimmed -match '^(?i)/yolo\s+(\S+)') {
+        return $Matches[1] -notmatch '^(?i)(?:status|\?)$'
+    }
+    return $false
+}
+
 $body = @{ message = $message } | ConvertTo-Json -Compress
+$invoke = @{
+    Uri = ($Base + "/api/chat")
+    Method = "POST"
+    ContentType = "application/json"
+    Body = $body
+    TimeoutSec = $timeout
+}
+if ((Test-GodBrainWriteSlash $message) -and -not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
+    $invoke.Headers = @{ Authorization = "Bearer " + $env:GODBRAIN_API_TOKEN }
+}
 try {
-    $r = Invoke-RestMethod -Uri ($Base + "/api/chat") -Method POST `
-        -ContentType "application/json" -Body $body -TimeoutSec $timeout
+    $r = Invoke-RestMethod @invoke
 } catch {
     throw "Ask-GodBrain failed: $_"
 }

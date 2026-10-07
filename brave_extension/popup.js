@@ -129,9 +129,52 @@ document.addEventListener('DOMContentLoaded', () => {
         appendMessage('user-msg', '[USER]', text);
         input.value = '';
 
+        function writeSlash(value) {
+            if (/^\/(?:verify|reject)\b/i.test(value)) return true;
+            const yolo = String(value).match(/^\/yolo\s+(\S+)/i);
+            if (!yolo) return false;
+            return !/^(?:status|\?)$/i.test(yolo[1]);
+        }
+
         const evidence = await collectEvidence();
         const body = { message: text };
         if (evidence) body.browser_evidence = evidence;
+        const headers = { 'Content-Type': 'application/json' };
+        if (writeSlash(text)) {
+            let needToken = false;
+            try {
+                const statusRes = await fetch('http://127.0.0.1:8083/api/status');
+                if (statusRes.ok) {
+                    const statusBody = await statusRes.json();
+                    needToken = !!statusBody.writes_need_token;
+                }
+            } catch (e) {
+                needToken = false;
+            }
+            if (needToken) {
+                let token = tokenInput ? tokenInput.value.trim() : '';
+                if (!token && chrome.storage && chrome.storage.local) {
+                    const stored = await new Promise(resolve => {
+                        chrome.storage.local.get(['godbrain_api_token'], value => resolve(value || {}));
+                    });
+                    token = String((stored && stored.godbrain_api_token) || '').trim();
+                }
+                if (!token) {
+                    const entered = window.prompt(
+                        'Paste GODBRAIN_API_TOKEN. Cancel leaves this write closed.');
+                    if (!entered || !entered.trim()) {
+                        appendMessage('err-msg', '[ERR]', 'Bearer required. This write was not sent.');
+                        return;
+                    }
+                    token = entered.trim();
+                    if (tokenInput) tokenInput.value = token;
+                    if (chrome.storage && chrome.storage.local) {
+                        chrome.storage.local.set({ godbrain_api_token: token });
+                    }
+                }
+                headers.Authorization = 'Bearer ' + token;
+            }
+        }
 
         appendMessage('sys-msg', '[SYS]', 'Asking GodBrain', 'loading');
 
@@ -139,7 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             response = await fetch('http://127.0.0.1:8083/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify(body)
             });
         } catch (err) {
@@ -152,7 +195,21 @@ document.addEventListener('DOMContentLoaded', () => {
         removeLoadingIndicator();
 
         if (!response.ok) {
-            appendMessage('err-msg', '[ERR]', `API returned ${response.status} ${response.statusText}`.trim());
+            let detail = '';
+            try {
+                const errBody = await response.json();
+                if (errBody && errBody.error) detail = String(errBody.error);
+            } catch (e) {
+                detail = '';
+            }
+            if ((response.status === 401 || response.status === 403) &&
+                detail.indexOf('not configured') < 0) {
+                if (tokenInput) tokenInput.value = '';
+                if (chrome.storage && chrome.storage.local) {
+                    chrome.storage.local.remove('godbrain_api_token');
+                }
+            }
+            appendMessage('err-msg', '[ERR]', detail || (`API returned ${response.status} ${response.statusText}`.trim()));
             return;
         }
 

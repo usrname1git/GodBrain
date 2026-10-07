@@ -68,12 +68,12 @@ never changes; only status does.
 | `GET` | `/api/vram` | None on loopback | One GPU slot + next worker size; writes `logs/last-vram.json` |
 | `GET` | `/api/doors` | None on loopback | Loopback and Tailscale URLs; chat stays loopback-only |
 | `GET` | `/api/desk` | None on loopback | Desk health used by `Test-GodBrainDesk.ps1` |
-| `POST` | `/api/remember` | Bearer if token set | Save a candidate idea, or Brave selected-text evidence (`title`/`url`/`selected`) as untrusted `browser_selection` |
-| `POST` | `/api/librarian` | Bearer if token set | Distill `text` via live `:8000`; fail-closed if CS2 sleeping, mouth busy, or `:8000` down |
-| `POST` | `/api/observe` | Bearer if token set | Host inventory (Heal each tick; unchanged is idempotent) |
-| `POST` | `/api/truth` | Bearer if token set | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
-| `POST` | `/api/judge` | Bearer if token set | `verified` or `rejected` with reasoning; rewrites `logs/last-pending.json` |
-| `POST` | `/api/chat` | None for ordinary chat | RAG plus streamed mouth inference; loopback only |
+| `POST` | `/api/remember` | Bearer; 401 if unset | Save a candidate idea, or Brave selected-text evidence (`title`/`url`/`selected`) as untrusted `browser_selection` |
+| `POST` | `/api/librarian` | Bearer; 401 if unset | Distill `text` via live `:8000`; fail-closed if CS2 sleeping, mouth busy, or `:8000` down |
+| `POST` | `/api/observe` | Bearer; 401 if unset | Host inventory (Heal each tick; unchanged is idempotent) |
+| `POST` | `/api/truth` | Bearer; 401 if unset | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
+| `POST` | `/api/judge` | Bearer; 401 if unset | `verified` or `rejected` with reasoning; rewrites `logs/last-pending.json` |
+| `POST` | `/api/chat` | Reads open; bearer for write slashes | RAG plus streamed mouth inference; loopback only. `/yolo` duration and off, `/verify`, and `/reject` need the bearer (401 if unset). Bare `/yolo`, `/yolo status`, and `/yolo ?` stay reads |
 | `POST` | `/api/chat` with `command_type` | Bearer; reasoning for high-risk | Direct privileged kernel dispatch |
 
 CORS: exact trusted loopback/Tauri origins only. CORS is not authorization.
@@ -174,7 +174,7 @@ Memory Store: one JSON document on stdin, cap 15 MiB. Ingestion accepts only
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `GODBRAIN_API_TOKEN` | C++ Kernel | Bearer for `command_type` and Tailscale door |
+| `GODBRAIN_API_TOKEN` | C++ Kernel | Bearer for `command_type`, chat writes, and the Tailscale door. An unset token fail-closes those writes |
 | `GODBRAIN_COLIBRI_PATH` | Heal / spawn path | Override Colibri executable. Kernel does not cold-spawn on 16 GB |
 | `GODBRAIN_COLIBRI_DIR` | Start-GodBrain | Colibri tree (`../colibri/c` preferred) |
 | `GODBRAIN_COLIBRI_MODEL` | C++ Kernel | Model id for `coli serve` (default `glm-5.2-colibri`) |
@@ -325,7 +325,7 @@ the Tailscale door, non-empty reasoning for high-risk commands, exact-child
 process timeouts, text nodes in the UI (not raw HTML), Heal never kills and
 never runs the repair cocktail.
 
-Known limitations: bearer is coarse; ordinary loopback chat is unauthenticated;
+Known limitations: bearer is coarse; ordinary loopback GET glances stay open and chat writes fail closed without a configured token;
 raw PowerShell exists behind the privileged boundary; Galaxy links are
 provenance stars; Rust router graph/node is `410`; structured audit belongs to
 Factory and is required *before* anyone enables autonomous privileged

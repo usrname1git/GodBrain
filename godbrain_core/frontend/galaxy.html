@@ -262,6 +262,13 @@
             return true;
         }
 
+        function chatWriteSlash(text) {
+            if (/^\/(?:verify|reject)\b/i.test(text)) return true;
+            const yolo = String(text).match(/^\/yolo\s+(\S+)/i);
+            if (!yolo) return false;
+            return !/^(?:status|\?)$/i.test(yolo[1]);
+        }
+
         function statusColor(status) {
             if (status === 'verified') return 0xffe08a;
             if (status === 'candidate') return 0xb7d4ff;
@@ -870,7 +877,7 @@
                 : 'unread';
             coliLine += ' rag=' + (rag.ready ? 'ready' : 'down') +
                 ' mongo=' + mongoWord +
-                ' writes=' + (status.writes_need_token ? 'need bearer' : 'open on loopback');
+                ' writes=' + (status.writes_need_token ? 'need bearer' : 'closed');
             lines.push(coliLine);
             if (coli.experts_disk != null) {
                 lines.push(
@@ -1048,6 +1055,14 @@
             }
 
             const isSlash = text.charAt(0) === '/';
+            if (chatWriteSlash(text) && !ensureWriteToken()) {
+                appendChatMessage(
+                    'sys-msg',
+                    '[ERR]',
+                    'Bearer required. Paste GODBRAIN_API_TOKEN, or cancel leaves this write closed.',
+                    'red');
+                return;
+            }
             const waiting = isSlash
                 ? null
                 : appendChatMessage(
@@ -1055,7 +1070,9 @@
                     '[SYS]',
                     'Prefill then decode. One GPU slot. /status ticks while this runs.');
 
-            const headers = {'Content-Type': 'application/json'};
+            const headers = chatWriteSlash(text)
+                ? writeHeaders()
+                : {'Content-Type': 'application/json'};
             if (!isSlash) headers['Accept'] = 'text/event-stream';
             fetch('/api/chat', {
                 method: 'POST',
@@ -1113,7 +1130,13 @@
                     throw new Error('Server returned invalid JSON (HTTP ' + res.status + ')');
                 }).then(data => {
                     if (!res.ok) {
-                        throw new Error((data && data.error) || ('API returned ' + res.status));
+                        const errText = (data && data.error) || ('API returned ' + res.status);
+                        if ((res.status === 401 || res.status === 403) &&
+                            String(errText).indexOf('not configured') < 0) {
+                            sessionStorage.removeItem('godbrain_write_token');
+                            writesNeedToken = true;
+                        }
+                        throw new Error(errText);
                     }
                     if (waiting && waiting.parentNode) waiting.parentNode.removeChild(waiting);
                     if (data && typeof data.response === 'string') {
@@ -1237,8 +1260,12 @@
             })
             .then(res => res.json().catch(() => ({})).then(data => {
                 if (res.status === 401 || res.status === 403) {
-                    sessionStorage.removeItem('godbrain_write_token');
-                    throw new Error((data && data.error) || 'bearer token required for this write');
+                    const errText = (data && data.error) || 'bearer token required for this write';
+                    if (String(errText).indexOf('not configured') < 0) {
+                        sessionStorage.removeItem('godbrain_write_token');
+                        writesNeedToken = true;
+                    }
+                    throw new Error(errText);
                 }
                 if (!res.ok) {
                     throw new Error((data && data.error) || ('API returned ' + res.status));
@@ -1316,7 +1343,7 @@
             const extra = ' | RAG ' + (ragReady ? 'ready' : 'down') +
                 ' | Mongo ' + mongoWord +
                 ' | ' + exl3.short +
-                ' | writes ' + (writesNeedToken ? 'need bearer' : 'open on loopback');
+                ' | writes ' + (writesNeedToken ? 'need bearer' : 'closed');
             const stats = document.getElementById('stats');
             if (stats) {
                 const base = (stats.dataset.baseText || stats.innerText || '')
@@ -1470,7 +1497,7 @@
                 boot.appendChild(document.createTextNode(
                     writesNeedToken
                         ? '[SYS] Writes need GODBRAIN_API_TOKEN. Verify/Reject will ask once and send Authorization.'
-                        : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes are open. Tailscale remember stays closed.'
+                        : '[SYS] GODBRAIN_API_TOKEN is not set. Loopback writes stay closed. GET glances stay open. Tailscale remember stays closed.'
                 ));
                 boot.appendChild(document.createElement('br'));
                 const glance = document.createElement('div');

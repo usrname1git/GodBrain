@@ -9,7 +9,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count) { throw ($errors -join "`n") }
 $script:fixtureRoot = $PSScriptRoot
 foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-WhisperLine", "Get-ModelPickFile", "Start-SelectedModel", "Stop-ActiveModel",
-    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Get-DeskImagePayload", "Wait-DeskImageResult", "Invoke-DeskAsk")) {
+    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Test-DeskWriteSlash", "Get-DeskImagePayload", "Wait-DeskImageResult", "Invoke-DeskAsk")) {
     $definition = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -20,10 +20,14 @@ foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-Wh
 
 function Test-Port([int]$Port) { return $Port -in $script:ports }
 function Invoke-RestMethod {
-    param([string]$Uri, [int]$TimeoutSec, [string]$Method, [string]$Body, [string]$ContentType)
+    param([string]$Uri, [int]$TimeoutSec, [string]$Method, [string]$Body, [string]$ContentType, [hashtable]$Headers)
     if ($script:httpFails) { throw "Fixture HTTP failure" }
     $script:lastUri = $Uri
     $script:lastBody = $Body
+    $script:lastAuthorization = $null
+    if ($Headers -and $Headers.ContainsKey("Authorization")) {
+        $script:lastAuthorization = [string]$Headers["Authorization"]
+    }
     if ($Method -eq "Post") { $script:lastPostBody = $Body }
     if ($script:asyncFixture -and $Uri -eq "http://127.0.0.1:8871/v1/images/generations") {
         $script:imagePostCount++
@@ -332,6 +336,80 @@ $request.ImageModel = $false
 Assert-Equal (Invoke-DeskAsk $request) "text fixture"
 Assert-Equal $script:lastUri "http://127.0.0.1:8083/api/chat"
 if (($script:lastBody | ConvertFrom-Json).message -notlike "No tools.*") { throw "Text Ask lost its no-tools routing." }
+if ($script:lastAuthorization) { throw "Ordinary Ask sent a bearer." }
+Assert-Equal (Test-DeskWriteSlash "/yolo") $false
+Assert-Equal (Test-DeskWriteSlash "/yolo status") $false
+Assert-Equal (Test-DeskWriteSlash "/yolo ?") $false
+Assert-Equal (Test-DeskWriteSlash "/YOLO off") $true
+Assert-Equal (Test-DeskWriteSlash "/verify last because") $true
+$savedAsk = $request.Message
+$savedPath = $request.Path
+$savedToken = $env:GODBRAIN_API_TOKEN
+try {
+    $env:GODBRAIN_API_TOKEN = "fixture-desk-token"
+    $request.Message = "/verify last the probe matched"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/verify last the probe matched"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "/yolo"
+    Invoke-DeskAsk $request | Out-Null
+    if ($script:lastAuthorization) { throw "Status /yolo sent a bearer." }
+    if (($script:lastBody | ConvertFrom-Json).message -like "No tools.*") { throw "Read /yolo was rewritten." }
+    $request.Message = "/yolo 15"
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Path = "C:\Temp\GitHub"
+    $request.Message = "/verify last the probe matched"
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/verify last the probe matched"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "/yolo off`r`n"
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "what is in here"
+    Invoke-DeskAsk $request | Out-Null
+    $ordinary = ($script:lastBody | ConvertFrom-Json).message
+    if ($ordinary -notmatch '(?s)^Path: .+what is in here$') { throw "Ordinary Ask with a path lost its path prefix." }
+    if ($script:lastAuthorization) { throw "Ordinary path Ask sent a bearer." }
+    $script:fixtureBusy = $true
+    $request.Path = ""
+    $request.Message = "/yolo off"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    $request.Message = "what is in here"
+    Assert-Throws { Invoke-DeskAsk $request } "*already running*"
+    $script:fixtureBusy = $null
+    $request.Message = "/yolo off"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
+    $script:fixtureBusy = $false
+    $request.Path = ""
+    $request.Message = "/yolo 15"
+    Remove-Item Env:GODBRAIN_API_TOKEN
+    Invoke-DeskAsk $request | Out-Null
+    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
+    if ($script:lastAuthorization) { throw "Unset token still sent a bearer." }
+} finally {
+    if ([string]::IsNullOrEmpty($savedToken)) { Remove-Item Env:GODBRAIN_API_TOKEN -ErrorAction SilentlyContinue }
+    else { $env:GODBRAIN_API_TOKEN = $savedToken }
+    $request.Message = $savedAsk
+    $request.Path = $savedPath
+}
+$askAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot "Ask-GodBrain.ps1"), [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors -join "`n") }
+$askWrite = $askAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Test-GodBrainWriteSlash"
+}, $true)
+if (-not $askWrite) { throw "Ask-GodBrain is missing Test-GodBrainWriteSlash." }
+. ([scriptblock]::Create($askWrite.Extent.Text))
+Assert-Equal (Test-GodBrainWriteSlash "/reject last junk") $true
+Assert-Equal (Test-GodBrainWriteSlash "/yolo status extra") $false
+Assert-Equal (Test-GodBrainWriteSlash "/brief") $false
 $script:fixtureBusy = $true
 Assert-Throws { Invoke-DeskAsk $request } "*already running*"
 $script:fixtureBusy = $null
