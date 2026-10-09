@@ -40,6 +40,47 @@ $profile = Get-DeskModelDefaults "vl"; $profile.Mtp = $true
 Assert-Fails { Get-DeskModelLaunchOptions "vl" $profile }
 $profile = Get-DeskModelDefaults "27b"; $profile.CacheQuant = "invalid"
 Assert-Fails { Get-DeskModelLaunchOptions "27b" $profile }
+& {
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot "Start-QwenVL.ps1"), [ref]$tokens, [ref]$errors)
+    Assert (-not $errors.Count) "VL launcher cannot be parsed."
+    $gate = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -eq "Test-LoopbackPort 8888"
+    }, $true)
+    Assert ($null -ne $gate) "VL live-profile compatibility gate is missing."
+    $verify = [scriptblock]::Create($gate.Extent.Text.Replace("exit 0", "return"))
+    function Test-LoopbackPort { return $true }
+    function Invoke-RestMethod {
+        param($Uri, $TimeoutSec)
+        if ($Uri -like "*/health") { return $script:vlFixtureHealth }
+        return @{data=@(@{id="qwen3-vl-8b-exl3"})}
+    }
+    $CacheSize = 57344; $CacheQuant = "fp16"
+    foreach ($budget in @(0, 4, 13.5, 64)) {
+        $CpuCacheSizeGB = $budget
+        $script:vlFixtureHealth = @{context_length=57344;cache_quant="fp16";cpu_cache_size_gb=$budget}
+        Assert ((& $verify) -like "already up*") "An exactly matching VL CPU-cache profile was rejected."
+    }
+    $CpuCacheSizeGB = 64
+    $script:vlFixtureHealth.cpu_cache_size_gb = 4
+    Assert-Fails { & $verify }
+    $CpuCacheSizeGB = 4
+    foreach ($value in @($null, "4", $false, -1, 65, [double]::NaN, [double]::PositiveInfinity, @{})) {
+        $script:vlFixtureHealth.cpu_cache_size_gb = $value
+        Assert-Fails { & $verify }
+    }
+    $script:vlFixtureHealth.Remove("cpu_cache_size_gb")
+    $script:vlFixtureHealth.cache_offload = @{cpu_kv_capacity_bytes=4GB}
+    Assert-Fails { & $verify }
+    $script:vlFixtureHealth.cpu_cache_size_gb = 4
+    $script:vlFixtureHealth.context_length = 8192
+    Assert-Fails { & $verify }
+    $script:vlFixtureHealth.context_length = 57344
+    $script:vlFixtureHealth.cache_quant = "4"
+    Assert-Fails { & $verify }
+}
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("desk-model-" + [guid]::NewGuid().ToString("N"))
 [void][IO.Directory]::CreateDirectory($fixture)
 try {

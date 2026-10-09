@@ -70,7 +70,7 @@ def tower_ready() -> bool:
     try:
         with urllib.request.urlopen("http://127.0.0.1:8888/health", timeout=2) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return bool(payload.get("vision"))
+        return isinstance(payload, dict) and payload.get("vision") is True and payload.get("busy") is False
     except (OSError, ValueError, TypeError):
         return False
 
@@ -229,7 +229,7 @@ def ocr_cpu(image: bytes, suffix: str) -> str:
     path = Path(name)
     try:
         path.write_bytes(image)
-        reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False)
+        reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
         lines = reader.readtext(str(path), detail=0)
         return "\n".join(str(line) for line in lines).strip()
     finally:
@@ -395,7 +395,7 @@ class VoiceHandler(BaseHTTPRequestHandler):
                 note = str(exc)[:200]
         else:
             if prefer_tower(self.repo):
-                note = "Qwen vision tower is off; CPU OCR answered"
+                note = "Qwen vision tower is unavailable or busy; CPU OCR answered"
             text = ocr_cpu(image, ".png" if mime == "image/png" else ".jpg")
         self.send_json({"text": text, "engine": engine, "note": note})
 

@@ -34,8 +34,15 @@ if (Test-LoopbackPort 8871) {
 if (Test-LoopbackPort 8888) {
     $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
     $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
+    $cpuCache = $health.cpu_cache_size_gb
+    if (($cpuCache -isnot [int] -and $cpuCache -isnot [long] -and $cpuCache -isnot [double]) -or
+        [double]::IsNaN([double]$cpuCache) -or [double]::IsInfinity([double]$cpuCache) -or
+        $cpuCache -lt 0 -or $cpuCache -gt 64) {
+        throw ":8888 CPU-cache budget is unavailable or invalid (health.cpu_cache_size_gb). Stop it before applying VL settings."
+    }
     if ($models.data[0].id -ne "qwen3-vl-8b-exl3" -or
-        $health.context_length -ne $CacheSize -or $health.cache_quant -ne $CacheQuant) {
+        $health.context_length -ne $CacheSize -or $health.cache_quant -ne $CacheQuant -or
+        $cpuCache -ne $CpuCacheSizeGB) {
         throw ":8888 is running a different model/cache configuration. Stop it before applying VL settings."
     }
     Write-Output "already up http://127.0.0.1:8888/v1 (stop Paper Qwen before swapping to VL)"

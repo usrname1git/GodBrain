@@ -3,8 +3,10 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import sys
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import urllib.error
 import urllib.request
 import wave
@@ -145,6 +147,65 @@ class VoiceSettingsTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_tower_readiness_requires_explicit_idle_vision_health(self):
+        for payload, expected in (
+            ({"vision": True, "busy": False}, True),
+            ({"vision": True, "busy": True}, False),
+            ({"vision": True}, False),
+            ({"vision": True, "busy": "false"}, False),
+            ({"vision": False, "busy": False}, False),
+            ({"vision": "true", "busy": False}, False),
+            ([], False),
+        ):
+            with self.subTest(payload=payload):
+                response = io.BytesIO(json.dumps(payload).encode("utf-8"))
+                with patch.object(voice.urllib.request, "urlopen", return_value=response):
+                    self.assertIs(voice.tower_ready(), expected)
+        with patch.object(voice.urllib.request, "urlopen", side_effect=OSError("fixture down")):
+            self.assertFalse(voice.tower_ready())
+
+    def test_ocr_uses_cpu_when_tower_is_busy_and_preserves_idle_tower(self):
+        self.write_settings(True)
+        for busy in (True, False):
+            with self.subTest(busy=busy):
+                handler = object.__new__(voice.VoiceHandler)
+                handler.repo = self.repo
+                handler.image_bytes = Mock(return_value=(b"fixture-image", "image/jpeg"))
+                handler.send_json = Mock()
+                response = io.BytesIO(json.dumps({"vision": True, "busy": busy}).encode("utf-8"))
+                with patch.object(voice.urllib.request, "urlopen", return_value=response), \
+                        patch.object(voice, "ocr_cpu", return_value="cpu fixture") as cpu, \
+                        patch.object(voice, "ocr_tower", return_value="tower fixture") as tower:
+                    handler.ocr_request()
+                    result = handler.send_json.call_args.args[0]
+                    if busy:
+                        cpu.assert_called_once_with(b"fixture-image", ".jpg")
+                        tower.assert_not_called()
+                        self.assertEqual(result["engine"], "cpu")
+                        self.assertIn("busy", result["note"])
+                    else:
+                        tower.assert_called_once_with(b"fixture-image", "image/jpeg")
+                        cpu.assert_not_called()
+                        self.assertEqual(result["engine"], "qwen")
+
+    def test_cpu_ocr_disables_downloads_and_surfaces_missing_assets(self):
+        paths = []
+        def readtext(path, detail):
+            paths.append(Path(path))
+            self.assertEqual(Path(path).read_bytes(), b"fixture-image")
+            self.assertEqual(detail, 0)
+            return ["fixture text"]
+        reader = Mock(readtext=Mock(side_effect=readtext))
+        factory = Mock(return_value=reader)
+        with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=factory)}):
+            self.assertEqual(voice.ocr_cpu(b"fixture-image", ".png"), "fixture text")
+            factory.assert_called_once_with(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
+            factory.side_effect = FileNotFoundError("Missing local OCR weights; downloads disabled")
+            with self.assertRaisesRegex(FileNotFoundError, "Missing local OCR weights"):
+                voice.ocr_cpu(b"fixture-image", ".png")
+        self.assertTrue(paths)
+        self.assertTrue(all(not path.exists() for path in paths))
 
     def test_audio_http_passes_exact_uploaded_bytes_to_transcription(self):
         handler = type("FixtureVoiceHandler", (voice.VoiceHandler,), {"repo": self.repo})

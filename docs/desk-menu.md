@@ -18,6 +18,11 @@ The installed Qwen kit's launchers must support the options advertised by
 `scripts\GodBrain-DeskModel.ps1`. The kit and its weights are external,
 not installed or vendored by this panel. `Start-QwenVL.ps1` supports the
 VL context/cache controls and rejects a mismatched already-running profile.
+Already-running VL reuse also requires a numeric configured RAM-cache budget
+in `health.cpu_cache_size_gb` matching the request. The installed kit currently
+reports only cache capacity, which is not proof of its configured budget:
+the launcher fails explicitly and requires a stop/start instead of claiming
+the requested profile is already applied. The external kit is not modified.
 
 KV precision is not weight precision. RAM prefix caching reuses prefixes;
 it does not extend live context or spill dense model weights to disk.
@@ -61,7 +66,10 @@ saved Vision settings produce an explicit unavailable/error response rather
 than enabling the tower or silently claiming CPU readiness.
 
 OCR may use the already-running Qwen vision tower when the saved 27B
-profile enables it, and reports CPU fallback explicitly. Speech stays CPU.
+profile enables it and health explicitly reports idle vision. Busy or
+unverifiable tower readiness uses CPU fallback with an explicit note.
+EasyOCR downloads are disabled; missing local weights fail explicitly.
+Speech stays CPU.
 The helper exposes `/health`, `/v1/audio/transcriptions`,
 `/v1/audio/speech`, `/ocr` and `/ingest/image`.
 
