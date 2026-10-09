@@ -23,7 +23,9 @@ KV precision is not weight precision. RAM prefix caching reuses prefixes;
 it does not extend live context or spill dense model weights to disk.
 Large text and Max context presets are plans, not guarantees of fitting
 every GPU. Explicit high-context/vision starts retain confirmation and the
-one-GPU-slot gates.
+one-GPU-slot gates. Context thresholds use numeric values, including six-digit
+contexts. A saved Vision preference must be a JSON boolean; strings such as
+`"false"` are rejected before stopping a model. A missing preference stays off.
 
 ## Complete-file review and images
 
@@ -52,6 +54,11 @@ on port 8001. It uses the existing local faster-whisper weights and Piper
 voices on CPU; EasyOCR is the CPU image-text fallback. These dependencies
 and weights must already be installed. Starting the panel does not download
 them or start speech/model services.
+
+Speech launches use typed child arguments so repository paths with spaces stay
+intact. Multipart audio/image uploads preserve the exact field bytes. Invalid
+saved Vision settings produce an explicit unavailable/error response rather
+than enabling the tower or silently claiming CPU readiness.
 
 OCR may use the already-running Qwen vision tower when the saved 27B
 profile enables it, and reports CPU fallback explicitly. Speech stays CPU.
@@ -93,6 +100,7 @@ From the repository root on Windows with PowerShell 7 and VS x64 C++ tools:
 pwsh -NoProfile -Sta -File .\scripts\Test-DeskMenu.ps1 -UiSmoke
 .\scripts\Test-DeskModel.ps1
 python -m unittest discover -s .\scripts -p test_desk_review_plan.py
+python -m unittest discover -s .\scripts -p test_voice_door.py
 python .\scripts\voice_door.py --self-test
 ```
 

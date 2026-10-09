@@ -983,12 +983,13 @@ function Start-SelectedModel {
         $options = Get-DeskModelLaunchOptions $script:modelPick $script:modelProfiles[$script:modelPick]
         Test-DeskModelLauncher (Get-ModelPickFile) $options
         $profile = $script:modelProfiles[$script:modelPick]
+        $context = [int]$profile.Context
         if ($script:modelPick -eq "27b" -and $profile.Vision) {
             if (-not (Confirm-Stop "Load the 27B vision tower on this start? It uses about 0.3 GB plus image prefill on the same GPU. The speech door still does OCR on the CPU when the tower is off or this box is unchecked." "Vision tower")) { return }
         }
         if (($script:modelPick -eq "27b" -and
-            ($profile.Context -gt 40960 -or ($profile.Context -gt 10240 -and $profile.CacheQuant -ne "4"))) -or
-            ($script:modelPick -eq "uncensored" -and ($profile.Context -gt 10240 -or $profile.Mtp))) {
+            ($context -gt 40960 -or ($context -gt 10240 -and $profile.CacheQuant -ne "4"))) -or
+            ($script:modelPick -eq "uncensored" -and ($context -gt 10240 -or $profile.Mtp))) {
             if (-not (Confirm-Stop "Restart with ctx=$($profile.Context), KV=$($profile.CacheQuant), MTP=$($profile.Mtp), GPU budget=$($profile.Budget) GiB? Large-context fit depends on all these settings; an out-of-memory failure is possible even after another configuration passed. Stop the current model and apply this profile?" "Large context restart")) { return }
         }
     } catch {
@@ -1017,13 +1018,21 @@ function Start-VoiceDoor {
         [System.Windows.Forms.MessageBox]::Show("python or scripts\voice_door.py is missing.")
         return
     }
-    $hidden = Join-Path $Repo "godbrain_core\cpp_tools\run_hidden.exe"
-    $arg = @($script, "--port", "8001", "--repo", $Repo)
-    if (Test-Path -LiteralPath $hidden) {
-        Start-Process -FilePath $hidden -ArgumentList (@($py) + $arg) -WorkingDirectory $Repo -WindowStyle Hidden | Out-Null
-    } else {
-        Start-Process -FilePath $py -ArgumentList $arg -WorkingDirectory $Repo -WindowStyle Hidden | Out-Null
+    $info = [Diagnostics.ProcessStartInfo]::new($py)
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.WorkingDirectory = $Repo
+    foreach ($value in @($script, "--port", "8001", "--repo", $Repo)) {
+        $info.ArgumentList.Add($value)
     }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw "The speech process did not start." }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("STT/TTS could not start: $($_.Exception.Message)")
+        return
+    } finally { $process.Dispose() }
     Update-Status
 }
 

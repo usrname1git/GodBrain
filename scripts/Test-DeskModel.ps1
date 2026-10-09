@@ -26,6 +26,10 @@ Assert ($visionOn[$visionOn.IndexOf("-Vision") + 1] -eq "auto") "The vision chec
 $profile.Remove("Vision")
 $visionMissing = Get-DeskModelLaunchOptions "27b" $profile
 Assert ($visionMissing[$visionMissing.IndexOf("-Vision") + 1] -eq "off") "An older saved 27B profile would load the vision tower."
+foreach ($vision in @("false", "true", 0, 1, $null, @{})) {
+    $profile = Get-DeskModelDefaults "27b"; $profile.Vision = $vision
+    Assert-Fails { Get-DeskModelLaunchOptions "27b" $profile }
+}
 foreach ($context in @("bad", 257, 0, 262400)) {
     $profile = Get-DeskModelDefaults "27b"; $profile.Context = $context
     Assert-Fails { Get-DeskModelLaunchOptions "27b" $profile }
@@ -43,6 +47,12 @@ try {
     Write-DeskModelProfiles $path @{ "27b" = (Get-DeskModelDefaults "27b") }
     $state = Read-DeskModelProfiles $path
     Assert ($state["27b"].Context -eq 36864 -and $state["27b"].Mtp) "Saved settings did not round-trip."
+    foreach ($vision in @("false", "true", 0, 1, $null)) {
+        $profile = Get-DeskModelDefaults "27b"; $profile.Vision = $vision
+        [IO.File]::WriteAllText($path, (@{version=1;profiles=@{"27b"=$profile}} | ConvertTo-Json -Depth 8))
+        Assert-Fails { Read-DeskModelProfiles $path }
+        Assert-Fails { Write-DeskModelProfiles $path @{"27b"=$profile} }
+    }
     [IO.File]::WriteAllText($path, '{"version":1,"profiles":{"27b":{"Context":257}}}')
     Assert-Fails { Read-DeskModelProfiles $path }
     $launcher = Join-Path $fixture "launcher.ps1"

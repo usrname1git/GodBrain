@@ -237,6 +237,61 @@ foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     }
 }
 $script:canResume = $false
+& {
+    foreach ($name in @("Save-DeskModelControls", "Start-SelectedModel")) {
+        $definition = $ast.Find({ param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text.Replace('$script:model', '$script:fixtureModel')))
+    }
+    function Get-ModelPickFile { return "fixture-launcher.ps1" }
+    function Test-DeskModelLauncher {}
+    function Write-DeskModelProfiles {}
+    function Enable-DeskAfterCs2 { return $true }
+    function Stop-Door { $script:fixtureSlotStopped = $true; return $true }
+    function Start-Door { param($File, $Options); $script:fixtureLaunchContext = $Options[1] }
+    function Confirm-Stop {
+        param($Message, $Title)
+        $script:fixtureConfirmations += $Title
+        return $script:fixtureConfirmAllowed
+    }
+    $script:fixtureModelSettingsError = ""
+    $script:fixtureModelSettingsHint = [pscustomobject]@{ Text = "" }
+    foreach ($case in @(
+        @{ Model="27b"; Context="8192"; Cache="4"; Warn=$false },
+        @{ Model="27b"; Context="40960"; Cache="4"; Warn=$false },
+        @{ Model="27b"; Context="41216"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="71680"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="131072"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="262144"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="10240"; Cache="fp16"; Warn=$false },
+        @{ Model="27b"; Context="10496"; Cache="fp16"; Warn=$true },
+        @{ Model="uncensored"; Context="8192"; Cache="fp16"; Warn=$false },
+        @{ Model="uncensored"; Context="10240"; Cache="fp16"; Warn=$false },
+        @{ Model="uncensored"; Context="10496"; Cache="fp16"; Warn=$true }
+    )) {
+        $script:fixtureModelPick = $case.Model
+        $script:fixtureModelProfiles = @{}
+        $script:fixtureModelContext = [pscustomobject]@{ Text = $case.Context }
+        $script:fixtureModelCache = [pscustomobject]@{ SelectedItem = $case.Cache }
+        $script:fixtureModelMtp = [pscustomobject]@{ Checked = $false }
+        $script:fixtureModelVision = [pscustomobject]@{ Checked = $false }
+        $script:fixtureModelBudget = [pscustomobject]@{ Text = "13.5" }
+        $script:fixtureModelCpuCache = [pscustomobject]@{ Text = "0" }
+        foreach ($accept in @($true, $false)) {
+            $script:fixtureConfirmAllowed = $accept
+            $script:fixtureConfirmations = @()
+            $script:fixtureSlotStopped = $false
+            $script:fixtureLaunchContext = ""
+            Start-SelectedModel
+            Assert-Equal ($script:fixtureConfirmations -contains "Large context restart") $case.Warn
+            $launch = -not $case.Warn -or $accept
+            Assert-Equal $script:fixtureSlotStopped $launch
+            Assert-Equal $script:fixtureLaunchContext $(if ($launch) { $case.Context } else { "" })
+            Assert-Equal ($script:fixtureModelProfiles[$case.Model].Context -is [string]) $true
+        }
+    }
+}
 foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     $script:modelPick = $pick
     $script:imageStarted = $false
@@ -246,6 +301,63 @@ foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     Assert-Equal $script:slotStopped $false
 }
 $script:canResume = $true
+& {
+    $script:fixtureVoicePython = (Microsoft.PowerShell.Core\Get-Command python -ErrorAction Stop).Source
+    $definition = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-VoiceDoor"
+    }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+    function Get-WhisperLine { return "down" }
+    function Test-Port { return $false }
+    function Get-Command { return [pscustomobject]@{ Source = $script:fixtureVoicePython } }
+    function Start-Process { throw "Speech must use typed child arguments." }
+    function Update-Status { $script:fixtureVoiceRefreshed = $true }
+    $Repo = Join-Path ([IO.Path]::GetTempPath()) ("desk voice spaces " + [guid]::NewGuid().ToString("N"))
+    $scripts = Join-Path $Repo "scripts"
+    [void][IO.Directory]::CreateDirectory($scripts)
+    $receipt = Join-Path $Repo "launched.json"
+    $script:fixtureVoiceRefreshed = $false
+    try {
+        [IO.File]::WriteAllText((Join-Path $scripts "voice_door.py"), @'
+import argparse, json, os
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("--port")
+parser.add_argument("--repo")
+args = parser.parse_args()
+root = Path(__file__).resolve().parents[1]
+temporary = root / "launched.tmp"
+temporary.write_text(json.dumps({"port": args.port, "repo": args.repo, "cwd": os.getcwd(), "pid": os.getpid()}), encoding="utf-8")
+temporary.replace(root / "launched.json")
+'@)
+        Start-VoiceDoor
+        $deadline = [datetime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $receipt) -and [datetime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not (Test-Path -LiteralPath $receipt)) { throw "Typed speech launch did not reach the inert space-path fixture." }
+        $result = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+        Assert-Equal $result.port "8001"
+        Assert-Equal $result.repo $Repo
+        Assert-Equal $result.cwd $Repo
+        Assert-Equal $script:fixtureVoiceRefreshed $true
+        $child = Get-Process -Id $result.pid -ErrorAction SilentlyContinue
+        if ($child) {
+            try {
+                if (-not $child.WaitForExit(5000)) {
+                    $child.Kill()
+                    $child.WaitForExit()
+                    throw "Inert speech fixture did not exit."
+                }
+            } finally { $child.Dispose() }
+        }
+        $script:fixtureVoicePython = Join-Path $Repo "missing-python.exe"
+        $script:fixtureVoiceRefreshed = $false
+        $failure = @(Start-VoiceDoor)
+        if (($failure -join "`n") -notlike "*STT/TTS could not start:*") { throw "Speech launch failure was not surfaced." }
+        Assert-Equal $script:fixtureVoiceRefreshed $false
+    } finally { Remove-Item -LiteralPath $Repo -Recurse -Force }
+}
 $script:ports = @(8871)
 $script:imageStopped = $false
 Stop-ActiveModel

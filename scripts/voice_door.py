@@ -20,6 +20,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -49,9 +51,19 @@ def prefer_tower(repo: Path) -> bool:
     path = repo / "logs" / "desk-model-settings.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return bool(data["profiles"]["27b"]["Vision"])
-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+    except FileNotFoundError:
         return False
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Cannot read saved model settings.") from exc
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("profiles"), dict):
+        raise RuntimeError("Invalid saved model settings.")
+    profile = data["profiles"].get("27b", {})
+    if not isinstance(profile, dict):
+        raise RuntimeError("Invalid saved 27B model profile.")
+    vision = profile.get("Vision", False)
+    if not isinstance(vision, bool):
+        raise RuntimeError("Saved 27B Vision preference must be true or false.")
+    return vision
 
 
 def tower_ready() -> bool:
@@ -131,29 +143,29 @@ def decode_image_body(body: bytes, content_type: str) -> bytes:
 
 
 def multipart_parts(content_type: str, body: bytes):
-    marker = "boundary="
-    if marker not in content_type:
-        raise ValueError("multipart body has no boundary")
-    boundary = content_type.split(marker, 1)[1].split(";", 1)[0].strip().strip('"')
-    token = ("--" + boundary).encode("utf-8")
+    if "\r" in content_type or "\n" in content_type:
+        raise ValueError("invalid multipart content type")
+    try:
+        header = content_type.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("invalid multipart content type") from exc
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: " + header + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
+    )
+    if message.get_content_type() != "multipart/form-data" or not message.get_boundary():
+        raise ValueError("expected multipart form data with a boundary")
+    if not message.is_multipart() or message.defects:
+        raise ValueError("malformed multipart body")
     parts = {}
-    for chunk in body.split(token):
-        if not chunk or chunk in (b"--", b"--\r\n"):
-            continue
-        chunk = chunk.strip(b"\r\n")
-        if chunk.endswith(b"--"):
-            chunk = chunk[:-2].rstrip(b"\r\n")
-        head, sep, data = chunk.partition(b"\r\n\r\n")
-        if not sep:
-            continue
-        disposition = head.decode("utf-8", "replace")
-        name = ""
-        for bit in disposition.split(";"):
-            bit = bit.strip()
-            if bit.lower().startswith("name="):
-                name = bit.split("=", 1)[1].strip().strip('"')
+    for part in message.iter_parts():
+        if part.is_multipart() or part.defects:
+            raise ValueError("malformed multipart field")
+        name = part.get_param("name", header="content-disposition")
         if name:
-            parts[name] = data.removesuffix(b"\r\n")
+            payload = part.get_payload(decode=True)
+            if not isinstance(payload, bytes) or part.defects:
+                raise ValueError("malformed multipart field data")
+            parts[name] = payload
     return parts
 
 
@@ -288,6 +300,11 @@ class VoiceHandler(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] != "/health":
             self.refuse(404, "not found")
             return
+        try:
+            ocr = "qwen" if prefer_tower(self.repo) else "cpu"
+        except RuntimeError as exc:
+            self.refuse(503, str(exc))
+            return
         self.send_json({
             "ok": True,
             "service": "voice",
@@ -296,7 +313,7 @@ class VoiceHandler(BaseHTTPRequestHandler):
             "bind": "tailnet" if self.server.server_address[0] == "0.0.0.0" else "loopback",
             "stt": "faster-whisper",
             "tts": "piper",
-            "ocr": "qwen" if prefer_tower(self.repo) else "cpu",
+            "ocr": ocr,
         })
 
     def do_POST(self):
@@ -389,8 +406,9 @@ def serve(repo: Path, port: int):
     VoiceHandler.repo = repo
     VoiceHandler.expected_key = key
     VoiceHandler.server_port = port
+    ocr = "qwen" if prefer_tower(repo) else "cpu"
     server = ThreadingHTTPServer((host, port), VoiceHandler)
-    print(f"voice door {host}:{port} ocr={'qwen' if prefer_tower(repo) else 'cpu'}", flush=True)
+    print(f"voice door {host}:{port} ocr={ocr}", flush=True)
     server.serve_forever()
 
 

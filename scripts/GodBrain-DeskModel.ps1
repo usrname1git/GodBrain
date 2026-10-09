@@ -44,7 +44,10 @@ function Get-DeskModelLaunchOptions([string]$Model, $Profile) {
     }
     if ($Model -eq "27b") {
         $vision = $false
-        if ($Profile.ContainsKey("Vision")) { $vision = [bool]$Profile.Vision }
+        if ($Profile.ContainsKey("Vision")) {
+            if ($Profile.Vision -isnot [bool]) { throw "Vision must be true or false." }
+            $vision = $Profile.Vision
+        }
         $args += @("-Vision", $(if ($vision) { "auto" } else { "off" }))
     }
     return ,$args
