@@ -9,7 +9,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count) { throw ($errors -join "`n") }
 $script:fixtureRoot = $PSScriptRoot
 foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-WhisperLine", "Get-ModelPickFile", "Start-SelectedModel", "Stop-ActiveModel",
-    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Test-DeskWriteSlash", "Get-DeskImagePayload", "Wait-DeskImageResult", "Invoke-DeskAsk")) {
+    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Read-DeskGrantedBytes", "Get-DeskImagePayload", "Wait-DeskImageResult", "Test-DeskWriteSlash", "Test-DeskVisionImage", "Test-DeskNeedsCompleteReview", "Invoke-DeskVisionAsk", "Invoke-DeskAsk")) {
     $definition = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -25,7 +25,7 @@ function Invoke-RestMethod {
     $script:lastUri = $Uri
     $script:lastBody = $Body
     $script:lastAuthorization = $null
-    if ($Headers -and $Headers.ContainsKey("Authorization")) {
+    if ($Headers -and $Headers.Contains("Authorization")) {
         $script:lastAuthorization = [string]$Headers["Authorization"]
     }
     if ($Method -eq "Post") { $script:lastPostBody = $Body }
@@ -185,25 +185,37 @@ Assert-Equal $script:tokSample $null
 if ($ast.Extent.Text -notmatch '\$rowTok = Add-Row \$pageStatus "Rate"') {
     throw "Image diffusion speed still has a misleading Tok/s label."
 }
+if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "STT/TTS"') {
+    throw "STT/TTS is missing its Start and Stop buttons."
+}
 
-$script:processFails = $false
-$script:processes = @()
-Assert-Equal (Get-WhisperLine) "CPU lyrics idle (no port)"
-$worker = Join-Path $PSScriptRoot "lyrics_loop.py"
-$script:processes = @(@{ CommandLine = 'python.exe "' + $worker + '" --name fixture' })
-Assert-Equal (Get-WhisperLine) "CPU lyrics running (no port)"
-$script:processes = @(@{ CommandLine = "python.exe $worker --name fixture" })
-Assert-Equal (Get-WhisperLine) "CPU lyrics running (no port)"
-$script:processes = @(@{ CommandLine = "python.exe $worker.backup" })
-Assert-Equal (Get-WhisperLine) "CPU lyrics idle (no port)"
-$script:processFails = $true
-Assert-Equal (Get-WhisperLine) "CPU lyrics process unread"
+$script:ports = @()
+$script:httpFails = $false
+Assert-Equal (Get-WhisperLine) "down"
+$script:ports = @(8001)
+$script:response = @{ service = "voice"; device = "cpu"; ocr = "cpu" }
+Assert-Equal (Get-WhisperLine) "CPU up :8001"
+$script:response.ocr = "qwen"
+Assert-Equal (Get-WhisperLine) "CPU up :8001 OCR=tower"
+$script:response = @{ service = "other"; device = "cpu"; ocr = "cpu" }
+Assert-Equal (Get-WhisperLine) "down (other)"
+$script:httpFails = $true
+Assert-Equal (Get-WhisperLine) "health unread"
+$script:httpFails = $false
+$script:ports = @()
 
 function Start-ImageDoor { $script:imageStarted = $true }
 function Stop-ImageDoor { $script:imageStopped = $true }
 function Enable-DeskAfterCs2 { return $script:canResume }
 function Stop-Door { $script:slotStopped = $true; return $true }
-function Start-Door([string]$File) { $script:startedFile = $File }
+function Start-Door([string]$File, [string[]]$Options) { $script:startedFile = $File; $script:startedOptions = $Options }
+function Save-DeskModelControls {
+    $script:modelProfiles[$script:modelPick] = Get-DeskModelDefaults $script:modelPick
+}
+function Test-DeskModelLauncher {}
+. (Join-Path $PSScriptRoot "GodBrain-DeskModel.ps1")
+function Test-DeskModelLauncher {}
+$script:modelProfiles = @{}
 function Update-Status {}
 $Start27 = "text-fixture.ps1"
 $StartVl = "vision-fixture.ps1"
@@ -221,9 +233,65 @@ foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     } else {
         Assert-Equal $script:slotStopped $true
         Assert-Equal $script:startedFile (Get-ModelPickFile)
+        Assert-Equal ($script:startedOptions -join ",") ((Get-DeskModelLaunchOptions $pick (Get-DeskModelDefaults $pick)) -join ",")
     }
 }
 $script:canResume = $false
+& {
+    foreach ($name in @("Save-DeskModelControls", "Start-SelectedModel")) {
+        $definition = $ast.Find({ param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text.Replace('$script:model', '$script:fixtureModel')))
+    }
+    function Get-ModelPickFile { return "fixture-launcher.ps1" }
+    function Test-DeskModelLauncher {}
+    function Write-DeskModelProfiles {}
+    function Enable-DeskAfterCs2 { return $true }
+    function Stop-Door { $script:fixtureSlotStopped = $true; return $true }
+    function Start-Door { param($File, $Options); $script:fixtureLaunchContext = $Options[1] }
+    function Confirm-Stop {
+        param($Message, $Title)
+        $script:fixtureConfirmations += $Title
+        return $script:fixtureConfirmAllowed
+    }
+    $script:fixtureModelSettingsError = ""
+    $script:fixtureModelSettingsHint = [pscustomobject]@{ Text = "" }
+    foreach ($case in @(
+        @{ Model="27b"; Context="8192"; Cache="4"; Warn=$false },
+        @{ Model="27b"; Context="40960"; Cache="4"; Warn=$false },
+        @{ Model="27b"; Context="41216"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="71680"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="131072"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="262144"; Cache="4"; Warn=$true },
+        @{ Model="27b"; Context="10240"; Cache="fp16"; Warn=$false },
+        @{ Model="27b"; Context="10496"; Cache="fp16"; Warn=$true },
+        @{ Model="uncensored"; Context="8192"; Cache="fp16"; Warn=$false },
+        @{ Model="uncensored"; Context="10240"; Cache="fp16"; Warn=$false },
+        @{ Model="uncensored"; Context="10496"; Cache="fp16"; Warn=$true }
+    )) {
+        $script:fixtureModelPick = $case.Model
+        $script:fixtureModelProfiles = @{}
+        $script:fixtureModelContext = [pscustomobject]@{ Text = $case.Context }
+        $script:fixtureModelCache = [pscustomobject]@{ SelectedItem = $case.Cache }
+        $script:fixtureModelMtp = [pscustomobject]@{ Checked = $false }
+        $script:fixtureModelVision = [pscustomobject]@{ Checked = $false }
+        $script:fixtureModelBudget = [pscustomobject]@{ Text = "13.5" }
+        $script:fixtureModelCpuCache = [pscustomobject]@{ Text = "0" }
+        foreach ($accept in @($true, $false)) {
+            $script:fixtureConfirmAllowed = $accept
+            $script:fixtureConfirmations = @()
+            $script:fixtureSlotStopped = $false
+            $script:fixtureLaunchContext = ""
+            Start-SelectedModel
+            Assert-Equal ($script:fixtureConfirmations -contains "Large context restart") $case.Warn
+            $launch = -not $case.Warn -or $accept
+            Assert-Equal $script:fixtureSlotStopped $launch
+            Assert-Equal $script:fixtureLaunchContext $(if ($launch) { $case.Context } else { "" })
+            Assert-Equal ($script:fixtureModelProfiles[$case.Model].Context -is [string]) $true
+        }
+    }
+}
 foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     $script:modelPick = $pick
     $script:imageStarted = $false
@@ -233,6 +301,63 @@ foreach ($pick in @("27b", "vl", "image", "uncensored")) {
     Assert-Equal $script:slotStopped $false
 }
 $script:canResume = $true
+& {
+    $script:fixtureVoicePython = (Microsoft.PowerShell.Core\Get-Command python -ErrorAction Stop).Source
+    $definition = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-VoiceDoor"
+    }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+    function Get-WhisperLine { return "down" }
+    function Test-Port { return $false }
+    function Get-Command { return [pscustomobject]@{ Source = $script:fixtureVoicePython } }
+    function Start-Process { throw "Speech must use typed child arguments." }
+    function Update-Status { $script:fixtureVoiceRefreshed = $true }
+    $Repo = Join-Path ([IO.Path]::GetTempPath()) ("desk voice spaces " + [guid]::NewGuid().ToString("N"))
+    $scripts = Join-Path $Repo "scripts"
+    [void][IO.Directory]::CreateDirectory($scripts)
+    $receipt = Join-Path $Repo "launched.json"
+    $script:fixtureVoiceRefreshed = $false
+    try {
+        [IO.File]::WriteAllText((Join-Path $scripts "voice_door.py"), @'
+import argparse, json, os
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("--port")
+parser.add_argument("--repo")
+args = parser.parse_args()
+root = Path(__file__).resolve().parents[1]
+temporary = root / "launched.tmp"
+temporary.write_text(json.dumps({"port": args.port, "repo": args.repo, "cwd": os.getcwd(), "pid": os.getpid()}), encoding="utf-8")
+temporary.replace(root / "launched.json")
+'@)
+        Start-VoiceDoor
+        $deadline = [datetime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $receipt) -and [datetime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not (Test-Path -LiteralPath $receipt)) { throw "Typed speech launch did not reach the inert space-path fixture." }
+        $result = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+        Assert-Equal $result.port "8001"
+        Assert-Equal $result.repo $Repo
+        Assert-Equal $result.cwd $Repo
+        Assert-Equal $script:fixtureVoiceRefreshed $true
+        $child = Get-Process -Id $result.pid -ErrorAction SilentlyContinue
+        if ($child) {
+            try {
+                if (-not $child.WaitForExit(5000)) {
+                    $child.Kill()
+                    $child.WaitForExit()
+                    throw "Inert speech fixture did not exit."
+                }
+            } finally { $child.Dispose() }
+        }
+        $script:fixtureVoicePython = Join-Path $Repo "missing-python.exe"
+        $script:fixtureVoiceRefreshed = $false
+        $failure = @(Start-VoiceDoor)
+        if (($failure -join "`n") -notlike "*STT/TTS could not start:*") { throw "Speech launch failure was not surfaced." }
+        Assert-Equal $script:fixtureVoiceRefreshed $false
+    } finally { Remove-Item -LiteralPath $Repo -Recurse -Force }
+}
 $script:ports = @(8871)
 $script:imageStopped = $false
 Stop-ActiveModel
@@ -353,44 +478,45 @@ try {
     Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
     $request.Message = "/yolo"
     Invoke-DeskAsk $request | Out-Null
-    if ($script:lastAuthorization) { throw "Status /yolo sent a bearer." }
     if (($script:lastBody | ConvertFrom-Json).message -like "No tools.*") { throw "Read /yolo was rewritten." }
-    $request.Message = "/yolo 15"
-    Invoke-DeskAsk $request | Out-Null
-    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
-    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    if ($script:lastAuthorization) { throw "Status /yolo sent a bearer." }
     $request.Path = "C:\Temp\GitHub"
+    $request.ReviewFile = $true
     $request.Message = "/verify last the probe matched"
     Invoke-DeskAsk $request | Out-Null
     Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/verify last the probe matched"
-    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    Assert-Equal $script:lastAuthorization ("Bearer " + $env:GODBRAIN_API_TOKEN)
+    $request.Path = "C:\Temp\GitHub\fixture.jpg"
     $request.Message = "/yolo off`r`n"
     Invoke-DeskAsk $request | Out-Null
     Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
-    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    Assert-Equal $script:lastAuthorization ("Bearer " + $env:GODBRAIN_API_TOKEN)
+    $request.ReviewFile = $false
+    $request.Path = "C:\Temp\GitHub"
     $request.Message = "what is in here"
     Invoke-DeskAsk $request | Out-Null
-    $ordinary = ($script:lastBody | ConvertFrom-Json).message
-    if ($ordinary -notmatch '(?s)^Path: .+what is in here$') { throw "Ordinary Ask with a path lost its path prefix." }
+    if (($script:lastBody | ConvertFrom-Json).message -notmatch '(?s)^Path: .+what is in here$') {
+        throw "Ordinary Ask with a path lost its path prefix."
+    }
     if ($script:lastAuthorization) { throw "Ordinary path Ask sent a bearer." }
-    $script:fixtureBusy = $true
     $request.Path = ""
+    $script:fixtureBusy = $true
     $request.Message = "/yolo off"
     Assert-Equal (Invoke-DeskAsk $request) "text fixture"
     Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
-    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    Assert-Equal $script:lastAuthorization ("Bearer " + $env:GODBRAIN_API_TOKEN)
     $request.Message = "what is in here"
     Assert-Throws { Invoke-DeskAsk $request } "*already running*"
     $script:fixtureBusy = $null
     $request.Message = "/yolo off"
     Assert-Equal (Invoke-DeskAsk $request) "text fixture"
-    Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo off"
     $script:fixtureBusy = $false
-    $request.Path = ""
     $request.Message = "/yolo 15"
-    Remove-Item Env:GODBRAIN_API_TOKEN
     Invoke-DeskAsk $request | Out-Null
     Assert-Equal (($script:lastBody | ConvertFrom-Json).message) "/yolo 15"
+    Assert-Equal $script:lastAuthorization "Bearer fixture-desk-token"
+    Remove-Item Env:GODBRAIN_API_TOKEN
+    Invoke-DeskAsk $request | Out-Null
     if ($script:lastAuthorization) { throw "Unset token still sent a bearer." }
 } finally {
     if ([string]::IsNullOrEmpty($savedToken)) { Remove-Item Env:GODBRAIN_API_TOKEN -ErrorAction SilentlyContinue }
@@ -410,6 +536,58 @@ if (-not $askWrite) { throw "Ask-GodBrain is missing Test-GodBrainWriteSlash." }
 Assert-Equal (Test-GodBrainWriteSlash "/reject last junk") $true
 Assert-Equal (Test-GodBrainWriteSlash "/yolo status extra") $false
 Assert-Equal (Test-GodBrainWriteSlash "/brief") $false
+$large = Join-Path $env:TEMP ("desk-review-" + [guid]::NewGuid().ToString("N") + ".cpp")
+$picture = $null
+try {
+    [IO.File]::WriteAllText($large, ("int x;`n" * 20000))
+    if ((Get-Item -LiteralPath $large).Length -le 128KB) { throw "Large-file fixture is under 128 KiB." }
+    function Invoke-DeskCodeReview { param($Path, $Task) $script:completeReview = $Path; return "chunked review" }
+    $savedMessage = $request.Message
+    $request.Path = $large
+    $request.Message = "I want this analyzed for bugs"
+    $request.ReviewFile = $false
+    Assert-Equal (Invoke-DeskAsk $request) "chunked review"
+    Assert-Equal $script:completeReview $large
+    $request.Message = "fix the crash in this file"
+    Assert-Equal (Invoke-DeskAsk $request) "text fixture"
+    Assert-Equal $script:lastUri "http://127.0.0.1:8083/api/chat"
+    $request.Path = ""
+    $request.Message = $savedMessage
+    $request.ReviewFile = $false
+    $picture = Join-Path $env:TEMP ("desk-vision-" + [guid]::NewGuid().ToString("N") + ".jpg")
+    $pixels = [byte[]]::new(140KB)
+    $pixels[0] = 0xFF; $pixels[1] = 0xD8; $pixels[2] = 0xFF; $pixels[3] = 0xD9
+    [IO.File]::WriteAllBytes($picture, $pixels)
+    $request.Path = $picture
+    $request.Message = "OCR"
+    $script:completeReview = ""
+    $script:ports = @()
+    Assert-Throws { Invoke-DeskAsk $request } "*vision tower is down*"
+    Assert-Equal $script:completeReview ""
+    $script:ports = @(8888)
+    $script:askResponses["http://127.0.0.1:8888/health"] = @{ vision = $false; busy = $false }
+    Assert-Throws { Invoke-DeskAsk $request } "*text-only*"
+    $script:askResponses["http://127.0.0.1:8888/health"] = @{ vision = $true; busy = $false }
+    $script:askResponses["http://127.0.0.1:8888/v1/models"] = @{ data = @(@{ id = "qwen-vision-fixture" }) }
+    $script:askResponses["http://127.0.0.1:8888/v1/chat/completions"] = @{
+        choices = @(@{ message = @{ content = "tank fixture" } })
+    }
+    Assert-Equal (Invoke-DeskAsk $request) "tank fixture"
+    Assert-Equal $script:completeReview ""
+    if ($script:lastBody -notmatch '"messages":\[') { throw "Vision Ask unwrapped the messages array." }
+    $posted = $script:lastBody | ConvertFrom-Json
+    Assert-Equal $posted.model "qwen-vision-fixture"
+    Assert-Equal ([bool]$posted.chat_template_kwargs.enable_thinking) $false
+    Assert-Equal $posted.messages[0].content[0].text "OCR"
+    if ($posted.messages[0].content[1].image_url.url -notlike "data:image/jpeg;base64,*") {
+        throw "Vision Ask did not send the picture."
+    }
+    $request.Path = ""
+    $request.Message = $savedMessage
+    $script:askResponses.Remove("http://127.0.0.1:8888/health")
+    $script:askResponses.Remove("http://127.0.0.1:8888/v1/models")
+    $script:askResponses.Remove("http://127.0.0.1:8888/v1/chat/completions")
+} finally { Remove-Item -LiteralPath $large, $picture -Force -ErrorAction SilentlyContinue }
 $script:fixtureBusy = $true
 Assert-Throws { Invoke-DeskAsk $request } "*already running*"
 $script:fixtureBusy = $null
@@ -541,7 +719,7 @@ if ($UiSmoke) {
         if ($statement.Extent.Text -in @('Update-Status', '$timer.Start()')) { continue }
         $source.Add($statement.Extent.Text)
     }
-    $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null
+    $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null; $MonitorRequest = $null
     $panelPath = "'" + (Join-Path $PSScriptRoot "Show-DeskMenu.ps1").Replace("'", "''") + "'"
     try {
         . ([scriptblock]::Create(($source -join "`n").Replace('$PSScriptRoot', '$script:uiScriptsRoot').Replace('$PSCommandPath', $panelPath)))
@@ -554,12 +732,254 @@ if ($UiSmoke) {
         $bitmap = New-Object System.Drawing.Bitmap($f.Width, $f.Height)
         try { $f.DrawToBitmap($bitmap, $f.ClientRectangle) } finally { $bitmap.Dispose() }
         Show-Page "Model"
+        foreach ($control in @($script:modelContext, $script:modelCache, $script:modelMtp, $script:modelBudget, $script:modelCpuCache, $script:modelSettingsHint, $script:modelLive)) {
+            if ($control.Parent -ne $pageModel -or $control.Bounds.Bottom -gt $pageModel.ClientSize.Height) {
+                throw "Model settings are outside the Model page."
+            }
+        }
+        Set-ModelPick "image"
+        Assert-Equal $script:modelContext.Enabled $false
+        Assert-Equal $script:modelMtp.Enabled $false
+        Set-ModelPick "vl"
+        Assert-Equal $script:modelContext.Enabled $true
+        Assert-Equal $script:modelMtp.Enabled $false
+        Set-ModelPick "27b"
+        Assert-Equal $script:modelMtp.Enabled $true
+        $hintSize = [Windows.Forms.TextRenderer]::MeasureText($script:modelSettingsHint.Text,
+            $script:modelSettingsHint.Font, $script:modelSettingsHint.Size, [Windows.Forms.TextFormatFlags]::WordBreak)
+        if ($hintSize.Height -gt $script:modelSettingsHint.Height) {
+            throw "Model settings explanation is clipped: measured=$($hintSize.Height), available=$($script:modelSettingsHint.Height)."
+        }
+        if ([Windows.Forms.TextRenderer]::MeasureText($reviewFile.Text, $reviewFile.Font).Width + 24 -gt $reviewFile.Width) {
+            throw "Complete-file review label is clipped."
+        }
+        $monitorRail = @($script:railMarks | Where-Object Name -eq "Monitor")
+        Assert-Equal $monitorRail.Count 1
+        Assert-Equal $monitorRail[0].Button.Top 296
+        if ($monitorRail[0].Button.Bottom -ge $script:micRail.Top) {
+            throw "Monitor icon is not above the microphone."
+        }
+        $script:monitorWorker.Dispose()
+        $script:monitorWorker = [PowerShell]::Create()
+        $monitorFixture = '{"schema_version":1,"ok":true,"model":"Dell S2522HG","display":"fixture","brightness":{"supported":true,"current":75,"maximum":100},"contrast":{"supported":true,"current":75,"maximum":100},"dark_stabilizer":{"supported":true,"current":0,"maximum":3},"dark_stabilizer_cycle":{"supported":true,"readback_available":false,"current":null},"preset":{"supported":true,"current":30,"maximum":255,"id":"game2"},"presets":[{"id":"standard","name":"Standard"},{"id":"game2","name":"Game 2"}]}'
+        [void]$script:monitorWorker.AddScript("Start-Sleep -Milliseconds 900; '$monitorFixture' | ConvertFrom-Json")
+        $script:monitorJob = $script:monitorWorker.BeginInvoke()
+        Set-MonitorEnabled
+        Show-Page "Monitor"
+        Assert-Equal $script:monitorApply.brightness.Enabled $false
+        $script:monitorUiTicks = 0
+        $probeTimer = [Windows.Forms.Timer]::new()
+        $probeTimer.Interval = 40
+        $probeTimer.Add_Tick({ $script:monitorUiTicks++ })
+        $probeTimer.Start()
+        $deadline = [datetime]::UtcNow.AddSeconds(5)
+        try {
+            while (-not $script:monitorJob.IsCompleted) {
+                [Windows.Forms.Application]::DoEvents()
+                Show-Page "Status"
+                Show-Page "Monitor"
+                if ([datetime]::UtcNow -gt $deadline) { throw "Monitor fixture did not finish." }
+                Start-Sleep -Milliseconds 10
+            }
+        } finally { $probeTimer.Stop(); $probeTimer.Dispose() }
+        if ($script:monitorUiTicks -lt 8) { throw "UI timer froze during slow monitor I/O." }
+        Update-Monitor
+        Assert-Equal $script:monitorControls.brightness.Value 75
+        Assert-Equal $script:monitorControls.preset.SelectedIndex 1
+        Assert-Equal $script:monitorApply.brightness.Enabled $true
+        Assert-Equal $script:monitorNames.dark_stabilizer "Dark Stabilizer"
+        Assert-Equal $script:monitorControls.ContainsKey("dark_stabilizer") $false
+        Assert-Equal $script:monitorApply.ContainsKey("dark_stabilizer") $false
+        Assert-Equal ($script:monitorDarkLevels -is [Windows.Forms.Label]) $true
+        Assert-Equal $script:monitorDarkLevels.Text "Disabled / Enabled level 1-3"
+        $darkLabels = @($pageMonitor.Controls | Where-Object { $_.Text -eq "Dark Stabilizer" })
+        Assert-Equal $darkLabels.Count 1
+        Assert-Equal $script:monitorCycle.Enabled $true
+        Assert-Equal $script:monitorCycle.Text "Cycle (F9)"
+        Assert-Equal $script:monitorCycle.Left $script:monitorApply.brightness.Left
+        Assert-Equal $script:monitorCycle.Size $script:monitorApply.brightness.Size
+        Assert-Equal $script:monitorCycle.Top ($script:monitorDarkLevels.Top - 2)
+        if ([Windows.Forms.TextRenderer]::MeasureText($script:monitorCycle.Text, $script:monitorCycle.Font).Width + 12 -gt $script:monitorCycle.Width) {
+            throw "Dark Stabilizer cycle button text is clipped."
+        }
+        foreach ($control in @($script:monitorControls.Values) + @($script:monitorApply.Values) +
+                @($script:monitorRefresh, $script:monitorMessage, $script:monitorCycle,
+                    $script:monitorHotkeyHint, $script:monitorClaimHotkey, $script:monitorDarkLevels)) {
+            if ($control.Parent -ne $pageMonitor -or $control.Bounds.Bottom -gt $pageMonitor.ClientSize.Height) {
+                throw "Monitor controls are outside their page."
+            }
+        }
+        $bitmap = [Drawing.Bitmap]::new($f.Width, $f.Height)
+        try { $f.DrawToBitmap($bitmap, $f.ClientRectangle) } finally { $bitmap.Dispose() }
+        $script:monitorWorker.Commands.Clear()
+        $unsupportedFixture = $monitorFixture | ConvertFrom-Json
+        $unsupportedFixture.dark_stabilizer = [pscustomobject]@{ supported = $false; error = "fixture levels unavailable" }
+        $unsupportedJson = $unsupportedFixture | ConvertTo-Json -Depth 8 -Compress
+        [void]$script:monitorWorker.AddScript("'$unsupportedJson' | ConvertFrom-Json")
+        $script:monitorJob = $script:monitorWorker.BeginInvoke()
+        while (-not $script:monitorJob.IsCompleted) { Start-Sleep -Milliseconds 10 }
+        Update-Monitor
+        Assert-Equal $script:monitorDarkLevels.Text "Disabled / Enabled level 1-3"
+        Assert-Equal $script:monitorDarkLevels.Enabled $true
+        Assert-Equal $script:monitorCycle.Enabled $true
+        Assert-Equal $script:monitorApply.brightness.Enabled $true
+        if ($script:monitorMessage.Text -notlike "*fixture levels unavailable*") { throw "Unsupported control was hidden." }
+        $script:monitorWorker.Commands.Clear()
+        $script:monitorWorker.Streams.Error.Clear()
+        [void]$script:monitorWorker.AddScript('throw "fixture monitor disconnected"')
+        $script:monitorJob = $script:monitorWorker.BeginInvoke()
+        while (-not $script:monitorJob.IsCompleted) { Start-Sleep -Milliseconds 10 }
+        Update-Monitor
+        Assert-Equal $script:monitorApply.brightness.Enabled $false
+        Assert-Equal $script:monitorRefresh.Enabled $true
+        if ($script:monitorMessage.Text -notlike "*fixture monitor disconnected*") {
+            throw "Monitor failure was not reported."
+        }
+        Assert-Equal $script:monitorCycle.Enabled $false
+        Assert-Equal $script:monitorDarkLevels.Text "Disabled / Enabled level 1-3"
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class DeskMonitorTestInput {
+    [StructLayout(LayoutKind.Sequential)]
+    struct Keyboard { public ushort Key, Scan; public uint Flags, Time; public UIntPtr Extra; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Mouse { public int X, Y; public uint Data, Flags, Time; public UIntPtr Extra; }
+    [StructLayout(LayoutKind.Explicit)]
+    struct Data { [FieldOffset(0)] public Keyboard Keyboard; [FieldOffset(0)] public Mouse Mouse; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Input { public uint Type; public Data Data; }
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint SendInput(uint count, Input[] inputs, int size);
+    public static void Key(ushort key, bool up) {
+        var input = new Input { Type = 1,
+            Data = new Data { Keyboard = new Keyboard { Key = key, Flags = up ? 2u : 0u } } };
+        if (SendInput(1, new[] { input }, Marshal.SizeOf<Input>()) != 1)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+}
+'@
+        $script:monitorHotkey.Dispose()
+        $script:monitorHotkey = [DeskMonitorHotkey]::new(0x87) # F24 fixture never claims the live F9.
+        $script:monitorHotkeyDeliveries = 0
+        $script:monitorHotkey.Add_Pressed({
+            $script:monitorHotkeyDeliveries++
+            Start-MonitorOperation "dark_stabilizer_cycle"
+        })
+        $blocker = [DeskMonitorHotkey]::new(0x87)
+        try {
+            if (-not $blocker.Register()) { throw "F24 fixture unavailable: $($blocker.RegistrationError)" }
+            Register-MonitorHotkey
+            Assert-Equal $script:monitorHotkey.Registered $false
+            Assert-Equal $script:monitorClaimHotkey.Enabled $true
+            if ($script:monitorHotkeyHint.Text -notlike "*F9 unavailable*Exit DDM*") { throw "Hotkey collision was not reported." }
+        } finally { $blocker.Dispose() }
+        Register-MonitorHotkey
+        Assert-Equal $script:monitorHotkey.Registered $true
+        Assert-Equal $script:monitorClaimHotkey.Enabled $false
+        if ($script:monitorMessage.Text -like "F9 unavailable*") { throw "Reclaimed hotkey still reports a collision." }
+
+        $cycleFixture = $unsupportedFixture
+        $cycleFixture | Add-Member action ([pscustomobject]@{
+            control = "dark_stabilizer_cycle"; command_accepted = $true; state_verified = $false
+            current = $null; vcp_code = 227; value = 16; write_count = 1
+        })
+        $cycleJson = $cycleFixture | ConvertTo-Json -Depth 8 -Compress
+        $script:monitorWorker.Dispose()
+        $cycleState = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+        $cycleState.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new("Get-FixtureMonitorCycle",
+            "param(`$MonitorRequest) `$global:cycleRequests.Add(`$MonitorRequest.Control); Start-Sleep -Milliseconds 900; if (`$global:cycleFail) { throw 'fixture cycle timed out; may have reached the monitor; current level is unavailable. No automatic retry was made.' }; '$cycleJson' | ConvertFrom-Json"))
+        $cycleRunspace = [RunspaceFactory]::CreateRunspace($cycleState)
+        $cycleRunspace.Open()
+        $cycleRequests = [Collections.Generic.List[string]]::new()
+        $cycleRunspace.SessionStateProxy.SetVariable("cycleRequests", $cycleRequests)
+        $script:monitorWorker = [PowerShell]::Create()
+        $script:monitorWorker.Runspace = $cycleRunspace
+        $startMonitor = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-MonitorOperation"
+        }, $true)
+        $script:monitorFixtureCommand = "Get-FixtureMonitorCycle"
+        . ([scriptblock]::Create($startMonitor.Extent.Text.Replace('$PSCommandPath', '$script:monitorFixtureCommand')))
+        $script:monitorSnapshot = $null
+        $f.Hide()
+        try {
+            [DeskMonitorTestInput]::Key(0x87, $false)
+            $deadline = [datetime]::UtcNow.AddSeconds(3)
+            while (-not $script:monitorJob) {
+                [Windows.Forms.Application]::DoEvents()
+                if ([datetime]::UtcNow -gt $deadline) { throw "Hidden-window hotkey did not start the fixture." }
+                Start-Sleep -Milliseconds 5
+            }
+            $firstJob = $script:monitorJob
+            [DeskMonitorTestInput]::Key(0x87, $false)
+            [Windows.Forms.Application]::DoEvents()
+            Assert-Equal $script:monitorHotkeyDeliveries 1
+        } finally { [DeskMonitorTestInput]::Key(0x87, $true) }
+        [DeskMonitorTestInput]::Key(0x87, $false)
+        [DeskMonitorTestInput]::Key(0x87, $true)
+        $deadline = [datetime]::UtcNow.AddSeconds(3)
+        while ($script:monitorHotkeyDeliveries -lt 2) {
+            [Windows.Forms.Application]::DoEvents()
+            if ([datetime]::UtcNow -gt $deadline) { throw "Second hotkey press was not dispatched." }
+            Start-Sleep -Milliseconds 5
+        }
+        Assert-Equal $script:monitorJob $firstJob
+        if ($script:monitorMessage.Text -notlike "*busy*not sent or queued*") { throw "Busy cycle was silently dropped or queued." }
+        if (-not $firstJob.AsyncWaitHandle.WaitOne(5000)) { throw "Cycle fixture did not finish." }
+        Update-Monitor
+        Assert-Equal $cycleRequests.Count 1
+        Assert-Equal $cycleRequests[0] "dark_stabilizer_cycle"
+        Assert-Equal $script:monitorDarkLevels.Text "Disabled / Enabled level 1-3"
+        if ($script:monitorMessage.Text -notlike "*command accepted*Current level unavailable*") { throw "Cycle claimed an unverified level." }
+        if ($script:monitorMessage.Text -like "*Hardware readback confirmed*") { throw "Cycle falsely claimed hardware verification." }
+        foreach ($control in @($script:monitorHotkeyHint, $script:monitorMessage, $monitorNote, $monitorHint,
+                $script:monitorDarkLevels, $darkLabels[0])) {
+            $measured = [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font,
+                $control.Size, [Windows.Forms.TextFormatFlags]::WordBreak)
+            if ($measured.Height -gt $control.Height) { throw "Monitor label is clipped: $($control.Text)" }
+        }
+        $cycleRunspace.SessionStateProxy.SetVariable("cycleFail", $true)
+        $f.Show()
+        Show-Page "Monitor"
+        $script:monitorCycle.PerformClick()
+        if (-not $script:monitorJob -or -not $script:monitorJob.AsyncWaitHandle.WaitOne(5000)) {
+            throw "Cycle button did not start its asynchronous fixture."
+        }
+        Update-Monitor
+        Assert-Equal $cycleRequests.Count 2
+        Assert-Equal $script:monitorCycle.Enabled $false
+        Assert-Equal $script:monitorRefresh.Enabled $true
+        if ($script:monitorMessage.Text -notlike "*cycle timed out*may have reached*current level is unavailable*No automatic retry*") {
+            throw "Uncertain cycle failure was not surfaced."
+        }
+        Start-Sleep -Milliseconds 100
+        Update-Monitor
+        Assert-Equal $cycleRequests.Count 2
+        $script:monitorSnapshot = $cycleFixture
+        $script:monitorSnapshot.dark_stabilizer_cycle = [pscustomobject]@{ supported = $false; error = "fixture no E3" }
+        Set-MonitorEnabled
+        Assert-Equal $script:monitorCycle.Enabled $false
+        Start-MonitorOperation "dark_stabilizer_cycle"
+        Assert-Equal $script:monitorJob $null
+        if ($script:monitorMessage.Text -notlike "*not advertised*no command sent*") { throw "Unsupported cycle was not reported." }
+        $script:monitorHotkey.Dispose()
+        $released = [DeskMonitorHotkey]::new(0x87)
+        try {
+            if (-not $released.Register()) { throw "Hotkey was not released on disposal." }
+        } finally { $released.Dispose() }
+        Write-Output "PASS: ordinary hidden-window hotkey delivery before first monitor read, MOD_NOREPEAT, collision/reclaim/release, one async cycle, busy/no-queue and unknown-level UI; F24 fixture only, no real monitor writes."
         Show-Page "Status"
+        Write-Output "PASS: Monitor icon/page bounds, slow-I/O UI timer responsiveness, readback display and disconnected fail-closed controls; no real monitor probes or writes."
         Write-Output "PASS: native STA desk construction/render and AFK option bounds; no actions or status probes started."
     } finally {
         if ($timer) { $timer.Stop(); $timer.Dispose() }
         if ($script:statusWorker) { $script:statusWorker.Dispose() }
         if ($script:askWorker) { $script:askWorker.Dispose() }
+        if ($script:monitorWorker) { $script:monitorWorker.Stop(); $script:monitorWorker.Dispose() }
+        if ($cycleRunspace) { $cycleRunspace.Dispose() }
+        if ($script:monitorHotkey) { $script:monitorHotkey.Dispose() }
         if ($script:ni) { $script:ni.Visible = $false; $script:ni.Dispose() }
         if ($f) { $f.Dispose() }
     }
