@@ -3,9 +3,13 @@
 [CmdletBinding()]
 param(
     [double]$Zoom = 1.0,
-    [double]$Fps = 1
+    [double]$Fps = 1,
+    [ValidateRange(256, 262144)][int]$CacheSize = 57344,
+    [ValidateSet("fp16", "4", "8", "8,4")][string]$CacheQuant = "fp16",
+    [ValidateRange(0, 64)][double]$CpuCacheSizeGB = 4
 )
 $ErrorActionPreference = "Stop"
+if ($CacheSize % 256) { throw "CacheSize must be a multiple of 256." }
 $Kit = "C:\nvme\Qwen3.8-27B-16gb"
 $model = "C:\nvme\qwen3-vl-8b-exl3"
 if (-not (Test-Path -LiteralPath (Join-Path $model "config.json"))) {
@@ -28,6 +32,12 @@ if (Test-LoopbackPort 8871) {
     throw ":8871 is still listening. Stop the image model before starting VL. One GPU slot."
 }
 if (Test-LoopbackPort 8888) {
+    $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
+    $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
+    if ($models.data[0].id -ne "qwen3-vl-8b-exl3" -or
+        $health.context_length -ne $CacheSize -or $health.cache_quant -ne $CacheQuant) {
+        throw ":8888 is running a different model/cache configuration. Stop it before applying VL settings."
+    }
     Write-Output "already up http://127.0.0.1:8888/v1 (stop Paper Qwen before swapping to VL)"
     exit 0
 }
@@ -47,14 +57,15 @@ $env:TRITON_CACHE_DIR = Join-Path $Kit "triton-cache"
 try { $Host.UI.RawUI.WindowTitle = "qwen3-vl-8b-exl3" } catch {}
 Write-Output "Starting qwen3-vl-8b-exl3 (vision on, ~110s CS clips: sample 1-2 fps, never full 60fps into VRAM)"
 Set-Location -LiteralPath $Kit
+$cacheArgs = if ($CacheQuant -eq "fp16") { @() } else { @("--cache_quant", $CacheQuant) }
 & $py -u $serve `
     --model $model `
     --model_id qwen3-vl-8b-exl3 `
     --host 127.0.0.1 `
     --port 8888 `
-    --cache_size 57344 `
+    --cache_size $CacheSize `
     --grid_size 14.5 `
-    --cpu_cache_size 4 `
+    --cpu_cache_size $CpuCacheSizeGB `
     --draft_model none `
     --vision auto `
     --image_max_pixels 1555200 `
@@ -64,4 +75,5 @@ Set-Location -LiteralPath $Kit
     --video_max_pixels 307200 `
     --video_zoom $Zoom `
     --ffmpeg "C:\Tools\ffmpeg\ffmpeg.exe" `
-    --ui off
+    --ui off @cacheArgs
+if ($LASTEXITCODE -ne 0) { throw "VL server exited with code $LASTEXITCODE." }

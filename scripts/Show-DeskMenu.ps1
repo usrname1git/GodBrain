@@ -1,5 +1,7 @@
 # One window for the doors already on this machine.
 # Status: each service has Start and Stop. Rate and GPU are readouts.
+# STT/TTS is the CPU voice door on :8001. The 27B vision tower stays off
+# unless the model page checkbox is saved and that model is started.
 # Model page picks 27B text, 8B vision, Qwen-Image-2.1, or Uncensored. Status starts that pick.
 # Clips page runs the deadtime scan. Lyrics starts capture, waits for loopback,
 # waits the preroll, then Shift+P into the running ncspot.
@@ -11,7 +13,8 @@ param(
     [switch]$ControlPanelHost,
     [switch]$StatusSnapshot,
     [object]$TokenSample,
-    [object]$AskRequest
+    [object]$AskRequest,
+    [object]$MonitorRequest
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +32,8 @@ if (Test-Path -LiteralPath $cs2Helper) { . $cs2Helper }
 $mouthHelper = Join-Path $PSScriptRoot "GodBrain-Mouth.ps1"
 if (Test-Path -LiteralPath $mouthHelper) { . $mouthHelper }
 . (Join-Path $PSScriptRoot "GodBrain-HostServices.ps1")
+. (Join-Path $PSScriptRoot "GodBrain-DeskModel.ps1")
+. (Join-Path $PSScriptRoot "GodBrain-DeskMonitor.ps1")
 $script:modelPick = "27b"
 
 function Test-Port([int]$Port) {
@@ -134,14 +139,13 @@ function Get-ModelLine {
 }
 
 function Get-WhisperLine {
+    if (-not (Test-Port 8001)) { return "down" }
     try {
-        $worker = Join-Path $PSScriptRoot "lyrics_loop.py"
-        $pattern = '(?:^|\s|")' + [regex]::Escape($worker) + '(?:"|\s|$)'
-        $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction Stop |
-            Where-Object { $_.CommandLine -match $pattern })
-        if ($processes.Count -gt 0) { return "CPU lyrics running (no port)" }
-        return "CPU lyrics idle (no port)"
-    } catch { return "CPU lyrics process unread" }
+        $health = Invoke-RestMethod http://127.0.0.1:8001/health -TimeoutSec 2
+        if ([string]$health.service -ne "voice" -or [string]$health.device -ne "cpu") { return "down (other)" }
+        if ([string]$health.ocr -eq "qwen") { return "CPU up :8001 OCR=tower" }
+        return "CPU up :8001"
+    } catch { return "health unread" }
 }
 
 function Get-HttpLine {
@@ -377,6 +381,7 @@ function Get-Cs2DeskLine {
 
 function Test-GenerateBusy {
     try {
+        if (Test-DeskReviewBusy) { return $true }
         $st = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:8083/api/status"
         if ($st.generate_busy) { return $true }
         if ($st.coli -and $st.coli.busy) { return $true }
@@ -449,7 +454,16 @@ function Get-DeskSnapshot {
         Web = Get-HttpLine
         Whisper = Get-WhisperLine
     }
-    [pscustomobject]@{ Rows = [pscustomobject]$rows; TokenSample = $script:tokSample }
+    $modelConfig = "Live context/MTP unavailable"
+    try {
+        if (Test-Port 8888) {
+            $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 2
+            $draft = if ($health.drafting.mode -eq "none") { "off" } else { "$($health.drafting.mode)/$($health.drafting.num_draft_tokens)" }
+            $modelConfig = "Live: ctx=$($health.context_length)  KV=$($health.cache_quant)  draft=$draft  vision=$($health.vision)"
+        } elseif (Test-Port 8871) { $modelConfig = "Live: image diffusion; no token context/MTP" }
+        else { $modelConfig = "Live: text/image model down" }
+    } catch { $modelConfig = "Live context/MTP unread: $($_.Exception.Message)" }
+    [pscustomobject]@{ Rows = [pscustomobject]$rows; TokenSample = $script:tokSample; ModelConfig = $modelConfig }
 }
 
 function Get-DeskJailRoots {
@@ -479,7 +493,7 @@ function Test-DeskPathToken([string]$Text) {
     return $Text -match '(?i)(?:[a-z]:[\\/]|%[A-Za-z0-9_()]+%\\)'
 }
 
-function Get-DeskImagePayload([string]$Path) {
+function Read-DeskGrantedBytes([string]$Path, [long]$Maximum, [string]$Kind) {
     if (-not ("DeskImagePath" -as [type])) {
         Add-Type -TypeDefinition @"
 using System;
@@ -504,18 +518,22 @@ public static class DeskImagePath {
     $stream = [IO.File]::OpenRead($Path)
     try {
         $finalPath = [DeskImagePath]::Resolve($stream.SafeFileHandle)
-        if (-not (Test-DeskGrantedPath $finalPath)) { throw "Image resolves outside the kernel file jail." }
-        if ($stream.Length -lt 1 -or $stream.Length -gt 10MB) { throw "Image input must be between 1 byte and 10 MiB." }
+        if (-not (Test-DeskGrantedPath $finalPath)) { throw "$Kind resolves outside the kernel file jail." }
+        if ($stream.Length -lt 1 -or $stream.Length -gt $Maximum) { throw "$Kind input must be between 1 byte and $Maximum bytes." }
         $memory = [IO.MemoryStream]::new()
         try {
             $buffer = [byte[]]::new(81920)
             while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                if ($memory.Length + $read -gt 10MB) { throw "Image input exceeds 10 MiB." }
+                if ($memory.Length + $read -gt $Maximum) { throw "$Kind input exceeds $Maximum bytes." }
                 $memory.Write($buffer, 0, $read)
             }
-            return [Convert]::ToBase64String($memory.ToArray())
+            return ,$memory.ToArray()
         } finally { $memory.Dispose() }
     } finally { $stream.Dispose() }
+}
+
+function Get-DeskImagePayload([string]$Path) {
+    return [Convert]::ToBase64String((Read-DeskGrantedBytes $Path 10MB "Image"))
 }
 
 function Wait-DeskImageResult([string]$RequestId) {
@@ -559,10 +577,72 @@ function Test-DeskWriteSlash([string]$Text) {
     return $false
 }
 
+function Test-DeskNeedsCompleteReview([string]$Path, [string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (Test-DeskVisionImage $Path) { return $false }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $Path).Length -le 128KB) { return $false }
+    return $Text -notmatch '(?i)(?:^|\s)/edit\b|\b(?:fix|patch|rewrite|implement)\b'
+}
+
+function Test-DeskVisionImage([string]$Path) {
+    return $Path -match '\.(?i:jpg|jpeg|png|webp|gif|bmp)$'
+}
+
+function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
+    if (-not (Test-Port 8888)) {
+        throw "The vision tower is down. On the model page, check Vision tower for the 27B, then press Status Start."
+    }
+    $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
+    if (-not $health.vision) {
+        throw "The model on :8888 is text-only. Stop it, check Vision tower, and start it again."
+    }
+    if ($health.busy) { throw "The model is already generating. Wait." }
+    $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
+    $model = [string]$models.data[0].id
+    if ([string]::IsNullOrWhiteSpace($Text)) { $Text = "Describe this image." }
+    $mime = switch ([IO.Path]::GetExtension($Path).ToLowerInvariant()) {
+        ".png" { "image/png" }
+        ".webp" { "image/webp" }
+        ".gif" { "image/gif" }
+        default { "image/jpeg" }
+    }
+    $encoded = Get-DeskImagePayload $Path
+    $body = @{
+        model = $model
+        temperature = 0
+        max_tokens = 1024
+        chat_template_kwargs = @{ enable_thinking = $false }
+        messages = @(@{
+            role = "user"
+            content = @(
+                @{ type = "text"; text = $Text }
+                @{ type = "image_url"; image_url = @{ url = "data:${mime};base64,$encoded" } }
+            )
+        })
+    } | ConvertTo-Json -Depth 8 -Compress
+    $res = Invoke-RestMethod "http://127.0.0.1:8888/v1/chat/completions" -Method Post `
+        -Body $body -ContentType "application/json; charset=utf-8" -TimeoutSec 180
+    $choice = $res.choices[0].message
+    $answer = [string]$choice.content
+    if ([string]::IsNullOrWhiteSpace($answer)) { $answer = [string]$choice.reasoning_content }
+    if ([string]::IsNullOrWhiteSpace($answer)) { throw "The vision tower returned no text." }
+    return $answer.Trim()
+}
+
 function Invoke-DeskAsk($Request) {
     $text = [string]$Request.Message
+    $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
     $path = ConvertTo-DeskAskPath ([string]$Request.Path)
     if ($path -and -not (Test-DeskGrantedPath $path)) { throw "That path is outside the kernel file jail ($path)." }
+    if (-not $yoloOrJudge -and $path -and -not $Request.ImageModel -and -not (Test-Port 8871) -and (Test-DeskVisionImage $path)) {
+        return (Invoke-DeskVisionAsk $path $text)
+    }
+    $completeReview = -not $yoloOrJudge -and -not $Request.ImageModel -and (
+        [bool]$Request.ReviewFile -or (Test-DeskNeedsCompleteReview $path $text))
+    if ($completeReview -and ($Request.ImageModel -or (Test-Port 8871))) {
+        throw "Complete-source review requires a text model, not image diffusion."
+    }
     if ($Request.ImageModel -or (Test-Port 8871)) {
         if ([string]::IsNullOrWhiteSpace($text)) { throw "Enter an image generation or edit prompt." }
         if (-not (Test-Port 8871)) { throw "Qwen-Image-2.1 is down on :8871. Start it from Status Model first." }
@@ -594,13 +674,13 @@ function Invoke-DeskAsk($Request) {
         if ($res.cleanup_error) { $answer += "`r`nWarning: model memory cleanup failed: $($res.cleanup_error)" }
         return $answer
     }
-    $writeSlash = Test-DeskWriteSlash $text
-    $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
     if (-not $yoloOrJudge) {
         $busy = Test-GenerateBusy
         if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
         if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
     }
+    if ($completeReview) { return (Invoke-DeskCodeReview $path $text) }
+    $writeSlash = Test-DeskWriteSlash $text
     if ($yoloOrJudge) {
         $text = $text.Trim()
     } elseif ($path) {
@@ -624,6 +704,11 @@ function Invoke-DeskAsk($Request) {
     if ($res.response) { return [string]$res.response }
     if ($res.error) { throw ([string]$res.error) }
     throw "Kernel returned no chat response."
+}
+
+if ($MonitorRequest) {
+    Invoke-DeskMonitor -Control $MonitorRequest.Control -Value $MonitorRequest.Value -RepoRoot $Repo
+    return
 }
 
 if ($AskRequest) {
@@ -687,8 +772,8 @@ public static class NcIn {
 "@
 }
 
-function Start-Door([string]$File) {
-    Start-Process -FilePath $Pwsh -ArgumentList @("-NoProfile", "-File", $File) -WindowStyle Normal | Out-Null
+function Start-Door([string]$File, [string[]]$Options = @()) {
+    Start-Process -FilePath $Pwsh -ArgumentList (@("-NoProfile", "-File", ('"' + $File + '"')) + $Options) -WindowStyle Normal | Out-Null
 }
 
 function Stop-Door {
@@ -888,13 +973,68 @@ function Stop-ImageDoor {
 }
 
 function Start-SelectedModel {
-    if (-not (Enable-DeskAfterCs2)) { return }
     if ($script:modelPick -eq "image") {
+        if (-not (Enable-DeskAfterCs2)) { return }
         Start-ImageDoor
         return
     }
+    try {
+        Save-DeskModelControls
+        $options = Get-DeskModelLaunchOptions $script:modelPick $script:modelProfiles[$script:modelPick]
+        Test-DeskModelLauncher (Get-ModelPickFile) $options
+        $profile = $script:modelProfiles[$script:modelPick]
+        if ($script:modelPick -eq "27b" -and $profile.Vision) {
+            if (-not (Confirm-Stop "Load the 27B vision tower on this start? It uses about 0.3 GB plus image prefill on the same GPU. The speech door still does OCR on the CPU when the tower is off or this box is unchecked." "Vision tower")) { return }
+        }
+        if (($script:modelPick -eq "27b" -and
+            ($profile.Context -gt 40960 -or ($profile.Context -gt 10240 -and $profile.CacheQuant -ne "4"))) -or
+            ($script:modelPick -eq "uncensored" -and ($profile.Context -gt 10240 -or $profile.Mtp))) {
+            if (-not (Confirm-Stop "Restart with ctx=$($profile.Context), KV=$($profile.CacheQuant), MTP=$($profile.Mtp), GPU budget=$($profile.Budget) GiB? Large-context fit depends on all these settings; an out-of-memory failure is possible even after another configuration passed. Stop the current model and apply this profile?" "Large context restart")) { return }
+        }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Model was not stopped: $($_.Exception.Message)")
+        return
+    }
+    if (-not (Enable-DeskAfterCs2)) { return }
     if (-not (Stop-Door)) { return }
-    Start-Door (Get-ModelPickFile)
+    Start-Door (Get-ModelPickFile) $options
+    Update-Status
+}
+
+function Start-VoiceDoor {
+    $line = Get-WhisperLine
+    if ($line -like "CPU up*") {
+        [System.Windows.Forms.MessageBox]::Show("STT/TTS is already up on :8001.")
+        return
+    }
+    if (Test-Port 8001) {
+        [System.Windows.Forms.MessageBox]::Show("Port 8001 is held by $line. STT/TTS stays down.")
+        return
+    }
+    $py = (Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    $script = Join-Path $Repo "scripts\voice_door.py"
+    if (-not $py -or -not (Test-Path -LiteralPath $script)) {
+        [System.Windows.Forms.MessageBox]::Show("python or scripts\voice_door.py is missing.")
+        return
+    }
+    $hidden = Join-Path $Repo "godbrain_core\cpp_tools\run_hidden.exe"
+    $arg = @($script, "--port", "8001", "--repo", $Repo)
+    if (Test-Path -LiteralPath $hidden) {
+        Start-Process -FilePath $hidden -ArgumentList (@($py) + $arg) -WorkingDirectory $Repo -WindowStyle Hidden | Out-Null
+    } else {
+        Start-Process -FilePath $py -ArgumentList $arg -WorkingDirectory $Repo -WindowStyle Hidden | Out-Null
+    }
+    Update-Status
+}
+
+function Stop-VoiceDoor {
+    $proc = Get-PortListener 8001
+    if (-not $proc -or [string]$proc.CommandLine -notlike "*voice_door.py*") {
+        [System.Windows.Forms.MessageBox]::Show("STT/TTS is already down.")
+        return
+    }
+    if (-not (Confirm-Stop "Stop STT/TTS on :8001? Whisper and Piper unload. The model on :8888 stays up." "STT/TTS")) { return }
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     Update-Status
 }
 
@@ -981,6 +1121,58 @@ function Start-MouthHold {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies @(
+    [Windows.Forms.NativeWindow].Assembly.Location,
+    [Windows.Forms.Message].Assembly.Location,
+    (Join-Path $PSHOME "System.Runtime.dll")
+) -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public sealed class DeskMonitorHotkey : NativeWindow, IDisposable {
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool UnregisterHotKey(IntPtr window, int id);
+    readonly uint key;
+    bool disposed;
+    public bool Registered { get; private set; }
+    public int RegistrationError { get; private set; }
+    public event EventHandler Pressed;
+    public DeskMonitorHotkey(uint key) {
+        this.key = key;
+        CreateHandle(new CreateParams {
+            Caption = "GodBrain Monitor Hotkey", Parent = new IntPtr(-3)
+        });
+    }
+    public bool Register() {
+        if (disposed) throw new ObjectDisposedException("DeskMonitorHotkey");
+        if (Registered) return true;
+        Registered = RegisterHotKey(Handle, 1, 0x4000, key); // MOD_NOREPEAT
+        RegistrationError = Registered ? 0 : Marshal.GetLastWin32Error();
+        return Registered;
+    }
+    protected override void WndProc(ref Message message) {
+        if (Registered && message.Msg == 0x312 && message.WParam.ToInt64() == 1)
+            Pressed?.Invoke(this, EventArgs.Empty);
+        base.WndProc(ref message);
+    }
+    public void Dispose() {
+        if (disposed) return;
+        disposed = true;
+        try {
+            if (Registered && !UnregisterHotKey(Handle, 1))
+                throw new InvalidOperationException("Release monitor hotkey failed (Windows error " +
+                    Marshal.GetLastWin32Error() + ")");
+        } finally {
+            Registered = false;
+            DestroyHandle();
+        }
+    }
+}
+"@
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -1161,11 +1353,13 @@ $pageModel = New-Page
 $pageAsk = New-Page
 $pageLyrics = New-Page
 $pageClips = New-Page
+$pageMonitor = New-Page
 $pages.Status = $pageStatus
 $pages.Model = $pageModel
 $pages.Ask = $pageAsk
 $pages.Lyrics = $pageLyrics
 $pages.Clips = $pageClips
+$pages.Monitor = $pageMonitor
 
 $script:railMarks = @()
 $script:railTip = New-Object System.Windows.Forms.ToolTip
@@ -1203,6 +1397,9 @@ function Show-Page([string]$name) {
         $item.Mark.Visible = $on
         $item.Button.ForeColor = $(if ($on) { $ink } else { $mute })
     }
+    if ($name -eq "Monitor" -and -not $script:monitorSnapshot -and -not $script:monitorJob) {
+        Start-MonitorOperation "read"
+    }
 }
 
 # Gauge, sun, chat, music, video. Same rail idea as the sky strip.
@@ -1211,6 +1408,7 @@ Add-Rail "Model" ([char]0xE706) 64
 Add-Rail "Ask" ([char]0xE8BD) 112
 Add-Rail "Lyrics" ([char]0xE189) 160
 Add-Rail "Clips" ([char]0xE714) 208
+Add-Rail "Monitor" ([char]0xE7F4) 296
 
 $script:micRail = New-Object System.Windows.Forms.Button
 $script:micRail.Text = [char]0xE720
@@ -1385,7 +1583,7 @@ $rowWatch = Add-Pair $pageStatus "AFK Watch" 432 { Set-WatchTask "ENABLE" } {
     Set-WatchTask "DISABLE"
 }
 $rowWeb = Add-Pair $pageStatus "Web" 464 { Start-WebDoor } { Stop-WebDoor }
-$rowWhisper = Add-Row $pageStatus "Whisper" 496
+$rowWhisper = Add-Pair $pageStatus "STT/TTS" 496 { Start-VoiceDoor } { Stop-VoiceDoor }
 $afkGym = New-Object System.Windows.Forms.CheckBox
 $afkGym.Text = "Recover Qwen + gym while AFK (opt-in)"
 $afkGym.Location = New-Object System.Drawing.Point(16, 532)
@@ -1425,6 +1623,7 @@ function Update-Status([switch]$Poll) {
                 $script:statusTip.SetToolTip($entry.Value, $entry.Value.Text)
             }
             $script:tokSample = $snapshot.TokenSample
+            if ($script:modelLive) { $script:modelLive.Text = [string]$snapshot.ModelConfig }
             Update-MicMark
         } catch {
             foreach ($label in $script:statusRows.Values) {
@@ -1448,7 +1647,7 @@ function Update-Status([switch]$Poll) {
 Update-Status
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
-$timer.Add_Tick({ Update-Status -Poll; Update-Ask })
+$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor })
 $timer.Start()
 
 Add-Head $pageModel "Model" 16
@@ -1460,10 +1659,14 @@ $modelHint.Size = New-Object System.Drawing.Size(($script:pageW - 40), 22)
 $pageModel.Controls.Add($modelHint)
 $script:modelButtons = @{}
 function Set-ModelPick([string]$Name) {
+    if ($script:modelContext -and $script:modelPick -ne "image" -and -not $script:modelSettingsError) {
+        Save-DeskModelControls -MemoryOnly
+    }
     $script:modelPick = $Name
     foreach ($key in @($script:modelButtons.Keys)) {
         Paint-Button $script:modelButtons[$key] ($key -eq $Name)
     }
+    if ($script:modelContext) { Show-DeskModelControls }
 }
 function Add-ModelPick([string]$key, [string]$text, [int]$x, [int]$y, [int]$w) {
     $b = New-Object System.Windows.Forms.Button
@@ -1473,7 +1676,8 @@ function Add-ModelPick([string]$key, [string]$text, [int]$x, [int]$y, [int]$w) {
     $b.Size = New-Object System.Drawing.Size($w, 34)
     $b.Add_Click({
         param($sender, $e)
-        Set-ModelPick ([string]$sender.Tag)
+        try { Set-ModelPick ([string]$sender.Tag) }
+        catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message) }
     })
     $pageModel.Controls.Add($b)
     $script:modelButtons[$key] = $b
@@ -1484,9 +1688,150 @@ Add-ModelPick "image" "Qwen-Image-2.1" 260 80 184
 Add-ModelPick "uncensored" "Qwen3.8-27B-Uncensored" 20 124 ($script:pageW - 40)
 Set-ModelPick "27b"
 
+$script:modelSettingsPath = Join-Path $Repo "logs\desk-model-settings.json"
+$script:modelSettingsError = ""
+try { $script:modelProfiles = Read-DeskModelProfiles $script:modelSettingsPath }
+catch { $script:modelProfiles = @{}; $script:modelSettingsError = $_.Exception.Message }
+function Add-ModelLabel([string]$Text, [int]$Y) {
+    $label = [System.Windows.Forms.Label]::new()
+    $label.Text = $Text
+    $label.ForeColor = $mute
+    $label.Location = [Drawing.Point]::new(20, $Y)
+    $label.Size = [Drawing.Size]::new(556, 22)
+    $pageModel.Controls.Add($label)
+}
+Add-ModelLabel "Context tokens (prompt + thinking/output; multiple of 256)" 180
+$script:modelContext = [System.Windows.Forms.TextBox]::new()
+$script:modelContext.Location = [Drawing.Point]::new(20, 204)
+$script:modelContext.Size = [Drawing.Size]::new(168, 26)
+Style-Box $script:modelContext
+$pageModel.Controls.Add($script:modelContext)
+Add-ModelLabel "KV cache precision (not model weight precision)" 242
+$script:modelCache = [System.Windows.Forms.ComboBox]::new()
+$script:modelCache.DropDownStyle = "DropDownList"
+$script:modelCache.Items.AddRange(@("4", "8", "8,4", "fp16"))
+$script:modelCache.Location = [Drawing.Point]::new(20, 266)
+$script:modelCache.Size = [Drawing.Size]::new(168, 26)
+$pageModel.Controls.Add($script:modelCache)
+$script:modelMtp = [System.Windows.Forms.CheckBox]::new()
+$script:modelMtp.Text = "MTP enabled (draft window 4)"
+$script:modelMtp.ForeColor = $ink
+$script:modelMtp.Location = [Drawing.Point]::new(208, 266)
+$script:modelMtp.Size = [Drawing.Size]::new(348, 26)
+$pageModel.Controls.Add($script:modelMtp)
+$script:modelVision = [System.Windows.Forms.CheckBox]::new()
+$script:modelVision.Text = "Vision tower on next 27B start (off by default)"
+$script:modelVision.ForeColor = $ink
+$script:modelVision.Location = [Drawing.Point]::new(208, 204)
+$script:modelVision.Size = [Drawing.Size]::new(360, 26)
+$pageModel.Controls.Add($script:modelVision)
+Add-ModelLabel "GPU budget GiB" 304
+$pageModel.Controls[$pageModel.Controls.Count - 1].Size = [Drawing.Size]::new(168, 22)
+$script:modelBudget = [System.Windows.Forms.TextBox]::new()
+$script:modelBudget.Location = [Drawing.Point]::new(20, 328)
+$script:modelBudget.Size = [Drawing.Size]::new(168, 26)
+Style-Box $script:modelBudget
+$pageModel.Controls.Add($script:modelBudget)
+Add-ModelLabel "RAM prefix cache GiB (reuse only)" 304
+$pageModel.Controls[$pageModel.Controls.Count - 1].Location = [Drawing.Point]::new(208, 304)
+$pageModel.Controls[$pageModel.Controls.Count - 1].Size = [Drawing.Size]::new(368, 22)
+$script:modelCpuCache = [System.Windows.Forms.TextBox]::new()
+$script:modelCpuCache.Location = [Drawing.Point]::new(208, 328)
+$script:modelCpuCache.Size = [Drawing.Size]::new(168, 26)
+Style-Box $script:modelCpuCache
+$pageModel.Controls.Add($script:modelCpuCache)
+$script:modelSettingsHint = [System.Windows.Forms.Label]::new()
+$script:modelSettingsHint.Font = [Drawing.Font]::new("Segoe UI", 9)
+$script:modelSettingsHint.ForeColor = $mute
+$script:modelSettingsHint.Location = [Drawing.Point]::new(20, 410)
+$script:modelSettingsHint.Size = [Drawing.Size]::new(556, 140)
+$pageModel.Controls.Add($script:modelSettingsHint)
+$script:modelLive = [System.Windows.Forms.Label]::new()
+$script:modelLive.Font = [Drawing.Font]::new("Segoe UI", 9)
+$script:modelLive.ForeColor = $ink
+$script:modelLive.Location = [Drawing.Point]::new(20, 558)
+$script:modelLive.Size = [Drawing.Size]::new(556, 48)
+$script:modelLive.Text = "Live settings pending status refresh..."
+$pageModel.Controls.Add($script:modelLive)
+function Save-DeskModelControls([switch]$MemoryOnly) {
+    if ($script:modelSettingsError) { throw $script:modelSettingsError }
+    if ($script:modelPick -eq "image") { return }
+    $profile = @{ Context = $script:modelContext.Text; CacheQuant = [string]$script:modelCache.SelectedItem
+        Mtp = [bool]$script:modelMtp.Checked; Budget = $script:modelBudget.Text; CpuCache = $script:modelCpuCache.Text }
+    if ($script:modelPick -eq "27b") { $profile.Vision = [bool]$script:modelVision.Checked }
+    [void](Get-DeskModelLaunchOptions $script:modelPick $profile)
+    $script:modelProfiles[$script:modelPick] = $profile
+    if (-not $MemoryOnly) {
+        Write-DeskModelProfiles $script:modelSettingsPath $script:modelProfiles
+        $script:modelSettingsHint.Text = "Saved for the next explicit Start from Status. The running model is unchanged."
+    }
+}
+function Show-DeskModelControls {
+    $enabled = $script:modelPick -ne "image" -and -not $script:modelSettingsError
+    foreach ($control in @($script:modelContext, $script:modelCache, $script:modelMtp, $script:modelBudget, $script:modelCpuCache, $script:modelVision)) {
+        $control.Enabled = $enabled
+    }
+    $script:modelMtp.Enabled = $enabled -and $script:modelPick -ne "vl"
+    $script:modelVision.Enabled = $enabled -and $script:modelPick -eq "27b"
+    $script:modelBudget.Enabled = $enabled -and $script:modelPick -ne "vl"
+    foreach ($button in $pageModel.Controls) {
+        if ($button.Text -eq "Large text (~70k)") { $button.Enabled = $enabled -and $script:modelPick -ne "vl" }
+        if ($button.Text -eq "Max context (kit)") { $button.Enabled = $enabled -and $script:modelPick -eq "27b" }
+        if ($button.Text -eq "Save") { $button.Enabled = $enabled }
+    }
+    if ($enabled) {
+        $profile = if ($script:modelProfiles.ContainsKey($script:modelPick)) {
+            $script:modelProfiles[$script:modelPick]
+        } else { Get-DeskModelDefaults $script:modelPick }
+        $script:modelContext.Text = [string]$profile.Context
+        $script:modelCache.SelectedItem = [string]$profile.CacheQuant
+        $script:modelMtp.Checked = [bool]$profile.Mtp
+        $script:modelBudget.Text = [string]$profile.Budget
+        $script:modelCpuCache.Text = if ($profile.ContainsKey("CpuCache")) { [string]$profile.CpuCache } else { "0" }
+        $script:modelVision.Checked = $script:modelPick -eq "27b" -and $profile.ContainsKey("Vision") -and [bool]$profile.Vision
+    } else { $script:modelVision.Checked = $false }
+    $script:modelSettingsHint.Text = if ($script:modelSettingsError) { $script:modelSettingsError } elseif (-not $enabled) {
+        "Image diffusion does not have token context or MTP controls."
+    } else {
+        "~70k: int4 KV, MTP/vision off; unchanged weights.`r`nRAM cache reuses prefixes, not extra live context. No dense CPU/SSD weight spill.`r`nThe vision checkbox loads the 27B tower on the next Start and lets :8001 try it for OCR. STT and TTS stay on the CPU.`r`nSave is passive; Status Start applies. Max is a kit plan."
+    }
+}
+Add-Button $pageModel "Large text (~70k)" 20 370 168 {
+    if ($script:modelPick -notin @("27b", "uncensored") -or $script:modelSettingsError) { return }
+    $script:modelContext.Text = "71680"
+    $script:modelCache.SelectedItem = "4"
+    $script:modelMtp.Checked = $false
+    $script:modelVision.Checked = $false
+    $script:modelBudget.Text = "14.7"
+    $script:modelCpuCache.Text = "4"
+} $false
+Add-Button $pageModel "Max context (kit)" 200 370 180 {
+    if ($script:modelPick -ne "27b" -or $script:modelSettingsError) {
+        [System.Windows.Forms.MessageBox]::Show("The kit's measured planner applies only to the standard 27B checkpoint.")
+        return
+    }
+    try {
+        $memory = @(& nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits)
+        if ($LASTEXITCODE -ne 0 -or $memory.Count -ne 1) { throw "Expected one detected GPU." }
+        $plan = Invoke-DeskReviewPlanner @{ op = "profile"; kit = $Kit; vram_gib = [double]$memory[0] / 1024 }
+        if ($plan.context -lt 256) { throw "The planner offers no supported context on this card." }
+        $script:modelContext.Text = [string]$plan.context
+        $script:modelCache.SelectedItem = "4"
+        $script:modelMtp.Checked = $false
+        $script:modelVision.Checked = $false
+        $script:modelBudget.Text = [string]$plan.budget
+        $script:modelCpuCache.Text = "4"
+        $script:modelSettingsHint.Text = "Kit plan: $($plan.context) tokens, text-only, int4 KV, MTP off for headroom. Weight precision unchanged. The planner is not a new host benchmark; explicit Start confirms a large-context restart."
+    } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+} $false
+Add-Button $pageModel "Save" 392 370 164 {
+    try { Save-DeskModelControls } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+} $true
+Show-DeskModelControls
+
 Add-Head $pageAsk "Ask" 16
 $fileLabel = New-Object System.Windows.Forms.Label
-$fileLabel.Text = "Path (file/folder for chat; image file for Qwen-Image)"
+$fileLabel.Text = "Path (file/folder, review source, or image input)"
 $fileLabel.ForeColor = $mute
 $fileLabel.Location = New-Object System.Drawing.Point(20, 44)
 $fileLabel.AutoSize = $true
@@ -1516,6 +1861,7 @@ $send.Add_Click({
         Message = [string]$prompt.Text
         Path = [string]$askPath.Text
         ImageModel = ($script:modelPick -eq "image")
+        ReviewFile = [bool]$reviewFile.Checked
     }
     $reply.Text = "working..."
     $send.Enabled = $false
@@ -1525,6 +1871,12 @@ $send.Add_Click({
     $script:askJob = $script:askWorker.BeginInvoke()
 })
 $pageAsk.Controls.Add($send)
+$reviewFile = [System.Windows.Forms.CheckBox]::new()
+$reviewFile.Text = "Review complete file (read-only; auto above 128 KiB)"
+$reviewFile.ForeColor = $ink
+$reviewFile.Location = [Drawing.Point]::new(20, 156)
+$reviewFile.Size = [Drawing.Size]::new(($script:pageW - 40), 24)
+$pageAsk.Controls.Add($reviewFile)
 function Update-Ask {
     if (-not $script:askJob -or -not $script:askJob.IsCompleted) { return }
     try {
@@ -1542,8 +1894,8 @@ function Update-Ask {
 $reply = New-Object System.Windows.Forms.TextBox
 $reply.Multiline = $true
 $reply.ScrollBars = "Vertical"
-$reply.Location = New-Object System.Drawing.Point(20, 164)
-$reply.Size = New-Object System.Drawing.Size(($script:pageW - 40), 330)
+$reply.Location = New-Object System.Drawing.Point(20, 188)
+$reply.Size = New-Object System.Drawing.Size(($script:pageW - 40), 306)
 $reply.MaxLength = 0
 Style-Box $reply
 $pageAsk.Controls.Add($reply)
@@ -1705,6 +2057,241 @@ $clipHint.Location = New-Object System.Drawing.Point(20, 56)
 $clipHint.Size = New-Object System.Drawing.Size(($script:pageW - 40), 48)
 $pageClips.Controls.Add($clipHint)
 Add-Button $pageClips "Scan clips" 20 116 176 { Start-ClipScan } $true
+
+Add-Head $pageMonitor "Monitor" 16
+$monitorHint = [Windows.Forms.Label]::new()
+$monitorHint.Text = "Dell S2522HG hardware controls. Apply uses readback; Cycle advances Dark Stabilizer without a current-level readout."
+$monitorHint.ForeColor = $mute
+$monitorHint.Location = [Drawing.Point]::new(20, 52)
+$monitorHint.Size = [Drawing.Size]::new(($script:pageW - 40), 44)
+$pageMonitor.Controls.Add($monitorHint)
+$script:monitorMessage = [Windows.Forms.Label]::new()
+$script:monitorMessage.Text = "Open this page to read the monitor."
+$script:monitorMessage.ForeColor = $mute
+$script:monitorMessage.Location = [Drawing.Point]::new(20, 436)
+$script:monitorMessage.Size = [Drawing.Size]::new(($script:pageW - 40), 92)
+$pageMonitor.Controls.Add($script:monitorMessage)
+$script:monitorWorker = [PowerShell]::Create()
+$script:monitorJob = $null
+$script:monitorSnapshot = $null
+$script:monitorOperation = $null
+$script:monitorControls = @{}
+$script:monitorApply = @{}
+$script:monitorNames = @{}
+foreach ($spec in @(
+    @{ Id = "brightness"; Name = "Brightness"; Y = 112 },
+    @{ Id = "contrast"; Name = "Contrast"; Y = 176 },
+    @{ Id = "preset"; Name = "Color preset"; Y = 240 },
+    @{ Id = "dark_stabilizer"; Name = "Dark Stabilizer"; Y = 304 }
+)) {
+    $label = [Windows.Forms.Label]::new()
+    $label.Text = $spec.Name
+    $label.ForeColor = $ink
+    $label.Location = [Drawing.Point]::new(20, $spec.Y)
+    $label.Size = [Drawing.Size]::new(144, 28)
+    $pageMonitor.Controls.Add($label)
+    $script:monitorNames[$spec.Id] = $spec.Name
+    if ($spec.Id -eq "dark_stabilizer") {
+        $script:monitorDarkLevels = [Windows.Forms.Label]::new()
+        $script:monitorDarkLevels.Text = "Disabled / Enabled level 1-3"
+        $script:monitorDarkLevels.ForeColor = $ink
+        $script:monitorDarkLevels.Location = [Drawing.Point]::new(168, $spec.Y)
+        $script:monitorDarkLevels.Size = [Drawing.Size]::new(268, 30)
+        $pageMonitor.Controls.Add($script:monitorDarkLevels)
+        continue
+    }
+    if ($spec.Id -in @("brightness", "contrast")) {
+        $control = [Windows.Forms.NumericUpDown]::new()
+        $control.Maximum = 100
+        $control.Minimum = 0
+        $control.DecimalPlaces = 0
+    } else {
+        $control = [Windows.Forms.ComboBox]::new()
+        $control.DropDownStyle = "DropDownList"
+    }
+    $control.Location = [Drawing.Point]::new(168, $spec.Y)
+    $control.Size = [Drawing.Size]::new(268, 30)
+    $control.BackColor = $fieldBg
+    $control.ForeColor = $ink
+    $control.Enabled = $false
+    $pageMonitor.Controls.Add($control)
+    $script:monitorControls[$spec.Id] = $control
+    $apply = [Windows.Forms.Button]::new()
+    $apply.Text = "Apply"
+    $apply.Tag = $spec.Id
+    $apply.Location = [Drawing.Point]::new(456, ($spec.Y - 2))
+    $apply.Size = [Drawing.Size]::new(112, 34)
+    Paint-Button $apply $true
+    $apply.Enabled = $false
+    $apply.Add_Click({
+        param($sender, $event)
+        $id = [string]$sender.Tag
+        $inputControl = $script:monitorControls[$id]
+        $value = if ($id -eq "preset") {
+            if ($inputControl.SelectedIndex -lt 0) { return }
+            [string]$script:monitorSnapshot.presets[$inputControl.SelectedIndex].id
+        } else { [string][int]$inputControl.Value }
+        Start-MonitorOperation $id $value
+    })
+    $pageMonitor.Controls.Add($apply)
+    $script:monitorApply[$spec.Id] = $apply
+}
+$script:monitorRefresh = [Windows.Forms.Button]::new()
+$script:monitorRefresh.Text = "Refresh"
+$script:monitorRefresh.Location = [Drawing.Point]::new(20, 352)
+$script:monitorRefresh.Size = [Drawing.Size]::new(112, 34)
+Paint-Button $script:monitorRefresh $false
+$script:monitorRefresh.Add_Click({ Start-MonitorOperation "read" })
+$pageMonitor.Controls.Add($script:monitorRefresh)
+$script:monitorCycle = [Windows.Forms.Button]::new()
+$script:monitorCycle.Text = "Cycle (F9)"
+$script:monitorCycle.Location = [Drawing.Point]::new(456, 302)
+$script:monitorCycle.Size = [Drawing.Size]::new(112, 34)
+$script:monitorCycle.Enabled = $false
+Paint-Button $script:monitorCycle $true
+$script:monitorCycle.Add_Click({ Start-MonitorOperation "dark_stabilizer_cycle" })
+$pageMonitor.Controls.Add($script:monitorCycle)
+$script:monitorHotkey = [DeskMonitorHotkey]::new(0x78)
+$script:monitorHotkey.Add_Pressed({ Start-MonitorOperation "dark_stabilizer_cycle" })
+$script:monitorHotkeyHint = [Windows.Forms.Label]::new()
+$script:monitorHotkeyHint.Text = "F9 registration pending."
+$script:monitorHotkeyHint.ForeColor = $mute
+$script:monitorHotkeyHint.Location = [Drawing.Point]::new(20, 392)
+$script:monitorHotkeyHint.Size = [Drawing.Size]::new(($script:pageW - 40), 40)
+$pageMonitor.Controls.Add($script:monitorHotkeyHint)
+$script:monitorClaimHotkey = [Windows.Forms.Button]::new()
+$script:monitorClaimHotkey.Text = "Claim F9"
+$script:monitorClaimHotkey.Location = [Drawing.Point]::new(456, 352)
+$script:monitorClaimHotkey.Size = [Drawing.Size]::new(112, 34)
+Paint-Button $script:monitorClaimHotkey $false
+$script:monitorClaimHotkey.Add_Click({ Register-MonitorHotkey })
+$pageMonitor.Controls.Add($script:monitorClaimHotkey)
+$monitorNote = [Windows.Forms.Label]::new()
+$monitorNote.Text = "DDM is not required. F9 stays active while Desk is hidden; quit releases it. No mouse hooks, automatic cycle retries or background monitor polling."
+$monitorNote.ForeColor = $mute
+$monitorNote.Location = [Drawing.Point]::new(20, 536)
+$monitorNote.Size = [Drawing.Size]::new(($script:pageW - 40), 60)
+$pageMonitor.Controls.Add($monitorNote)
+
+function Set-MonitorEnabled {
+    foreach ($id in $script:monitorControls.Keys) {
+        $enabled = -not $script:monitorJob -and $script:monitorSnapshot -and
+            $script:monitorSnapshot.$id.supported
+        $script:monitorControls[$id].Enabled = [bool]$enabled
+        $script:monitorApply[$id].Enabled = [bool]$enabled
+        if ($id -eq "preset" -and $script:monitorControls[$id].SelectedIndex -lt 0) {
+            $script:monitorApply[$id].Enabled = $false
+        }
+        Paint-Button $script:monitorApply[$id] $script:monitorApply[$id].Enabled
+    }
+    $script:monitorRefresh.Enabled = -not $script:monitorJob
+    $script:monitorCycle.Enabled = -not $script:monitorJob -and $script:monitorSnapshot -and
+        $script:monitorSnapshot.dark_stabilizer_cycle.supported
+    Paint-Button $script:monitorCycle $script:monitorCycle.Enabled
+}
+function Show-MonitorNotice([string]$Text, [bool]$Failed = $false) {
+    $script:monitorMessage.Text = $Text
+    if ($script:ni -and ($Failed -or -not $pageMonitor.Visible)) {
+        $icon = if ($Failed) { [Windows.Forms.ToolTipIcon]::Warning } else { [Windows.Forms.ToolTipIcon]::Info }
+        $script:ni.ShowBalloonTip(3000, "Dark Stabilizer", $Text, $icon)
+    }
+}
+function Register-MonitorHotkey {
+    if ($script:monitorHotkey.Register()) {
+        $script:monitorHotkeyHint.Text = "F9 ready, including while Desk is hidden. Each press advances one step; current level is unavailable."
+        if ($script:monitorMessage.Text -like "F9 unavailable*") {
+            Show-MonitorNotice "F9 registered. Each press sends one cycle command; current level is unavailable."
+        }
+    } else {
+        $script:monitorHotkeyHint.Text = "F9 unavailable (Windows error $($script:monitorHotkey.RegistrationError)). Exit DDM/other F9 owner, then Claim F9."
+        Show-MonitorNotice $script:monitorHotkeyHint.Text $true
+    }
+    $script:monitorClaimHotkey.Enabled = -not $script:monitorHotkey.Registered
+}
+function Start-MonitorOperation([string]$Control, [string]$Value) {
+    if ($script:monitorJob) {
+        if ($Control -eq "dark_stabilizer_cycle") {
+            Show-MonitorNotice "Monitor busy. This cycle press was not sent or queued; wait for the current operation." $true
+        }
+        return
+    }
+    if ($Control -eq "dark_stabilizer_cycle" -and $script:monitorSnapshot -and
+            -not $script:monitorSnapshot.dark_stabilizer_cycle.supported) {
+        Show-MonitorNotice "Dark Stabilizer cycling is not advertised by this monitor; no command sent." $true
+        return
+    }
+    $script:monitorMessage.Text = if ($Control -eq "read") {
+        "Reading Dell S2522HG... DDC/CI discovery can take several seconds."
+    } elseif ($Control -eq "dark_stabilizer_cycle") {
+        "Sending one Dark Stabilizer cycle command. Current level is unavailable."
+    } else { "Applying $Control and checking the monitor's readback..." }
+    $script:monitorOperation = $Control
+    try {
+        $script:monitorWorker.Commands.Clear()
+        $script:monitorWorker.Streams.Error.Clear()
+        $request = [pscustomobject]@{ Control = $Control; Value = $Value }
+        [void]$script:monitorWorker.AddCommand($PSCommandPath).AddParameter("MonitorRequest", $request)
+        $script:monitorJob = $script:monitorWorker.BeginInvoke()
+    } catch {
+        Show-MonitorNotice "Monitor operation could not start: $($_.Exception.Message)" $true
+        $script:monitorOperation = $null
+    }
+    Set-MonitorEnabled
+}
+function Update-Monitor {
+    if (-not $script:monitorJob -or -not $script:monitorJob.IsCompleted) { return }
+    try {
+        $result = @($script:monitorWorker.EndInvoke($script:monitorJob))
+        if ($script:monitorWorker.HadErrors) {
+            throw ($script:monitorWorker.Streams.Error | Out-String).Trim()
+        }
+        if ($result.Count -ne 1 -or $result[0].ok -ne $true) { throw "Invalid monitor snapshot." }
+        $script:monitorSnapshot = $result[0]
+        $warnings = @()
+        foreach ($id in $script:monitorControls.Keys) {
+            $state = $script:monitorSnapshot.$id
+            if (-not $state.supported) {
+                $warnings += "$($script:monitorNames[$id]): $($state.error)"
+                continue
+            }
+            if ($id -in @("brightness", "contrast")) { $script:monitorControls[$id].Value = $state.current }
+        }
+        if (-not $script:monitorSnapshot.dark_stabilizer.supported) {
+            $warnings += "Dark Stabilizer: $($script:monitorSnapshot.dark_stabilizer.error)"
+        }
+        $presetsBox = $script:monitorControls.preset
+        $presetsBox.Items.Clear()
+        foreach ($preset in $script:monitorSnapshot.presets) { [void]$presetsBox.Items.Add([string]$preset.name) }
+        $presetsBox.SelectedIndex = -1
+        for ($i = 0; $i -lt $script:monitorSnapshot.presets.Count; $i++) {
+            if ($script:monitorSnapshot.presets[$i].id -eq $script:monitorSnapshot.preset.id) {
+                $presetsBox.SelectedIndex = $i
+            }
+        }
+        $script:monitorMessage.Text = "$($script:monitorSnapshot.model) on $($script:monitorSnapshot.display)`r`n"
+        $script:monitorMessage.Text += if ($script:monitorSnapshot.action) {
+            "Cycle command accepted. Current level unavailable; observe the picture."
+        } elseif ($script:monitorSnapshot.changed) {
+            "Applied $($script:monitorNames[$script:monitorSnapshot.changed.control]): $($script:monitorSnapshot.changed.requested). Hardware readback confirmed."
+        } else { "Current settings read from the monitor." }
+        if ($warnings.Count) { $script:monitorMessage.Text += "`r`n" + ($warnings -join "`r`n") }
+        if (-not $script:monitorSnapshot.dark_stabilizer_cycle.supported) {
+            $script:monitorMessage.Text += "`r`nCycle: $($script:monitorSnapshot.dark_stabilizer_cycle.error)"
+        }
+        if ($script:monitorSnapshot.action) {
+            Show-MonitorNotice $script:monitorMessage.Text
+        }
+    } catch {
+        $script:monitorSnapshot = $null
+        $script:monitorControls.preset.SelectedIndex = -1
+        Show-MonitorNotice "Monitor error: $($_.Exception.Message)" ($script:monitorOperation -eq "dark_stabilizer_cycle")
+    } finally {
+        $script:monitorJob = $null
+        $script:monitorOperation = $null
+        Set-MonitorEnabled
+    }
+}
+$script:monitorControls.preset.Add_SelectedIndexChanged({ Set-MonitorEnabled })
 Show-Page "Status"
 
 $script:quit = $false
@@ -1743,14 +2330,19 @@ $f.Add_FormClosing({
 
 $f.Show()
 try {
+    Register-MonitorHotkey
     [System.Windows.Forms.Application]::Run($f)
 } finally {
+    try { $script:monitorHotkey.Dispose() }
+    catch { Write-Error "Monitor hotkey cleanup failed: $($_.Exception.Message)" -ErrorAction Continue }
     $timer.Stop()
     $timer.Dispose()
     $script:statusWorker.Stop()
     $script:statusWorker.Dispose()
     $script:askWorker.Stop()
     $script:askWorker.Dispose()
+    $script:monitorWorker.Stop()
+    $script:monitorWorker.Dispose()
     if ($script:ni) {
         $script:ni.Visible = $false
         $script:ni.Dispose()
