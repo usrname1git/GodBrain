@@ -80,6 +80,8 @@ background HTTPS to `:8085`, backend down, tailnet offline, missing mapping
 or a query error. Explicit Tailscale Start verifies an existing private mapping;
 only an entirely empty configuration is initialized. Conflicting mappings and
 Funnel are reported rather than replaced. Status polling never configures Serve.
+The CLI's valid JSON `null` also means unconfigured; empty, malformed or
+non-object/non-null output is an error, never permission to configure.
 `--bg` stores the mapping in the existing daemon, so it resumes when the
 Tailscale service starts. No second watcher is needed. This does not change
 the service startup type or override a manual Stop/CS2 hold.
@@ -133,7 +135,7 @@ health checks never download or load them. EasyOCR downloads are disabled.
 
 | Component | Required local assets | Directory |
 |---|---|---|
-| STT | faster-whisper-compatible `model.bin`, `config.json`, tokenizer/preprocessor assets | `GODBRAIN_WHISPER_DIR`; default `C:\nvme\faster-whisper-large-v3` |
+| STT | faster-whisper-compatible `model.bin`, `config.json`, `tokenizer.json`, matching preprocessor assets | `GODBRAIN_WHISPER_DIR`; default `C:\nvme\faster-whisper-large-v3` |
 | TTS | `en_US-lessac-medium.onnx` and `.onnx.json` | `GODBRAIN_PIPER_VOICES_DIR`; default `C:\nvme\piper-voices` |
 | CPU OCR | `craft_mlt_25k.pth`, `latin_g2.pth` | EasyOCR's `model` folder under `EASYOCR_MODULE_PATH`, then `MODULE_PATH`, then `%USERPROFILE%\.EasyOCR` |
 
@@ -141,6 +143,9 @@ Optional directory overrides can be set in the helper's environment before
 startup. Keep local paths and weights out of commits. CPU OCR uses Pillow,
 including EXIF orientation, then contiguous BGR pixels for EasyOCR; it does
 not depend on `skimage` filename plugins.
+STT availability and initialization require the local tokenizer as well as
+the model/config files. Incomplete assets fail before model initialization,
+and the loader uses local-files-only mode rather than fetching missing weights.
 
 ### Configure authentication before starting
 
@@ -213,6 +218,9 @@ assets or a backend error. Invalid/legacy health is unknown, and a stopped helpe
 is stopped. Runtime request state resets when the helper restarts. A new
 successful request clears that component's backend error. Invalid image input
 gets HTTP 400 and does not label the CPU backend broken.
+Public health reports only a generic backend failure and its exception class,
+not raw stderr, local paths or request details. The authenticated failed POST
+response retains the bounded diagnostic error; do not share it without redaction.
 
 OCR's `engine` field reports `cpu` or `qwen`. The top-level health `ocr` field
 is the saved preference, not proof the tower is running. Qwen OCR uses only an

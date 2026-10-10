@@ -263,6 +263,31 @@ class VoiceSettingsTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(probe.stdout), [str(self.repo / "whisper"), str(self.repo / "voices")])
 
+    def test_stt_assets_and_loader_require_local_tokenizer_without_model_initialization(self):
+        weights = self.repo / "whisper"
+        weights.mkdir()
+        factory = Mock()
+        with patch.object(voice, "WHISPER", weights), patch.object(voice, "_whisper", None), \
+                patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                patch.dict(sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=factory)}):
+            for name in voice.WHISPER_FILES:
+                (weights / name).write_bytes(b"fixture")
+            self.assertEqual(voice.component_status()["stt"]["state"], "available")
+            for name in voice.WHISPER_FILES:
+                with self.subTest(missing=name):
+                    (weights / name).unlink()
+                    health = voice.component_status()["stt"]
+                    self.assertEqual(health["state"], "unready")
+                    self.assertIn(name, health["detail"])
+                    with self.assertRaisesRegex(RuntimeError, name):
+                        voice.load_whisper()
+                    factory.assert_not_called()
+                    (weights / name).write_bytes(b"fixture")
+            self.assertIs(voice.load_whisper(), factory.return_value)
+            self.assertIs(voice.load_whisper(), factory.return_value)
+            factory.assert_called_once_with(str(weights), device="cpu", compute_type="int8",
+                                            cpu_threads=8, local_files_only=True)
+
     def test_http_ocr_failure_is_visible_in_health_and_clears_after_success(self):
         self.write_settings(False)
         handler = type("FixtureVoiceHandler", (voice.VoiceHandler,), {"repo": self.repo})
@@ -282,11 +307,73 @@ class VoiceSettingsTests(unittest.TestCase):
                 error.exception.close()
                 with urllib.request.urlopen(url + "/health", timeout=3) as response:
                     component = json.loads(response.read())["components"]["ocr_cpu"]
-                self.assertEqual(component, {"state": "unready", "detail": "fixture loader failed"})
+                self.assertEqual(component, {
+                    "state": "unready",
+                    "detail": "CPU backend failed (RuntimeError); see the authenticated response for details.",
+                })
                 with urllib.request.urlopen(request, timeout=3) as response:
                     self.assertEqual(json.loads(response.read())["text"], "fixture text")
                 with urllib.request.urlopen(url + "/health", timeout=3) as response:
                     self.assertEqual(json.loads(response.read())["components"]["ocr_cpu"]["state"], "ready")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_public_health_hides_backend_details_for_all_remote_post_components(self):
+        self.write_settings(False)
+
+        class RemoteFixture(voice.VoiceHandler):
+            expected_key = "fixture-key"
+
+            def setup(self):
+                super().setup()
+                self.client_address = ("192.0.2.10", self.client_address[1])
+
+        RemoteFixture.repo = self.repo
+        server = voice.ThreadingHTTPServer(("127.0.0.1", 0), RemoteFixture)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        private_detail = r"fixture stderr at C:\private\synthetic-assets; private diagnostic content"
+        try:
+            with patch.object(voice, "note"), \
+                    patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                    patch.object(Path, "is_file", return_value=True):
+                for path, component, backend, body, success in (
+                    ("/v1/audio/transcriptions", "stt", "transcribe", b"RIFFfixture", "fixture"),
+                    ("/v1/audio/speech", "tts", "synthesize", b'{"input":"fixture"}', b"RIFFfixture"),
+                    ("/ocr", "ocr_cpu", "ocr_cpu", b"fixture", "fixture"),
+                ):
+                    with self.subTest(component=component), patch.object(
+                        voice, backend, side_effect=[RuntimeError(private_detail), success]
+                    ) as operation:
+                        unauthenticated = urllib.request.Request(url + path, data=body, method="POST")
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            urllib.request.urlopen(unauthenticated, timeout=3)
+                        self.assertEqual(error.exception.code, 401)
+                        error.exception.close()
+                        operation.assert_not_called()
+                        request = urllib.request.Request(
+                            url + path, data=body, headers={"X-API-Key": "fixture-key"}, method="POST")
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            urllib.request.urlopen(request, timeout=3)
+                        self.assertEqual(error.exception.code, 503)
+                        self.assertEqual(json.loads(error.exception.read())["error"], private_detail)
+                        error.exception.close()
+                        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                            raw = response.read()
+                        self.assertNotIn(private_detail.encode("utf-8"), raw)
+                        self.assertNotIn(b"synthetic-assets", raw)
+                        self.assertNotIn(b"private diagnostic content", raw)
+                        self.assertEqual(json.loads(raw)["components"][component], {
+                            "state": "unready",
+                            "detail": "CPU backend failed (RuntimeError); see the authenticated response for details.",
+                        })
+                        with urllib.request.urlopen(request, timeout=3) as response:
+                            response.read()
+                        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                            self.assertEqual(json.loads(response.read())["components"][component]["state"], "ready")
         finally:
             server.shutdown()
             server.server_close()

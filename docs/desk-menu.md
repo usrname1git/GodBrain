@@ -92,11 +92,16 @@ means local dependencies/weights exist, not that inference was verified.
 A successful request reports `ready`; a backend failure reports `unready`
 with its error until a later successful request. Health polling itself never
 loads weights or generates. Phone Desk shows these passive states and errors.
+Public backend errors are sanitized; detailed errors stay in the authenticated
+POST response. STT checks the local tokenizer/model/config before initialization
+and does not fetch missing assets.
 
 The Status page also has a separate **Serve** row. Tailscale Start preserves
 an existing private HTTPS mapping to Phone Desk on `127.0.0.1:8085`; with no
 Serve configuration it installs that mapping using `serve --bg --https=443`.
 An unrelated mapping or Funnel configuration is left unchanged and reported.
+The CLI's unconfigured JSON `null` is accepted; blank, malformed or other
+non-object output fails closed without configuring anything.
 Background Serve belongs to the existing Tailscale daemon and resumes with its
 service; it is not a second launcher/watchdog. Read-only status polling does not
 configure Serve, start Tailscale, or recover the phone backend.

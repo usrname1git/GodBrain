@@ -9,7 +9,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count) { throw ($errors -join "`n") }
 $script:fixtureRoot = $PSScriptRoot
 foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-WhisperLine", "Get-ModelPickFile", "Start-SelectedModel", "Stop-ActiveModel",
-    "Invoke-DeskTailscale", "Get-DeskServeMapping", "Get-TailscaleServeLine", "Start-DeskPhoneServe",
+    "Invoke-DeskTailscale", "Get-DeskServeMapping", "Read-DeskServeMapping", "Get-TailscaleServeLine", "Start-DeskPhoneServe",
     "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Read-DeskGrantedBytes", "Get-DeskImagePayload", "Wait-DeskImageResult", "Test-DeskWriteSlash", "Test-DeskVisionImage", "Test-DeskNeedsCompleteReview", "Invoke-DeskVisionAsk", "Invoke-DeskAsk")) {
     $definition = $ast.Find({
         param($node)
@@ -216,14 +216,21 @@ $script:ports = @()
     Assert-Equal (Get-DeskServeMapping $configuration).Configured $true
     Assert-Equal (Get-DeskServeMapping $configuration).Url "https://fixture.ts.net/"
     Assert-Equal (Get-DeskServeMapping ([pscustomobject]@{})).Empty $true
-    Assert-Throws { Get-DeskServeMapping $null } "*Invalid*"
+    Assert-Equal (Get-DeskServeMapping $null).Empty $true
+    foreach ($invalid in @($false, 1, "null", @())) {
+        Assert-Throws { Get-DeskServeMapping $invalid } "*Invalid*"
+    }
     $script:serveConfig = $configuration
+    $script:serveRaw = $null
     $script:serveNode = [pscustomobject]@{ BackendState = "Running"; Self = @{ Online = $true } }
     $script:serveCommands = @()
     function Invoke-DeskTailscale([string[]]$Arguments) {
         $script:serveCommands += ,$Arguments
         if ($Arguments[0] -eq "status") { return $script:serveNode | ConvertTo-Json -Depth 5 -Compress }
-        if ($Arguments[1] -eq "status") { return $script:serveConfig | ConvertTo-Json -Depth 8 -Compress }
+        if ($Arguments[1] -eq "status") {
+            if ($null -ne $script:serveRaw) { return $script:serveRaw }
+            return ConvertTo-Json -InputObject $script:serveConfig -Depth 8 -Compress
+        }
         Assert-Equal ($Arguments -join " ") "serve --bg --https=443 http://127.0.0.1:8085"
         $script:serveConfig = $configuration
     }
@@ -236,6 +243,28 @@ $script:ports = @()
     $script:serveConfig = [pscustomobject]@{}
     Start-DeskPhoneServe
     Assert-Equal (Get-DeskServeMapping $script:serveConfig).Configured $true
+    $script:serveConfig = $null
+    $script:serveCommands = @()
+    Assert-Equal (Get-TailscaleServeLine) "Phone Desk not configured"
+    if (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) {
+        throw "Polling configured an empty Serve mapping."
+    }
+    Start-DeskPhoneServe
+    Assert-Equal (Get-DeskServeMapping $script:serveConfig).Configured $true
+    Assert-Equal (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) 1
+    foreach ($invalid in @("", " ", "not json", "[]", "[{}]", "false", "1", '"null"',
+                           '{"AllowFunnel":false}', '{"AllowFunnel":[]}')) {
+        $script:serveRaw = $invalid
+        $script:serveCommands = @()
+        Assert-Throws { Start-DeskPhoneServe } "*"
+        if (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) {
+            throw "Invalid Serve output caused configuration writes."
+        }
+        if ((Get-TailscaleServeLine) -notlike "Serve unread:*") {
+            throw "Invalid Serve output was not reported."
+        }
+    }
+    $script:serveRaw = $null
     $script:ports = @()
     Assert-Equal (Get-TailscaleServeLine) "HTTPS :443 -> :8085 (backend down)"
     $script:serveNode.Self.Online = $false

@@ -234,12 +234,16 @@ function Invoke-DeskTailscale([string[]]$Arguments) {
 }
 
 function Get-DeskServeMapping($Configuration) {
-    if ($null -eq $Configuration -or $Configuration -isnot [pscustomobject]) {
+    if ($null -eq $Configuration) { $Configuration = [pscustomobject]@{} }
+    # Parsed JSON primitives are PSObject-wrapped; check their underlying type.
+    if ($Configuration.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
         throw "Invalid Tailscale Serve configuration."
     }
     $empty = @($Configuration.PSObject.Properties).Count -eq 0
     if ($null -ne $Configuration.AllowFunnel) {
-        if ($Configuration.AllowFunnel -isnot [pscustomobject]) { throw "Invalid Tailscale Funnel configuration." }
+        if ($Configuration.AllowFunnel.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
+            throw "Invalid Tailscale Funnel configuration."
+        }
         foreach ($entry in $Configuration.AllowFunnel.PSObject.Properties) {
             if ($entry.Value -isnot [bool] -or $entry.Value) {
                 return [pscustomobject]@{ Configured = $false; Empty = $false; Url = ""; Detail = "Funnel enabled or invalid; private Phone Desk required" }
@@ -265,11 +269,18 @@ function Get-DeskServeMapping($Configuration) {
     }
 }
 
+function Read-DeskServeMapping {
+    $output = Invoke-DeskTailscale @("serve", "status", "--json")
+    if ([string]::IsNullOrWhiteSpace($output)) { throw "Tailscale Serve response is empty." }
+    $configuration = ConvertFrom-Json -InputObject $output -ErrorAction Stop -NoEnumerate
+    return Get-DeskServeMapping $configuration
+}
+
 function Get-TailscaleServeLine {
     $word = Get-ServiceWord "Tailscale"
     if ($word -ne "running") { return "service $word" }
     try {
-        $mapping = Get-DeskServeMapping (Invoke-DeskTailscale @("serve", "status", "--json") | ConvertFrom-Json -ErrorAction Stop)
+        $mapping = Read-DeskServeMapping
         if (-not $mapping.Configured) { return $mapping.Detail }
         $node = Invoke-DeskTailscale @("status", "--json") | ConvertFrom-Json -ErrorAction Stop
         if ($node.BackendState -ne "Running" -or $node.Self.Online -isnot [bool] -or -not $node.Self.Online) {
@@ -281,11 +292,11 @@ function Get-TailscaleServeLine {
 }
 
 function Start-DeskPhoneServe {
-    $mapping = Get-DeskServeMapping (Invoke-DeskTailscale @("serve", "status", "--json") | ConvertFrom-Json -ErrorAction Stop)
+    $mapping = Read-DeskServeMapping
     if ($mapping.Configured) { return }
     if (-not $mapping.Empty) { throw "$($mapping.Detail). Existing Serve configuration was left unchanged." }
     $null = Invoke-DeskTailscale @("serve", "--bg", "--https=443", "http://127.0.0.1:8085")
-    $mapping = Get-DeskServeMapping (Invoke-DeskTailscale @("serve", "status", "--json") | ConvertFrom-Json -ErrorAction Stop)
+    $mapping = Read-DeskServeMapping
     if (-not $mapping.Configured) { throw "Private background Phone Desk Serve did not become configured." }
 }
 

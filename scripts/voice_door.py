@@ -30,6 +30,7 @@ from pathlib import Path
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 WHISPER = Path(os.environ.get("GODBRAIN_WHISPER_DIR") or r"C:\nvme\faster-whisper-large-v3")
+WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json")
 VOICES = Path(os.environ.get("GODBRAIN_PIPER_VOICES_DIR") or r"C:\nvme\piper-voices")
 DEFAULT_VOICE = "en_US-lessac-medium"
 MAX_BODY = 25 * 1024 * 1024
@@ -49,7 +50,7 @@ def component_status() -> dict:
     ocr_root = Path(os.environ.get("EASYOCR_MODULE_PATH") or
                     os.environ.get("MODULE_PATH") or (Path.home() / ".EasyOCR")) / "model"
     requirements = {
-        "stt": (("faster_whisper",), (WHISPER / "model.bin", WHISPER / "config.json")),
+        "stt": (("faster_whisper",), tuple(WHISPER / name for name in WHISPER_FILES)),
         "tts": (("piper",), (VOICES / f"{DEFAULT_VOICE}.onnx", VOICES / f"{DEFAULT_VOICE}.onnx.json")),
         "ocr_cpu": (("easyocr", "PIL", "numpy"),
                     (ocr_root / "craft_mlt_25k.pth", ocr_root / "latin_g2.pth")),
@@ -205,8 +206,12 @@ def load_whisper():
     global _whisper
     with _lock:
         if _whisper is None:
+            missing = [name for name in WHISPER_FILES if not (WHISPER / name).is_file()]
+            if missing:
+                raise RuntimeError("Missing local Whisper assets: " + ", ".join(missing))
             from faster_whisper import WhisperModel
-            _whisper = WhisperModel(str(WHISPER), device="cpu", compute_type="int8", cpu_threads=8)
+            _whisper = WhisperModel(str(WHISPER), device="cpu", compute_type="int8", cpu_threads=8,
+                                    local_files_only=True)
         return _whisper
 
 
@@ -372,7 +377,9 @@ class VoiceHandler(BaseHTTPRequestHandler):
             self.refuse(400, str(exc))
         except Exception as exc:
             if self.component:
-                record_component(self.component, "unready", str(exc))
+                record_component(self.component, "unready",
+                                 f"CPU backend failed ({type(exc).__name__}); "
+                                 "see the authenticated response for details.")
             note(f"POST {path} failed: {type(exc).__name__}")
             self.refuse(503, str(exc)[:400])
 
