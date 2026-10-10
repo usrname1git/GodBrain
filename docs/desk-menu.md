@@ -6,6 +6,11 @@ the power glyph quits. Status and Ask use serialized asynchronous workers
 instead of blocking the UI. Image status checks port 8871 and identifies
 Qwen-Image-2.1 independently of the text/vision service on port 8888.
 
+The panel can be resized or maximized; its original size is the minimum.
+Ask expands the reply area with the window and preserves response line breaks,
+so longer answers can be captured in a screenshot. Replies that exceed the
+available screen space still scroll.
+
 ## Model profiles
 
 The Model page saves context tokens, KV-cache precision, MTP, GPU budget,
@@ -38,6 +43,9 @@ Ask accepts granted file/folder paths, source files and images. Image bytes
 and review bytes are bounded and checked against their final handle target,
 not just the visible path. Picture questions use an already-running vision
 tower; Qwen-Image uses its existing generation/edit path and request receipts.
+Desk picture questions use greedy decoding (`temperature=0`), thinking off,
+and a 2,048-token generation ceiling. This is separate from the server's image
+pixel limit and the loaded model's context size.
 
 Review complete file is read-only and is also selected automatically for
 non-image files above 128 KiB when the request is advisory, not an edit/fix.
@@ -59,6 +67,11 @@ on port 8001. It uses the existing local faster-whisper weights and Piper
 voices on CPU; EasyOCR is the CPU image-text fallback. These dependencies
 and weights must already be installed. Starting the panel does not download
 them or start speech/model services.
+Set `GODBRAIN_WHISPER_DIR` and `GODBRAIN_PIPER_VOICES_DIR` before launching
+the panel/helper to use other local weight directories. Existing defaults stay
+unchanged. The [phone setup guide](phone-control.md#remote-ocr-and-cpu-speech)
+lists dependencies, local assets, exact iOS upload/response actions and
+authentication troubleshooting without embedding a device address or key.
 
 Speech launches use typed child arguments so repository paths with spaces stay
 intact. Multipart audio/image uploads preserve the exact field bytes. Invalid
@@ -69,9 +82,29 @@ OCR may use the already-running Qwen vision tower when the saved 27B
 profile enables it and health explicitly reports idle vision. Busy or
 unverifiable tower readiness uses CPU fallback with an explicit note.
 EasyOCR downloads are disabled; missing local weights fail explicitly.
+CPU OCR decodes with Pillow (including image orientation) and passes contiguous
+BGR pixels to EasyOCR; it does not depend on `skimage` image-file plugins.
 Speech stays CPU.
 The helper exposes `/health`, `/v1/audio/transcriptions`,
 `/v1/audio/speech`, `/ocr` and `/ingest/image`.
+`/health.components` reports STT, TTS and CPU OCR separately. `available`
+means local dependencies/weights exist, not that inference was verified.
+A successful request reports `ready`; a backend failure reports `unready`
+with its error until a later successful request. Health polling itself never
+loads weights or generates. Phone Desk shows these passive states and errors.
+Public backend errors are sanitized; detailed errors stay in the authenticated
+POST response. STT checks the local tokenizer/model/config before initialization
+and does not fetch missing assets.
+
+The Status page also has a separate **Serve** row. Tailscale Start preserves
+an existing private HTTPS mapping to Phone Desk on `127.0.0.1:8085`; with no
+Serve configuration it installs that mapping using `serve --bg --https=443`.
+An unrelated mapping or Funnel configuration is left unchanged and reported.
+The CLI's unconfigured JSON `null` is accepted; blank, malformed or other
+non-object output fails closed without configuring anything.
+Background Serve belongs to the existing Tailscale daemon and resumes with its
+service; it is not a second launcher/watchdog. Read-only status polling does not
+configure Serve, start Tailscale, or recover the phone backend.
 
 With no configured API key it binds loopback. Setting `X-API-Key` or
 `GODBRAIN_API_KEY` makes this helper bind **all IPv4 interfaces**; non-loopback
@@ -110,6 +143,7 @@ pwsh -NoProfile -Sta -File .\scripts\Test-DeskMenu.ps1 -UiSmoke
 python -m unittest discover -s .\scripts -p test_desk_review_plan.py
 python -m unittest discover -s .\scripts -p test_voice_door.py
 python .\scripts\voice_door.py --self-test
+.\scripts\Test-PhoneDesk.ps1
 ```
 
 These checks use synthetic monitor, model, speech and HTTP fixtures, not
@@ -117,3 +151,6 @@ model inference or real monitor writes. `Test-DeskModel.ps1 -InstalledLaunchers`
 also checks this host's external kit parameter contract without running it.
 `Test-DeskMonitor.ps1 -LiveMonitor` is a separate explicit hardware write-and-
 restore action. Do not use it for routine PR or RAG-ingestion validation.
+Phone Desk's browser checks use the existing Playwright dependency from
+`godbrain_core\skill_lab`; see the phone guide for scoped setup and optional
+passive live checks.

@@ -12,6 +12,7 @@ import urllib.request
 import wave
 
 import voice_door as voice
+import numpy as np
 
 
 def form_body(payload, name="file"):
@@ -78,6 +79,8 @@ class VoiceSettingsTests(unittest.TestCase):
         self.repo = Path(self.temporary.name)
         (self.repo / "logs").mkdir()
         self.settings = self.repo / "logs" / "desk-model-settings.json"
+        with voice._status_lock:
+            voice._component_results.clear()
 
     def write_settings(self, vision):
         self.settings.write_text(
@@ -190,22 +193,191 @@ class VoiceSettingsTests(unittest.TestCase):
                         self.assertEqual(result["engine"], "qwen")
 
     def test_cpu_ocr_disables_downloads_and_surfaces_missing_assets(self):
-        paths = []
-        def readtext(path, detail):
-            paths.append(Path(path))
-            self.assertEqual(Path(path).read_bytes(), b"fixture-image")
+        from PIL import Image
+        output = io.BytesIO()
+        Image.new("RGB", (2, 3), (10, 20, 30)).save(output, format="PNG")
+        image = output.getvalue()
+        def readtext(pixels, detail):
+            self.assertIsInstance(pixels, np.ndarray)
+            self.assertEqual(pixels.shape, (3, 2, 3))
+            self.assertEqual(pixels[0, 0].tolist(), [30, 20, 10])
+            self.assertTrue(pixels.flags.c_contiguous)
             self.assertEqual(detail, 0)
             return ["fixture text"]
         reader = Mock(readtext=Mock(side_effect=readtext))
         factory = Mock(return_value=reader)
         with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=factory)}):
-            self.assertEqual(voice.ocr_cpu(b"fixture-image", ".png"), "fixture text")
+            self.assertEqual(voice.ocr_cpu(image, ".png"), "fixture text")
             factory.assert_called_once_with(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
             factory.side_effect = FileNotFoundError("Missing local OCR weights; downloads disabled")
             with self.assertRaisesRegex(FileNotFoundError, "Missing local OCR weights"):
-                voice.ocr_cpu(b"fixture-image", ".png")
-        self.assertTrue(paths)
-        self.assertTrue(all(not path.exists() for path in paths))
+                voice.ocr_cpu(image, ".png")
+
+    def test_cpu_ocr_rejects_invalid_images_before_loading_weights(self):
+        factory = Mock()
+        with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=factory)}):
+            with self.assertRaisesRegex(ValueError, "decodable"):
+                voice.ocr_cpu(b"not an image", ".jpg")
+        factory.assert_not_called()
+
+    def test_cpu_ocr_applies_exif_orientation(self):
+        from PIL import Image
+        output = io.BytesIO()
+        image = Image.new("RGB", (2, 3), (10, 20, 30))
+        exif = image.getexif()
+        exif[274] = 6
+        image.save(output, format="PNG", exif=exif)
+        reader = Mock()
+        reader.readtext.return_value = ["rotated text"]
+        with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=Mock(return_value=reader))}):
+            self.assertEqual(voice.ocr_cpu(output.getvalue(), ".png"), "rotated text")
+        self.assertEqual(reader.readtext.call_args.args[0].shape, (2, 3, 3))
+
+    def test_component_health_is_passive_and_preserves_runtime_failure(self):
+        with patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                patch.object(Path, "is_file", return_value=True), \
+                patch.object(voice, "load_whisper") as load, \
+                patch.object(voice, "ocr_cpu") as cpu, \
+                patch.object(voice, "synthesize") as tts:
+            self.assertTrue(all(row["state"] == "available" for row in voice.component_status().values()))
+            voice.record_component("ocr_cpu", "unready", "fixture image loader failed")
+            self.assertEqual(voice.component_status()["ocr_cpu"]["detail"], "fixture image loader failed")
+            voice.record_component("ocr_cpu", "ready", "Last CPU image-text request succeeded")
+            self.assertEqual(voice.component_status()["ocr_cpu"]["state"], "ready")
+            load.assert_not_called()
+            cpu.assert_not_called()
+            tts.assert_not_called()
+        with patch.object(voice.importlib.util, "find_spec", return_value=None), \
+                patch.object(Path, "is_file", return_value=False):
+            self.assertTrue(all(row["state"] == "unready" for row in voice.component_status().values()))
+
+    def test_local_weight_directory_overrides_are_used_without_loading_models(self):
+        import subprocess
+        environment = dict(voice.os.environ, GODBRAIN_WHISPER_DIR=str(self.repo / "whisper"),
+                           GODBRAIN_PIPER_VOICES_DIR=str(self.repo / "voices"))
+        probe = subprocess.run(
+            [sys.executable, "-B", "-c",
+             "import json, voice_door as v; print(json.dumps([str(v.WHISPER), str(v.VOICES)]))"],
+            cwd=Path(voice.__file__).parent, env=environment, capture_output=True, text=True,
+            timeout=10, check=True,
+        )
+        self.assertEqual(json.loads(probe.stdout), [str(self.repo / "whisper"), str(self.repo / "voices")])
+
+    def test_stt_assets_and_loader_require_local_tokenizer_without_model_initialization(self):
+        weights = self.repo / "whisper"
+        weights.mkdir()
+        factory = Mock()
+        with patch.object(voice, "WHISPER", weights), patch.object(voice, "_whisper", None), \
+                patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                patch.dict(sys.modules, {"faster_whisper": SimpleNamespace(WhisperModel=factory)}):
+            for name in voice.WHISPER_FILES:
+                (weights / name).write_bytes(b"fixture")
+            self.assertEqual(voice.component_status()["stt"]["state"], "available")
+            for name in voice.WHISPER_FILES:
+                with self.subTest(missing=name):
+                    (weights / name).unlink()
+                    health = voice.component_status()["stt"]
+                    self.assertEqual(health["state"], "unready")
+                    self.assertIn(name, health["detail"])
+                    with self.assertRaisesRegex(RuntimeError, name):
+                        voice.load_whisper()
+                    factory.assert_not_called()
+                    (weights / name).write_bytes(b"fixture")
+            self.assertIs(voice.load_whisper(), factory.return_value)
+            self.assertIs(voice.load_whisper(), factory.return_value)
+            factory.assert_called_once_with(str(weights), device="cpu", compute_type="int8",
+                                            cpu_threads=8, local_files_only=True)
+
+    def test_http_ocr_failure_is_visible_in_health_and_clears_after_success(self):
+        self.write_settings(False)
+        handler = type("FixtureVoiceHandler", (voice.VoiceHandler,), {"repo": self.repo})
+        server = voice.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with patch.object(voice, "note"), \
+                    patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                    patch.object(Path, "is_file", return_value=True), \
+                    patch.object(voice, "ocr_cpu", side_effect=[RuntimeError("fixture loader failed"), "fixture text"]):
+                request = urllib.request.Request(url + "/ocr", data=b"image", method="POST")
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(request, timeout=3)
+                self.assertEqual(error.exception.code, 503)
+                error.exception.close()
+                with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                    component = json.loads(response.read())["components"]["ocr_cpu"]
+                self.assertEqual(component, {
+                    "state": "unready",
+                    "detail": "CPU backend failed (RuntimeError); see the authenticated response for details.",
+                })
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    self.assertEqual(json.loads(response.read())["text"], "fixture text")
+                with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                    self.assertEqual(json.loads(response.read())["components"]["ocr_cpu"]["state"], "ready")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_public_health_hides_backend_details_for_all_remote_post_components(self):
+        self.write_settings(False)
+
+        class RemoteFixture(voice.VoiceHandler):
+            expected_key = "fixture-key"
+
+            def setup(self):
+                super().setup()
+                self.client_address = ("192.0.2.10", self.client_address[1])
+
+        RemoteFixture.repo = self.repo
+        server = voice.ThreadingHTTPServer(("127.0.0.1", 0), RemoteFixture)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        private_detail = r"fixture stderr at C:\private\synthetic-assets; private diagnostic content"
+        try:
+            with patch.object(voice, "note"), \
+                    patch.object(voice.importlib.util, "find_spec", return_value=object()), \
+                    patch.object(Path, "is_file", return_value=True):
+                for path, component, backend, body, success in (
+                    ("/v1/audio/transcriptions", "stt", "transcribe", b"RIFFfixture", "fixture"),
+                    ("/v1/audio/speech", "tts", "synthesize", b'{"input":"fixture"}', b"RIFFfixture"),
+                    ("/ocr", "ocr_cpu", "ocr_cpu", b"fixture", "fixture"),
+                ):
+                    with self.subTest(component=component), patch.object(
+                        voice, backend, side_effect=[RuntimeError(private_detail), success]
+                    ) as operation:
+                        unauthenticated = urllib.request.Request(url + path, data=body, method="POST")
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            urllib.request.urlopen(unauthenticated, timeout=3)
+                        self.assertEqual(error.exception.code, 401)
+                        error.exception.close()
+                        operation.assert_not_called()
+                        request = urllib.request.Request(
+                            url + path, data=body, headers={"X-API-Key": "fixture-key"}, method="POST")
+                        with self.assertRaises(urllib.error.HTTPError) as error:
+                            urllib.request.urlopen(request, timeout=3)
+                        self.assertEqual(error.exception.code, 503)
+                        self.assertEqual(json.loads(error.exception.read())["error"], private_detail)
+                        error.exception.close()
+                        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                            raw = response.read()
+                        self.assertNotIn(private_detail.encode("utf-8"), raw)
+                        self.assertNotIn(b"synthetic-assets", raw)
+                        self.assertNotIn(b"private diagnostic content", raw)
+                        self.assertEqual(json.loads(raw)["components"][component], {
+                            "state": "unready",
+                            "detail": "CPU backend failed (RuntimeError); see the authenticated response for details.",
+                        })
+                        with urllib.request.urlopen(request, timeout=3) as response:
+                            response.read()
+                        with urllib.request.urlopen(url + "/health", timeout=3) as response:
+                            self.assertEqual(json.loads(response.read())["components"][component]["state"], "ready")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     def test_audio_http_passes_exact_uploaded_bytes_to_transcription(self):
         handler = type("FixtureVoiceHandler", (voice.VoiceHandler,), {"repo": self.repo})

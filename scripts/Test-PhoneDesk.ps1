@@ -146,7 +146,8 @@ try {
         } finally { $client.Dispose() }
         for ($i = 0; $i -lt 3; $i++) {
             $data = Invoke-RestMethod "$url/api/phone/status" -Headers $headers -TimeoutSec 12
-            if ($data.schema_version -ne 1 -or $data.read_only -ne $true -or $data.services.Count -ne 3) {
+            if ($data.schema_version -ne 1 -or $data.read_only -ne $true -or $data.services.Count -ne 3 -or
+                $data.speech.Count -ne 3) {
                 throw 'Invalid live Phone Desk response.'
             }
             Start-Sleep -Seconds 3

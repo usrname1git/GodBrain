@@ -124,6 +124,22 @@ int main(int argc, char** argv) {
         check(phone_desk::tailscale_status(offline)["state"] == "unready", "Offline node became ready");
         offline["Self"].erase("Online");
         check(phone_desk::tailscale_status(offline)["state"] == "unknown", "Missing online state became ready");
+        json speech = {{"service", "voice"}, {"device", "cpu"}, {"ok", true}, {"components", {
+            {"stt", {{"state", "available"}, {"detail", "CPU weights present; not exercised"}}},
+            {"tts", {{"state", "ready"}, {"detail", "Last synthesis succeeded"}}},
+            {"ocr_cpu", {{"state", "unready"}, {"detail", "Image loader failed"}}}}}};
+        const json speech_cards = phone_desk::speech_status(speech);
+        check(speech_cards.size() == 3, "Speech cards missing");
+        check(speech_cards[0]["state"] == "available", "Availability became verified readiness");
+        check(speech_cards[2]["state"] == "unready" && speech_cards[2]["detail"] == "Image loader failed",
+              "CPU OCR failure was hidden");
+        check(phone_desk::speech_status(json::object())[0]["state"] == "unknown", "Missing speech health became ready");
+        speech["components"]["ocr_cpu"]["state"] = true;
+        check(phone_desk::speech_status(speech)[2]["state"] == "unknown", "Invalid OCR state became ready");
+        speech["components"]["tts"]["detail"] = std::string(401, 'x');
+        check(phone_desk::speech_status(speech)[1]["state"] == "unknown", "Oversized speech detail accepted");
+        speech["ok"] = "true";
+        check(phone_desk::speech_status(speech)[0]["state"] == "unknown", "Truthy speech readiness accepted");
         const json models = {{"data", json::array({{{"id", "C:\\private\\Qwen-test"}}})}};
         const json health = {{"ok", true}, {"busy", true}, {"context_length", 40960}};
         const json model = phone_desk::model_status(8888, models, health);

@@ -143,6 +143,9 @@ function Get-WhisperLine {
     try {
         $health = Invoke-RestMethod http://127.0.0.1:8001/health -TimeoutSec 2
         if ([string]$health.service -ne "voice" -or [string]$health.device -ne "cpu") { return "down (other)" }
+        if ($health.components.ocr_cpu.state -eq "unready") {
+            return "CPU up :8001 / OCR fail: $($health.components.ocr_cpu.detail)"
+        }
         if ([string]$health.ocr -eq "qwen") { return "CPU up :8001 OCR=tower" }
         return "CPU up :8001"
     } catch { return "health unread" }
@@ -199,6 +202,104 @@ function Get-TailscaleLine {
     return "running, no 100.x"
 }
 
+function Invoke-DeskTailscale([string[]]$Arguments) {
+    $exe = Get-TailscaleExe
+    if (-not $exe) { throw "Tailscale CLI is missing." }
+    $info = [Diagnostics.ProcessStartInfo]::new($exe)
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw "Could not start the Tailscale CLI." }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(5000)) {
+            $process.Kill()
+            $null = $process.WaitForExit(3000)
+            throw "Tailscale CLI timed out."
+        }
+        if (-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)) {
+            throw "Tailscale CLI output timed out."
+        }
+        $output = $stdout.GetAwaiter().GetResult().Trim()
+        $errorText = $stderr.GetAwaiter().GetResult().Trim()
+        if ($process.ExitCode -ne 0) { throw "Tailscale CLI failed (exit $($process.ExitCode)): $errorText" }
+        if ($output.Length -gt 1048576) { throw "Tailscale CLI response exceeds its size limit." }
+        return $output
+    } finally { $process.Dispose() }
+}
+
+function Get-DeskServeMapping($Configuration) {
+    if ($null -eq $Configuration) { $Configuration = [pscustomobject]@{} }
+    # Parsed JSON primitives are PSObject-wrapped; check their underlying type.
+    if ($Configuration.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "Invalid Tailscale Serve configuration."
+    }
+    $empty = @($Configuration.PSObject.Properties).Count -eq 0
+    if ($null -ne $Configuration.AllowFunnel) {
+        if ($Configuration.AllowFunnel.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
+            throw "Invalid Tailscale Funnel configuration."
+        }
+        foreach ($entry in $Configuration.AllowFunnel.PSObject.Properties) {
+            if ($entry.Value -isnot [bool] -or $entry.Value) {
+                return [pscustomobject]@{ Configured = $false; Empty = $false; Url = ""; Detail = "Funnel enabled or invalid; private Phone Desk required" }
+            }
+        }
+    }
+    foreach ($site in @($Configuration.Web.PSObject.Properties)) {
+        $https = $Configuration.TCP.'443'.HTTPS
+        if ($site.Name -match '^[A-Za-z0-9.-]+:443$' -and
+            $https -is [bool] -and $https -and
+            $site.Value.Handlers.'/'.Proxy -is [string] -and
+            $site.Value.Handlers.'/'.Proxy -ceq "http://127.0.0.1:8085") {
+            return [pscustomobject]@{
+                Configured = $true; Empty = $false
+                Url = "https://$($site.Name -replace ':443$', '')/"
+                Detail = "HTTPS :443 -> :8085 (background)"
+            }
+        }
+    }
+    return [pscustomobject]@{
+        Configured = $false; Empty = $empty; Url = ""
+        Detail = $(if ($empty) { "Phone Desk not configured" } else { "Existing Serve mapping is not persistent private Phone Desk" })
+    }
+}
+
+function Read-DeskServeMapping {
+    $output = Invoke-DeskTailscale @("serve", "status", "--json")
+    if ([string]::IsNullOrWhiteSpace($output)) { throw "Tailscale Serve response is empty." }
+    $configuration = ConvertFrom-Json -InputObject $output -ErrorAction Stop -NoEnumerate
+    return Get-DeskServeMapping $configuration
+}
+
+function Get-TailscaleServeLine {
+    $word = Get-ServiceWord "Tailscale"
+    if ($word -ne "running") { return "service $word" }
+    try {
+        $mapping = Read-DeskServeMapping
+        if (-not $mapping.Configured) { return $mapping.Detail }
+        $node = Invoke-DeskTailscale @("status", "--json") | ConvertFrom-Json -ErrorAction Stop
+        if ($node.BackendState -ne "Running" -or $node.Self.Online -isnot [bool] -or -not $node.Self.Online) {
+            return "Configured / tailnet offline"
+        }
+        if (-not (Test-Port 8085)) { return "HTTPS :443 -> :8085 (backend down)" }
+        return $mapping.Detail
+    } catch { return "Serve unread: $($_.Exception.Message)" }
+}
+
+function Start-DeskPhoneServe {
+    $mapping = Read-DeskServeMapping
+    if ($mapping.Configured) { return }
+    if (-not $mapping.Empty) { throw "$($mapping.Detail). Existing Serve configuration was left unchanged." }
+    $null = Invoke-DeskTailscale @("serve", "--bg", "--https=443", "http://127.0.0.1:8085")
+    $mapping = Read-DeskServeMapping
+    if (-not $mapping.Configured) { throw "Private background Phone Desk Serve did not become configured." }
+}
+
 function Get-WatchLine {
     $out = & schtasks.exe /Query /TN GodBrainWatch /FO LIST 2>$null | Out-String
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($out)) { return "missing" }
@@ -244,7 +345,10 @@ function Enable-DeskAfterCs2 {
 function Start-TailscaleDesk {
     Set-HostService "Tailscale" "start"
     if ((Get-ServiceWord "Tailscale") -ne "running") { return }
-    try { Set-TailscaleForCs2 $true } catch {
+    try {
+        Set-TailscaleForCs2 $true
+        Start-DeskPhoneServe
+    } catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Tailscale")
     }
     Update-Status
@@ -430,6 +534,8 @@ function Get-DeskStatus {
         $mouth
         (Get-GpuLine)
         ("web {0}" -f (Get-HttpLine))
+        ("Tailscale {0}" -f (Get-TailscaleLine))
+        ("Serve {0}" -f (Get-TailscaleServeLine))
     ) -join "`r`n"
 }
 
@@ -450,6 +556,7 @@ function Get-DeskSnapshot {
         Rust = Get-RustDeskLine
         Ssh = Get-SshLine
         Tail = Get-TailscaleLine
+        Serve = Get-TailscaleServeLine
         Watch = Get-WatchLine
         Web = Get-HttpLine
         Whisper = Get-WhisperLine
@@ -611,7 +718,7 @@ function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
     $body = @{
         model = $model
         temperature = 0
-        max_tokens = 1024
+        max_tokens = 2048
         chat_template_kwargs = @{ enable_thinking = $false }
         messages = @(@{
             role = "user"
@@ -1330,8 +1437,8 @@ $railBg = [System.Drawing.Color]::FromArgb(7, 13, 22)
 $deskIcon = New-GodBrainIcon
 $f = New-Object System.Windows.Forms.Form
 $f.Text = "Desk"
-$f.FormBorderStyle = "FixedSingle"
-$f.MaximizeBox = $false
+$f.FormBorderStyle = "Sizable"
+$f.MaximizeBox = $true
 # Wide enough for the longest model id, a gap, then Start and Stop.
 $script:pageW = 596
 $f.ClientSize = New-Object System.Drawing.Size((52 + $script:pageW), 640)
@@ -1340,10 +1447,12 @@ $f.BackColor = $bg
 $f.ForeColor = $ink
 $f.Font = New-Object System.Drawing.Font("Segoe UI", 10)
 $f.Icon = $deskIcon
+$f.MinimumSize = $f.Size
 
 $rail = New-Object System.Windows.Forms.Panel
 $rail.Location = New-Object System.Drawing.Point(0, 0)
 $rail.Size = New-Object System.Drawing.Size(52, 612)
+$rail.Anchor = "Top, Bottom, Left"
 $rail.BackColor = $railBg
 $f.Controls.Add($rail)
 
@@ -1352,6 +1461,7 @@ function New-Page {
     $p = New-Object System.Windows.Forms.Panel
     $p.Location = New-Object System.Drawing.Point(52, 0)
     $p.Size = New-Object System.Drawing.Size($script:pageW, 612)
+    $p.Anchor = "Top, Bottom, Left, Right"
     $p.BackColor = $bg
     $p.Visible = $false
     $f.Controls.Add($p)
@@ -1587,15 +1697,16 @@ $rowTail = Add-Pair $pageStatus "Tailscale" 400 { Start-TailscaleDesk } {
     if (-not (Confirm-Stop "Stop the Tailscale service? This machine leaves the tailnet until you start the service again. This does not log out or reset Tailscale." "Tailscale")) { return }
     Set-HostService "Tailscale" "stop"
 }
-$rowWatch = Add-Pair $pageStatus "AFK Watch" 432 { Set-WatchTask "ENABLE" } {
+$rowServe = Add-Row $pageStatus "Serve" 432
+$rowWatch = Add-Pair $pageStatus "AFK Watch" 464 { Set-WatchTask "ENABLE" } {
     if (-not (Confirm-Stop "Stop AFK Watch? Automatic host/gym recovery stays off until you enable it again. A Heal already running may finish; running services/models are left alone." "Watch")) { return }
     Set-WatchTask "DISABLE"
 }
-$rowWeb = Add-Pair $pageStatus "Web" 464 { Start-WebDoor } { Stop-WebDoor }
-$rowWhisper = Add-Pair $pageStatus "STT/TTS" 496 { Start-VoiceDoor } { Stop-VoiceDoor }
+$rowWeb = Add-Pair $pageStatus "Web" 496 { Start-WebDoor } { Stop-WebDoor }
+$rowWhisper = Add-Pair $pageStatus "STT/TTS" 528 { Start-VoiceDoor } { Stop-VoiceDoor }
 $afkGym = New-Object System.Windows.Forms.CheckBox
 $afkGym.Text = "Recover Qwen + gym while AFK (opt-in)"
-$afkGym.Location = New-Object System.Drawing.Point(16, 532)
+$afkGym.Location = New-Object System.Drawing.Point(16, 564)
 $afkGym.Size = New-Object System.Drawing.Size(($script:pageW - 32), 24)
 $afkGym.ForeColor = $ink
 $afkGym.BackColor = $bg
@@ -1613,7 +1724,7 @@ $script:statusRows = [ordered]@{
     Model = $rowModel; Tok = $rowTok; Kernel = $rowKernel; Rag = $rowRag
     Mongo = $rowMongo; Gym = $rowGym; Cs2 = $rowCs2; Mouth = $rowMouth
     Gpu = $rowGpu; Rust = $rowRust; Ssh = $rowSsh; Tail = $rowTail
-    Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper
+    Serve = $rowServe; Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper
 }
 $script:statusWorker = [PowerShell]::Create()
 $script:statusJob = $null
@@ -1891,7 +2002,7 @@ function Update-Ask {
     try {
         $result = @($script:askWorker.EndInvoke($script:askJob))
         if ($result.Count -ne 1) { throw "Invalid Ask response." }
-        $reply.Text = [string]$result[0]
+        $reply.Text = ([string]$result[0]) -replace "\r?\n", "`r`n"
     } catch {
         $reply.Text = "Error: $($_.Exception.Message)"
         if ($_.ErrorDetails.Message) { $reply.Text += "`r`n$($_.ErrorDetails.Message)" }
@@ -1927,6 +2038,13 @@ Add-Button $pageAsk "Open Grok" ($script:pageW - 132) 526 112 {
     if (-not $grok) { [System.Windows.Forms.MessageBox]::Show("grok is not on PATH"); return }
     Start-Process -FilePath $grok -WorkingDirectory $dir | Out-Null
 } $false
+
+foreach ($control in @($askPath, $prompt, $reviewFile)) { $control.Anchor = "Top, Left, Right" }
+$send.Anchor = "Top, Right"
+$reply.Anchor = "Top, Bottom, Left, Right"
+$cwdLabel.Anchor = "Bottom, Left"
+$cwd.Anchor = "Bottom, Left, Right"
+($pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Open Grok" }).Anchor = "Bottom, Right"
 
 Add-Head $pageLyrics "Lyrics" 16
 function Add-Field([string]$label, [string]$value, [int]$x, [int]$y, [int]$w) {
