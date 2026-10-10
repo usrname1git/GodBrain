@@ -29,6 +29,7 @@ function snapshot() {
     ],
     services: ['RustDesk', 'Tailscale', 'SSH'].map(name => card(name)),
     core: ['Kernel', 'Alexandria / RAG', 'MongoDB'].map(name => card(name)),
+    speech: ['STT', 'TTS', 'CPU OCR'].map(name => card(name, 'available', 'Local assets present; not exercised')),
     gpu: { state: 'ready', used_mib: 15000, total_mib: 16376 },
   };
 }
@@ -58,6 +59,8 @@ test('Phone Desk mobile rendering, fail-closed states and GET-only polling', asy
     await page.waitForFunction(() => document.getElementById('models').textContent.includes('Qwen EXL3'));
     assert.equal(await page.locator('#services .card').count(), 3);
     assert.equal(await page.locator('#core .core-row').count(), 3);
+    assert.equal(await page.locator('#speech .core-row').count(), 3);
+    assert.match(await page.locator('#speech').textContent(), /Available/);
     assert.match(await page.locator('#gpu').textContent(), /14\.6 \/ 16\.0 GiB/);
     assert.ok((await page.locator('#refresh').boundingBox()).height >= 44);
     for (const width of [320, 390, 430, 740]) {
@@ -80,11 +83,20 @@ test('Phone Desk mobile rendering, fail-closed states and GET-only polling', asy
     await refresh();
     assert.match(await page.locator('#error').textContent(), /Access denied/);
     status = 200;
+    reply.speech[2] = card('CPU OCR', 'unready', 'No suitable plugin registered for imread.');
+    await refresh();
+    assert.match(await page.locator('#speech').textContent(), /CPU OCR.*No suitable plugin registered.*Not ready/s);
+    delete reply.speech;
+    await refresh();
+    assert.match(await page.locator('#speech').textContent(), /Unknown/);
     for (const mutate of [
       data => { data.read_only = false; },
       data => { data.services[1] = data.services[0]; },
       data => { data.models = []; },
       data => { data.models[0].state = 'invented'; },
+      data => { data.speech[0] = data.speech[1]; },
+      data => { data.speech[0].state = 'invented'; },
+      data => { data.speech[0].state = ['ready']; },
       data => { data.gpu.used_mib = -1; },
       data => { data.gpu.used_mib = data.gpu.total_mib + 1; },
       data => { data.sampled_at = null; },
@@ -99,11 +111,13 @@ test('Phone Desk mobile rendering, fail-closed states and GET-only polling', asy
 
     reply = snapshot();
     reply.models[0].name = '<img src=x onerror="window.injected=true">';
+    reply.speech[2].detail = '<img src=x onerror="window.injected=true">';
     reply.models[1] = { ...card('Qwen-Image-2.1', 'busy', ':8871 / weights loaded'), port: 8871 };
     reply.gpu = { state: 'unknown', used_mib: null, total_mib: null, detail: 'Sensor unavailable' };
     await refresh();
     assert.equal(await page.locator('#error').isVisible(), false);
     assert.equal(await page.locator('#models img').count(), 0);
+    assert.equal(await page.locator('#speech img').count(), 0);
     assert.equal(await page.evaluate(() => window.injected), undefined);
     assert.match(await page.locator('#models').textContent(), /Qwen-Image-2\.1.*weights loaded/s);
     assert.equal(await page.locator('#gpu').textContent(), 'Sensor unavailable');
@@ -140,6 +154,7 @@ test('Live mobile route', { skip: process.env.GODBRAIN_PHONE_LIVE_TEST !== '1' }
     assert.equal(await page.locator('#error').isVisible(), false);
     assert.equal(await page.locator('#services .card').count(), 3);
     assert.equal(await page.locator('#core .core-row').count(), 3);
+    assert.equal(await page.locator('#speech .core-row').count(), 3);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.locator('#refresh').click();
     await page.waitForFunction(() => !document.getElementById('refresh').disabled);

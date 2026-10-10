@@ -10,6 +10,8 @@ import base64
 import binascii
 import hashlib
 import hmac
+import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -27,13 +29,43 @@ from pathlib import Path
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-WHISPER = Path(r"C:\nvme\faster-whisper-large-v3")
-VOICES = Path(r"C:\nvme\piper-voices")
+WHISPER = Path(os.environ.get("GODBRAIN_WHISPER_DIR") or r"C:\nvme\faster-whisper-large-v3")
+VOICES = Path(os.environ.get("GODBRAIN_PIPER_VOICES_DIR") or r"C:\nvme\piper-voices")
 DEFAULT_VOICE = "en_US-lessac-medium"
 MAX_BODY = 25 * 1024 * 1024
 MAX_SPEECH = 4000
 _lock = threading.Lock()
 _whisper = None
+_status_lock = threading.Lock()
+_component_results = {}
+
+
+def record_component(name: str, state: str, detail: str) -> None:
+    with _status_lock:
+        _component_results[name] = {"state": state, "detail": detail[:400]}
+
+
+def component_status() -> dict:
+    ocr_root = Path(os.environ.get("EASYOCR_MODULE_PATH") or
+                    os.environ.get("MODULE_PATH") or (Path.home() / ".EasyOCR")) / "model"
+    requirements = {
+        "stt": (("faster_whisper",), (WHISPER / "model.bin", WHISPER / "config.json")),
+        "tts": (("piper",), (VOICES / f"{DEFAULT_VOICE}.onnx", VOICES / f"{DEFAULT_VOICE}.onnx.json")),
+        "ocr_cpu": (("easyocr", "PIL", "numpy"),
+                    (ocr_root / "craft_mlt_25k.pth", ocr_root / "latin_g2.pth")),
+    }
+    result = {}
+    for name, (modules, files) in requirements.items():
+        missing = [module for module in modules if importlib.util.find_spec(module) is None]
+        missing += [path.name for path in files if not path.is_file()]
+        if missing:
+            result[name] = {"state": "unready", "detail": "Missing local dependency or weights: " + ", ".join(missing)}
+        else:
+            with _status_lock:
+                result[name] = dict(_component_results.get(name, {
+                    "state": "available", "detail": "CPU dependencies and local weights present; not yet exercised",
+                }))
+    return result
 
 
 def note(message: str) -> None:
@@ -224,16 +256,17 @@ def synthesize(text: str, voice: str) -> bytes:
 
 def ocr_cpu(image: bytes, suffix: str) -> str:
     import easyocr
-    fd, name = tempfile.mkstemp(suffix=suffix or ".png")
-    os.close(fd)
-    path = Path(name)
+    import numpy as np
+    from PIL import Image, ImageOps
     try:
-        path.write_bytes(image)
-        reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
-        lines = reader.readtext(str(path), detail=0)
-        return "\n".join(str(line) for line in lines).strip()
-    finally:
-        path.unlink(missing_ok=True)
+        with Image.open(io.BytesIO(image)) as source:
+            decoded = ImageOps.exif_transpose(source).convert("RGB")
+            pixels = np.asarray(decoded)[:, :, ::-1].copy()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise ValueError("image is not a decodable image") from exc
+    reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
+    lines = reader.readtext(pixels, detail=0)
+    return "\n".join(str(line) for line in lines).strip()
 
 
 def ocr_tower(image: bytes, mime: str) -> str:
@@ -314,6 +347,7 @@ class VoiceHandler(BaseHTTPRequestHandler):
             "stt": "faster-whisper",
             "tts": "piper",
             "ocr": ocr,
+            "components": component_status(),
         })
 
     def do_POST(self):
@@ -324,6 +358,7 @@ class VoiceHandler(BaseHTTPRequestHandler):
         if not self.guard():
             note(f"POST {path} rejected")
             return
+        self.component = ""
         try:
             if path == "/v1/audio/transcriptions":
                 self.transcribe_request()
@@ -336,6 +371,9 @@ class VoiceHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.refuse(400, str(exc))
         except Exception as exc:
+            if self.component:
+                record_component(self.component, "unready", str(exc))
+            note(f"POST {path} failed: {type(exc).__name__}")
             self.refuse(503, str(exc)[:400])
 
     def audio_bytes(self):
@@ -358,7 +396,11 @@ class VoiceHandler(BaseHTTPRequestHandler):
         audio, suffix, language = self.audio_bytes()
         if language and not language.replace("-", "").isalpha():
             raise ValueError("language must be a short name such as sv or en")
-        self.send_json({"text": transcribe(audio, suffix, language)})
+        self.component = "stt"
+        text = transcribe(audio, suffix, language)
+        record_component("stt", "ready", "Last CPU transcription succeeded")
+        self.component = ""
+        self.send_json({"text": text})
 
     def speech_request(self):
         payload = json.loads(read_body(self).decode("utf-8"))
@@ -368,7 +410,10 @@ class VoiceHandler(BaseHTTPRequestHandler):
         voice = str(payload.get("voice") or DEFAULT_VOICE)
         if not voice.replace("_", "").replace("-", "").isalnum():
             raise ValueError("unknown voice")
+        self.component = "tts"
         audio = synthesize(text, voice)
+        record_component("tts", "ready", "Last CPU speech synthesis succeeded")
+        self.component = ""
         self.send_response(200)
         self.send_header("Content-Type", "audio/wav")
         self.send_header("Content-Length", str(len(audio)))
@@ -391,12 +436,17 @@ class VoiceHandler(BaseHTTPRequestHandler):
                 text = ocr_tower(image, mime)
                 engine = "qwen"
             except (OSError, ValueError, KeyError, TypeError) as exc:
+                self.component = "ocr_cpu"
                 text = ocr_cpu(image, ".png" if mime == "image/png" else ".jpg")
                 note = str(exc)[:200]
         else:
             if prefer_tower(self.repo):
                 note = "Qwen vision tower is unavailable or busy; CPU OCR answered"
+            self.component = "ocr_cpu"
             text = ocr_cpu(image, ".png" if mime == "image/png" else ".jpg")
+        if engine == "cpu":
+            record_component("ocr_cpu", "ready", "Last CPU image-text request succeeded")
+        self.component = ""
         self.send_json({"text": text, "engine": engine, "note": note})
 
 

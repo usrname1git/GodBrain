@@ -9,6 +9,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors.Count) { throw ($errors -join "`n") }
 $script:fixtureRoot = $PSScriptRoot
 foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-WhisperLine", "Get-ModelPickFile", "Start-SelectedModel", "Stop-ActiveModel",
+    "Invoke-DeskTailscale", "Get-DeskServeMapping", "Get-TailscaleServeLine", "Start-DeskPhoneServe",
     "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Read-DeskGrantedBytes", "Get-DeskImagePayload", "Wait-DeskImageResult", "Test-DeskWriteSlash", "Test-DeskVisionImage", "Test-DeskNeedsCompleteReview", "Invoke-DeskVisionAsk", "Invoke-DeskAsk")) {
     $definition = $ast.Find({
         param($node)
@@ -197,12 +198,69 @@ $script:response = @{ service = "voice"; device = "cpu"; ocr = "cpu" }
 Assert-Equal (Get-WhisperLine) "CPU up :8001"
 $script:response.ocr = "qwen"
 Assert-Equal (Get-WhisperLine) "CPU up :8001 OCR=tower"
+$script:response.components = @{ ocr_cpu = @{ state = "unready"; detail = "fixture loader failed" } }
+Assert-Equal (Get-WhisperLine) "CPU up :8001 / OCR fail: fixture loader failed"
 $script:response = @{ service = "other"; device = "cpu"; ocr = "cpu" }
 Assert-Equal (Get-WhisperLine) "down (other)"
 $script:httpFails = $true
 Assert-Equal (Get-WhisperLine) "health unread"
 $script:httpFails = $false
 $script:ports = @()
+
+& {
+    function Get-TailscaleExe { return "C:\pwsh\pwsh.exe" }
+    Assert-Equal (Invoke-DeskTailscale @("-NoProfile", "-Command", "'{}'")) "{}"
+    Assert-Throws { Invoke-DeskTailscale @("-NoProfile", "-Command", "exit 7") } "*exit 7*"
+    Assert-Throws { Invoke-DeskTailscale @("-NoProfile", "-Command", "Start-Sleep -Seconds 20") } "*timed out*"
+    $configuration = '{"TCP":{"443":{"HTTPS":true}},"Web":{"fixture.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8085"}}}}}' | ConvertFrom-Json
+    Assert-Equal (Get-DeskServeMapping $configuration).Configured $true
+    Assert-Equal (Get-DeskServeMapping $configuration).Url "https://fixture.ts.net/"
+    Assert-Equal (Get-DeskServeMapping ([pscustomobject]@{})).Empty $true
+    Assert-Throws { Get-DeskServeMapping $null } "*Invalid*"
+    $script:serveConfig = $configuration
+    $script:serveNode = [pscustomobject]@{ BackendState = "Running"; Self = @{ Online = $true } }
+    $script:serveCommands = @()
+    function Invoke-DeskTailscale([string[]]$Arguments) {
+        $script:serveCommands += ,$Arguments
+        if ($Arguments[0] -eq "status") { return $script:serveNode | ConvertTo-Json -Depth 5 -Compress }
+        if ($Arguments[1] -eq "status") { return $script:serveConfig | ConvertTo-Json -Depth 8 -Compress }
+        Assert-Equal ($Arguments -join " ") "serve --bg --https=443 http://127.0.0.1:8085"
+        $script:serveConfig = $configuration
+    }
+    function Get-ServiceWord { return $script:tailServiceWord }
+    $script:tailServiceWord = "running"
+    $script:ports = @(8085)
+    Assert-Equal (Get-TailscaleServeLine) "HTTPS :443 -> :8085 (background)"
+    Start-DeskPhoneServe
+    if (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) { throw "Persistent Serve was needlessly reconfigured." }
+    $script:serveConfig = [pscustomobject]@{}
+    Start-DeskPhoneServe
+    Assert-Equal (Get-DeskServeMapping $script:serveConfig).Configured $true
+    $script:ports = @()
+    Assert-Equal (Get-TailscaleServeLine) "HTTPS :443 -> :8085 (backend down)"
+    $script:serveNode.Self.Online = $false
+    Assert-Equal (Get-TailscaleServeLine) "Configured / tailnet offline"
+    $script:serveNode.Self.Online = "true"
+    Assert-Equal (Get-TailscaleServeLine) "Configured / tailnet offline"
+    $script:tailServiceWord = "stopped"
+    Assert-Equal (Get-TailscaleServeLine) "service stopped"
+    $configuration.Web.'fixture.ts.net:443'.Handlers.'/'.Proxy = "http://127.0.0.1:8083"
+    Assert-Equal (Get-DeskServeMapping $configuration).Configured $false
+    $script:serveConfig = $configuration
+    Assert-Throws { Start-DeskPhoneServe } "*left unchanged*"
+    $configuration.Web.'fixture.ts.net:443'.Handlers.'/'.Proxy = @("http://127.0.0.1:8085")
+    Assert-Equal (Get-DeskServeMapping $configuration).Configured $false
+    $configuration.Web.'fixture.ts.net:443'.Handlers.'/'.Proxy = "http://127.0.0.1:8085"
+    $configuration | Add-Member AllowFunnel ([pscustomobject]@{ 'fixture.ts.net:443' = $true })
+    Assert-Equal (Get-DeskServeMapping $configuration).Configured $false
+    Assert-Throws { Start-DeskPhoneServe } "*left unchanged*"
+    $configuration.AllowFunnel.'fixture.ts.net:443' = $false
+    Assert-Equal (Get-DeskServeMapping $configuration).Configured $true
+}
+if ($ast.Extent.Text -notmatch 'Add-Row \$pageStatus "Serve"' -or
+    $ast.Extent.Text -notmatch '(?s)function Start-TailscaleDesk.*?Set-TailscaleForCs2 \$true\s+Start-DeskPhoneServe') {
+    throw "Tailscale Serve status or default background start is missing."
+}
 
 function Start-ImageDoor { $script:imageStarted = $true }
 function Stop-ImageDoor { $script:imageStopped = $true }
@@ -577,6 +635,8 @@ try {
     if ($script:lastBody -notmatch '"messages":\[') { throw "Vision Ask unwrapped the messages array." }
     $posted = $script:lastBody | ConvertFrom-Json
     Assert-Equal $posted.model "qwen-vision-fixture"
+    Assert-Equal $posted.max_tokens 2048
+    Assert-Equal $posted.temperature 0
     Assert-Equal ([bool]$posted.chat_template_kwargs.enable_thinking) $false
     Assert-Equal $posted.messages[0].content[0].text "OCR"
     if ($posted.messages[0].content[1].image_url.url -notlike "data:image/jpeg;base64,*") {
@@ -601,7 +661,7 @@ if (-not $update) { throw "Missing asynchronous status updater." }
 . ([scriptblock]::Create($update.Extent.Text.Replace('$PSCommandPath', '$script:fixtureCommand')))
 function Update-MicMark {}
 $script:statusRows = [ordered]@{}
-foreach ($key in @("Model", "Tok", "Kernel", "Rag", "Mongo", "Gym", "Cs2", "Mouth", "Gpu", "Rust", "Ssh", "Tail", "Watch", "Web", "Whisper")) {
+foreach ($key in @("Model", "Tok", "Kernel", "Rag", "Mongo", "Gym", "Cs2", "Mouth", "Gpu", "Rust", "Ssh", "Tail", "Serve", "Watch", "Web", "Whisper")) {
     $script:statusRows[$key] = [pscustomobject]@{ Text = "waiting" }
 }
 $rowModel = $script:statusRows.Model
@@ -615,7 +675,7 @@ $state.Commands.Add([System.Management.Automation.Runspaces.SessionStateFunction
 param([switch]$StatusSnapshot, [object]$TokenSample)
 Start-Sleep -Milliseconds 1500
 $rows = @{}
-foreach ($key in "Model", "Tok", "Kernel", "Rag", "Mongo", "Gym", "Cs2", "Mouth", "Gpu", "Rust", "Ssh", "Tail", "Watch", "Web", "Whisper") {
+foreach ($key in "Model", "Tok", "Kernel", "Rag", "Mongo", "Gym", "Cs2", "Mouth", "Gpu", "Rust", "Ssh", "Tail", "Serve", "Watch", "Web", "Whisper") {
     $rows[$key] = "fixture $key"
 }
 [pscustomobject]@{ Rows = [pscustomobject]$rows; TokenSample = @{ Total = (1 + $TokenSample.Total) } }
@@ -753,6 +813,52 @@ if ($UiSmoke) {
         if ([Windows.Forms.TextRenderer]::MeasureText($reviewFile.Text, $reviewFile.Font).Width + 24 -gt $reviewFile.Width) {
             throw "Complete-file review label is clipped."
         }
+        Assert-Equal $f.FormBorderStyle ([Windows.Forms.FormBorderStyle]::Sizable)
+        Assert-Equal $f.MaximizeBox $true
+        Assert-Equal $f.MinimumSize $f.Size
+        Show-Page "Ask"
+        $replyBounds = $reply.Bounds
+        $askSize = $pageAsk.Size
+        $formSize = $f.ClientSize
+        $openGrok = $pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Open Grok" }
+        foreach ($size in @([Drawing.Size]::new(1200, 900), [Drawing.Size]::new(900, 760), $formSize)) {
+            $f.ClientSize = $size
+            $f.PerformLayout()
+            $pageAsk.PerformLayout()
+            $dx = $size.Width - $formSize.Width
+            $dy = $size.Height - $formSize.Height
+            Assert-Equal $pageAsk.Width ($askSize.Width + $dx)
+            Assert-Equal $pageAsk.Height ($askSize.Height + $dy)
+            Assert-Equal $reply.Width ($replyBounds.Width + $dx)
+            Assert-Equal $reply.Height ($replyBounds.Height + $dy)
+            Assert-Equal $reply.Location $replyBounds.Location
+            foreach ($control in @($askPath, $prompt, $send, $reviewFile, $reply, $cwdLabel, $cwd, $openGrok)) {
+                if ($control.Right -gt $pageAsk.ClientSize.Width - 20 -or $control.Bottom -gt $pageAsk.ClientSize.Height) {
+                    throw "Ask control escaped the resized page: $($control.GetType().Name)"
+                }
+            }
+            if ($reply.Bottom -ge $cwdLabel.Top -or $prompt.Right -ge $send.Left -or $cwd.Right -ge $openGrok.Left) {
+                throw "Ask controls overlap after resizing."
+            }
+        }
+        $f.Show()
+        $f.WindowState = "Maximized"
+        [Windows.Forms.Application]::DoEvents()
+        Assert-Equal $f.WindowState ([Windows.Forms.FormWindowState]::Maximized)
+        if ($reply.Width -le $replyBounds.Width -or $reply.Height -le $replyBounds.Height) {
+            throw "Maximizing did not expand the reply area."
+        }
+        $f.WindowState = "Normal"
+        [Windows.Forms.Application]::DoEvents()
+        Assert-Equal $f.ClientSize $formSize
+        $script:askWorker.Commands.Clear()
+        [void]$script:askWorker.AddScript('"Heading`n`n- First detail`n- Second detail"')
+        $script:askJob = $script:askWorker.BeginInvoke()
+        if (-not $script:askJob.AsyncWaitHandle.WaitOne(5000)) { throw "Reply-format fixture timed out." }
+        Update-Ask
+        Assert-Equal $reply.Text "Heading`r`n`r`n- First detail`r`n- Second detail"
+        Assert-Equal $send.Enabled $true
+        $f.Hide()
         $monitorRail = @($script:railMarks | Where-Object Name -eq "Monitor")
         Assert-Equal $monitorRail.Count 1
         Assert-Equal $monitorRail[0].Button.Top 296

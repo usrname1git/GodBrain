@@ -384,6 +384,19 @@ json collect() {
         mongo["detail"] = open ? "Service + port 27017; no database commands run" : "Service running; port 27017 unavailable";
         if (!open) mongo["state"] = "unready";
     }
+    json speech;
+    if (!telemetry::tcp_loopback_open(8001, 150)) {
+        speech = json::array({card("STT", "stopped", "Speech helper :8001 is stopped"),
+                             card("TTS", "stopped", "Speech helper :8001 is stopped"),
+                             card("CPU OCR", "stopped", "Speech helper :8001 is stopped")});
+    } else {
+        try { speech = speech_status(get_json(8001, "/health")); }
+        catch (const std::runtime_error& error) {
+            speech = json::array({card("STT", "unknown", error.what()),
+                                 card("TTS", "unknown", error.what()),
+                                 card("CPU OCR", "unknown", error.what())});
+        }
+    }
     SYSTEMTIME time{};
     GetSystemTime(&time);
     char timestamp[40];
@@ -395,6 +408,7 @@ json collect() {
     return {{"schema_version", 1}, {"read_only", true}, {"sampled_at", timestamp},
             {"models", models}, {"gpu", gpu_usage()},
             {"services", json::array({rust, tail, ssh})},
+            {"speech", speech},
             {"core", json::array({card("Kernel", "ready", "Phone Desk responds; no command dispatch"), rag, mongo})}};
 }
 }
@@ -552,6 +566,29 @@ json tailscale_status(const json& status) {
                     break;
                 }
         }
+    }
+    return result;
+}
+
+json speech_status(const json& health) {
+    json result = json::array();
+    const bool valid = health.is_object() && health.value("service", json()) == "voice" &&
+        health.value("device", json()) == "cpu" && health.value("ok", json()) == true &&
+        health.contains("components") && health["components"].is_object();
+    for (const auto& component : {std::pair<const char*, const char*>{"stt", "STT"},
+                                 {"tts", "TTS"}, {"ocr_cpu", "CPU OCR"}}) {
+        json row = card(component.second, "unknown", "Speech helper omitted valid component health");
+        if (valid && health["components"].contains(component.first)) {
+            const json& value = health["components"][component.first];
+            if (value.is_object() && value.contains("state") && value["state"].is_string() &&
+                value.contains("detail") && value["detail"].is_string() &&
+                value["detail"].get_ref<const std::string&>().size() <= 400) {
+                const std::string state = value["state"];
+                if (state == "available" || state == "ready" || state == "unready" || state == "unknown")
+                    row = card(component.second, state, value["detail"]);
+            }
+        }
+        result.push_back(row);
     }
     return result;
 }

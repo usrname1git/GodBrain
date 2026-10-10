@@ -18,6 +18,7 @@ reachability without public SSH, router port-forwarding or an exit node.
 | Launch/stop a model or run gym work | SSH: existing installed launchers; or the desktop controls through RustDesk | Explicit actions, one GPU slot, required model kit/weights and pause/CS2 gates. Foreground launchers keep the SSH session occupied. |
 | Save ideas, read pending/last/edit history, or judge a candidate | Native Shortcut/SSH client using the existing tailnet API | Configured bearer token; judging needs a reason. Not controls on Phone Desk. |
 | AFK host recovery with optional gym/model maintenance | Existing desktop Watch controls, accessible through RustDesk | Operator-enabled; host-only default; Limited task service-start rights are not assumed or granted. |
+| OCR images, transcribe audio or synthesize speech | Native HTTP Shortcut/client to the optional `:8001` helper | Separate API key for remote POSTs; local assets required. STT/TTS stay CPU; OCR can use an already-idle vision model. Not actions on Phone Desk. |
 
 These are ways to operate the existing Windows runtime, not new permissions.
 Administrative SSH is powerful: use keys, protect the phone and do not turn
@@ -56,10 +57,17 @@ listener binds **127.0.0.1:8085** inside the existing C++ process. It serves
 only the page and `GET/HEAD /api/phone/status`; bodies, body framing, query
 parameters and control routes are rejected.
 
-Configure once on the PC:
+From the repository root, compile with `.\scripts\Build-Kernel.ps1`.
+Reload only the kernel with its configured `GODBRAIN_API_TOKEN` using the
+existing explicit Stop/Start controls or `Start-GodBrain.ps1 -Only kernel`
+after the old kernel has stopped. A build does not restart the running kernel;
+the HTML page is loaded at boot. RAG, Mongo and model setup are unchanged.
+
+Before configuring Serve, inspect `serve status`. If no mapping exists,
+configure once on the PC:
 
 ```powershell
-& 'C:\Program Files\Tailscale\tailscale.exe' serve --bg --yes http://127.0.0.1:8085
+& 'C:\Program Files\Tailscale\tailscale.exe' serve --bg --https=443 http://127.0.0.1:8085
 & 'C:\Program Files\Tailscale\tailscale.exe' serve status
 ```
 
@@ -67,6 +75,14 @@ If HTTPS/Serve is not enabled, follow the owner consent URL printed by
 Tailscale. Enable HTTPS and **leave Funnel off**, then rerun if necessary.
 Certificate DNS names enter public certificate-transparency logs; the page
 remains private. Do not replace unrelated Serve handlers or use `serve reset`.
+Desk Status now shows **Serve** separately from the Tailscale service: private
+background HTTPS to `:8085`, backend down, tailnet offline, missing mapping
+or a query error. Explicit Tailscale Start verifies an existing private mapping;
+only an entirely empty configuration is initialized. Conflicting mappings and
+Funnel are reported rather than replaced. Status polling never configures Serve.
+`--bg` stores the mapping in the existing daemon, so it resumes when the
+Tailscale service starts. No second watcher is needed. This does not change
+the service startup type or override a manual Stop/CS2 hold.
 
 Open the printed HTTPS URL with phone Tailscale connected:
 
@@ -94,6 +110,130 @@ unchanged; it never restarts the running kernel or model.
 **Never proxy the whole `:8083` listener through Serve.** It contains chat
 and legacy status/brief routes that can start a paused model. The read-only
 listener does not call them. Do not enable public Funnel.
+
+## Remote OCR and CPU speech
+
+The optional helper is `scripts\voice_door.py`, port **8001**. This is a
+different API from the kernel and the private HTTPS dashboard. Its POST key is
+`X-API-Key` (environment variable), falling back to `GODBRAIN_API_KEY`.
+**`GODBRAIN_API_TOKEN` is the kernel token, not the speech key.**
+
+### Local dependencies and weights
+
+Use a local Python environment with `faster-whisper`, `piper-tts`, `easyocr`,
+Pillow and NumPy. If not already installed, install them in that environment:
+
+```powershell
+python -m pip install faster-whisper piper-tts easyocr Pillow numpy
+```
+
+Activate that environment before opening Desk, or launch the helper explicitly
+with its Python executable. Model assets must be provisioned locally in advance;
+health checks never download or load them. EasyOCR downloads are disabled.
+
+| Component | Required local assets | Directory |
+|---|---|---|
+| STT | faster-whisper-compatible `model.bin`, `config.json`, tokenizer/preprocessor assets | `GODBRAIN_WHISPER_DIR`; default `C:\nvme\faster-whisper-large-v3` |
+| TTS | `en_US-lessac-medium.onnx` and `.onnx.json` | `GODBRAIN_PIPER_VOICES_DIR`; default `C:\nvme\piper-voices` |
+| CPU OCR | `craft_mlt_25k.pth`, `latin_g2.pth` | EasyOCR's `model` folder under `EASYOCR_MODULE_PATH`, then `MODULE_PATH`, then `%USERPROFILE%\.EasyOCR` |
+
+Optional directory overrides can be set in the helper's environment before
+startup. Keep local paths and weights out of commits. CPU OCR uses Pillow,
+including EXIF orientation, then contiguous BGR pixels for EasyOCR; it does
+not depend on `skimage` filename plugins.
+
+### Configure authentication before starting
+
+Keep an existing key when present; replacing it invalidates saved Shortcuts.
+For a first setup only, generate a key locally and set it without printing it:
+
+```powershell
+$key = [Environment]::GetEnvironmentVariable('X-API-Key', 'User')
+if (-not $key) {
+    $key = [Environment]::GetEnvironmentVariable('GODBRAIN_API_KEY', 'User')
+}
+if (-not $key) {
+    $key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    [Environment]::SetEnvironmentVariable('X-API-Key', $key, 'User')
+}
+[Environment]::SetEnvironmentVariable('X-API-Key', $key, 'Process')
+Set-Clipboard $key
+Remove-Variable key
+```
+
+Paste the key only into the native Shortcut's **X-API-Key header value** through
+a trusted channel. Clipboard contents are sensitive; clear them after transfer.
+Do not export/publish the populated Shortcut, log the key, or put it in a URL.
+For an already-running helper, its startup environment is authoritative:
+changing the user environment requires restarting that helper before the new
+value takes effect. Open a fresh Desk process after changing its environment.
+
+Use Desk Status **STT/TTS Start**, or from the repository root:
+
+```powershell
+python .\scripts\voice_door.py --repo . --port 8001
+```
+
+The explicit CLI stays in the foreground; Desk uses its existing hidden child.
+Without a key the helper binds loopback. With a key it binds **all IPv4
+interfaces**, not only Tailscale. Remote POSTs require the key or equivalent
+bearer; loopback calls are trusted locally. `/health` is unauthenticated.
+The `bind: "tailnet"` health label does not prove interface-only exposure.
+This helper uses plain HTTP; Tailscale encrypts transport when addressed through
+the tailnet. Restrict inbound TCP 8001 to the intended Tailscale interface/peers
+using your existing firewall and tailnet ACL policy. Do not expose it publicly,
+forward it through your router or assume the key replaces firewall policy.
+Neither Desk nor this helper installs firewall rules or changes Tailscale ACLs.
+
+### iOS Shortcuts: exact request and result wiring
+
+Replace `<PC_TAILNET_IP>` with your own PC's private address from Tailscale,
+not an address copied from someone else's screenshot.
+
+| Shortcut | Request actions | Result actions |
+|---|---|---|
+| Health | Get Contents of URL: `http://<PC_TAILNET_IP>:8001/health`, GET | Show Result / Quick Look on Contents of URL |
+| Remote OCR | Receive one image from Share Sheet; Convert **Shortcut Input** to JPEG; URL `http://<PC_TAILNET_IP>:8001/ocr`; Get Contents of URL, POST, header `X-API-Key`, body **File**, value **Converted Image** | Get Dictionary Value `text` in Contents of URL; Show Result |
+| STT | Record Audio; URL `http://<PC_TAILNET_IP>:8001/v1/audio/transcriptions?language=sv` (or `en`); POST, header `X-API-Key`, body **File**, value **Recorded Audio** | Get Dictionary Value `text`; Show Result |
+| TTS | Text to speak; URL `http://<PC_TAILNET_IP>:8001/v1/audio/speech`; POST, header `X-API-Key`, body **JSON**, field `input` = text; optional `voice` = installed voice name | Play Sound / Quick Look on returned WAV |
+
+OCR and STT accept raw-file uploads; multipart Form is optional, not required.
+If using Form, the literal key must be `file` and its value the actual file.
+JPEG conversion should receive an image, not the URL, a dictionary or an empty
+Shortcut Input. Audio can be WAV or M4A; TTS expects JSON text, not audio.
+TTS input is bounded to 4,000 characters. Android HTTP clients use the same
+endpoints, headers and payloads; their UI wiring is client-specific.
+
+### Status and troubleshooting
+
+Phone Desk's **Speech / OCR** cards poll only local `/health.components`:
+`available` means dependency/weight files exist, not verified inference;
+`ready` means the last component request succeeded; `unready` shows missing
+assets or a backend error. Invalid/legacy health is unknown, and a stopped helper
+is stopped. Runtime request state resets when the helper restarts. A new
+successful request clears that component's backend error. Invalid image input
+gets HTTP 400 and does not label the CPU backend broken.
+
+OCR's `engine` field reports `cpu` or `qwen`. The top-level health `ocr` field
+is the saved preference, not proof the tower is running. Qwen OCR uses only an
+already-running explicitly idle vision tower; an unavailable/busy tower falls
+back to CPU with a note. The dashboard never generates or starts a model.
+
+| Symptom | Check before changing the Shortcut |
+|---|---|
+| Health works, POST fails or times out | GET health requires no key. Confirm the POST header is the exact speech key from the helper's startup environment; it is not the kernel token. |
+| HTTP 401 / log says `POST /ocr rejected` | Authentication failed before OCR. Replace only the header value; changing File to Form cannot fix a key mismatch. |
+| HTTP 400 / zero-byte upload | Make sure File points to the conversion/recording output and the Shortcut was given input. |
+| HTTP 503 / Not ready card | Read the component detail; verify local assets and dependencies. Missing weights never trigger an automatic download. |
+| Request finishes, nothing appears | OCR/STT return JSON: extract `text` and display it. TTS returns WAV: play/preview it. |
+| No `POST /ocr` log entry | Check listener, phone Tailscale connection, PC address, firewall and ACL reachability before blaming inference. |
+
+Inspect `logs\voice-door.log` locally for path, upload size/type and rejection
+markers. It does not log payloads or keys. Share only redacted diagnostics.
+The known-good raw-file OCR flow has been exercised from an iPhone; STT/TTS
+have CPU HTTP fixtures and host-side requests, not a claimed device-side result.
+Network speed, model task quality and future mobile routes remain separate
+from request/authorization correctness.
 
 ## RustDesk: one command, then open the client
 
@@ -217,3 +357,11 @@ task has service-start rights.
 Scoped checks: `scripts\Test-PhoneDesk.ps1` (`-Live` for passive host checks),
 `scripts\Test-RustDeskShortcut.ps1`, `scripts\Test-DeskMenu.ps1`,
 `scripts\Test-Cs2Controls.ps1`, `scripts\Test-AfkWatch.ps1`.
+For speech/OCR, run `python -B -m unittest discover -s .\scripts -p test_voice_door.py`
+and `python -B .\scripts\voice_door.py --self-test` in the configured Python
+environment. Native Phone Desk checks require VS x64 C++ tools; browser
+checks reuse the pinned Playwright dependency in `godbrain_core\skill_lab`
+(`npm ci --prefix .\godbrain_core\skill_lab` if it is not installed) and an
+installed Brave/Edge browser on Windows. These offline checks do not perform
+model inference, change Serve or write to Mongo. `-Live` is opt-in and passive;
+`-ServeTransport` is a separate explicit temporary-mapping integration check.

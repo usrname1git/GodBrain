@@ -38,6 +38,7 @@ footer{font-size:12px;color:#8298a8;margin-top:22px;line-height:1.6}.empty{font-
 <section class="card" aria-labelledby="model-title"><h2 id="model-title">Model / one GPU slot</h2><div id="models"><p class="empty">No status received yet.</p></div>
 <div class="memory"><div class="detail" id="gpu">VRAM not checked yet</div><div class="meter" aria-hidden="true"><span id="gpu-bar"></span></div></div></section>
 <div class="grid" id="services"></div>
+<section class="card core"><h2>Speech / OCR</h2><div id="speech"><p class="empty">Waiting for passive speech health.</p></div></section>
 <section class="card core"><h2>Core services</h2><div id="core"><p class="empty">Waiting for live probes.</p></div></section>
 <footer>Read-only. Opening or refreshing this page never starts, repairs or restarts a service or model.<br>Recovery stays in your explicit SSH Shortcuts. Private HTTPS access requires Tailscale.</footer>
 </main>
@@ -45,7 +46,7 @@ footer{font-size:12px;color:#8298a8;margin-top:22px;line-height:1.6}.empty{font-
 'use strict';
 const $ = id => document.getElementById(id);
 let inFlight = false, lastSample = null;
-const labels = {ready:'Ready',running:'Running',busy:'Busy',stopped:'Stopped',missing:'Missing',unknown:'Unknown',unready:'Not ready',starting:'Starting',stopping:'Stopping',paused:'Paused',transitioning:'Changing'};
+const labels = {ready:'Ready',available:'Available',running:'Running',busy:'Busy',stopped:'Stopped',missing:'Missing',unknown:'Unknown',unready:'Not ready',starting:'Starting',stopping:'Stopping',paused:'Paused',transitioning:'Changing'};
 function element(tag, className, text) {
   const node = document.createElement(tag); node.className = className;
   if (text !== undefined) node.textContent = text;
@@ -54,6 +55,7 @@ function element(tag, className, text) {
 function badge(state) { return element('span', 'badge ' + state, labels[state] || 'Unknown'); }
 function validCard(card) {
   return card && typeof card.name === 'string' && card.name.trim().length > 0 && typeof card.detail === 'string' &&
+    typeof card.state === 'string' &&
     Object.prototype.hasOwnProperty.call(labels, card.state);
 }
 function validate(data) {
@@ -65,6 +67,8 @@ function validate(data) {
       new Set(data.services.map(card => card.name)).size !== 3 || !data.services.every(card => ['RustDesk','Tailscale','SSH'].includes(card.name)) ||
       !Array.isArray(data.core) || data.core.length !== 3 || !data.core.every(validCard) ||
       new Set(data.core.map(card => card.name)).size !== 3 || !data.core.every(card => ['Kernel','Alexandria / RAG','MongoDB'].includes(card.name)) ||
+      (data.speech !== undefined && (!Array.isArray(data.speech) || data.speech.length !== 3 || !data.speech.every(validCard) ||
+        new Set(data.speech.map(card => card.name)).size !== 3 || !data.speech.every(card => ['STT','TTS','CPU OCR'].includes(card.name)))) ||
       !data.gpu || !['ready','unknown'].includes(data.gpu.state) ||
       (data.gpu.state === 'ready' && (!Number.isFinite(data.gpu.used_mib) || data.gpu.used_mib < 0 ||
         !Number.isFinite(data.gpu.total_mib) || data.gpu.total_mib <= 0 || data.gpu.used_mib > data.gpu.total_mib)))
@@ -87,6 +91,15 @@ function render(data) {
       element('p','detail',service.detail)); services.append(node);
   }
   $('services').replaceChildren(services);
+  const speech = document.createDocumentFragment();
+  for (const service of data.speech || ['STT','TTS','CPU OCR'].map(name => ({
+    name, state:'unknown', detail:'This kernel has not reported speech component health.',
+  }))) {
+    const row = element('div','core-row'), text = element('div','detail');
+    text.append(element('div','',service.name),element('div','muted',service.detail));
+    row.append(text,badge(service.state)); speech.append(row);
+  }
+  $('speech').replaceChildren(speech);
   const core = document.createDocumentFragment();
   for (const service of data.core) {
     const row = element('div','core-row'), text = element('div','detail');
