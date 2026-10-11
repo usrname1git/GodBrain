@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param([switch]$UiSmoke)
+param([switch]$UiSmoke, [switch]$AirPlayLive)
 
 $ErrorActionPreference = "Stop"
+if ($AirPlayLive -and -not $UiSmoke) { throw '-AirPlayLive requires -UiSmoke.' }
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -188,6 +189,12 @@ if ($ast.Extent.Text -notmatch '\$rowTok = Add-Row \$pageStatus "Rate"') {
 }
 if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "STT/TTS"') {
     throw "STT/TTS is missing its Start and Stop buttons."
+}
+if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "AirPlay"' -or
+    $ast.Extent.Text -notmatch 'AirPlay = Get-GodBrainAirPlayLine' -or
+    $ast.Extent.Text -notmatch 'AddParameter\(''AirPlayRequest'', \$Action\)' -or
+    $ast.Extent.Text -notmatch 'Update-AirPlayOperation \}') {
+    throw 'AirPlay row, passive snapshot or asynchronous operation routing is missing.'
 }
 
 $script:ports = @()
@@ -808,7 +815,7 @@ if ($UiSmoke) {
         if ($statement.Extent.Text -in @('Update-Status', '$timer.Start()')) { continue }
         $source.Add($statement.Extent.Text)
     }
-    $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null; $MonitorRequest = $null
+    $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null; $MonitorRequest = $null; $DisplayRequest = $null; $AirPlayRequest = $null
     $panelPath = "'" + (Join-Path $PSScriptRoot "Show-DeskMenu.ps1").Replace("'", "''") + "'"
     try {
         . ([scriptblock]::Create(($source -join "`n").Replace('$PSScriptRoot', '$script:uiScriptsRoot').Replace('$PSCommandPath', $panelPath)))
@@ -818,10 +825,50 @@ if ($UiSmoke) {
         if ([System.Windows.Forms.TextRenderer]::MeasureText($afkGym.Text, $afkGym.Font).Width + 24 -gt $afkGym.Width) {
             throw "AFK option label is clipped."
         }
+        Assert-Equal ($script:airPlayButtons.Keys -join ',') 'Start,Stop,Open'
+        foreach ($button in $script:airPlayButtons.Values) {
+            if ($button.Parent -ne $pageStatus -or $button.Bottom -ge $afkGym.Top -or $button.Right -gt $pageStatus.Width) {
+                throw 'AirPlay controls escaped or overlapped the Status page.'
+            }
+        }
+        if ($rowAirPlay.Right -ge $script:airPlayButtons.Open.Left) { throw 'AirPlay status overlaps Open.' }
+        if ($AirPlayLive) {
+            $running = @(CimCmdlets\Get-CimInstance Win32_Process -Filter "Name='ShairportQt.exe'")
+            if ($running.Count) { throw 'Live AirPlay UI check requires the receiver stopped.' }
+            function Confirm-Stop { return $true }
+            $f.Show()
+            Show-Page 'Status'
+            [Windows.Forms.Application]::DoEvents()
+            $startedPid = $null
+            foreach ($action in 'Start', 'Open', 'Stop') {
+                $script:airPlayButtons[$action].PerformClick()
+                if (-not $script:airPlayJob) { throw "AirPlay $action button did not dispatch." }
+                foreach ($button in $script:airPlayButtons.Values) { Assert-Equal $button.Enabled $false }
+                $deadline = [datetime]::UtcNow.AddSeconds(20)
+                while (-not $script:airPlayJob.IsCompleted) {
+                    [Windows.Forms.Application]::DoEvents()
+                    if ([datetime]::UtcNow -gt $deadline) { throw "AirPlay $action UI operation timed out." }
+                    Start-Sleep -Milliseconds 10
+                }
+                if ($script:airPlayWorker.HadErrors) { throw ($script:airPlayWorker.Streams.Error -join "`n") }
+                Update-AirPlayOperation
+                foreach ($button in $script:airPlayButtons.Values) { Assert-Equal $button.Enabled $true }
+                $running = @(CimCmdlets\Get-CimInstance Win32_Process -Filter "Name='ShairportQt.exe'")
+                if ($action -eq 'Stop') { Assert-Equal $running.Count 0 }
+                else {
+                    Assert-Equal $running.Count 1
+                    if ($startedPid) { Assert-Equal $running[0].ProcessId $startedPid }
+                    else { $startedPid = $running[0].ProcessId }
+                }
+            }
+            Write-Host 'PASS: Real AirPlay Start/Open/Stop Desk button path and non-blocking worker'
+            $f.Hide()
+        }
         $bitmap = New-Object System.Drawing.Bitmap($f.Width, $f.Height)
         try { $f.DrawToBitmap($bitmap, $f.ClientRectangle) } finally { $bitmap.Dispose() }
         Show-Page "Model"
-        foreach ($control in @($script:modelContext, $script:modelCache, $script:modelMtp, $script:modelBudget, $script:modelCpuCache, $script:modelSettingsHint, $script:modelLive)) {
+        foreach ($control in @($script:modelContext, $script:modelCache, $script:modelMtp, $script:modelBudget, $script:modelCpuCache, $script:modelSettingsHint, $script:modelLive,
+                $script:modelReasoning, $script:modelReasoningStatus)) {
             if ($control.Parent -ne $pageModel -or $control.Bounds.Bottom -gt $pageModel.ClientSize.Height) {
                 throw "Model settings are outside the Model page."
             }
@@ -838,6 +885,40 @@ if ($UiSmoke) {
             $script:modelSettingsHint.Font, $script:modelSettingsHint.Size, [Windows.Forms.TextFormatFlags]::WordBreak)
         if ($hintSize.Height -gt $script:modelSettingsHint.Height) {
             throw "Model settings explanation is clipped: measured=$($hintSize.Height), available=$($script:modelSettingsHint.Height)."
+        }
+        $reasoningFixture = Join-Path ([IO.Path]::GetTempPath()) ("desk-reasoning-ui-" + [guid]::NewGuid().ToString("N"))
+        $actualRepo = $Repo
+        $Repo = $reasoningFixture
+        try {
+            $f.Show()
+            [Windows.Forms.Application]::DoEvents()
+            Show-DeskReasoningPreference
+            Assert-Equal $script:modelReasoning.SelectedIndex 0
+            $applyReasoning = @($pageModel.Controls | Where-Object Text -eq "Apply reasoning")
+            Assert-Equal $applyReasoning.Count 1
+            foreach ($index in @(1, 2, 3, 4, 0)) {
+                $script:modelReasoning.SelectedIndex = $index
+                $applyReasoning[0].PerformClick()
+                $saved = Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")
+                Assert-Equal $saved.Value (@("on", "off", "low", "medium", "xhigh")[$index])
+                Assert-Equal $script:modelReasoningStatus.Text "Saved: $($script:modelReasoning.SelectedItem)"
+            }
+            [IO.File]::WriteAllText((Join-Path $Repo "logs\thinking.txt"), "invalid")
+            Show-DeskReasoningPreference
+            Assert-Equal $script:modelReasoning.SelectedIndex -1
+            Assert-Equal $script:modelReasoningStatus.Text "Invalid preference; select and apply to repair."
+            $script:modelReasoning.SelectedIndex = 4
+            $applyReasoning[0].PerformClick()
+            Assert-Equal (Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")).Effort "xhigh"
+            foreach ($control in @($script:modelReasoningStatus, $applyReasoning[0])) {
+                $measured = [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font,
+                    $control.Size, [Windows.Forms.TextFormatFlags]::WordBreak)
+                if ($measured.Height -gt $control.Height) { throw "Reasoning control text is clipped." }
+            }
+        } finally {
+            $Repo = $actualRepo
+            Show-DeskReasoningPreference
+            if (Test-Path -LiteralPath $reasoningFixture) { Remove-Item -LiteralPath $reasoningFixture -Recurse -Force }
         }
         if ([Windows.Forms.TextRenderer]::MeasureText($reviewFile.Text, $reviewFile.Font).Width + 24 -gt $reviewFile.Width) {
             throw "Complete-file review label is clipped."
@@ -920,6 +1001,29 @@ if ($UiSmoke) {
         if ($script:monitorUiTicks -lt 8) { throw "UI timer froze during slow monitor I/O." }
         Update-Monitor
         Assert-Equal $script:monitorControls.brightness.Value 75
+        Assert-Equal $script:monitorControls.contrast.Minimum 25
+        Assert-Equal $script:monitorControls.brightness.Minimum 0
+        foreach ($value in @("0", "24", "101", "-1", "24.9", "25;exit", "4294967296")) {
+            Start-MonitorOperation "contrast" $value
+            Assert-Equal $script:monitorJob $null
+            if ($script:monitorMessage.Text -notlike "*Contrast must be between 25 and 100*no command sent*") {
+                throw "Unsafe contrast was not rejected by the UI."
+            }
+        }
+        $script:monitorWorker.Commands.Clear()
+        $lowContrastFixture = $monitorFixture | ConvertFrom-Json
+        $lowContrastFixture.contrast.current = 10
+        $lowContrastJson = $lowContrastFixture | ConvertTo-Json -Depth 8 -Compress
+        [void]$script:monitorWorker.AddScript("'$lowContrastJson' | ConvertFrom-Json")
+        $script:monitorJob = $script:monitorWorker.BeginInvoke()
+        while (-not $script:monitorJob.IsCompleted) { Start-Sleep -Milliseconds 10 }
+        Update-Monitor
+        Assert-Equal $script:monitorSnapshot.contrast.current 10
+        Assert-Equal $script:monitorControls.contrast.Value 25
+        Assert-Equal $script:monitorApply.contrast.Enabled $true
+        if ($script:monitorMessage.Text -notlike "*Hardware contrast is 10*no setting was changed*") {
+            throw "Low hardware contrast was hidden or broke the UI."
+        }
         Assert-Equal $script:monitorControls.preset.SelectedIndex 1
         Assert-Equal $script:monitorApply.brightness.Enabled $true
         Assert-Equal $script:monitorNames.dark_stabilizer "Dark Stabilizer"
@@ -1105,16 +1209,201 @@ public static class DeskMonitorTestInput {
             if (-not $released.Register()) { throw "Hotkey was not released on disposal." }
         } finally { $released.Dispose() }
         Write-Output "PASS: ordinary hidden-window hotkey delivery before first monitor read, MOD_NOREPEAT, collision/reclaim/release, one async cycle, busy/no-queue and unknown-level UI; F24 fixture only, no real monitor writes."
+        foreach ($control in $pageDisplayLayouts.Controls) {
+            if ($control.Bounds.Bottom -gt $pageDisplayLayouts.ClientSize.Height -or $control.Bounds.Right -gt $pageDisplayLayouts.ClientSize.Width) {
+                throw "Display-layout control is outside the page."
+            }
+            if ($control -is [Windows.Forms.Button] -and
+                    [Windows.Forms.TextRenderer]::MeasureText($control.Text, $control.Font).Width + 12 -gt $control.Width) {
+                throw "Display-layout button text is clipped: $($control.Text)"
+            }
+        }
+        $script:displayWorker.Dispose()
+        $displayRunspace = [runspacefactory]::CreateRunspace()
+        $displayRunspace.Open()
+        $displayCalls = [Collections.Generic.List[string]]::new()
+        $displayRunspace.SessionStateProxy.SetVariable("displayCalls", $displayCalls)
+        $displayRunspace.SessionStateProxy.SetVariable("displayFails", $false)
+        $displayRunspace.SessionStateProxy.SetVariable("recoveryPending", $false)
+        $displayRunspace.SessionStateProxy.SetVariable("profileJson",
+            '{"name":"Fixture layout","hotkey":1,"displays":[{"label":"Synthetic monitor","width":1920,"height":1080,"x":0,"y":0,"primary":true,"rotation":1,"refresh_hz":60.0}]}')
+        $displayFixtureSource = @'
+function global:Get-FixtureDisplay {
+    param($DisplayRequest)
+    $operation = $DisplayRequest.Operation
+    $global:displayCalls.Add("$operation`:$($DisplayRequest.Name)")
+    Start-Sleep -Milliseconds 900
+    $profile = $global:profileJson | ConvertFrom-Json
+    $result = [pscustomobject]@{ schema_version = 1; ok = $true; operation = $operation }
+    if ($operation -eq "list") {
+        $result | Add-Member profiles @($profile)
+        $result | Add-Member recovery_pending $global:recoveryPending
+    } elseif ($operation -eq "recover") {
+        $global:recoveryPending = $false
+        $result | Add-Member verified $true
+        $result | Add-Member outcome "restored"
+    } else {
+        if ($operation -eq "current") { $profile.name = "Current layout" }
+        else { $profile.name = $DisplayRequest.Name }
+        $result | Add-Member profile $profile
+        if ($operation -eq "apply") {
+            if ($global:displayFails) {
+                $global:recoveryPending = $true
+                throw "Fixture interrupted switch; restoration unverified."
+            }
+            $result | Add-Member verified $true
+            $result | Add-Member outcome "kept"
+            $result | Add-Member confirmation "saved_profile"
+        } elseif ($operation -eq "preview") { $result | Add-Member validated $true }
+    }
+    return $result
+}
+'@
+        $fixtureDefinitionWorker = [PowerShell]::Create()
+        try {
+            $fixtureDefinitionWorker.Runspace = $displayRunspace
+            [void]$fixtureDefinitionWorker.AddScript($displayFixtureSource, $false)
+            $fixtureDefinitionWorker.Invoke() | Out-Null
+            if ($fixtureDefinitionWorker.HadErrors) { throw ($fixtureDefinitionWorker.Streams.Error | Out-String) }
+        } finally { $fixtureDefinitionWorker.Dispose() }
+        $script:displayWorker = [PowerShell]::Create()
+        $script:displayWorker.Runspace = $displayRunspace
+        function New-DisplayFixtureWorker {
+            $worker = [PowerShell]::Create()
+            $worker.Runspace = $displayRunspace
+            return $worker
+        }
+        $script:displayFixtureCommand = "Get-FixtureDisplay"
+        $startDisplay = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-DisplayOperation"
+        }, $true)
+        . ([scriptblock]::Create($startDisplay.Extent.Text.Replace('$PSCommandPath', '$script:displayFixtureCommand').
+            Replace('[PowerShell]::Create()', '(New-DisplayFixtureWorker)')))
+        $registerDisplay = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Register-DisplayHotkeys"
+        }, $true)
+        . ([scriptblock]::Create($registerDisplay.Extent.Text.Replace('[uint32](0x6F + $profile.hotkey)', '[uint32]0x87')))
+        function Wait-DisplayFixture {
+            $deadline = [datetime]::UtcNow.AddSeconds(8)
+            while ($script:displayJob) {
+                [Windows.Forms.Application]::DoEvents()
+                Update-DisplayOperation
+                if ([datetime]::UtcNow -gt $deadline) { throw "Display UI fixture did not finish." }
+                Start-Sleep -Milliseconds 10
+            }
+        }
+        Show-Page "Layouts"
+        Assert-Equal $pageDisplayLayouts.Visible $true
+        Assert-Equal (@($script:railMarks | Where-Object { $_.Name -eq "Monitor" -and $_.Mark.Visible })).Count 1
+        $probeTimer = [Windows.Forms.Timer]::new()
+        $script:displayUiTicks = 0
+        $probeTimer.Interval = 40; $probeTimer.Add_Tick({ $script:displayUiTicks++ }); $probeTimer.Start()
+        try { Wait-DisplayFixture } finally { $probeTimer.Stop(); $probeTimer.Dispose() }
+        if ($script:displayUiTicks -lt 8) {
+            throw "Display-layout fixture failed: ticks=$script:displayUiTicks calls=$($displayCalls -join ',') notice=$script:displayNotice"
+        }
+        Assert-Equal $script:displayProfilesBox.Text "Fixture layout"
+        Assert-Equal $script:displayButtons.apply.Enabled $true
+        if ($script:displayDetails.Text -notlike "*1920x1080*60 Hz*primary*") { throw "Profile details were hidden." }
+        $beforeInvalid = $displayCalls.Count
+        Start-DisplayOperation "save" "../unsafe"
+        Assert-Equal $script:displayJob $null
+        Assert-Equal $displayCalls.Count $beforeInvalid
+        $script:displayNameBox.Text = "Profile with spaces"
+        $script:displayButtons.save.PerformClick()
+        Wait-DisplayFixture
+        if ($displayCalls -cnotcontains "save:Profile with spaces" -or $script:displayNotice -notlike "*Captured*No display settings changed*") {
+            throw "Capture click/arguments or passive receipt failed."
+        }
+        $script:displayButtons.preview.PerformClick()
+        Wait-DisplayFixture
+        if ($script:displayNotice -notlike "*Validated without applying*") { throw "Preview implied a live change." }
+        $script:displayButtons.current.PerformClick()
+        Wait-DisplayFixture
+        Assert-Equal $script:displayProfilesBox.Text "Fixture layout"
+        if ($script:displayDetails.Text -notlike "*Current Windows layout*Profile: Current layout*") {
+            throw "Read current did not show the live layout independently of the saved selection."
+        }
+        Clear-DisplayHotkeys
+        $blocker = [DeskMonitorHotkey]::new(0x87, 3)
+        try {
+            if (-not $blocker.Register()) { throw "Ctrl+Alt+F24 collision fixture unavailable." }
+            Register-DisplayHotkeys
+            Assert-Equal $script:displayHotkeys[0].Registered $false
+            if (($script:displayHotkeyStatus -join " ") -notlike "*unavailable*") { throw "Profile hotkey collision was hidden." }
+        } finally { $blocker.Dispose() }
+        Register-DisplayHotkeys
+        Assert-Equal $script:displayHotkeys[0].Registered $true
+        $f.Hide()
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class DisplayHotkeyFixtureMessage {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
+}
+'@
+        if (-not [DisplayHotkeyFixtureMessage]::PostMessage($script:displayHotkeys[0].Handle, 0x312, [IntPtr]1, [IntPtr]0x870003)) {
+            throw "Could not post to the exact registered fixture hotkey window."
+        }
+        $deadline = [datetime]::UtcNow.AddSeconds(3)
+        while (-not $script:displayJob -and [datetime]::UtcNow -lt $deadline) {
+            [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 10
+        }
+        if (-not $script:displayJob) { throw "Hidden Desk did not receive the profile hotkey." }
+        $firstDisplayJob = $script:displayJob
+        Start-DisplayOperation "apply" "Fixture layout"
+        Assert-Equal $script:displayJob $firstDisplayJob
+        if ($script:displayNotice -notlike "*busy*no request sent or queued*") { throw "Busy profile press was queued or hidden." }
+        Wait-DisplayFixture
+        Assert-Equal (@($displayCalls | Where-Object { $_ -ceq "apply:Fixture layout" })).Count 1
+        if ($script:displayNotice -notlike "*Applied 'Fixture layout' without a confirmation popup*Live and saved display configuration verified*") {
+            throw "Direct profile-hotkey switch receipt was hidden or still required confirmation."
+        }
+        if ($layoutHint.Text -like "*Keep / Revert*" -or $layoutHint.Text -notlike "*without a Keep popup*") {
+            throw "Layout instructions still imply a confirmation popup."
+        }
+        $f.Show()
+        $script:displayButtons.apply.PerformClick()
+        Wait-DisplayFixture
+        Assert-Equal (@($displayCalls | Where-Object { $_ -ceq "apply:Fixture layout" })).Count 2
+        if ($script:displayNotice -notlike "*without a confirmation popup*verified*") { throw "Apply button did not report the direct switch." }
+        $displayRunspace.SessionStateProxy.SetVariable("displayFails", $true)
+        $script:displayButtons.apply.PerformClick()
+        Wait-DisplayFixture
+        Assert-Equal $script:displayButtons.apply.Enabled $false
+        Assert-Equal $script:displayButtons.recover.Enabled $true
+        if ($script:displayDetails.Text -notlike "*UNFINISHED SWITCH*Recover previous layout*") {
+            throw "Recovery state was hidden: pending=$($script:displaySnapshot.recovery_pending) calls=$($displayCalls -join ',') details=$($script:displayDetails.Text)"
+        }
+        $script:displayButtons.recover.PerformClick()
+        Wait-DisplayFixture
+        Assert-Equal $script:displayButtons.apply.Enabled $true
+        if ($script:displayNotice -notlike "*restored and verified*") { throw "Recovery receipt was hidden." }
+        Clear-DisplayHotkeys
+        $releasedProfile = [DeskMonitorHotkey]::new(0x87, 3)
+        try { if (-not $releasedProfile.Register()) { throw "Profile hotkey was not released." } } finally { $releasedProfile.Dispose() }
+        Write-Output "PASS: Layouts navigation, bounds, async capture/preview, direct Apply/hotkey receipts, no-queue switching, hidden Ctrl+Alt+F24 collision/reclaim/release, failure and recovery; synthetic profiles only."
         Show-Page "Status"
         Write-Output "PASS: Monitor icon/page bounds, slow-I/O UI timer responsiveness, readback display and disconnected fail-closed controls; no real monitor probes or writes."
-        Write-Output "PASS: native STA desk construction/render and AFK option bounds; no actions or status probes started."
+        if ($AirPlayLive) {
+            Write-Output 'PASS: native STA desk construction/render and bounds; only explicitly selected AirPlay controls exercised.'
+        } else {
+            Write-Output "PASS: native STA desk construction/render and AFK option bounds; no actions or status probes started."
+        }
     } finally {
         if ($timer) { $timer.Stop(); $timer.Dispose() }
         if ($script:statusWorker) { $script:statusWorker.Dispose() }
         if ($script:askWorker) { $script:askWorker.Dispose() }
+        if ($script:airPlayWorker) { $script:airPlayWorker.Stop(); $script:airPlayWorker.Dispose() }
         if ($script:monitorWorker) { $script:monitorWorker.Stop(); $script:monitorWorker.Dispose() }
         if ($cycleRunspace) { $cycleRunspace.Dispose() }
         if ($script:monitorHotkey) { $script:monitorHotkey.Dispose() }
+        if ($script:displayHotkeys) { Clear-DisplayHotkeys }
+        if ($script:displayWorker) { $script:displayWorker.Stop(); $script:displayWorker.Dispose() }
+        if ($displayRunspace) { $displayRunspace.Dispose() }
         if ($script:ni) { $script:ni.Visible = $false; $script:ni.Dispose() }
         if ($f) { $f.Dispose() }
     }

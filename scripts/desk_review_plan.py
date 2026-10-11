@@ -19,10 +19,15 @@ SYSTEM = (
 )
 RESERVE = 1024  # Template/runtime identity, boundary token and speculative lookahead.
 
-def formatted_token_count(tokenizer, messages, thinking=True):
+def formatted_token_count(tokenizer, messages, thinking=True, reasoning_effort=""):
+    kwargs = {}
+    if thinking and reasoning_effort:
+        if reasoning_effort not in ("low", "medium", "xhigh"):
+            raise ValueError("Unsupported reasoning effort; review budget cannot be trusted.")
+        kwargs["reasoning_effort"] = reasoning_effort
     encoded = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=True, enable_thinking=thinking,
-        return_dict=False,
+        return_dict=False, **kwargs,
     )
     ids = encoded["input_ids"] if isinstance(encoded, Mapping) else encoded
     if not isinstance(ids, list) or not ids or any(not isinstance(value, int) for value in ids):
@@ -158,7 +163,8 @@ def main():
         )
 
         def count(msgs):
-            return formatted_token_count(tokenizer, msgs, bool(req.get("thinking", True)))
+            return formatted_token_count(tokenizer, msgs, bool(req.get("thinking", True)),
+                                         req.get("reasoning_effort", ""))
 
         if req["op"] == "plan":
             result = make_plan(req["text"], req["name"], req["task"],

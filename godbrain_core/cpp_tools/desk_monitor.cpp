@@ -124,7 +124,10 @@ static void validate_change(const std::string& control, const std::string& value
     if (control == "preset") { find_preset(value); return; }
     if (control != "brightness" && control != "contrast" && control != "dark_stabilizer")
         throw std::runtime_error("Unsupported monitor control: " + control);
-    if (number(value) > (control == "dark_stabilizer" ? 3u : 100u))
+    const unsigned requested = number(value);
+    if (control == "contrast" && requested < 25)
+        throw std::runtime_error("Contrast must be between 25 and 100");
+    if (requested > (control == "dark_stabilizer" ? 3u : 100u))
         throw std::runtime_error("Monitor value is outside the allowed range");
 }
 
@@ -134,6 +137,21 @@ static std::string win_error(const std::string& operation) {
 
 static bool dell_device(const std::wstring& id) {
     return id.size() >= 11 && _wcsnicmp(id.c_str(), L"MONITOR\\DEL", 11) == 0;
+}
+
+template <typename Enumerate>
+static bool display_has_active_dell(const wchar_t* display, Enumerate enumerate) {
+    unsigned matches = 0;
+    for (DWORD index = 0; index < 32; ++index) {
+        DISPLAY_DEVICEW device{};
+        device.cb = sizeof(device);
+        if (!enumerate(display, index, &device, 0)) return matches == 1;
+        if ((device.StateFlags & DISPLAY_DEVICE_ACTIVE) && dell_device(device.DeviceID)) {
+            if (++matches > 1)
+                throw std::runtime_error("Multiple active Dell monitor identities: target is ambiguous");
+        }
+    }
+    throw std::runtime_error("Monitor identity enumeration exceeds its limit");
 }
 
 struct PhysicalSet {
@@ -202,11 +220,7 @@ static Target select_target() {
         info.cbSize = sizeof(info);
         if (!GetMonitorInfoW(screen, reinterpret_cast<MONITORINFO*>(&info)))
             throw std::runtime_error(win_error("Display identity"));
-        DISPLAY_DEVICEW device{};
-        device.cb = sizeof(device);
-        if (!EnumDisplayDevicesW(info.szDevice, 0, &device, 0))
-            throw std::runtime_error(win_error("Monitor identity"));
-        if (!dell_device(device.DeviceID)) continue;
+        if (!display_has_active_dell(info.szDevice, EnumDisplayDevicesW)) continue;
         auto owner = std::make_unique<PhysicalSet>(screen);
         for (const auto& physical : owner->monitors) {
             DWORD length = 0;
@@ -307,6 +321,7 @@ static json snapshot(const Target& target) {
 
 static void apply_change(const Target& target, const std::string& control, const std::string& value,
                          bool& may_have_changed) {
+    validate_change(control, value);
     BYTE code = control == "brightness" ? 0x10 : control == "contrast" ? 0x12 : 0xF4;
     BYTE read_code = code;
     DWORD wanted = 0, expected = 0;
@@ -362,10 +377,38 @@ static json self_test() {
         try { action(); } catch (const std::runtime_error&) { rejected = true; }
         check(rejected);
     };
-    for (const auto& control : {"brightness", "contrast"}) {
-        validate_change(control, "0"); validate_change(control, "100");
-        rejects([&]() { validate_change(control, "101"); });
-    }
+    validate_change("brightness", "0"); validate_change("brightness", "100");
+    rejects([]() { validate_change("brightness", "101"); });
+    validate_change("contrast", "25"); validate_change("contrast", "100");
+    for (unsigned value = 0; value < 25; ++value)
+        rejects([&]() { validate_change("contrast", std::to_string(value)); });
+    rejects([]() { validate_change("contrast", "101"); });
+    bool unsafe_changed = false;
+    rejects([&]() { apply_change(Target{}, "contrast", "24", unsafe_changed); });
+    check(!unsafe_changed);
+    auto monitor_ids = [&](const std::vector<std::pair<std::wstring, DWORD>>& identities) {
+        return display_has_active_dell(L"fixture", [&](const wchar_t*, DWORD index,
+                                                     DISPLAY_DEVICEW* device, DWORD) {
+            if (index >= identities.size()) return FALSE;
+            std::copy(identities[index].first.begin(), identities[index].first.end(), device->DeviceID);
+            device->StateFlags = identities[index].second;
+            return TRUE;
+        });
+    };
+    check(monitor_ids({{L"MONITOR\\SAM1234\\stale", 2},
+                       {L"MONITOR\\DELA1C2\\active", DISPLAY_DEVICE_ACTIVE | 2}}));
+    check(!monitor_ids({{L"MONITOR\\DELA1C2\\stale", 2},
+                        {L"MONITOR\\SAM1234\\active", DISPLAY_DEVICE_ACTIVE | 2}}));
+    check(monitor_ids({{L"MONITOR\\DELA1C2\\stale", 2},
+                       {L"MONITOR\\DELA1C2\\active", DISPLAY_DEVICE_ACTIVE | 2}}));
+    check(!monitor_ids({}));
+    rejects([&]() { monitor_ids({{L"MONITOR\\DELA1C2\\first", DISPLAY_DEVICE_ACTIVE},
+                                 {L"MONITOR\\DELA1C2\\second", DISPLAY_DEVICE_ACTIVE}}); });
+    rejects([]() {
+        display_has_active_dell(L"fixture", [](const wchar_t*, DWORD, DISPLAY_DEVICEW*, DWORD) {
+            return TRUE;
+        });
+    });
     for (unsigned level = 0; level <= 3; ++level) validate_change("dark_stabilizer", std::to_string(level));
     rejects([]() { validate_change("dark_stabilizer", "4"); });
     rejects([]() { dark_level(0x3F); });

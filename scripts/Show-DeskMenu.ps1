@@ -14,7 +14,10 @@ param(
     [switch]$StatusSnapshot,
     [object]$TokenSample,
     [object]$AskRequest,
-    [object]$MonitorRequest
+    [object]$MonitorRequest,
+    [object]$DisplayRequest,
+    [ValidateSet('Start', 'Stop', 'Open')]
+    [string]$AirPlayRequest
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +37,8 @@ if (Test-Path -LiteralPath $mouthHelper) { . $mouthHelper }
 . (Join-Path $PSScriptRoot "GodBrain-HostServices.ps1")
 . (Join-Path $PSScriptRoot "GodBrain-DeskModel.ps1")
 . (Join-Path $PSScriptRoot "GodBrain-DeskMonitor.ps1")
+. (Join-Path $PSScriptRoot "GodBrain-DisplayProfiles.ps1")
+. (Join-Path $PSScriptRoot "GodBrain-AirPlay.ps1")
 $script:modelPick = "27b"
 
 function Test-Port([int]$Port) {
@@ -536,6 +541,7 @@ function Get-DeskStatus {
         ("web {0}" -f (Get-HttpLine))
         ("Tailscale {0}" -f (Get-TailscaleLine))
         ("Serve {0}" -f (Get-TailscaleServeLine))
+        ("AirPlay {0}" -f (Get-GodBrainAirPlayLine))
     ) -join "`r`n"
 }
 
@@ -560,6 +566,7 @@ function Get-DeskSnapshot {
         Watch = Get-WatchLine
         Web = Get-HttpLine
         Whisper = Get-WhisperLine
+        AirPlay = Get-GodBrainAirPlayLine
     }
     $modelConfig = "Live context/MTP unavailable"
     try {
@@ -811,6 +818,17 @@ function Invoke-DeskAsk($Request) {
     if ($res.response) { return [string]$res.response }
     if ($res.error) { throw ([string]$res.error) }
     throw "Kernel returned no chat response."
+}
+
+if ($AirPlayRequest) {
+    Invoke-GodBrainAirPlay -Action $AirPlayRequest
+    return
+}
+
+if ($DisplayRequest) {
+    Invoke-DisplayProfiles -Operation $DisplayRequest.Operation -Name $DisplayRequest.Name `
+        -Hotkey $DisplayRequest.Hotkey -Overwrite:$DisplayRequest.Overwrite -RepoRoot $Repo
+    return
 }
 
 if ($MonitorRequest) {
@@ -1154,6 +1172,33 @@ function Stop-VoiceDoor {
     Update-Status
 }
 
+function Start-AirPlayOperation([string]$Action) {
+    if ($script:airPlayJob) { return }
+    if ($Action -eq 'Stop' -and -not (Confirm-Stop 'Stop the AirPlay receiver? Playback from connected devices will end.' 'AirPlay')) { return }
+    $script:airPlayWorker.Commands.Clear()
+    $script:airPlayWorker.Streams.Error.Clear()
+    [void]$script:airPlayWorker.AddCommand($PSCommandPath).AddParameter('AirPlayRequest', $Action)
+    $script:airPlayJob = $script:airPlayWorker.BeginInvoke()
+    foreach ($button in $script:airPlayButtons.Values) { $button.Enabled = $false }
+    $rowAirPlay.Text = "$Action in progress..."
+}
+
+function Update-AirPlayOperation {
+    if (-not $script:airPlayJob -or -not $script:airPlayJob.IsCompleted) { return }
+    try {
+        $result = @($script:airPlayWorker.EndInvoke($script:airPlayJob))
+        if ($script:airPlayWorker.HadErrors -or $result.Count -ne 1) { throw 'AirPlay operation returned no valid result.' }
+        $rowAirPlay.Text = [string]$result[0]
+    } catch {
+        $rowAirPlay.Text = 'AirPlay operation failed'
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'AirPlay')
+    } finally {
+        $script:airPlayJob = $null
+        foreach ($button in $script:airPlayButtons.Values) { $button.Enabled = $true }
+        Update-Status
+    }
+}
+
 function Start-WebDoor {
     if ((Get-HttpLine) -eq "up :8000") {
         [System.Windows.Forms.MessageBox]::Show("Web is already up on :8000.")
@@ -1253,12 +1298,15 @@ public sealed class DeskMonitorHotkey : NativeWindow, IDisposable {
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool UnregisterHotKey(IntPtr window, int id);
     readonly uint key;
+    readonly uint modifiers;
     bool disposed;
     public bool Registered { get; private set; }
     public int RegistrationError { get; private set; }
     public event EventHandler Pressed;
-    public DeskMonitorHotkey(uint key) {
+    public DeskMonitorHotkey(uint key) : this(key, 0) {}
+    public DeskMonitorHotkey(uint key, uint modifiers) {
         this.key = key;
+        this.modifiers = modifiers;
         CreateHandle(new CreateParams {
             Caption = "GodBrain Monitor Hotkey", Parent = new IntPtr(-3)
         });
@@ -1266,7 +1314,7 @@ public sealed class DeskMonitorHotkey : NativeWindow, IDisposable {
     public bool Register() {
         if (disposed) throw new ObjectDisposedException("DeskMonitorHotkey");
         if (Registered) return true;
-        Registered = RegisterHotKey(Handle, 1, 0x4000, key); // MOD_NOREPEAT
+        Registered = RegisterHotKey(Handle, 1, modifiers | 0x4000, key); // MOD_NOREPEAT
         RegistrationError = Registered ? 0 : Marshal.GetLastWin32Error();
         return Registered;
     }
@@ -1441,7 +1489,7 @@ $f.FormBorderStyle = "Sizable"
 $f.MaximizeBox = $true
 # Wide enough for the longest model id, a gap, then Start and Stop.
 $script:pageW = 596
-$f.ClientSize = New-Object System.Drawing.Size((52 + $script:pageW), 640)
+$f.ClientSize = New-Object System.Drawing.Size((52 + $script:pageW), 672)
 $f.StartPosition = "CenterScreen"
 $f.BackColor = $bg
 $f.ForeColor = $ink
@@ -1451,7 +1499,7 @@ $f.MinimumSize = $f.Size
 
 $rail = New-Object System.Windows.Forms.Panel
 $rail.Location = New-Object System.Drawing.Point(0, 0)
-$rail.Size = New-Object System.Drawing.Size(52, 612)
+$rail.Size = New-Object System.Drawing.Size(52, 644)
 $rail.Anchor = "Top, Bottom, Left"
 $rail.BackColor = $railBg
 $f.Controls.Add($rail)
@@ -1460,7 +1508,7 @@ $pages = @{}
 function New-Page {
     $p = New-Object System.Windows.Forms.Panel
     $p.Location = New-Object System.Drawing.Point(52, 0)
-    $p.Size = New-Object System.Drawing.Size($script:pageW, 612)
+    $p.Size = New-Object System.Drawing.Size($script:pageW, 644)
     $p.Anchor = "Top, Bottom, Left, Right"
     $p.BackColor = $bg
     $p.Visible = $false
@@ -1473,12 +1521,14 @@ $pageAsk = New-Page
 $pageLyrics = New-Page
 $pageClips = New-Page
 $pageMonitor = New-Page
+$pageDisplayLayouts = New-Page
 $pages.Status = $pageStatus
 $pages.Model = $pageModel
 $pages.Ask = $pageAsk
 $pages.Lyrics = $pageLyrics
 $pages.Clips = $pageClips
 $pages.Monitor = $pageMonitor
+$pages.Layouts = $pageDisplayLayouts
 
 $script:railMarks = @()
 $script:railTip = New-Object System.Windows.Forms.ToolTip
@@ -1512,12 +1562,16 @@ function Add-Rail([string]$name, [string]$glyph, [int]$y) {
 function Show-Page([string]$name) {
     foreach ($key in @($pages.Keys)) { $pages[$key].Visible = ($key -eq $name) }
     foreach ($item in $script:railMarks) {
-        $on = $item.Name -eq $name
+        $on = $item.Name -eq $name -or ($item.Name -eq "Monitor" -and $name -eq "Layouts")
         $item.Mark.Visible = $on
         $item.Button.ForeColor = $(if ($on) { $ink } else { $mute })
     }
+    if ($name -eq "Model" -and $script:modelReasoning) { Show-DeskReasoningPreference }
     if ($name -eq "Monitor" -and -not $script:monitorSnapshot -and -not $script:monitorJob) {
         Start-MonitorOperation "read"
+    }
+    if ($name -eq "Layouts" -and -not $script:displaySnapshot -and -not $script:displayJob) {
+        Start-DisplayOperation "list"
     }
 }
 
@@ -1704,9 +1758,26 @@ $rowWatch = Add-Pair $pageStatus "AFK Watch" 464 { Set-WatchTask "ENABLE" } {
 }
 $rowWeb = Add-Pair $pageStatus "Web" 496 { Start-WebDoor } { Stop-WebDoor }
 $rowWhisper = Add-Pair $pageStatus "STT/TTS" 528 { Start-VoiceDoor } { Stop-VoiceDoor }
+$script:airPlayWorker = [PowerShell]::Create()
+$script:airPlayJob = $null
+$script:airPlayButtons = [ordered]@{}
+$rowAirPlay = Add-Pair $pageStatus "AirPlay" 560 { Start-AirPlayOperation 'Start' } { Start-AirPlayOperation 'Stop' }
+$rowAirPlay.Width = 246
+foreach ($button in @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Top -eq 558 })) {
+    $script:airPlayButtons[$button.Text] = $button
+}
+$airPlayOpen = New-Object System.Windows.Forms.Button
+$airPlayOpen.Text = 'Open'
+$airPlayOpen.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$airPlayOpen.Location = [Drawing.Point]::new(354, 558)
+$airPlayOpen.Size = [Drawing.Size]::new(70, 24)
+Paint-Button $airPlayOpen $false
+$airPlayOpen.Add_Click({ Start-AirPlayOperation 'Open' })
+$pageStatus.Controls.Add($airPlayOpen)
+$script:airPlayButtons.Open = $airPlayOpen
 $afkGym = New-Object System.Windows.Forms.CheckBox
 $afkGym.Text = "Recover Qwen + gym while AFK (opt-in)"
-$afkGym.Location = New-Object System.Drawing.Point(16, 564)
+$afkGym.Location = New-Object System.Drawing.Point(16, 596)
 $afkGym.Size = New-Object System.Drawing.Size(($script:pageW - 32), 24)
 $afkGym.ForeColor = $ink
 $afkGym.BackColor = $bg
@@ -1724,7 +1795,7 @@ $script:statusRows = [ordered]@{
     Model = $rowModel; Tok = $rowTok; Kernel = $rowKernel; Rag = $rowRag
     Mongo = $rowMongo; Gym = $rowGym; Cs2 = $rowCs2; Mouth = $rowMouth
     Gpu = $rowGpu; Rust = $rowRust; Ssh = $rowSsh; Tail = $rowTail
-    Serve = $rowServe; Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper
+    Serve = $rowServe; Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper; AirPlay = $rowAirPlay
 }
 $script:statusWorker = [PowerShell]::Create()
 $script:statusJob = $null
@@ -1739,6 +1810,7 @@ function Update-Status([switch]$Poll) {
             if ($result.Count -ne 1 -or -not $result[0].Rows) { throw "Invalid Desk status snapshot." }
             $snapshot = $result[0]
             foreach ($entry in $script:statusRows.GetEnumerator()) {
+                if ($entry.Key -eq 'AirPlay' -and $script:airPlayJob) { continue }
                 $entry.Value.Text = [string]$snapshot.Rows.($entry.Key)
                 $script:statusTip.SetToolTip($entry.Value, $entry.Value.Text)
             }
@@ -1767,7 +1839,7 @@ function Update-Status([switch]$Poll) {
 Update-Status
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
-$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor })
+$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation })
 $timer.Start()
 
 Add-Head $pageModel "Model" 16
@@ -1863,8 +1935,8 @@ $pageModel.Controls.Add($script:modelCpuCache)
 $script:modelSettingsHint = [System.Windows.Forms.Label]::new()
 $script:modelSettingsHint.Font = [Drawing.Font]::new("Segoe UI", 9)
 $script:modelSettingsHint.ForeColor = $mute
-$script:modelSettingsHint.Location = [Drawing.Point]::new(20, 410)
-$script:modelSettingsHint.Size = [Drawing.Size]::new(556, 140)
+$script:modelSettingsHint.Location = [Drawing.Point]::new(20, 474)
+$script:modelSettingsHint.Size = [Drawing.Size]::new(556, 80)
 $pageModel.Controls.Add($script:modelSettingsHint)
 $script:modelLive = [System.Windows.Forms.Label]::new()
 $script:modelLive.Font = [Drawing.Font]::new("Segoe UI", 9)
@@ -1913,7 +1985,7 @@ function Show-DeskModelControls {
     $script:modelSettingsHint.Text = if ($script:modelSettingsError) { $script:modelSettingsError } elseif (-not $enabled) {
         "Image diffusion does not have token context or MTP controls."
     } else {
-        "~70k: int4 KV, MTP/vision off; unchanged weights.`r`nRAM cache reuses prefixes, not extra live context. No dense CPU/SSD weight spill.`r`nThe vision checkbox loads the 27B tower on the next Start and lets :8001 try it for OCR. STT and TTS stay on the CPU.`r`nSave is passive; Status Start applies. Max is a kit plan."
+        "~70k: int4 KV, MTP/vision off; unchanged weights. Max is a kit plan.`r`nRAM cache reuses prefixes, not live context. No dense weight spill.`r`nVision/OCR applies on next 27B Start; speech stays CPU.`r`nReasoning applies next request; tools, pictures and /edit stay off."
     }
 }
 Add-Button $pageModel "Large text (~70k)" 20 370 168 {
@@ -1948,6 +2020,39 @@ Add-Button $pageModel "Save" 392 370 164 {
     try { Save-DeskModelControls } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message) }
 } $true
 Show-DeskModelControls
+Add-ModelLabel "Text reasoning effort (next request; no model restart)" 410
+$script:modelReasoning = [Windows.Forms.ComboBox]::new()
+$script:modelReasoning.DropDownStyle = "DropDownList"
+$script:modelReasoning.Items.AddRange(@("Default (model)", "Off", "Low", "Medium", "High (xhigh)"))
+$script:modelReasoning.Location = [Drawing.Point]::new(20, 434)
+$script:modelReasoning.Size = [Drawing.Size]::new(168, 26)
+$pageModel.Controls.Add($script:modelReasoning)
+$script:modelReasoningStatus = [Windows.Forms.Label]::new()
+$script:modelReasoningStatus.ForeColor = $mute
+$script:modelReasoningStatus.Font = [Drawing.Font]::new("Segoe UI", 9)
+$script:modelReasoningStatus.Location = [Drawing.Point]::new(392, 432)
+$script:modelReasoningStatus.Size = [Drawing.Size]::new(184, 38)
+$pageModel.Controls.Add($script:modelReasoningStatus)
+function Show-DeskReasoningPreference {
+    try {
+        $preference = Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")
+        $script:modelReasoning.SelectedIndex = @("on", "off", "low", "medium", "xhigh").IndexOf($preference.Value)
+        $script:modelReasoningStatus.Text = "Saved: $($script:modelReasoning.SelectedItem)"
+    } catch {
+        $script:modelReasoning.SelectedIndex = -1
+        $script:modelReasoningStatus.Text = "Invalid preference; select and apply to repair."
+    }
+}
+function Save-DeskReasoningPreference {
+    if ($script:modelReasoning.SelectedIndex -lt 0) { throw "Select a reasoning effort first." }
+    $value = @("on", "off", "low", "medium", "xhigh")[$script:modelReasoning.SelectedIndex]
+    Write-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt") $value
+    Show-DeskReasoningPreference
+}
+Add-Button $pageModel "Apply reasoning" 200 430 180 {
+    try { Save-DeskReasoningPreference } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+} $true
+Show-DeskReasoningPreference
 
 Add-Head $pageAsk "Ask" 16
 $fileLabel = New-Object System.Windows.Forms.Label
@@ -2186,6 +2291,7 @@ $pageClips.Controls.Add($clipHint)
 Add-Button $pageClips "Scan clips" 20 116 176 { Start-ClipScan } $true
 
 Add-Head $pageMonitor "Monitor" 16
+Add-Button $pageMonitor "Layouts" 456 12 112 { Show-Page "Layouts" } $false
 $monitorHint = [Windows.Forms.Label]::new()
 $monitorHint.Text = "Dell S2522HG hardware controls. Apply uses readback; Cycle advances Dark Stabilizer without a current-level readout."
 $monitorHint.ForeColor = $mute
@@ -2230,7 +2336,7 @@ foreach ($spec in @(
     if ($spec.Id -in @("brightness", "contrast")) {
         $control = [Windows.Forms.NumericUpDown]::new()
         $control.Maximum = 100
-        $control.Minimum = 0
+        $control.Minimum = if ($spec.Id -eq "contrast") { 25 } else { 0 }
         $control.DecimalPlaces = 0
     } else {
         $control = [Windows.Forms.ComboBox]::new()
@@ -2302,7 +2408,7 @@ $pageMonitor.Controls.Add($monitorNote)
 
 function Set-MonitorEnabled {
     foreach ($id in $script:monitorControls.Keys) {
-        $enabled = -not $script:monitorJob -and $script:monitorSnapshot -and
+        $enabled = -not $script:monitorJob -and -not $script:displayJob -and $script:monitorSnapshot -and
             $script:monitorSnapshot.$id.supported
         $script:monitorControls[$id].Enabled = [bool]$enabled
         $script:monitorApply[$id].Enabled = [bool]$enabled
@@ -2311,8 +2417,8 @@ function Set-MonitorEnabled {
         }
         Paint-Button $script:monitorApply[$id] $script:monitorApply[$id].Enabled
     }
-    $script:monitorRefresh.Enabled = -not $script:monitorJob
-    $script:monitorCycle.Enabled = -not $script:monitorJob -and $script:monitorSnapshot -and
+    $script:monitorRefresh.Enabled = -not $script:monitorJob -and -not $script:displayJob
+    $script:monitorCycle.Enabled = -not $script:monitorJob -and -not $script:displayJob -and $script:monitorSnapshot -and
         $script:monitorSnapshot.dark_stabilizer_cycle.supported
     Paint-Button $script:monitorCycle $script:monitorCycle.Enabled
 }
@@ -2336,6 +2442,17 @@ function Register-MonitorHotkey {
     $script:monitorClaimHotkey.Enabled = -not $script:monitorHotkey.Registered
 }
 function Start-MonitorOperation([string]$Control, [string]$Value) {
+    if ($script:displayJob) {
+        Show-MonitorNotice "Display layout operation is busy; no monitor command sent or queued." $true
+        return
+    }
+    if ($Control -eq "contrast") {
+        try { Assert-DeskMonitorContrast $Value }
+        catch {
+            Show-MonitorNotice "$($_.Exception.Message) No command sent." $true
+            return
+        }
+    }
     if ($script:monitorJob) {
         if ($Control -eq "dark_stabilizer_cycle") {
             Show-MonitorNotice "Monitor busy. This cycle press was not sent or queued; wait for the current operation." $true
@@ -2364,6 +2481,7 @@ function Start-MonitorOperation([string]$Control, [string]$Value) {
         $script:monitorOperation = $null
     }
     Set-MonitorEnabled
+    Set-DisplayEnabled
 }
 function Update-Monitor {
     if (-not $script:monitorJob -or -not $script:monitorJob.IsCompleted) { return }
@@ -2381,7 +2499,13 @@ function Update-Monitor {
                 $warnings += "$($script:monitorNames[$id]): $($state.error)"
                 continue
             }
-            if ($id -in @("brightness", "contrast")) { $script:monitorControls[$id].Value = $state.current }
+            if ($id -in @("brightness", "contrast")) {
+                $minimum = $script:monitorControls[$id].Minimum
+                $script:monitorControls[$id].Value = [Math]::Max($minimum, $state.current)
+                if ($state.current -lt $minimum) {
+                    $warnings += "Hardware contrast is $($state.current), below the allowed minimum $minimum. The input is $minimum for the next Apply; no setting was changed."
+                }
+            }
         }
         if (-not $script:monitorSnapshot.dark_stabilizer.supported) {
             $warnings += "Dark Stabilizer: $($script:monitorSnapshot.dark_stabilizer.error)"
@@ -2416,9 +2540,252 @@ function Update-Monitor {
         $script:monitorJob = $null
         $script:monitorOperation = $null
         Set-MonitorEnabled
+        Set-DisplayEnabled
     }
 }
 $script:monitorControls.preset.Add_SelectedIndexChanged({ Set-MonitorEnabled })
+
+Add-Head $pageDisplayLayouts "Display layouts" 16
+Add-Button $pageDisplayLayouts "Dell controls" 428 12 140 { Show-Page "Monitor" } $false
+$layoutHint = [Windows.Forms.Label]::new()
+$layoutHint.Text = "Save the layout configured in Windows. Apply switches directly to a saved profile, without a Keep popup. Dell picture settings are separate."
+$layoutHint.Location = [Drawing.Point]::new(20, 56)
+$layoutHint.Size = [Drawing.Size]::new(($script:pageW - 40), 48)
+$layoutHint.ForeColor = $mute
+$pageDisplayLayouts.Controls.Add($layoutHint)
+$script:displayWorker = [PowerShell]::Create()
+$script:displayJob = $null
+$script:displaySnapshot = $null
+$script:displayRequest = $null
+$script:displayNotice = "No display layout has been changed."
+$script:displayDetailProfile = $null
+$script:displayHotkeys = @()
+$script:displayHotkeyNames = @{}
+$script:displayHotkeyStatus = @()
+$script:displayButtons = @{}
+foreach ($spec in @(@{ Text = "Profile"; Y = 114 }, @{ Text = "New name"; Y = 162 }, @{ Text = "Hotkey"; Y = 262 })) {
+    $label = [Windows.Forms.Label]::new()
+    $label.Text = $spec.Text
+    $label.Location = [Drawing.Point]::new(20, $spec.Y)
+    $label.Size = [Drawing.Size]::new(140, 28)
+    $label.ForeColor = $ink
+    $pageDisplayLayouts.Controls.Add($label)
+}
+$script:displayProfilesBox = [Windows.Forms.ComboBox]::new()
+$script:displayProfilesBox.DropDownStyle = "DropDownList"
+$script:displayProfilesBox.Location = [Drawing.Point]::new(168, 112)
+$script:displayProfilesBox.Size = [Drawing.Size]::new(268, 30)
+$script:displayProfilesBox.BackColor = $fieldBg
+$script:displayProfilesBox.ForeColor = $ink
+$pageDisplayLayouts.Controls.Add($script:displayProfilesBox)
+$script:displayNameBox = [Windows.Forms.TextBox]::new()
+$script:displayNameBox.Location = [Drawing.Point]::new(168, 160)
+$script:displayNameBox.Size = [Drawing.Size]::new(268, 30)
+Style-Box $script:displayNameBox
+$pageDisplayLayouts.Controls.Add($script:displayNameBox)
+$script:displayHotkeyBox = [Windows.Forms.ComboBox]::new()
+$script:displayHotkeyBox.DropDownStyle = "DropDownList"
+$script:displayHotkeyBox.Location = [Drawing.Point]::new(168, 260)
+$script:displayHotkeyBox.Size = [Drawing.Size]::new(268, 30)
+$script:displayHotkeyBox.BackColor = $fieldBg
+$script:displayHotkeyBox.ForeColor = $ink
+[void]$script:displayHotkeyBox.Items.Add("None")
+foreach ($number in 1..12) { [void]$script:displayHotkeyBox.Items.Add("Ctrl+Alt+F$number") }
+$script:displayHotkeyBox.SelectedIndex = 0
+$pageDisplayLayouts.Controls.Add($script:displayHotkeyBox)
+$script:displayDetails = [Windows.Forms.TextBox]::new()
+$script:displayDetails.Multiline = $true
+$script:displayDetails.ReadOnly = $true
+$script:displayDetails.ScrollBars = "Vertical"
+$script:displayDetails.Location = [Drawing.Point]::new(20, 356)
+$script:displayDetails.Size = [Drawing.Size]::new(($script:pageW - 40), 232)
+$script:displayDetails.Anchor = "Top, Bottom, Left, Right"
+Style-Box $script:displayDetails
+$pageDisplayLayouts.Controls.Add($script:displayDetails)
+foreach ($spec in @(
+    @{ Id = "list"; Text = "Refresh"; X = 456; Y = 110; W = 112 },
+    @{ Id = "save"; Text = "Capture"; X = 456; Y = 158; W = 112 },
+    @{ Id = "preview"; Text = "Preview"; X = 20; Y = 210; W = 120 },
+    @{ Id = "apply"; Text = "Apply"; X = 148; Y = 210; W = 120 },
+    @{ Id = "overwrite"; Text = "Overwrite"; X = 276; Y = 210; W = 140 },
+    @{ Id = "delete"; Text = "Delete"; X = 424; Y = 210; W = 144 },
+    @{ Id = "hotkey"; Text = "Set hotkey"; X = 456; Y = 258; W = 112 },
+    @{ Id = "current"; Text = "Read current"; X = 20; Y = 308; W = 140 },
+    @{ Id = "recover"; Text = "Recover previous layout"; X = 176; Y = 308; W = 244 }
+)) {
+    $button = [Windows.Forms.Button]::new()
+    $button.Text = $spec.Text
+    $button.Tag = $spec.Id
+    $button.Location = [Drawing.Point]::new($spec.X, $spec.Y)
+    $button.Size = [Drawing.Size]::new($spec.W, 34)
+    Paint-Button $button ($spec.Id -eq "apply")
+    $button.Add_Click({
+        param($sender, $event)
+        try {
+            $operation = [string]$sender.Tag
+            $name = $null
+            $overwrite = $false
+            if ($operation -eq "save") { $name = $script:displayNameBox.Text }
+            elseif ($operation -in @("preview", "apply", "overwrite", "delete", "hotkey")) {
+                $profile = Get-SelectedDisplayProfile
+                if (-not $profile) { throw "Select a display profile first." }
+                $name = [string]$profile.name
+            }
+            if ($operation -in @("overwrite", "delete")) {
+                $verb = if ($operation -eq "overwrite") { "Replace" } else { "Delete" }
+                if ([Windows.Forms.MessageBox]::Show("$verb GodBrain display profile '$name'? Monitor Profile Switcher's profiles are untouched.",
+                        "Display layouts", "YesNo", "Warning", "Button2") -ne "Yes") { return }
+                if ($operation -eq "overwrite") { $operation = "save"; $overwrite = $true }
+            }
+            Start-DisplayOperation $operation $name $script:displayHotkeyBox.SelectedIndex $overwrite
+        } catch { $script:displayNotice = "Display layout error: $($_.Exception.Message)"; Update-DisplayDetails }
+    })
+    $script:displayButtons[$spec.Id] = $button
+    $pageDisplayLayouts.Controls.Add($button)
+}
+function Get-SelectedDisplayProfile {
+    $index = $script:displayProfilesBox.SelectedIndex
+    if ($script:displaySnapshot -and $index -ge 0 -and $index -lt $script:displaySnapshot.profiles.Count) {
+        return $script:displaySnapshot.profiles[$index]
+    }
+    return $null
+}
+function Format-DisplayProfile($Profile) {
+    $lines = @("Profile: $($Profile.name)")
+    foreach ($display in $Profile.displays) {
+        $primary = if ($display.primary) { " primary" } else { "" }
+        $orientation = @("landscape", "portrait", "landscape flipped", "portrait flipped")[$display.rotation - 1]
+        $lines += "$($display.label): $($display.width)x$($display.height), $([Math]::Round($display.refresh_hz, 3)) Hz, $orientation, ($($display.x),$($display.y))$primary"
+    }
+    return $lines -join "`r`n"
+}
+function Update-DisplayDetails {
+    $lines = @($script:displayNotice)
+    if ($script:displaySnapshot.recovery_pending) {
+        $lines += "UNFINISHED SWITCH: use Recover previous layout. Other layout changes are blocked."
+    }
+    $profile = if ($script:displayDetailProfile) { $script:displayDetailProfile } else { Get-SelectedDisplayProfile }
+    if ($profile) { $lines += ""; $lines += Format-DisplayProfile $profile }
+    if ($script:displayHotkeyStatus.Count) { $lines += ""; $lines += $script:displayHotkeyStatus }
+    $script:displayDetails.Text = $lines -join "`r`n"
+}
+function Clear-DisplayHotkeys {
+    foreach ($hotkey in $script:displayHotkeys) { $hotkey.Dispose() }
+    $script:displayHotkeys = @()
+    $script:displayHotkeyNames = @{}
+}
+function Register-DisplayHotkeys {
+    Clear-DisplayHotkeys
+    $script:displayHotkeyStatus = @()
+    if ($script:displaySnapshot.recovery_pending) { return }
+    foreach ($profile in $script:displaySnapshot.profiles) {
+        if ($profile.hotkey -eq 0) { continue }
+        $hotkey = [DeskMonitorHotkey]::new([uint32](0x6F + $profile.hotkey), 3)
+        $script:displayHotkeys += $hotkey
+        $script:displayHotkeyNames[$hotkey.Handle.ToInt64()] = [string]$profile.name
+        $hotkey.Add_Pressed({
+            param($sender, $event)
+            Start-DisplayOperation "apply" $script:displayHotkeyNames[$sender.Handle.ToInt64()]
+        })
+        if ($hotkey.Register()) { $script:displayHotkeyStatus += "Ctrl+Alt+F$($profile.hotkey): $($profile.name) ready (also while Desk is hidden)." }
+        else { $script:displayHotkeyStatus += "Ctrl+Alt+F$($profile.hotkey): unavailable, Windows error $($hotkey.RegistrationError). Release its other owner, then Refresh." }
+    }
+}
+function Set-DisplayEnabled {
+    $busy = $script:displayJob -or $script:monitorJob
+    $selected = $null -ne (Get-SelectedDisplayProfile)
+    $pending = $script:displaySnapshot.recovery_pending
+    foreach ($id in $script:displayButtons.Keys) {
+        $enabled = -not $busy
+        if ($id -in @("preview", "apply", "overwrite", "delete", "hotkey")) { $enabled = $enabled -and $selected }
+        if ($pending -and $id -notin @("list", "recover")) { $enabled = $false }
+        $script:displayButtons[$id].Enabled = [bool]$enabled
+        Paint-Button $script:displayButtons[$id] ($enabled -and $id -eq "apply")
+    }
+    $script:displayProfilesBox.Enabled = -not $busy
+    $script:displayNameBox.Enabled = -not $busy -and -not $pending
+    $script:displayHotkeyBox.Enabled = -not $busy -and -not $pending
+}
+function Start-DisplayOperation([string]$Operation, [string]$Name, [int]$Hotkey = 0, [bool]$Overwrite = $false) {
+    try {
+        if ($Operation -in @("save", "preview", "apply", "hotkey", "delete")) { Assert-DisplayProfileName $Name }
+        if ($script:displayJob -or $script:monitorJob) { throw "Monitor/display operation is busy; no request sent or queued." }
+        if ($script:displaySnapshot.recovery_pending -and $Operation -notin @("list", "recover")) {
+            throw "An unfinished switch requires Recover previous layout."
+        }
+        $script:displayWorker.Dispose()
+        $script:displayWorker = [PowerShell]::Create()
+        $request = [pscustomobject]@{ Operation = $Operation; Name = $Name; Hotkey = $Hotkey; Overwrite = $Overwrite }
+        [void]$script:displayWorker.AddCommand($PSCommandPath).AddParameter("DisplayRequest", $request)
+        $script:displayRequest = $request
+        $script:displayJob = $script:displayWorker.BeginInvoke()
+        $script:displayDetailProfile = $null
+        $script:displayNotice = if ($Operation -eq "apply") {
+            "Switching to saved profile '$Name' without a confirmation popup. Validating and verifying the display configuration."
+        } else { "Display layouts: $Operation..." }
+    } catch { $script:displayNotice = "Display layout error: $($_.Exception.Message)" }
+    Set-DisplayEnabled; Set-MonitorEnabled; Update-DisplayDetails
+}
+function Update-DisplayOperation {
+    if (-not $script:displayJob -or -not $script:displayJob.IsCompleted) { return }
+    $refresh = $false
+    try {
+        $results = @($script:displayWorker.EndInvoke($script:displayJob))
+        if ($script:displayWorker.HadErrors) { throw ($script:displayWorker.Streams.Error | Out-String).Trim() }
+        if ($results.Count -ne 1) { throw "Invalid display-profile result count." }
+        $request = $script:displayRequest
+        $result = Assert-DisplayProfileResult $results[0] $request.Operation $request.Name
+        if ($request.Operation -eq "list") {
+            $selected = [string]$script:displayProfilesBox.Text
+            $script:displaySnapshot = $result
+            $script:displayProfilesBox.Items.Clear()
+            foreach ($profile in $result.profiles) { [void]$script:displayProfilesBox.Items.Add([string]$profile.name) }
+            $script:displayProfilesBox.SelectedIndex = -1
+            for ($i = 0; $i -lt $result.profiles.Count; $i++) {
+                if ($result.profiles[$i].name -eq $selected) { $script:displayProfilesBox.SelectedIndex = $i; break }
+            }
+            if ($script:displayProfilesBox.SelectedIndex -lt 0 -and $result.profiles.Count) { $script:displayProfilesBox.SelectedIndex = 0 }
+            Register-DisplayHotkeys
+            $script:displayNotice = if ($script:displayLastNotice) { $script:displayLastNotice } else { "$($result.profiles.Count) GodBrain profiles. No layout change requested." }
+            $script:displayLastNotice = $null
+        } else {
+            $script:displayNotice = switch ($request.Operation) {
+                "apply" {
+                    if ($result.confirmation -ceq "saved_profile") { "Applied '$($result.profile.name)' without a confirmation popup. Live and saved display configuration verified." }
+                    else { "Layout $($result.outcome) ($($result.confirmation)). Actual display configuration verified." }
+                }
+                "recover" { "Previous layout restored and verified." }
+                "save" { "Captured '$($result.profile.name)'. No display settings changed." }
+                "preview" { "Validated without applying." }
+                "current" { "Current Windows layout, read-only." }
+                "hotkey" { "Saved hotkey for '$($result.profile.name)'." }
+                "delete" { "Deleted only GodBrain profile '$($result.deleted)'." }
+            }
+            if ($request.Operation -in @("preview", "current")) { $script:displayDetailProfile = $result.profile }
+            if ($request.Operation -in @("apply", "recover")) { $script:monitorSnapshot = $null }
+            $refresh = $request.Operation -in @("save", "hotkey", "delete", "apply", "recover")
+        }
+    } catch {
+        $script:displayNotice = "Display layout error: $($_.Exception.Message)"
+        if ($script:displayRequest.Operation -eq "list") { $script:displaySnapshot = $null; Clear-DisplayHotkeys }
+        else { $refresh = $true }
+    } finally {
+        $script:displayJob = $null; $script:displayRequest = $null
+        Set-DisplayEnabled; Set-MonitorEnabled; Update-DisplayDetails
+    }
+    if ($refresh) {
+        $script:displayLastNotice = $script:displayNotice
+        Start-DisplayOperation "list"
+    }
+}
+$script:displayProfilesBox.Add_SelectedIndexChanged({
+    $script:displayDetailProfile = $null
+    $profile = Get-SelectedDisplayProfile
+    if ($profile) { $script:displayHotkeyBox.SelectedIndex = [int]$profile.hotkey }
+    Set-DisplayEnabled; Update-DisplayDetails
+})
+Set-DisplayEnabled
+Update-DisplayDetails
 Show-Page "Status"
 
 $script:quit = $false
@@ -2458,6 +2825,7 @@ $f.Add_FormClosing({
 $f.Show()
 try {
     Register-MonitorHotkey
+    Start-DisplayOperation "list"
     [System.Windows.Forms.Application]::Run($f)
 } finally {
     try { $script:monitorHotkey.Dispose() }
@@ -2468,8 +2836,13 @@ try {
     $script:statusWorker.Dispose()
     $script:askWorker.Stop()
     $script:askWorker.Dispose()
+    $script:airPlayWorker.Stop()
+    $script:airPlayWorker.Dispose()
     $script:monitorWorker.Stop()
     $script:monitorWorker.Dispose()
+    Clear-DisplayHotkeys
+    $script:displayWorker.Stop()
+    $script:displayWorker.Dispose()
     if ($script:ni) {
         $script:ni.Visible = $false
         $script:ni.Dispose()

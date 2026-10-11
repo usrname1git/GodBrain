@@ -119,7 +119,7 @@ static void note_oracle_partial(
     DWORD elapsed_ms);
 static void retry_unstored_oracle_turns();
 static json load_mouth();
-static bool llama_thinking_enabled();
+static ThinkingPreference load_thinking_preference();
 static bool write_thinking_enabled(bool on);
 static json load_last_edit();
 static json load_heal_last();
@@ -2969,7 +2969,10 @@ static json load_mouth() {
         mouth["label"] = engine;
     }
     mouth["model"] = model;
-    mouth["thinking"] = llama_thinking_enabled();
+    const auto thinking = load_thinking_preference();
+    mouth["thinking"] = thinking.enabled;
+    mouth["reasoning_effort"] = thinking.effort.empty() ? "default" : thinking.effort;
+    if (!thinking.error.empty()) mouth["thinking_error"] = thinking.error;
     mouth["paused"] = mouth_paused();
     return mouth;
 }
@@ -2978,19 +2981,8 @@ static std::string thinking_state_path() {
     return repo_root_from_exe() + "\\logs\\thinking.txt";
 }
 
-// Missing file = llama.cpp default (on). Desk command writes on/off.
-static bool llama_thinking_enabled() {
-    std::ifstream in(thinking_state_path(), std::ios::binary);
-    if (!in) return true;
-    std::string line;
-    std::getline(in, line);
-    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
-                             line.back() == ' ')) {
-        line.pop_back();
-    }
-    const std::string lower = ascii_lower_copy(line);
-    if (lower == "off" || lower == "false" || lower == "0") return false;
-    return true;
+static ThinkingPreference load_thinking_preference() {
+    return read_thinking_preference(thinking_state_path());
 }
 
 static bool write_thinking_enabled(bool on) {
@@ -3346,6 +3338,8 @@ std::string run_colibri_serve(
     // EXL3 on :8888 is the tool mouth while Gemma is paused. Same flatten
     // loop as llama. Do not recycle llama-server between hops.
     const bool tool_mouth = llama_mouth || exl3_mouth;
+    const auto thinking = load_thinking_preference();
+    json reasoning_models;
     const std::string apply_src = tool_hint.empty() ? user : tool_hint;
     const bool apply_cont = wants_apply_continue(system, apply_src);
     // Colibri pings empty deltas every ~10s during prefill. llama.cpp does
@@ -3447,15 +3441,25 @@ std::string run_colibri_serve(
             {"max_tokens", chunk_tokens},
             {"messages", messages},
         };
-        // /edit apply always off. Ordinary llama chat uses logs/thinking.txt
-        // (Galaxy message enable_thinking: false|true, no GPU).
         if (tool_mouth) {
-            // Tool rounds must not think: reasoning_content ngram-aborts the
-            // SSE before delta.tool_calls arrive (empty answer).
-            const bool think =
-                use_tools ? false
-                          : (apply_cont ? false : llama_thinking_enabled());
-            body["chat_template_kwargs"] = {{"enable_thinking", think}};
+            // Tool rounds and /edit stay off, regardless of the saved effort.
+            const bool force_off = use_tools || apply_cont;
+            if (!force_off && thinking.enabled && !thinking.effort.empty() &&
+                reasoning_models.is_null()) {
+                const auto response = client.Get("/v1/models");
+                if (!response || response->status != 200) {
+                    return "Error: could not check reasoning capabilities. No reasoning generation was sent.";
+                }
+                try {
+                    reasoning_models = json::parse(response->body);
+                } catch (const json::exception&) {
+                    return "Error: invalid reasoning capabilities. No reasoning generation was sent.";
+                }
+            }
+            std::string thinking_error;
+            if (!configure_thinking_request(body, thinking, force_off, reasoning_models, thinking_error)) {
+                return "Error: " + thinking_error;
+            }
             // cache_prompt is llama.cpp. EXL3 ignores it; omit so the
             // server does not have to.
             if (llama_mouth) body["cache_prompt"] = false;
@@ -4612,18 +4616,17 @@ int main() {
                     const json mouth = load_mouth();
                     std::ostringstream reply;
                     reply << "thinking=" << (on ? "on" : "off")
-                          << " saved. Next llama chat sends "
+                          << " saved. Reasoning preference reset to "
+                          << (on ? "model default" : "off")
+                          << ". Next eligible text chat/review sends "
                              "chat_template_kwargs.enable_thinking="
                           << (on ? "true" : "false") << ". No GPU.\n";
-                    if (mouth.value("label", "") != "llama") {
-                        reply << "Current mouth is not llama; flag applies "
-                                 "when llama is on :8000.\n";
-                    }
-                    if (!on) {
+                    reply << "Tool rounds, pictures and /edit apply stay thinking-off.\n";
+                    if (!on && mouth.value("label", "") == "llama") {
                         reply << "If the last reply was <unused49>, restart "
                                  "llama (slot KV is poisoned). "
                                  "scripts\\Start-LlamaServer.ps1 -NoDraft\n";
-                    } else {
+                    } else if (on && mouth.value("label", "") == "llama") {
                         reply << "This llama.cpp still floods unused49 with "
                                  "Gemma 4 thinking on.\n";
                     }

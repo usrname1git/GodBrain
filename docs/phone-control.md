@@ -95,14 +95,21 @@ The page refreshes every ten seconds while visible, uses a short server
 cache and clearly marks invalid/failed/stale data. There are no Start,
 Stop, Repair or Generate buttons. The exact untagged device-owner identity
 from Serve is checked; shared users are denied. No bearer is embedded in
-HTML, URLs or browser storage. The kernel authenticates the live TCP peer as
-the installed SYSTEM-owned Tailscale service or its immediate SYSTEM worker
-before trusting identity headers. Other direct loopback clients require the
-bearer; copying the owner's header does not grant access. If the service,
-worker identity or connection ownership cannot be verified, proxy access is
-denied (no permissive fallback). If owner lookup fails at kernel boot, Serve
-access remains closed until identity is available and the kernel is explicitly
-reloaded.
+HTML, URLs or browser storage. The unelevated kernel authenticates the live TCP
+peer using the running LocalSystem Tailscale service's configured executable,
+native session-0 process names/ancestry/creation times and exact connection owner
+PID, then rechecks identities and socket ownership before trusting headers.
+It does not require access to SYSTEM process handles, which Windows can deny to
+a normal user. Other direct loopback clients require the bearer; copying the
+owner's header does not grant access. If the service, worker identity or
+connection ownership cannot be verified, proxy access is denied (no permissive
+fallback). If owner lookup fails at kernel boot, Serve access stays closed and
+retries at most once per 30 seconds on a trusted Serve request. A successful
+owner identity is pinned until kernel restart.
+
+`scripts\Test-PhoneDesk.ps1 -Live -Serve` checks the existing private HTTPS page,
+status and mobile route without a bearer, plus direct loopback spoof rejection.
+It does not change Serve configuration or restart services/models.
 
 `scripts\Test-PhoneDesk.ps1 -ServeTransport` checks direct-header rejection
 and a real HTTPS proxy request using a temporary, random Serve path. It

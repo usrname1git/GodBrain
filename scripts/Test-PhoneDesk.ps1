@@ -1,7 +1,8 @@
 [CmdletBinding()]
-param([switch]$Live, [switch]$ServeTransport, [switch]$RustDeskStatus, [string]$ImageHealthFixture = '')
+param([switch]$Live, [switch]$Serve, [switch]$ServeTransport, [switch]$RustDeskStatus, [string]$ImageHealthFixture = '')
 
 $ErrorActionPreference = 'Stop'
+if ($Serve -and -not $Live) { throw '-Serve requires -Live.' }
 function Get-ServiceIdentity {
     @(Get-CimInstance Win32_Service -Filter "Name='RustDesk' OR Name='Tailscale' OR Name='sshd' OR Name='MongoDB'" |
         ForEach-Object { "$($_.Name):$($_.State):$($_.ProcessId):$($_.StartMode)" }) +
@@ -107,12 +108,25 @@ try {
     }
 
     $previous = $env:GODBRAIN_PHONE_LIVE_TEST
+    $previousServe = $env:GODBRAIN_PHONE_SERVE_URL
     if ($Live) { $before = Get-ServiceIdentity }
     try {
         $env:GODBRAIN_PHONE_LIVE_TEST = if ($Live) { '1' } else { '0' }
+        $env:GODBRAIN_PHONE_SERVE_URL = $null
+        if ($Serve) {
+            $tail = & 'C:\Program Files\Tailscale\tailscale.exe' status --json | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $tail.BackendState -ne 'Running' -or
+                $tail.Self.Online -ne $true -or -not $tail.Self.DNSName) {
+                throw 'Private Serve live check requires an online Tailscale device.'
+            }
+            $env:GODBRAIN_PHONE_SERVE_URL = 'https://' + $tail.Self.DNSName.TrimEnd('.')
+        }
         & node --test (Join-Path $repo 'godbrain_core\frontend\phone.test.mjs')
         if ($LASTEXITCODE -ne 0) { throw 'Phone Desk browser checks failed.' }
-    } finally { $env:GODBRAIN_PHONE_LIVE_TEST = $previous }
+    } finally {
+        $env:GODBRAIN_PHONE_LIVE_TEST = $previous
+        $env:GODBRAIN_PHONE_SERVE_URL = $previousServe
+    }
 
     if ($Live) {
         $headers = @{ Authorization = 'Bearer ' + $env:GODBRAIN_API_TOKEN }
@@ -121,6 +135,18 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Tailscale owner query failed.' }
         $owner = $tail.User.PSObject.Properties[$tail.Self.UserID.ToString()].Value.LoginName
         if (-not $owner) { throw 'Tailscale device owner is missing.' }
+        if ($Serve) {
+            $serveUrl = 'https://' + $tail.Self.DNSName.TrimEnd('.')
+            $page = Invoke-WebRequest "$serveUrl/" -TimeoutSec 12
+            if ([int]$page.StatusCode -ne 200 -or $page.Content -notmatch 'Phone Desk') {
+                throw 'Private Serve owner could not open Phone Desk without bearer.'
+            }
+            $data = Invoke-RestMethod "$serveUrl/api/phone/status" -TimeoutSec 12
+            if ($data.schema_version -ne 1 -or $data.read_only -ne $true -or
+                $data.services.Count -ne 3 -or $data.speech.Count -ne 3) {
+                throw 'Invalid private Serve owner status.'
+            }
+        }
         foreach ($case in @(
             @{ Path='/api/phone/status'; Headers=@{}; Method='GET'; Expected=403 },
             @{ Path='/api/phone/status'; Headers=@{Authorization='Bearer fixture-invalid'}; Method='GET'; Expected=403 },
@@ -157,6 +183,7 @@ try {
             throw 'Phone Desk is not exclusively loopback-bound.'
         }
         Write-Host 'PASS: Live loopback authentication, no control routes, read-only refreshes and unchanged service/model identities'
+        if ($Serve) { Write-Host 'PASS: Private Serve owner page and status without bearer' }
     }
 } finally {
     Remove-Item -LiteralPath $build -Recurse -Force

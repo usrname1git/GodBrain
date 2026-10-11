@@ -91,11 +91,20 @@ absolute level from a hotkey binding or cached value.
 | Control | VCP code, hex | VCP code, decimal | Native accepted range |
 |---|---|---|---|
 | Brightness | `10` | 16 | 0-100, with hardware maximum 100 |
-| Contrast | `12` | 18 | 0-100, with hardware maximum 100 |
+| Contrast | `12` | 18 | 25-100 for writes, with hardware maximum 100 |
 
 These are ordinary readable controls, unlike the E3 cycle. GodBrain verifies
 their actual readback after one write. A failed verification is not reported
 as a verified change.
+Contrast writes below 25 are rejected in the Desk UI, PowerShell wrapper and
+native helper before monitor access. Readback still accepts the hardware's
+0-100 range: a lower external setting is reported honestly, with 25 offered
+as the next allowed Apply value, never written automatically.
+
+Discovery enumerates active PnP records rather than assuming child index zero
+is the connected monitor. Inactive records left by a display-profile switch
+are ignored. Dell identity plus the exact S2522HG capability model are still
+required, and ambiguous active targets fail closed.
 
 ## Color presets: setter and E2 readback are different
 
