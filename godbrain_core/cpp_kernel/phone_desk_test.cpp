@@ -1,4 +1,5 @@
 #include "phone_desk.h"
+#include <atomic>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -8,6 +9,70 @@ using phone_desk::json;
 void check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
+void test_owner_recovery(const json& status) {
+    using namespace std::chrono;
+    const steady_clock::time_point start{};
+    phone_desk::OwnerIdentity owner;
+    unsigned reads = 0;
+    auto ready = [&]() { ++reads; return status; };
+    auto unavailable = [&]() -> json { ++reads; throw std::runtime_error("Fixture daemon unavailable"); };
+    check(owner.resolve(false, ready, start).empty() && reads == 0, "Spoof caused owner lookup");
+    check(owner.resolve(true, unavailable, start).empty() && reads == 1, "Failed owner lookup accepted");
+    check(owner.resolve(true, ready, start + seconds(29)).empty() && reads == 1, "Owner retry was not bounded");
+    check(owner.resolve(true, [&]() { ++reads; return json::object(); }, start + seconds(30)).empty(),
+          "Missing owner became an identity");
+    check(owner.resolve(true, ready, start + seconds(60)) == "operator@example.invalid" && reads == 3,
+          "Owner did not recover after startup");
+    check(owner.resolve(true, unavailable, start + hours(1)) == "operator@example.invalid" && reads == 3,
+          "Resolved owner was not pinned");
+    check(owner.resolve(false, ready, start + hours(1)).empty() && reads == 3, "Untrusted peer obtained owner");
+    phone_desk::OwnerIdentity concurrent;
+    std::atomic<unsigned> calls{0}, matches{0};
+    std::vector<std::thread> threads;
+    for (unsigned i = 0; i < 8; ++i) threads.emplace_back([&]() {
+        const auto login = concurrent.resolve(true, [&]() {
+            ++calls;
+            std::this_thread::sleep_for(milliseconds(20));
+            return status;
+        }, start);
+        if (login == "operator@example.invalid") ++matches;
+    });
+    for (auto& thread : threads) thread.join();
+    check(calls == 1 && matches == 8, "Concurrent owner requests duplicated or raced lookup");
+}
+
+void test_proxy_lineage() {
+    const phone_desk::ProxyProcessIdentity service{100, 50, 0, 1000, L"tailscaled.exe"};
+    const phone_desk::ProxyProcessIdentity worker{101, 100, 0, 1001, L"tailscaled.exe"};
+    check(phone_desk::valid_proxy_lineage(service, service), "Direct service peer rejected");
+    check(phone_desk::valid_proxy_lineage(service, worker), "Immediate service worker rejected");
+    check(!phone_desk::valid_proxy_lineage({}, worker), "Absent SCM process accepted");
+    check(!phone_desk::valid_proxy_lineage(service, {}), "Absent socket process accepted");
+    auto forged = worker;
+    forged.parent_pid = 99;
+    check(!phone_desk::valid_proxy_lineage(service, forged), "Unrelated same-name worker accepted");
+    forged = worker; forged.session = 1;
+    check(!phone_desk::valid_proxy_lineage(service, forged), "Interactive same-name worker accepted");
+    forged = service; forged.session = 1;
+    check(!phone_desk::valid_proxy_lineage(forged, worker), "Interactive service accepted");
+    forged = worker; forged.created = 999;
+    check(!phone_desk::valid_proxy_lineage(service, forged), "Worker predating service accepted");
+    forged = worker; forged.image = L"other.exe";
+    check(!phone_desk::valid_proxy_lineage(service, forged), "Wrong worker image accepted");
+    forged = service; forged.image = L"other.exe";
+    check(!phone_desk::valid_proxy_lineage(forged, worker), "Wrong service image accepted");
+    check(phone_desk::same_proxy_process(worker, worker), "Stable worker rejected");
+    for (unsigned field = 0; field < 5; ++field) {
+        forged = worker;
+        if (field == 0) ++forged.pid;
+        if (field == 1) ++forged.parent_pid;
+        if (field == 2) ++forged.session;
+        if (field == 3) ++forged.created;
+        if (field == 4) forged.image = L"other.exe";
+        check(!phone_desk::same_proxy_process(worker, forged), "Changed/recycled worker accepted");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--rustdesk-status") {
@@ -73,6 +138,7 @@ int main(int argc, char** argv) {
             if (!fixture.listen("127.0.0.1", std::stoi(argv[2]))) throw std::runtime_error("Proxy fixture listener failed");
             return 0;
         }
+        test_proxy_lineage();
         httplib::Request request;
         request.remote_addr = "127.0.0.1";
         request.method = "GET";
@@ -109,6 +175,7 @@ int main(int argc, char** argv) {
         const json status = {{"Self", {{"UserID", 42u}, {"Online", true}}}, {"User", {{"42", {{"LoginName", "operator@example.invalid"}}}}},
                              {"BackendState", "Running"}};
         check(phone_desk::owner_login(status) == "operator@example.invalid", "Owner extraction failed");
+        test_owner_recovery(status);
         check(phone_desk::owner_login(json::object()).empty(), "Missing owner defaulted");
         check(phone_desk::tailscale_status(status)["state"] == "ready", "Running daemon not ready");
         check(phone_desk::rustdesk_status("running", true)["state"] == "ready", "Observed server not ready");
@@ -154,7 +221,7 @@ int main(int argc, char** argv) {
         check(phone_desk::model_status(8871, json::object(), {{"ok", true}, {"ready", false}, {"model", "Qwen-Image"}})["state"] == "unready", "Unready image API became ready");
         check(phone_desk::model_status(8871, json::object(), {{"ok", true}, {"model", "Qwen-Image"}, {"loaded", false}})["detail"]
               .get<std::string>().find("unloaded") != std::string::npos, "Idle image API became loaded");
-        std::cout << "PASS: Phone Desk authorization, identity, readiness and path redaction\n";
+        std::cout << "PASS: Phone Desk authorization, proxy lineage, bounded owner recovery, readiness and path redaction\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

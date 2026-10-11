@@ -28,6 +28,22 @@ class ReviewPlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             formatted_token_count(Tokenizer(), [])
 
+    def test_budget_uses_exact_effort_and_preserves_off(self):
+        class Tokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                self.kwargs = kwargs
+                return [1] * (23 if kwargs.get("reasoning_effort") == "xhigh" else 11)
+        tokenizer = Tokenizer()
+        for effort in ("low", "medium", "xhigh"):
+            expected = 23 if effort == "xhigh" else 11
+            self.assertEqual(formatted_token_count(tokenizer, [], reasoning_effort=effort), expected)
+            self.assertEqual(tokenizer.kwargs["reasoning_effort"], effort)
+        formatted_token_count(tokenizer, [], thinking=False, reasoning_effort="xhigh")
+        self.assertNotIn("reasoning_effort", tokenizer.kwargs)
+        self.assertFalse(tokenizer.kwargs["enable_thinking"])
+        with self.assertRaises(ValueError):
+            formatted_token_count(tokenizer, [], reasoning_effort="high")
+
     def test_whole_source_and_budget(self):
         text = "int first() { return 1; }\nint last() { return first(); }\n"
         plan = make_plan(text, "fixture.cpp", "review", 4096, 512, count)

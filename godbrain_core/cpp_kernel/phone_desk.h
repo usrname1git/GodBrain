@@ -3,6 +3,7 @@
 #include "httplib.h"
 #include "json.hpp"
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -21,6 +22,29 @@ json rustdesk_status(const std::string& service_state, bool server_observed,
 json read_rustdesk_status();
 std::string owner_login(const json& status);
 
+struct ProxyProcessIdentity {
+    unsigned long pid = 0;
+    unsigned long parent_pid = 0;
+    unsigned long session = 0;
+    long long created = 0;
+    std::wstring image;
+};
+bool valid_proxy_lineage(const ProxyProcessIdentity& service,
+                         const ProxyProcessIdentity& peer);
+bool same_proxy_process(const ProxyProcessIdentity& before,
+                        const ProxyProcessIdentity& after);
+
+class OwnerIdentity {
+public:
+    std::string resolve(bool trusted_proxy, const std::function<json()>& read,
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+
+private:
+    std::mutex mutex_;
+    std::string login_;
+    std::chrono::steady_clock::time_point next_attempt_{};
+};
+
 class Server {
 public:
     Server(std::string token, const std::string& html_path);
@@ -33,7 +57,7 @@ private:
     httplib::Server server_;
     std::thread thread_;
     std::string token_;
-    std::string owner_login_;
+    OwnerIdentity owner_;
     std::string html_;
     std::mutex mutex_;
     json cached_;

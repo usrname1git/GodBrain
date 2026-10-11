@@ -10,6 +10,7 @@ $self = (& $exe --self-test) | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or $self.self_test -ne "passed") { throw "Native monitor checks failed." }
 foreach ($args in @(
     @("--set", "brightness", "101"), @("--set", "contrast", "-1"),
+    @("--set", "contrast", "0"), @("--set", "contrast", "24"),
     @("--set", "dark_stabilizer", "4"), @("--set", "dark_stabilizer", "65535"),
     @("--set", "preset", "hdr"), @("--set", "input", "1"),
     @("--set", "brightness", "10.5"), @("--set", "brightness", "10;exit"),
@@ -19,6 +20,17 @@ foreach ($args in @(
     $reply = (& $exe @args) | ConvertFrom-Json
     if ($LASTEXITCODE -eq 0 -or $reply.ok -ne $false -or $reply.may_have_changed -ne $false -or -not $reply.error) {
         throw "Invalid native request was not rejected before monitor access: $($args -join ' ')"
+    }
+    Assert-DeskMonitorContrast "25"
+    Assert-DeskMonitorContrast "100"
+    foreach ($value in @("0", "24", "101", "-1", "24.9", "25;exit", "4294967296")) {
+        $rejected = $false
+        try { Invoke-DeskMonitor -Control contrast -Value $value -RepoRoot "fixture-missing-repo" | Out-Null }
+        catch {
+            if ($_.Exception.Message -notlike "Contrast must be between 25 and 100*") { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw "Contrast gate did not run before helper lookup/start: $value" }
     }
 }
 try {
@@ -72,6 +84,9 @@ foreach ($mutate in @(
 $receipt = $fixture | ConvertFrom-Json
 $receipt.PSObject.Properties.Remove("action")
 Assert-DeskMonitorResult $receipt "read" | Out-Null
+$receipt.contrast.current = 10
+Assert-DeskMonitorResult $receipt "read" | Out-Null
+$receipt.contrast.current = 75
 $receipt | Add-Member changed ([pscustomobject]@{ control = "brightness"; requested = "75"; verified = $true })
 Assert-DeskMonitorResult $receipt "brightness" "75" | Out-Null
 $receipt.changed.verified = $false
@@ -117,6 +132,18 @@ $invokeDefinition = $wrapperAst.Find({
 }, $true)
 try {
     . ([scriptblock]::Create($invokeDefinition.Extent.Text.Replace('[Diagnostics.Process]::new()', '$script:monitorTestProcess')))
+    foreach ($value in @("25", "100")) {
+        $safe = $fixture | ConvertFrom-Json
+        $safe.PSObject.Properties.Remove("action")
+        $safe.contrast.current = [int]$value
+        $safe | Add-Member changed ([pscustomobject]@{ control = "contrast"; requested = $value; verified = $true })
+        $script:monitorTestProcess = [DeskMonitorFixtureProcess]::new(($safe | ConvertTo-Json -Depth 8 -Compress))
+        $result = Invoke-DeskMonitor -Control contrast -Value $value -RepoRoot $repo
+        if ($result.contrast.current -ne [int]$value -or $script:monitorTestProcess.Starts -ne 1 -or
+                ($script:monitorTestProcess.StartInfo.ArgumentList -join " ") -ne "--set contrast $value") {
+            throw "Allowed contrast boundary was not sent exactly once: $value"
+        }
+    }
     foreach ($case in @(
         @{ Reply = $fixture; Exit = 0; Complete = $true; Error = $null; Kills = 0 },
         @{ Reply = '{"schema_version":1,"ok":false,"error":"fixture cycle write failed","may_have_changed":true}'; Exit = 1; Complete = $true; Error = "*may have reached*current level is unavailable*No automatic retry*"; Kills = 0 },
@@ -143,9 +170,13 @@ try {
 } finally { . (Join-Path $PSScriptRoot "GodBrain-DeskMonitor.ps1") }
 Write-Output "PASS: native capability gates, single E3=0x10 write including failure/no-retry, bounds, invalid arguments, honest cycle receipts and preserved scalar verification; no monitor access."
 Write-Output "PASS: cycle wrapper timeout/failed-write/malformed-reply uncertainty, one request and exact-owned cleanup using process fixtures."
+Write-Output "PASS: contrast 25-100 write policy, early unsafe-input rejection, accepted boundaries and honest lower readbacks; inactive-first Dell discovery fixtures."
 
 if (-not $LiveMonitor) { return }
 $baseline = Invoke-DeskMonitor
+if ($baseline.contrast.supported -and $baseline.contrast.current -lt 25) {
+    throw "Live test cannot restore contrast below 25; no writes performed."
+}
 foreach ($id in @("brightness", "contrast", "preset")) {
     if (-not $baseline.$id.supported) { throw "Live check requires readable $id." }
 }
@@ -158,7 +189,8 @@ $restoreErrors = @()
 try {
     foreach ($id in @("brightness", "contrast")) {
         $initial = [int]$baseline.$id.current
-        $value = if ($initial -gt 0) { $initial - 1 } else { 1 }
+        $minimum = if ($id -eq "contrast") { 25 } else { 0 }
+        $value = if ($initial -gt $minimum) { $initial - 1 } else { $initial + 1 }
         $changed = Invoke-DeskMonitor -Control $id -Value ([string]$value)
         if ($changed.$id.current -ne $value) { throw "$id readback mismatch." }
         Invoke-DeskMonitor -Control $id -Value ([string]$initial) | Out-Null

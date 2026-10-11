@@ -84,6 +84,28 @@ Assert-Fails { Get-DeskModelLaunchOptions "27b" $profile }
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("desk-model-" + [guid]::NewGuid().ToString("N"))
 [void][IO.Directory]::CreateDirectory($fixture)
 try {
+    $thinkingPath = Join-Path $fixture "thinking.txt"
+    $defaultThinking = Read-DeskReasoningPreference $thinkingPath
+    Assert ($defaultThinking.Enabled -and -not $defaultThinking.Effort -and $defaultThinking.Value -eq "on") "Missing preference changed default."
+    foreach ($value in @("on", "off", "low", "medium", "xhigh")) {
+        Write-DeskReasoningPreference $thinkingPath $value
+        $preference = Read-DeskReasoningPreference $thinkingPath
+        Assert ($preference.Value -ceq $value) "Reasoning preference did not round-trip."
+        Assert ($preference.Enabled -eq ($value -ne "off")) "Reasoning enable state changed."
+        Assert ([IO.File]::ReadAllBytes($thinkingPath)[0] -ne 239) "Reasoning file has a BOM."
+    }
+    foreach ($value in @("true", "1", "false", "0", " MEDIUM `r`n")) {
+        [IO.File]::WriteAllText($thinkingPath, $value)
+        $preference = Read-DeskReasoningPreference $thinkingPath
+        Assert ($preference.Enabled -eq ($value -notin @("false", "0"))) "Legacy thinking preference changed."
+    }
+    foreach ($value in @("", "high", "max", "low`non", ("x" * 65))) {
+        [IO.File]::WriteAllText($thinkingPath, $value)
+        Assert-Fails { Read-DeskReasoningPreference $thinkingPath }
+    }
+    $before = [IO.File]::ReadAllText($thinkingPath)
+    Assert-Fails { Write-DeskReasoningPreference $thinkingPath "invalid" }
+    Assert ([IO.File]::ReadAllText($thinkingPath) -ceq $before) "Invalid save overwrote the preference."
     $path = Join-Path $fixture "profiles.json"
     Write-DeskModelProfiles $path @{ "27b" = (Get-DeskModelDefaults "27b") }
     $state = Read-DeskModelProfiles $path
@@ -116,6 +138,7 @@ try {
     function Invoke-RestMethod {
         param($Uri, $Method, $Body, $ContentType, $TimeoutSec)
         if ($Uri -like "*/health") { return @{ backend = "exl3"; busy = $script:busy; model = "fixture-model" } }
+        if ($Uri -like "*/models") { return @{data=@(@{id="fixture-model";supported_reasoning_efforts=$script:efforts})} }
         $script:requests += ($Body | ConvertFrom-Json)
         return @{ choices = @(@{ finish_reason = $script:finish; message = @{ content = "fixture finding" } })
             usage = @{ prompt_tokens = $script:promptTokens; completion_tokens = 4 } }
@@ -137,6 +160,22 @@ try {
     $script:promptTokens = 2048
     Assert-Fails { Invoke-DeskReviewCompletion $messages "fixture-model" 512 0 1 }
     $script:promptTokens = 123
+    $script:efforts = @("low", "medium", "xhigh")
+    foreach ($effort in $script:efforts) {
+        [void](Invoke-DeskReviewCompletion $messages "fixture-model" 512 0 123 $true $effort)
+        Assert ($script:requests[-1].reasoning_effort -ceq $effort) "Review effort was not forwarded."
+        Assert ($script:requests[-1].max_tokens -eq 512) "Effort changed the output limit."
+    }
+    $script:efforts = @()
+    $count = $script:requests.Count
+    Assert-Fails { Invoke-DeskReviewCompletion $messages "fixture-model" 512 0 123 $true "xhigh" }
+    Assert ($script:requests.Count -eq $count) "Unsupported effort generated anyway."
+    $script:efforts = "xhigh"
+    Assert-Fails { Invoke-DeskReviewCompletion $messages "fixture-model" 512 0 123 $true "xhigh" }
+    Assert ($script:requests.Count -eq $count) "Malformed capability list generated anyway."
+    Assert-Fails { Assert-DeskReasoningCapability @{ data = @{ id = "fixture-model"; supported_reasoning_efforts = @("xhigh") } } "fixture-model" "xhigh" }
+    [void](Invoke-DeskReviewCompletion $messages "fixture-model" 512 0 123 $false "xhigh")
+    Assert (-not $script:requests[-1].reasoning_effort -and -not $script:requests[-1].chat_template_kwargs.enable_thinking) "Thinking-off request retained effort."
 
     $Repo = $fixture
     $Kit = $fixture
@@ -155,7 +194,7 @@ try {
         param($Uri, $Method, $Body, $ContentType, $TimeoutSec)
         $model = "qwen3.8-27b-exl3-3.5bpw"
         if ($Uri -like "*/health") { return @{ backend = "exl3"; busy = $false; model = $model; context_length = 8192 } }
-        if ($Uri -like "*/models") { return @{ data = @(@{ id = $model }) } }
+        if ($Uri -like "*/models") { return @{ data = @(@{ id = $model; supported_reasoning_efforts = @("low", "medium", "xhigh") }) } }
         $script:reviewRequests += ($Body | ConvertFrom-Json)
         $finish = if ($script:reviewRequests.Count -eq $script:failPart) { "length" } else { "stop" }
         return @{ choices = @(@{ finish_reason = $finish; message = @{ content = "fixture candidate" } })
@@ -185,6 +224,18 @@ try {
         Assert ($request.chat_template_kwargs.enable_thinking -and $request.tool_choice -eq "none") "Review thinking/tool policy changed."
     }
     Assert ($script:sourceReads -eq 2 -and $receipt.source_sha256.Length -eq 64) "Source hash was not checked again."
+
+    Write-DeskReasoningPreference (Join-Path $fixture "logs\thinking.txt") "xhigh"
+    $script:sourceReads = 0; $script:plannerRequests = @(); $script:reviewRequests = @()
+    [void](Invoke-DeskCodeReview "fixture.cpp" "check high effort")
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+    Assert ($receipt.reasoning_effort -ceq "xhigh") "Receipt lost effort."
+    foreach ($request in $script:plannerRequests) {
+        Assert ($request.reasoning_effort -ceq "xhigh" -and $request.thinking) "CPU planner lost effort."
+    }
+    foreach ($request in $script:reviewRequests) {
+        Assert ($request.reasoning_effort -ceq "xhigh" -and $request.chat_template_kwargs.enable_thinking) "Part or synthesis lost effort."
+    }
 
     [IO.File]::WriteAllText((Join-Path $fixture "logs\thinking.txt"), "off")
     $script:sourceReads = 0; $script:sourceChanges = $true

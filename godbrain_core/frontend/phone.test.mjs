@@ -139,16 +139,17 @@ test('Phone Desk mobile rendering, fail-closed states and GET-only polling', asy
 });
 
 test('Live mobile route', { skip: process.env.GODBRAIN_PHONE_LIVE_TEST !== '1' }, async () => {
-  assert.ok(process.env.GODBRAIN_API_TOKEN, 'Live check needs GODBRAIN_API_TOKEN');
+  const serveUrl = process.env.GODBRAIN_PHONE_SERVE_URL;
+  if (!serveUrl) assert.ok(process.env.GODBRAIN_API_TOKEN, 'Live check needs GODBRAIN_API_TOKEN');
   const browser = await launchBrowser();
   const page = await browser.newPage({
     viewport: { width: 390, height: 844 }, isMobile: true,
-    extraHTTPHeaders: { Authorization: 'Bearer ' + process.env.GODBRAIN_API_TOKEN },
+    extraHTTPHeaders: serveUrl ? {} : { Authorization: 'Bearer ' + process.env.GODBRAIN_API_TOKEN },
   });
   const requests = [];
   page.on('request', request => requests.push(request));
   try {
-    const response = await page.goto('http://127.0.0.1:8085/');
+    const response = await page.goto((serveUrl || 'http://127.0.0.1:8085') + '/');
     assert.equal(response.status(), 200);
     await page.waitForFunction(() => document.getElementById('stamp').textContent.startsWith('Checked'));
     assert.equal(await page.locator('#error').isVisible(), false);

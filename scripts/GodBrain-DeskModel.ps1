@@ -1,3 +1,36 @@
+function Read-DeskReasoningPreference([string]$Path) {
+    $value = if (Test-Path -LiteralPath $Path) {
+        if ((Get-Item -LiteralPath $Path).Length -gt 64) { throw "Reasoning preference exceeds 64 bytes: $Path" }
+        [IO.File]::ReadAllText($Path).Trim().ToLowerInvariant()
+    } else { "on" }
+    switch ($value) {
+        { $_ -in @("on", "true", "1") } { return @{ Enabled = $true; Effort = ""; Value = "on" } }
+        { $_ -in @("off", "false", "0") } { return @{ Enabled = $false; Effort = ""; Value = "off" } }
+        { $_ -in @("low", "medium", "xhigh") } { return @{ Enabled = $true; Effort = $value; Value = $value } }
+        default { throw "Invalid reasoning preference: $Path. Select Default, Off, Low, Medium or High." }
+    }
+}
+
+function Write-DeskReasoningPreference([string]$Path, [string]$Value) {
+    if ($Value -notin @("on", "off", "low", "medium", "xhigh")) { throw "Unsupported reasoning preference." }
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path))
+    $temporary = $Path + "." + [guid]::NewGuid().ToString("N") + ".tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, $Value + "`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary, $Path, $true)
+    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
+}
+
+function Assert-DeskReasoningCapability($Models, [string]$Model, [string]$Effort) {
+    if (-not $Effort) { return }
+    $match = @($Models.data | Where-Object { $_.id -ceq $Model })
+    if ($Models.data -isnot [array] -or $match.Count -ne 1 -or
+        $match[0].supported_reasoning_efforts -isnot [array] -or
+        $Effort -cnotin $match[0].supported_reasoning_efforts) {
+        throw "The running model does not advertise reasoning effort $Effort. Select Default or Off; no generation was sent."
+    }
+}
+
 function Get-DeskModelDefaults([string]$Model) {
     switch ($Model) {
         "27b" { return @{ Context = 36864; CacheQuant = "4"; Mtp = $true; Budget = 13.5; CpuCache = 0; Vision = $false } }
@@ -124,7 +157,7 @@ function Invoke-DeskReviewPlanner($Request) {
 }
 
 function Invoke-DeskReviewCompletion($Messages, [string]$Model, [int]$Output, [int]$Context = 0,
-    [int]$PlannedPrompt = 0, [bool]$Thinking = $true) {
+    [int]$PlannedPrompt = 0, [bool]$Thinking = $true, [string]$Effort = "") {
     $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
     if ($health.backend -ne "exl3" -or $health.busy) { throw "EXL3 is unavailable or busy. Review was not queued." }
     if ($health.model -cne $Model -or ($Context -and $health.context_length -ne $Context)) {
@@ -132,6 +165,11 @@ function Invoke-DeskReviewCompletion($Messages, [string]$Model, [int]$Output, [i
     }
     $body = @{ model = $Model; messages = @($Messages); max_tokens = $Output; stream = $false
         temperature = 0.1; chat_template_kwargs = @{ enable_thinking = $Thinking }; tool_choice = "none" }
+    if ($Thinking -and $Effort) {
+        $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
+        Assert-DeskReasoningCapability $models $Model $Effort
+        $body.reasoning_effort = $Effort
+    }
     $response = Invoke-RestMethod "http://127.0.0.1:8888/v1/chat/completions" -Method Post `
         -Body ($body | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json; charset=utf-8" -TimeoutSec 600
     if ($response.error) { throw "Review failed: $($response.error | ConvertTo-Json -Compress)" }
@@ -198,18 +236,18 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
         default { throw "No trusted local tokenizer mapping for the running model '$model'." }
     }
     $output = [Math]::Min(8192, [int]$health.context_length / 4)
-    $thinkingPath = Join-Path $Repo "logs\thinking.txt"
-    $thinking = if (Test-Path -LiteralPath $thinkingPath) {
-        (Get-Content -LiteralPath $thinkingPath -Raw).Trim().ToLowerInvariant() -notin @("off", "false", "0")
-    } else { $true }
+    $preference = Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")
+    $thinking = [bool]$preference.Enabled
+    $effort = [string]$preference.Effort
+    Assert-DeskReasoningCapability $models $model $effort
     $request = @{ op = "plan"; tokenizer = $tokenizer; name = $Path; task = $Task; text = $text
-        context = [int]$health.context_length; output = [int]$output; thinking = $thinking }
+        context = [int]$health.context_length; output = [int]$output; thinking = $thinking; reasoning_effort = $effort }
     $plan = Invoke-DeskReviewPlanner $request
     $receiptPath = Join-Path $Repo "logs\last-code-review.json"
     [void][IO.Directory]::CreateDirectory((Split-Path $receiptPath -Parent))
     $receipt = @{ version = 1; status = "running"; trust_tier = "candidate"; path = $Path
         source_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-        model = $model; context = $plan.context; thinking_enabled = $thinking
+        model = $model; context = $plan.context; thinking_enabled = $thinking; reasoning_effort = $effort
         parts = @(); lines = $plan.lines; at = [datetime]::UtcNow.ToString("o") }
     $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8
     try {
@@ -220,7 +258,7 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
         } else { $output }
         if ($partOutput -lt 256) { throw "Context is too small for a reliable synthesis; increase context." }
         foreach ($chunk in $plan.chunks) {
-            $response = Invoke-DeskReviewCompletion $chunk.messages $model $partOutput $plan.context $chunk.prompt_tokens $thinking
+            $response = Invoke-DeskReviewCompletion $chunk.messages $model $partOutput $plan.context $chunk.prompt_tokens $thinking $effort
             $reports.Add("Lines $($chunk.start)-$($chunk.end):`n$($response.choices[0].message.content)")
             $receipt.parts += @{ start = $chunk.start; end = $chunk.end; split = $chunk.split
                 prompt_tokens = $response.usage.prompt_tokens; completion_tokens = $response.usage.completion_tokens }
@@ -233,7 +271,7 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
             $request.reports = @($reports.ToArray())
             $request.shared = $plan.shared
             $synthesis = Invoke-DeskReviewPlanner $request
-            $final = Invoke-DeskReviewCompletion $synthesis.messages $model $output $plan.context $synthesis.prompt_tokens $thinking
+            $final = Invoke-DeskReviewCompletion $synthesis.messages $model $output $plan.context $synthesis.prompt_tokens $thinking $effort
             $answer = [string]$final.choices[0].message.content
             $receipt.synthesis_prompt_tokens = $final.usage.prompt_tokens
         }

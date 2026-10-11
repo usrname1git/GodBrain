@@ -1,3 +1,12 @@
+function Assert-DeskMonitorContrast {
+    param([string]$Value)
+    [uint32]$contrast = 0
+    if ($Value -notmatch '^[0-9]+$' -or -not [uint32]::TryParse($Value, [ref]$contrast) -or
+            $contrast -lt 25 -or $contrast -gt 100) {
+        throw "Contrast must be between 25 and 100."
+    }
+}
+
 function Assert-DeskMonitorResult {
     param($Result, [string]$Control = "read", [string]$Value)
     if ($Result.schema_version -ne 1 -or $Result.ok -isnot [bool] -or -not $Result.ok) {
@@ -77,6 +86,9 @@ function Invoke-DeskMonitor {
         [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
         [ValidateRange(1, 60)][int]$TimeoutSeconds = 15
     )
+    if ($Control -eq "contrast") {
+        Assert-DeskMonitorContrast $Value
+    }
     if ($Control -eq "dark_stabilizer_cycle" -and -not [string]::IsNullOrEmpty($Value)) {
         throw "Dark Stabilizer cycling takes no level or value."
     }
