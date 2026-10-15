@@ -223,6 +223,28 @@ try {
 
     & {
         . $helper
+        $script:qfnLauncher = [pscustomobject]@{
+            Name = "pwsh.exe"; ProcessId = 456
+            CommandLine = "pwsh.exe -NoProfile -File `"$repo\scripts\Start-QwenFlashNext.ps1`""
+        }
+        $script:stoppedQfn = @()
+        function Get-CimInstance {
+            param($ClassName, $Filter, $ErrorAction)
+            if ($script:qfnLauncher) { return $script:qfnLauncher }
+            return @()
+        }
+        function Stop-Cs2OwnedProcess {
+            param($Process)
+            $script:stoppedQfn += $Process.ProcessId
+            $script:qfnLauncher = $null
+        }
+        function Get-NetTCPConnection { param($State, $ErrorAction); return @() }
+        Stop-Cs2GpuRuntimes $repo
+        Assert-Equal ($script:stoppedQfn -join ",") "456"
+    }
+
+    & {
+        . $helper
         $script:census = 0; $script:lateStopped = @()
         $script:lateLauncher = [pscustomobject]@{
             ProcessId = 610; Name = "pwsh.exe"
@@ -405,9 +427,10 @@ function Resume-GodBrainAfterCs2 { throw "Automatic resume is forbidden." }
         function Set-HostService { param($Name, $Action); $script:tailCalls += "$Name/$Action" }
         function Get-ServiceWord { param($Name); return "running" }
         function Set-TailscaleForCs2 { param($Up); $script:tailCalls += "reconnect:$Up" }
+        function Start-DeskPhoneServe { $script:tailCalls += "phone-serve" }
         function Update-Status {}
         Start-TailscaleDesk
-        Assert-Equal ($script:tailCalls -join ",") "Tailscale/start,reconnect:True"
+        Assert-Equal ($script:tailCalls -join ",") "Tailscale/start,reconnect:True,phone-serve"
     }
     Write-Output "PASS: CS2 manual launch/hold, model identity, task failure, gym pause and Tailscale routing."
 } finally {

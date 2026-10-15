@@ -154,6 +154,7 @@ function Stop-Cs2GpuRuntimes([string]$RepoRoot) {
         (Join-Path $RepoRoot "scripts\Watch-FrontendGymOvernight.ps1"),
         (Join-Path $RepoRoot "scripts\Invoke-FrontendGymMaintenance.ps1"),
         (Join-Path $RepoRoot "scripts\Start-QwenVL.ps1"),
+        (Join-Path $RepoRoot "scripts\Start-QwenFlashNext.ps1"),
         (Join-Path $RepoRoot "scripts\Start-QwenImage.ps1"),
         (Join-Path $RepoRoot "scripts\Start-LlamaServer.ps1"),
         "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-PaperQwen.ps1",

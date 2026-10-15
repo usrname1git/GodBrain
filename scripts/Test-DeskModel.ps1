@@ -8,7 +8,7 @@ function Assert-Fails([scriptblock]$Action) {
     try { & $Action } catch { $failed = $true }
     Assert $failed "Expected explicit failure."
 }
-foreach ($model in @("27b", "uncensored", "vl")) {
+foreach ($model in @("27b", "uncensored", "vl", "qfn")) {
     $profile = Get-DeskModelDefaults $model
     $args = Get-DeskModelLaunchOptions $model $profile
     Assert ($args[1] -eq [string]$profile.Context) "Wrong context argument."
@@ -16,6 +16,19 @@ foreach ($model in @("27b", "uncensored", "vl")) {
     Assert (($args -contains "-NumDraftTokens") -eq $profile.Mtp) "Wrong MTP window argument."
     Assert (($args -contains "-Vision") -eq ($model -eq "27b")) "Vision belongs only on the 27B launcher."
 }
+$qfn = Get-DeskModelDefaults "qfn"
+Assert ($qfn.CacheQuant -ceq "fp16" -and $qfn.Context -eq 16384 -and $qfn.CpuExperts -eq 432 -and $qfn.CpuCache -eq 0) "QFN quality/fit defaults changed."
+foreach ($change in @(
+    @{Context=71680}, @{CpuExperts=999}, @{CpuExperts="bad"}, @{CpuCache=1}, @{Budget=15}, @{Vision="false"}, @{Vision=$true}
+)) {
+    $profile = Get-DeskModelDefaults "qfn"
+    foreach ($key in $change.Keys) { $profile[$key] = $change[$key] }
+    Assert-Fails { Get-DeskModelLaunchOptions "qfn" $profile }
+}
+$qfn.Mtp = $true
+$qfnArgs = Get-DeskModelLaunchOptions "qfn" $qfn
+Assert ($qfnArgs[$qfnArgs.IndexOf("-NumDraftTokens") + 1] -ceq "3") "QFN draft window is not three tokens."
+Assert ($qfnArgs[$qfnArgs.IndexOf("-CpuExperts") + 1] -ceq "432") "QFN expert split did not reach its launcher."
 $profile = Get-DeskModelDefaults "27b"
 Assert ($profile.Vision -eq $false) "The vision tower defaults on."
 $visionOff = Get-DeskModelLaunchOptions "27b" $profile
@@ -107,9 +120,32 @@ try {
     Assert-Fails { Write-DeskReasoningPreference $thinkingPath "invalid" }
     Assert ([IO.File]::ReadAllText($thinkingPath) -ceq $before) "Invalid save overwrote the preference."
     $path = Join-Path $fixture "profiles.json"
-    Write-DeskModelProfiles $path @{ "27b" = (Get-DeskModelDefaults "27b") }
+    Write-DeskModelProfiles $path @{ "27b" = (Get-DeskModelDefaults "27b"); "qfn" = (Get-DeskModelDefaults "qfn") }
     $state = Read-DeskModelProfiles $path
     Assert ($state["27b"].Context -eq 36864 -and $state["27b"].Mtp) "Saved settings did not round-trip."
+    Assert ($state["qfn"].CpuExperts -eq 432 -and $state["qfn"].CacheQuant -ceq "fp16") "QFN profile did not round-trip."
+    & {
+        . (Join-Path $PSScriptRoot "Start-QwenFlashNext.ps1")
+        $Repo = $fixture
+        $statusSpec = [pscustomobject]@{RepoRoot=$fixture}
+        $script:qfnFixtureLaunchers = @([pscustomobject]@{ProcessId=$PID})
+        function Get-DeskQfnLaunchers { return $script:qfnFixtureLaunchers }
+        function Stop-Cs2OwnedProcess {
+            param($Process)
+            Assert ($Process.ProcessId -eq $PID) "Stop targeted an unrecognized launcher."
+            $script:qfnFixtureLaunchers = @()
+        }
+        Write-QfnLaunchStatus $statusSpec "checking" "fixture checks"
+        Assert ((Read-DeskQfnLaunchStatus).state -ceq "checking") "An owned checking launcher lost its state."
+        $script:qfnFixtureLaunchers = @()
+        Assert ((Read-DeskQfnLaunchStatus).state -ceq "stopped") "An exited launcher was still reported as loading."
+        Write-QfnLaunchStatus $statusSpec "failed" "fixture failure"
+        Assert ((Read-DeskQfnLaunchStatus).message -ceq "fixture failure") "Desk hid its persisted failure."
+        $script:qfnFixtureLaunchers = @([pscustomobject]@{ProcessId=$PID})
+        Assert (Stop-DeskQfnLauncher) "Owned QFN launcher was not stopped."
+        Assert ((Read-DeskQfnLaunchStatus).state -ceq "stopped") "Explicit Stop was reported as a launch failure."
+        Assert (-not (Stop-DeskQfnLauncher)) "A missing QFN launcher was reported as stopped."
+    }
     foreach ($vision in @("false", "true", 0, 1, $null)) {
         $profile = Get-DeskModelDefaults "27b"; $profile.Vision = $vision
         [IO.File]::WriteAllText($path, (@{version=1;profiles=@{"27b"=$profile}} | ConvertTo-Json -Depth 8))
@@ -122,7 +158,10 @@ try {
     [IO.File]::WriteAllText($launcher, 'param($CacheSize,$CacheQuant,$CpuCacheSizeGB,$DraftMode,$GpuMemoryGB,$NumDraftTokens,$Vision)')
     Test-DeskModelLauncher $launcher (Get-DeskModelLaunchOptions "27b" (Get-DeskModelDefaults "27b"))
     Assert-Fails { Test-DeskModelLauncher $launcher @("-Unsupported", "value") }
-    $launchers = @((Join-Path $PSScriptRoot "Start-QwenVL.ps1"))
+    $launchers = @(
+        (Join-Path $PSScriptRoot "Start-QwenVL.ps1"),
+        (Join-Path $PSScriptRoot "Start-QwenFlashNext.ps1")
+    )
     if ($InstalledLaunchers) {
         $launchers += @(
             "C:\nvme\Qwen3.8-27B-16gb\paper-godbrain\Start-Qwen.ps1",
@@ -130,7 +169,7 @@ try {
         )
     }
     foreach ($file in $launchers) {
-        $model = if ($file -like "*VL*") { "vl" } elseif ($file -like "*Uncensored*") { "uncensored" } else { "27b" }
+        $model = if ($file -like "*FlashNext*") { "qfn" } elseif ($file -like "*VL*") { "vl" } elseif ($file -like "*Uncensored*") { "uncensored" } else { "27b" }
         Test-DeskModelLauncher $file (Get-DeskModelLaunchOptions $model (Get-DeskModelDefaults $model))
     }
     $reports = [Collections.Generic.List[string]]::new()
@@ -184,6 +223,7 @@ try {
     $script:plannerRequests = @()
     $script:reviewRequests = @()
     $script:failPart = 0
+    $script:reviewModel = "qwen3.8-27b-exl3-3.5bpw"
     function Read-DeskGrantedBytes {
         param($Path, $Maximum, $Purpose)
         $script:sourceReads++
@@ -192,7 +232,7 @@ try {
     }
     function Invoke-RestMethod {
         param($Uri, $Method, $Body, $ContentType, $TimeoutSec)
-        $model = "qwen3.8-27b-exl3-3.5bpw"
+        $model = $script:reviewModel
         if ($Uri -like "*/health") { return @{ backend = "exl3"; busy = $false; model = $model; context_length = 8192 } }
         if ($Uri -like "*/models") { return @{ data = @(@{ id = $model; supported_reasoning_efforts = @("low", "medium", "xhigh") }) } }
         $script:reviewRequests += ($Body | ConvertFrom-Json)
@@ -224,6 +264,10 @@ try {
         Assert ($request.chat_template_kwargs.enable_thinking -and $request.tool_choice -eq "none") "Review thinking/tool policy changed."
     }
     Assert ($script:sourceReads -eq 2 -and $receipt.source_sha256.Length -eq 64) "Source hash was not checked again."
+    $script:reviewModel = "qwen3.8-flash-next-exl3-3.05bpw"
+    [void](Invoke-DeskCodeReview "fixture.cpp" "QFN review")
+    Assert ($script:plannerRequests[-1].tokenizer -like "*Qwen3.8-Flash-Next-EXL3-3.05bpw\tokenizer.json") "QFN used another checkpoint's tokenizer."
+    $script:reviewModel = "qwen3.8-27b-exl3-3.5bpw"
 
     Write-DeskReasoningPreference (Join-Path $fixture "logs\thinking.txt") "xhigh"
     $script:sourceReads = 0; $script:plannerRequests = @(); $script:reviewRequests = @()

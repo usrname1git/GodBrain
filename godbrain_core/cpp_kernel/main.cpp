@@ -3307,7 +3307,8 @@ std::string run_colibri_serve(
     const char* serve_host = kColibriServeHost,
     int serve_port = kColibriServePort,
     const std::string& serve_model = {},
-    bool exl3_mouth = false) {
+    bool exl3_mouth = false,
+    const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth) {
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3351,6 +3352,14 @@ std::string run_colibri_serve(
     std::string assembled;
     std::string last_reason;
     std::string last_tool_out;
+    const auto no_final_answer = [&](const std::string& reason) {
+        const std::string error =
+            reason == "length"
+                ? "Error: model reached the output limit without a final answer."
+                : "Error: model returned no final answer.";
+        if (spoken) *spoken = error;
+        return error;
+    };
     const bool native_tools =
         tool_mouth && !apply_cont &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
@@ -3471,6 +3480,7 @@ std::string run_colibri_serve(
             body["parallel_tool_calls"] = true;
         }
         std::string piece;
+        std::string reasoning_piece;
         std::string sse_buf;
         std::string finish_reason;
         bool heading_loop = false;
@@ -3490,7 +3500,7 @@ std::string run_colibri_serve(
                     err = "Error: EXL3 on :8888 returned no body. Ask again. "
                           "Gemma stays paused.";
                 } else {
-                    maybe_restart_mouth();
+                    restart_mouth(false);
                     err = colibri_serve_up()
                               ? "Error: llama-server returned no body (cut or timeout). "
                                 "Ask again. Not Colibri."
@@ -3508,13 +3518,26 @@ std::string run_colibri_serve(
             }
             try {
                 const json parsed = json::parse(response->body);
-                const auto& msg = parsed.at("choices").at(0).at("message");
+                const auto& choice = parsed.at("choices").at(0);
+                const auto& msg = choice.at("message");
+                if (choice.contains("finish_reason") &&
+                    choice["finish_reason"].is_string()) {
+                    finish_reason = choice["finish_reason"].get<std::string>();
+                }
                 if (msg.contains("content") && msg["content"].is_string()) {
                     assembled = msg["content"].get<std::string>();
                 }
+                if (msg.contains("reasoning_content") && msg["reasoning_content"].is_string()) {
+                    reasoning_piece = msg["reasoning_content"].get<std::string>();
+                }
+                if (unused49::contains(reasoning_piece)) unused49_seen = true;
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
                     tool_acc = msg["tool_calls"];
                     finish_reason = "tool_calls";
+                }
+                if (trim_copy(assembled).empty() && tool_acc.empty()) {
+                    if (unused49_seen && llama_mouth && !exl3_mouth) restart_mouth(true);
+                    return no_final_answer(finish_reason);
                 }
             } catch (const json::exception&) {
                 return exl3_mouth
@@ -3531,15 +3554,19 @@ std::string run_colibri_serve(
                     sse_buf, data, len, piece, on_token, on_ping,
                     [&](const std::string& reason) { finish_reason = reason; },
                     spoken,
-                    &tool_acc);
-                if (!use_tools && is_generation_loop(piece)) {
+                    &tool_acc,
+                    &reasoning_piece);
+                if (!use_tools &&
+                    (is_generation_loop(piece) ||
+                     is_generation_loop(reasoning_piece))) {
                     heading_loop = true;
                     return false;
                 }
                 return true;
             });
         if (heading_loop) {
-            if (unused49::contains(piece)) unused49_seen = true;
+            if (unused49::contains(piece) ||
+                unused49::contains(reasoning_piece)) unused49_seen = true;
             piece = sanitize_oracle_body(piece);
             if (is_resume_jail(piece)) {
                 const size_t cut = piece.find("END>>");
@@ -3561,7 +3588,7 @@ std::string run_colibri_serve(
                     return err;
                 }
                 if (llama_mouth) {
-                    maybe_restart_mouth();
+                    restart_mouth(false);
                     std::string err =
                         colibri_serve_up()
                             ? "Error: llama-server returned no body (cut or timeout). "
@@ -3601,6 +3628,14 @@ std::string run_colibri_serve(
                          std::to_string(response->status) + ", say continue]";
             return assembled;
         }
+        last_reason = finish_reason;
+        if (trim_copy(piece).empty() && !reasoning_piece.empty() &&
+            tool_acc.empty()) {
+            if (unused49::contains(reasoning_piece) && llama_mouth && !exl3_mouth) {
+                restart_mouth(true);
+            }
+            return no_final_answer(finish_reason);
+        }
         if (piece.empty()) {
             // Streaming already drained the body. Empty tokens on a later
             // auto-continue chunk means the model stopped, not a parse error.
@@ -3623,12 +3658,12 @@ std::string run_colibri_serve(
             }
             if (piece.empty()) break;
         }
-        const bool piece49 = unused49::contains(piece);
+        const bool piece49 =
+            unused49::contains(piece) || unused49::contains(reasoning_piece);
         if (piece49) unused49_seen = true;
         piece = sanitize_oracle_body(piece);
         piece = strip_replayed_prefix(assembled, piece);
         assembled += piece;
-        last_reason = finish_reason;
         if (piece49) break;
         if (heading_loop) break;
         if (finish_reason == "tool_calls") break;
@@ -3780,7 +3815,7 @@ std::string run_colibri_serve(
         if (spoken) spoken->clear();
         if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
             std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
-            maybe_restart_mouth(true);
+            restart_mouth(true);
             Sleep(5000);
             wait_mouth_up();
         }
@@ -3807,13 +3842,13 @@ std::string run_colibri_serve(
     if (spoken) spoken->clear();
     if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
         std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
-        maybe_restart_mouth(true);
+        restart_mouth(true);
         Sleep(5000);
         wait_mouth_up();
     }
     continue;
     }
-    if (last_reason == "length" && !tool_mouth) {
+    if (last_reason == "length" && !tool_mouth && !assembled.empty()) {
         assembled +=
             "\n[cut at 640 tokens — say continue]";
     }
@@ -3830,7 +3865,7 @@ std::string run_colibri_serve(
     }
     if (hit49 && unused49::keep_count(assembled) < 24) assembled.clear();
     if (hit49 && spoken && unused49::keep_count(*spoken) < 24) spoken->clear();
-    if ((unused49_seen || hit49) && llama_mouth) maybe_restart_mouth(true);
+    if ((unused49_seen || hit49) && llama_mouth && !exl3_mouth) restart_mouth(true);
     if (assembled.empty()) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         if (local_tools::looks_like_jarvis_need_ask(hop_hint)) {
@@ -3843,6 +3878,7 @@ std::string run_colibri_serve(
             assembled = tool_ledger;
         }
     }
+    if (trim_copy(assembled).empty()) return no_final_answer(last_reason);
     if (spoken && spoken->empty()) *spoken = assembled;
     if (chain_hops > 0 || !tool_ledger.empty()) {
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,

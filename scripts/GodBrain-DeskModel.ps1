@@ -36,12 +36,13 @@ function Get-DeskModelDefaults([string]$Model) {
         "27b" { return @{ Context = 36864; CacheQuant = "4"; Mtp = $true; Budget = 13.5; CpuCache = 0; Vision = $false } }
         "uncensored" { return @{ Context = 10240; CacheQuant = "fp16"; Mtp = $false; Budget = 13.5; CpuCache = 0 } }
         "vl" { return @{ Context = 57344; CacheQuant = "fp16"; Mtp = $false; Budget = 14.5; CpuCache = 4 } }
+        "qfn" { return @{ Context = 16384; CacheQuant = "fp16"; Mtp = $false; Budget = 13.5; CpuCache = 0; CpuExperts = 432 } }
         default { throw "No token context controls for $Model." }
     }
 }
 
 function Get-DeskModelLaunchOptions([string]$Model, $Profile) {
-    if ($Model -notin @("27b", "uncensored", "vl")) { throw "Unsupported text model." }
+    if ($Model -notin @("27b", "uncensored", "vl", "qfn")) { throw "Unsupported text model." }
     $context = 0
     if (-not [int]::TryParse([string]$Profile.Context, [ref]$context) -or
         $context -lt 256 -or $context -gt 262144 -or $context % 256) {
@@ -67,13 +68,25 @@ function Get-DeskModelLaunchOptions([string]$Model, $Profile) {
             $cpuCache -lt 0 -or $cpuCache -gt 64 -or [double]::IsNaN($cpuCache) -or [double]::IsInfinity($cpuCache)) {
             throw "RAM prefix cache must be 0..64 GiB."
         }
+        $experts = 0
+        if ($Model -eq "qfn") {
+            if ($context -gt 65536) { throw "Flash Next context is limited to 65536 until larger contexts are measured." }
+            if ($budget -gt 14.7 -or $cpuCache -ne 0) { throw "Flash Next requires GPU budget <=14.7 GiB and RAM prefix cache 0." }
+            if (-not [int]::TryParse([string]$Profile.CpuExperts, [ref]$experts) -or
+                $experts -notin @(400, 416, 432, 448, 464)) {
+                throw "Flash Next CPU experts must be 400, 416, 432, 448 or 464."
+            }
+            if ($Profile.ContainsKey("Vision") -and ($Profile.Vision -isnot [bool] -or $Profile.Vision)) {
+                throw "Flash Next's hardware-fit profile is text-only."
+            }
+        }
     }
     $args = @("-CacheSize", [string]$context, "-CacheQuant", [string]$Profile.CacheQuant)
     $args += @("-CpuCacheSizeGB", $cpuCache.ToString([Globalization.CultureInfo]::InvariantCulture))
     if ($Model -ne "vl") {
         $args += @("-DraftMode", $(if ($Profile.Mtp) { "Mtp" } else { "None" }), "-GpuMemoryGB",
             $budget.ToString([Globalization.CultureInfo]::InvariantCulture))
-        if ($Profile.Mtp) { $args += @("-NumDraftTokens", "4") }
+        if ($Profile.Mtp) { $args += @("-NumDraftTokens", $(if ($Model -eq "qfn") { "3" } else { "4" })) }
     }
     if ($Model -eq "27b") {
         $vision = $false
@@ -83,7 +96,57 @@ function Get-DeskModelLaunchOptions([string]$Model, $Profile) {
         }
         $args += @("-Vision", $(if ($vision) { "auto" } else { "off" }))
     }
+    if ($Model -eq "qfn") { $args += @("-CpuExperts", [string]$experts) }
     return ,$args
+}
+
+function Test-DeskQfnPrerequisites($Profile) {
+    $options = Get-DeskModelLaunchOptions "qfn" $Profile
+    . (Join-Path $PSScriptRoot "Start-QwenFlashNext.ps1")
+    $spec = New-QfnLaunchSpec -KitRoot $Kit -ModelRoot (Join-Path (Split-Path $Kit -Parent) "Qwen3.8-Flash-Next-EXL3-3.05bpw") `
+        -RepoRoot $Repo -CpuExperts $Profile.CpuExperts -CacheSize $Profile.Context -CacheQuant $Profile.CacheQuant `
+        -GpuMemoryGB ([double]$options[$options.IndexOf("-GpuMemoryGB") + 1]) -DraftMode $(if ($Profile.Mtp) { "Mtp" } else { "None" })
+    [void](Test-QfnPrerequisites $spec)
+    $hardware = Get-QfnHardware $Repo $spec.Info.ArgumentList[1]
+    if ($hardware.AvailableRamGiB -isnot [double] -or -not [double]::IsFinite($hardware.AvailableRamGiB)) {
+        throw "Available RAM probe is invalid; the current model was not stopped."
+    }
+    if ($hardware.AvailableRamGiB -lt $spec.RequiredRamGiB) {
+        throw ("Flash Next needs {0} GiB available RAM for this split; currently {1:F2} GiB. Close other applications and retry. No model was stopped." -f
+            $spec.RequiredRamGiB, $hardware.AvailableRamGiB)
+    }
+}
+
+function Get-DeskQfnLaunchers {
+    $path = Join-Path $Repo "scripts\Start-QwenFlashNext.ps1"
+    @(Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction Stop |
+        Where-Object { Test-Cs2ScriptProcess $_ $path -PowerShell })
+}
+
+function Stop-DeskQfnLauncher {
+    $launchers = @(Get-DeskQfnLaunchers)
+    foreach ($launcher in $launchers) { Stop-Cs2OwnedProcess $launcher }
+    if ($launchers.Count) {
+        . (Join-Path $PSScriptRoot "Start-QwenFlashNext.ps1")
+        Write-QfnLaunchStatus ([pscustomobject]@{ RepoRoot = $Repo }) "stopped" "QFN stopped by Desk; its Job releases server and CPU workers."
+        return $true
+    }
+    return $false
+}
+
+function Read-DeskQfnLaunchStatus {
+    $path = Join-Path $Repo "logs\qfn-last-launch.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    if ((Get-Item -LiteralPath $path).Length -gt 65536) { throw "QFN launch receipt exceeds its size limit." }
+    $status = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($status.version -ne 1 -or $status.state -notin @("checking", "loading", "failed", "stopped") -or
+        $status.message -isnot [string] -or $status.message.Length -gt 8192) { throw "Invalid QFN launch receipt." }
+    if ($status.state -in @("checking", "loading") -and
+        -not (@(Get-DeskQfnLaunchers) | Where-Object ProcessId -eq $status.launcher_pid)) {
+        $status.state = "stopped"
+        $status.message = "QFN launcher exited; no live readiness is claimed."
+    }
+    return $status
 }
 
 function Read-DeskModelProfiles([string]$Path) {
@@ -233,6 +296,7 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
         '^qwen3\.8-27b-uncensored' { Join-Path (Split-Path $Kit -Parent) "Qwen3.8-27B-Uncensored-exl3-3.07bpw\tokenizer.json"; break }
         '^qwen3\.8-27b-exl3-3\.5bpw$' { Join-Path $Kit "models\Qwen3.8-27B-EXL3-3.5bpw\tokenizer.json"; break }
         '^qwen3-vl-8b-exl3$' { Join-Path (Split-Path $Kit -Parent) "qwen3-vl-8b-exl3\tokenizer.json"; break }
+        '^qwen3\.8-flash-next-exl3-3\.05bpw$' { Join-Path (Split-Path $Kit -Parent) "Qwen3.8-Flash-Next-EXL3-3.05bpw\tokenizer.json"; break }
         default { throw "No trusted local tokenizer mapping for the running model '$model'." }
     }
     $output = [Math]::Min(8192, [int]$health.context_length / 4)

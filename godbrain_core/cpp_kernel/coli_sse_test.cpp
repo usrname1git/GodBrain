@@ -69,22 +69,61 @@ int main() {
 
     std::string think_only;
     std::string spoken;
+    std::string reasoning;
+    const int pings_before_thinking = pings;
+    last_token.clear();
     godbrain_coli::handle_sse_event(
         "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan \"}}]}",
         think_only,
         on_token,
         on_ping,
         {},
-        &spoken);
+        &spoken,
+        nullptr,
+        &reasoning);
+    if (!expect(think_only.empty() && spoken.empty() && last_token.empty() &&
+                    reasoning == "plan " && pings == pings_before_thinking + 1,
+                "reasoning is private and sends a progress ping, not a token")) {
+        return 1;
+    }
     godbrain_coli::handle_sse_event(
         "data: {\"choices\":[{\"delta\":{\"content\":\"done.\"}}]}",
         think_only,
         on_token,
         on_ping,
         {},
-        &spoken);
-    if (!expect(think_only == "plan done." && spoken == "done.",
-                "think streams, spoken is content only")) {
+        &spoken,
+        nullptr,
+        &reasoning);
+    if (!expect(think_only == "done." && spoken == "done." &&
+                    last_token == "done." && reasoning == "plan ",
+                "assembled, streamed and spoken output contain only the answer")) {
+        return 1;
+    }
+
+    godbrain_coli::handle_sse_event(
+        R"SSE(data: {"choices":[{"delta":{"reasoning_content":"private","content":" Public."}}]})SSE",
+        think_only, on_token, on_ping, {}, &spoken, nullptr, &reasoning);
+    if (!expect(think_only == "done. Public." && spoken == think_only &&
+                    reasoning == "plan private" && last_token == " Public.",
+                "both channels in one event remain separated")) {
+        return 1;
+    }
+
+    std::string private_buf;
+    std::string private_assembled;
+    std::string private_reasoning;
+    const std::string private_event =
+        R"SSE(data: {"choices":[{"delta":{"reasoning_content":"fragmented private text"}}]})SSE"
+        "\n\n";
+    for (const char byte : private_event) {
+        godbrain_coli::feed_sse(
+            private_buf, &byte, 1, private_assembled, on_token, on_ping,
+            {}, nullptr, nullptr, &private_reasoning);
+    }
+    if (!expect(private_buf.empty() && private_assembled.empty() &&
+                    private_reasoning == "fragmented private text",
+                "fragmented SSE retains reasoning only in its private buffer")) {
         return 1;
     }
 

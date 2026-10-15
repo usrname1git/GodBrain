@@ -6,8 +6,22 @@
 param([switch]$Allow2K)
 $ErrorActionPreference = "Stop"
 $Weights = "C:\nvme\Qwen-Image-2.1"
-$Py = Join-Path $Weights ".venv\Scripts\python.exe"
+$ImageEnvironment = Join-Path $Weights ".venv-isolated"
+$Py = Join-Path $ImageEnvironment "Scripts\python.exe"
 $Server = Join-Path $PSScriptRoot "qwen_image_server.py"
+
+function Assert-ImageEnvironment([string]$Root) {
+    $config = Join-Path $Root "pyvenv.cfg"
+    if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+        throw "Image venv configuration missing at $config. See docs\python-environments.md."
+    }
+    $settings = @(Get-Content -LiteralPath $config | Where-Object {
+        $_ -match '^\s*include-system-site-packages\s*='
+    })
+    if ($settings.Count -ne 1 -or $settings[0] -notmatch '^\s*include-system-site-packages\s*=\s*false\s*$') {
+        throw "Image venv must disable system-site packages. Rebuild it using docs\python-environments.md."
+    }
+}
 
 function Test-LoopbackPort([int]$Port) {
     try {
@@ -40,6 +54,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $Weights "model_index.json"))) {
 }
 if (-not (Test-Path -LiteralPath $Py)) { throw "Image venv missing at $Py" }
 if (-not (Test-Path -LiteralPath $Server)) { throw "Image server missing at $Server" }
+Assert-ImageEnvironment $ImageEnvironment
 Assert-ImageGpuSlot
 if (Test-LoopbackPort 8871) {
     Write-Output "already up http://127.0.0.1:8871/health"

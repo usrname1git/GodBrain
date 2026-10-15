@@ -125,6 +125,17 @@ Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")
 Invoke-CompiledTest "browser_evidence_test" @("browser_evidence_test.cpp")
 Invoke-CompiledTest "unused49_test" @("unused49_test.cpp")
 
+$replyRunner = Join-Path $RepoRoot "scripts\Test-KernelReplies.ps1"
+$replyWatch = [Diagnostics.Stopwatch]::StartNew()
+try {
+    & $replyRunner -RepoRoot $RepoRoot
+    $replyWatch.Stop()
+    Add-Task "reply-channels" $true $replyWatch.ElapsedMilliseconds "answer-only SSE/history; isolated mock HTTP"
+} catch {
+    $replyWatch.Stop()
+    Add-Task "reply-channels" $false $replyWatch.ElapsedMilliseconds "$_"
+}
+
 if ($LiveMouth) {
     $ask = Join-Path $RepoRoot "scripts\Ask-GodBrain.ps1"
     $sw = [Diagnostics.Stopwatch]::StartNew()

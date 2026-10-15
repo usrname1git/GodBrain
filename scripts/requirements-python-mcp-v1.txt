@@ -1,0 +1,4 @@
+mcp-server-fetch==2026.10.10
+mcp-server-time==2026.10.10
+mcp==1.30.0
+httpx==0.28.1

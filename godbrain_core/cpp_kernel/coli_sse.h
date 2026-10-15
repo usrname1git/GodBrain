@@ -59,7 +59,8 @@ inline void handle_sse_event(
     const std::function<void()>& on_ping,
     const std::function<void(const std::string&)>& on_finish = {},
     std::string* spoken = nullptr,
-    nlohmann::json* tool_calls = nullptr) {
+    nlohmann::json* tool_calls = nullptr,
+    std::string* reasoning = nullptr) {
     std::istringstream lines(event);
     std::string line;
     while (std::getline(lines, line)) {
@@ -88,11 +89,11 @@ inline void handle_sse_event(
                 spoken_token = delta["content"].get<std::string>();
                 token = spoken_token;
             }
-            // Stream think so Galaxy can show it. Do not treat it as the
-            // spoken answer: that would fill next-turn KV with the outline.
-            if (token.empty() && delta.contains("reasoning_content") &&
+            // Retain reasoning only for private loop guards, never replies
+            // or the assistant history used by continuation.
+            if (reasoning && delta.contains("reasoning_content") &&
                 delta["reasoning_content"].is_string()) {
-                token = delta["reasoning_content"].get<std::string>();
+                *reasoning += delta["reasoning_content"].get<std::string>();
             }
             if (tool_calls) {
                 accumulate_tool_calls(*tool_calls, delta);
@@ -127,7 +128,8 @@ inline void feed_sse(
     const std::function<void()>& on_ping,
     const std::function<void(const std::string&)>& on_finish = {},
     std::string* spoken = nullptr,
-    nlohmann::json* tool_calls = nullptr) {
+    nlohmann::json* tool_calls = nullptr,
+    std::string* reasoning = nullptr) {
     buf.append(data, len);
     for (;;) {
         const auto pos = buf.find("\n\n");
@@ -135,7 +137,8 @@ inline void feed_sse(
         const std::string event = buf.substr(0, pos);
         buf.erase(0, pos + 2);
         handle_sse_event(
-            event, assembled, on_token, on_ping, on_finish, spoken, tool_calls);
+            event, assembled, on_token, on_ping, on_finish, spoken, tool_calls,
+            reasoning);
     }
 }
 

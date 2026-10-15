@@ -1,8 +1,10 @@
 [CmdletBinding()]
-param([switch]$UiSmoke, [switch]$AirPlayLive)
+param([switch]$UiSmoke, [switch]$AirPlayLive, [string]$ModelScreenshot, [string]$StatusScreenshot)
 
 $ErrorActionPreference = "Stop"
 if ($AirPlayLive -and -not $UiSmoke) { throw '-AirPlayLive requires -UiSmoke.' }
+if ($ModelScreenshot -and -not $UiSmoke) { throw '-ModelScreenshot requires -UiSmoke.' }
+if ($StatusScreenshot -and -not $UiSmoke) { throw '-StatusScreenshot requires -UiSmoke.' }
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -193,7 +195,7 @@ if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "STT/TTS"') {
 if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "AirPlay"' -or
     $ast.Extent.Text -notmatch 'AirPlay = Get-GodBrainAirPlayLine' -or
     $ast.Extent.Text -notmatch 'AddParameter\(''AirPlayRequest'', \$Action\)' -or
-    $ast.Extent.Text -notmatch 'Update-AirPlayOperation \}') {
+    $ast.Extent.Text -notmatch 'Update-AirPlayOperation\s*(?:;|\})') {
     throw 'AirPlay row, passive snapshot or asynchronous operation routing is missing.'
 }
 
@@ -307,6 +309,14 @@ function Save-DeskModelControls {
     $script:modelProfiles[$script:modelPick] = Get-DeskModelDefaults $script:modelPick
 }
 function Test-DeskModelLauncher {}
+function Test-DeskQfnPrerequisites {}
+function Get-DeskQfnLaunchers { return @() }
+function Stop-DeskQfnLauncher { return $false }
+function Start-HiddenPwsh([string[]]$ArgumentList) {
+    Assert-Equal $ArgumentList[3] "-DeskLaunch"
+    $script:startedFile = $ArgumentList[2].Trim('"')
+    $script:startedOptions = $ArgumentList[4..($ArgumentList.Count - 1)]
+}
 . (Join-Path $PSScriptRoot "GodBrain-DeskModel.ps1")
 function Test-DeskModelLauncher {}
 $script:modelProfiles = @{}
@@ -315,8 +325,12 @@ $Start27 = "text-fixture.ps1"
 $StartVl = "vision-fixture.ps1"
 $StartImage = "image-fixture.ps1"
 $StartUncensored = "uncensored-fixture.ps1"
+$StartQfn = "qfn-fixture.ps1"
+function Test-DeskQfnPrerequisites {}
+function Get-DeskQfnLaunchers { return @() }
+function Stop-DeskQfnLauncher { return $false }
 $script:canResume = $true
-foreach ($pick in @("27b", "vl", "image", "uncensored")) {
+foreach ($pick in @("27b", "vl", "image", "uncensored", "qfn")) {
     $script:modelPick = $pick
     $script:imageStarted = $false
     $script:slotStopped = $false
@@ -329,6 +343,18 @@ foreach ($pick in @("27b", "vl", "image", "uncensored")) {
         Assert-Equal $script:startedFile (Get-ModelPickFile)
         Assert-Equal ($script:startedOptions -join ",") ((Get-DeskModelLaunchOptions $pick (Get-DeskModelDefaults $pick)) -join ",")
     }
+}
+& {
+    $definition = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-SelectedModel"
+    }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+    function Test-DeskQfnPrerequisites { throw "fixture QFN insufficient RAM" }
+    $script:modelPick = "qfn"
+    $script:slotStopped = $false
+    $message = @(Start-SelectedModel) -join "`n"
+    Assert-Equal $script:slotStopped $false
+    if ($message -notlike "*Model was not stopped:*fixture QFN insufficient RAM*") { throw "QFN pre-stop rejection was hidden." }
 }
 $script:canResume = $false
 & {
@@ -386,7 +412,7 @@ $script:canResume = $false
         }
     }
 }
-foreach ($pick in @("27b", "vl", "image", "uncensored")) {
+foreach ($pick in @("27b", "vl", "image", "uncensored", "qfn")) {
     $script:modelPick = $pick
     $script:imageStarted = $false
     $script:slotStopped = $false
@@ -466,6 +492,29 @@ if ($ast.Extent.Text -notmatch 'Add-ModelPick "image" "Qwen-Image-2\.1"') {
 $starter = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot "Start-QwenImage.ps1"), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors -join "`n") }
+$imageEnvironmentGuard = $starter.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Assert-ImageEnvironment"
+}, $true)
+if (-not $imageEnvironmentGuard -or $starter.Extent.Text -notmatch '\.venv-isolated') {
+    throw "Image launch must use and validate the isolated environment."
+}
+. ([scriptblock]::Create($imageEnvironmentGuard.Extent.Text))
+$imageEnvFixture = Join-Path ([IO.Path]::GetTempPath()) ("GodBrain-image-env-test-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $imageEnvFixture | Out-Null
+try {
+    Assert-Throws { Assert-ImageEnvironment $imageEnvFixture } "*configuration missing*"
+    $imageEnvConfig = Join-Path $imageEnvFixture "pyvenv.cfg"
+    Set-Content -LiteralPath $imageEnvConfig -Value "include-system-site-packages = false"
+    Assert-ImageEnvironment $imageEnvFixture
+    Set-Content -LiteralPath $imageEnvConfig -Value "include-system-site-packages = true"
+    Assert-Throws { Assert-ImageEnvironment $imageEnvFixture } "*must disable system-site*"
+    Set-Content -LiteralPath $imageEnvConfig -Value @(
+        "include-system-site-packages = false", "include-system-site-packages = true")
+    Assert-Throws { Assert-ImageEnvironment $imageEnvFixture } "*must disable system-site*"
+    Set-Content -LiteralPath $imageEnvConfig -Value "home = fixture"
+    Assert-Throws { Assert-ImageEnvironment $imageEnvFixture } "*must disable system-site*"
+} finally { Remove-Item -LiteralPath $imageEnvFixture -Recurse -Force }
 $guard = $starter.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Assert-ImageGpuSlot"
@@ -806,6 +855,85 @@ Write-Output "Desk model routing, GPU-slot, and non-blocking status checks passe
     Assert-Equal ($script:appActions -join ",") "hold:rustdesk,stop,backend-start,resume:off"
 }
 
+& {
+    function Update-Status { $script:operationFixtureRefreshes++ }
+    function Show-OperationFixtureError([string]$Message, [string]$Caption) {
+        $script:operationFixtureNotifications++
+        Assert-Equal $script:operationFixtureNotifications 1
+        Assert-Equal $Caption $script:operationFixtureName
+        if ($Message -notlike '*fixture operation failed*') { throw "Underlying operation error was lost: $Message" }
+        if ($Caption -eq 'AirPlay') {
+            Assert-Equal $script:airPlayJob $null
+            foreach ($button in $script:airPlayButtons.Values) { Assert-Equal $button.Enabled $false }
+            Update-AirPlayOperation
+        } else {
+            Assert-Equal $script:clipShareJob $null
+            foreach ($button in $script:clipShareButtons) { Assert-Equal $button.Enabled $false }
+            Update-ClipShareOperation
+        }
+    }
+    foreach ($name in @('AirPlay', 'ClipShare')) {
+        $updateName = "Update-${name}Operation"
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $updateName
+        }, $true)
+        $notification = "[System.Windows.Forms.MessageBox]::Show(`$_.Exception.GetBaseException().Message, '$name')"
+        if (-not $definition -or -not $definition.Extent.Text.Contains($notification)) {
+            throw "Missing operation failure notification: $name"
+        }
+        $replacement = "Show-OperationFixtureError (`$_.Exception.GetBaseException().Message) '$name'"
+        . ([scriptblock]::Create($definition.Extent.Text.Replace($notification, $replacement)))
+        $script:operationFixtureName = $name
+        $script:operationFixtureCalls = 0
+        $script:operationFixtureNotifications = 0
+        $script:operationFixtureRefreshes = 0
+        $script:operationFixtureJob = [pscustomobject]@{ IsCompleted = $false }
+        $worker = [pscustomobject]@{ HadErrors = $false }
+        $worker | Add-Member ScriptMethod EndInvoke {
+            param($Job)
+            if (-not [object]::ReferenceEquals($Job, $script:operationFixtureJob)) { throw 'Wrong completion receipt.' }
+            $script:operationFixtureCalls++
+            throw 'fixture operation failed'
+        }
+        $buttons = @([pscustomobject]@{ Enabled = $false }, [pscustomobject]@{ Enabled = $false })
+        if ($name -eq 'AirPlay') {
+            $script:airPlayWorker = $worker
+            $script:airPlayJob = $script:operationFixtureJob
+            $script:airPlayButtons = [ordered]@{ Start = $buttons[0]; Stop = $buttons[1] }
+            $rowAirPlay = [pscustomobject]@{ Text = '' }
+        } else {
+            $script:clipShareWorker = $worker
+            $script:clipShareJob = $script:operationFixtureJob
+            $script:clipShareButtons = $buttons
+            $script:clipShareMessage = [pscustomobject]@{ Text = '' }
+        }
+        & $updateName
+        Assert-Equal $script:operationFixtureCalls 0
+        $script:operationFixtureJob.IsCompleted = $true
+        & $updateName
+        foreach ($tick in 1..20) { & $updateName }
+        Assert-Equal $script:operationFixtureCalls 1
+        Assert-Equal $script:operationFixtureNotifications 1
+        Assert-Equal $script:operationFixtureRefreshes 1
+        foreach ($button in $buttons) { Assert-Equal $button.Enabled $true }
+        $worker | Add-Member ScriptMethod EndInvoke {
+            param($Job)
+            $script:operationFixtureCalls++
+            return 'fixture retry ready'
+        } -Force
+        if ($name -eq 'AirPlay') { $script:airPlayJob = $script:operationFixtureJob }
+        else { $script:clipShareJob = $script:operationFixtureJob }
+        foreach ($button in $buttons) { $button.Enabled = $false }
+        & $updateName
+        Assert-Equal $script:operationFixtureCalls 2
+        Assert-Equal $script:operationFixtureNotifications 1
+        Assert-Equal $script:operationFixtureRefreshes 2
+        foreach ($button in $buttons) { Assert-Equal $button.Enabled $true }
+    }
+    Write-Host 'PASS: AirPlay/ClipShare completion consumed before reentrant error notification, one error per receipt and retry recovery.'
+}
+
 if ($UiSmoke) {
     if ([Threading.Thread]::CurrentThread.ApartmentState -ne "STA") { throw "UI smoke requires pwsh -Sta." }
     $script:uiScriptsRoot = $PSScriptRoot
@@ -832,6 +960,73 @@ if ($UiSmoke) {
             }
         }
         if ($rowAirPlay.Right -ge $script:airPlayButtons.Open.Left) { throw 'AirPlay status overlaps Open.' }
+        $statusFormSize = $f.ClientSize
+        $statusLabelBounds = @{}
+        foreach ($entry in $script:statusRows.GetEnumerator()) { $statusLabelBounds[$entry.Key] = $entry.Value.Bounds }
+        $statusButtons = @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] })
+        $statusButtonBounds = @($statusButtons | ForEach-Object { $_.Bounds })
+        $statusAfkBounds = $afkGym.Bounds
+        $statusShareBounds = $script:clipShareStatus.Bounds
+        $rowClipShare.Text = 'ready :3923; ingress: Local TLS ready; last verified at 2026-01-02 03:04 UTC (setup changed)'
+        $rowAirPlay.Text = 'playing :5000 (ShairportQt)'
+        $rowModel.Text = 'Qwen3.8-Flash-Next-EXL3-3.05bpw  :8888'
+        $rowServe.Text = 'HTTPS :443 -> :8085 (background)'
+        $f.Show()
+        Show-Page "Status"
+        [Windows.Forms.Application]::DoEvents()
+        foreach ($size in @([Drawing.Size]::new(1200, 900), [Drawing.Size]::new(900, 760), $statusFormSize)) {
+            $f.ClientSize = $size
+            $f.PerformLayout()
+            $pageStatus.PerformLayout()
+            [Windows.Forms.Application]::DoEvents()
+            $dx = $size.Width - $statusFormSize.Width
+            foreach ($entry in $script:statusRows.GetEnumerator()) {
+                $baseline = $statusLabelBounds[$entry.Key]
+                Assert-Equal $entry.Value.Left $baseline.Left
+                Assert-Equal $entry.Value.Top $baseline.Top
+                Assert-Equal $entry.Value.Width ($baseline.Width + $dx)
+                Assert-Equal $entry.Value.Height $baseline.Height
+                foreach ($button in $statusButtons) {
+                    if ($entry.Value.Bounds.IntersectsWith($button.Bounds)) { throw "Resized status overlaps an action: $($entry.Key)" }
+                }
+            }
+            for ($i = 0; $i -lt $statusButtons.Count; $i++) {
+                $button = $statusButtons[$i]
+                Assert-Equal $button.Left ($statusButtonBounds[$i].Left + $dx)
+                Assert-Equal $button.Size $statusButtonBounds[$i].Size
+                if ($button.Right -gt $pageStatus.ClientSize.Width - 16) { throw "Status action escaped the page: $($button.Text)" }
+                if ([Windows.Forms.TextRenderer]::MeasureText($button.Text, $button.Font).Width + 12 -gt $button.Width) {
+                    throw "Status button caption is clipped: $($button.Text)"
+                }
+            }
+            Assert-Equal $afkGym.Width ($statusAfkBounds.Width + $dx)
+            Assert-Equal $script:clipShareStatus.Width ($statusShareBounds.Width + $dx)
+        }
+        $f.WindowState = "Maximized"
+        [Windows.Forms.Application]::DoEvents()
+        foreach ($entry in $script:statusRows.GetEnumerator()) {
+            if ($entry.Value.Width -le $statusLabelBounds[$entry.Key].Width) { throw "Maximizing did not expand Status: $($entry.Key)" }
+            if ([Windows.Forms.TextRenderer]::MeasureText($entry.Value.Text, $entry.Value.Font,
+                    [Drawing.Size]::new([int]::MaxValue, [int]::MaxValue), [Windows.Forms.TextFormatFlags]::SingleLine).Width -gt $entry.Value.Width) {
+                throw "Maximized status is clipped: $($entry.Key)"
+            }
+        }
+        foreach ($button in $statusButtons) {
+            if ($button.Right -gt $pageStatus.ClientSize.Width - 16) { throw "Maximized action escaped Status." }
+            foreach ($label in $script:statusRows.Values) {
+                if ($label.Bounds.IntersectsWith($button.Bounds)) { throw "Maximized status overlaps an action." }
+            }
+        }
+        if ($StatusScreenshot) {
+            $bitmap = [Drawing.Bitmap]::new($f.Width, $f.Height)
+            try { $f.DrawToBitmap($bitmap, [Drawing.Rectangle]::new(0, 0, $f.Width, $f.Height)); $bitmap.Save($StatusScreenshot, [Drawing.Imaging.ImageFormat]::Png) }
+            finally { $bitmap.Dispose() }
+        }
+        $f.WindowState = "Normal"
+        [Windows.Forms.Application]::DoEvents()
+        Assert-Equal $f.ClientSize $statusFormSize
+        foreach ($entry in $script:statusRows.GetEnumerator()) { Assert-Equal $entry.Value.Bounds $statusLabelBounds[$entry.Key] }
+        $f.Hide()
         if ($AirPlayLive) {
             $running = @(CimCmdlets\Get-CimInstance Win32_Process -Filter "Name='ShairportQt.exe'")
             if ($running.Count) { throw 'Live AirPlay UI check requires the receiver stopped.' }
@@ -867,6 +1062,21 @@ if ($UiSmoke) {
         $bitmap = New-Object System.Drawing.Bitmap($f.Width, $f.Height)
         try { $f.DrawToBitmap($bitmap, $f.ClientRectangle) } finally { $bitmap.Dispose() }
         Show-Page "Model"
+        Assert-Equal $script:modelButtons.Count 5
+        foreach ($entry in $script:modelButtons.GetEnumerator()) {
+            $button = $entry.Value
+            Assert-Equal $button.Width 272
+            Assert-Equal $button.Height 34
+            if ($button.Right -gt $pageModel.Width -or $button.Bottom -ge $script:modelContext.Top) { throw "Model picker escaped its grid." }
+            if ([Windows.Forms.TextRenderer]::MeasureText($button.Text, $button.Font).Width + 12 -gt $button.Width) { throw "Model name is clipped: $($button.Text)" }
+            foreach ($other in $script:modelButtons.Values) {
+                if ($other -ne $button -and $button.Bounds.IntersectsWith($other.Bounds)) { throw "Model buttons overlap." }
+            }
+        }
+        Assert-Equal $script:modelButtons["27b"].Text "Qwen3.8-27B"
+        Assert-Equal $script:modelButtons["vl"].Text "Qwen3-VL-8B"
+        Assert-Equal $script:modelButtons["uncensored"].Text "Qwen3.8-27B-Uncensored"
+        Assert-Equal $script:modelButtons["qfn"].Text "Qwen3.8-Flash-Next"
         foreach ($control in @($script:modelContext, $script:modelCache, $script:modelMtp, $script:modelBudget, $script:modelCpuCache, $script:modelSettingsHint, $script:modelLive,
                 $script:modelReasoning, $script:modelReasoningStatus)) {
             if ($control.Parent -ne $pageModel -or $control.Bounds.Bottom -gt $pageModel.ClientSize.Height) {
@@ -881,6 +1091,28 @@ if ($UiSmoke) {
         Assert-Equal $script:modelMtp.Enabled $false
         Set-ModelPick "27b"
         Assert-Equal $script:modelMtp.Enabled $true
+        Set-ModelPick "qfn"
+        Assert-Equal $script:modelVision.Enabled $false
+        Assert-Equal $script:modelCache.SelectedItem "fp16"
+        Assert-Equal $script:modelCpuCache.Text "432"
+        Assert-Equal $script:modelCpuLabel.Text "CPU experts (400/416/432/448/464)"
+        Assert-Equal $script:modelMtp.Text "MTP enabled (draft window 3)"
+        $f.Show()
+        [Windows.Forms.Application]::DoEvents()
+        $quality = @($pageModel.Controls | Where-Object Text -eq "Quality preset")
+        Assert-Equal $quality.Count 1
+        $script:modelContext.Text = "32768"; $script:modelCache.SelectedItem = "4"; $script:modelCpuCache.Text = "448"
+        $quality[0].PerformClick()
+        Assert-Equal $script:modelContext.Text "16384"
+        Assert-Equal $script:modelCache.SelectedItem "fp16"
+        Assert-Equal $script:modelCpuCache.Text "432"
+        if ($ModelScreenshot) {
+            $bitmap = [Drawing.Bitmap]::new($f.Width, $f.Height)
+            try { $f.DrawToBitmap($bitmap, [Drawing.Rectangle]::new(0, 0, $f.Width, $f.Height)); $bitmap.Save($ModelScreenshot, [Drawing.Imaging.ImageFormat]::Png) }
+            finally { $bitmap.Dispose() }
+        }
+        $f.Hide()
+        Set-ModelPick "27b"
         $hintSize = [Windows.Forms.TextRenderer]::MeasureText($script:modelSettingsHint.Text,
             $script:modelSettingsHint.Font, $script:modelSettingsHint.Size, [Windows.Forms.TextFormatFlags]::WordBreak)
         if ($hintSize.Height -gt $script:modelSettingsHint.Height) {
@@ -930,7 +1162,10 @@ if ($UiSmoke) {
         $replyBounds = $reply.Bounds
         $askSize = $pageAsk.Size
         $formSize = $f.ClientSize
-        $openGrok = $pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Open Grok" }
+        Assert-Equal (@($pageAsk.Controls | Where-Object { $_.Text -in @("Grok folder", "Open Grok") })).Count 0
+        Assert-Equal (@($pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.TextBox] })).Count 3
+        Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
+        Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
         foreach ($size in @([Drawing.Size]::new(1200, 900), [Drawing.Size]::new(900, 760), $formSize)) {
             $f.ClientSize = $size
             $f.PerformLayout()
@@ -942,12 +1177,14 @@ if ($UiSmoke) {
             Assert-Equal $reply.Width ($replyBounds.Width + $dx)
             Assert-Equal $reply.Height ($replyBounds.Height + $dy)
             Assert-Equal $reply.Location $replyBounds.Location
-            foreach ($control in @($askPath, $prompt, $send, $reviewFile, $reply, $cwdLabel, $cwd, $openGrok)) {
+            Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
+            Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
+            foreach ($control in @($askPath, $prompt, $send, $reviewFile, $reply)) {
                 if ($control.Right -gt $pageAsk.ClientSize.Width - 20 -or $control.Bottom -gt $pageAsk.ClientSize.Height) {
                     throw "Ask control escaped the resized page: $($control.GetType().Name)"
                 }
             }
-            if ($reply.Bottom -ge $cwdLabel.Top -or $prompt.Right -ge $send.Left -or $cwd.Right -ge $openGrok.Left) {
+            if ($reviewFile.Bottom -gt $reply.Top -or $prompt.Right -ge $send.Left) {
                 throw "Ask controls overlap after resizing."
             }
         }
@@ -958,9 +1195,12 @@ if ($UiSmoke) {
         if ($reply.Width -le $replyBounds.Width -or $reply.Height -le $replyBounds.Height) {
             throw "Maximizing did not expand the reply area."
         }
+        Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
+        Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
         $f.WindowState = "Normal"
         [Windows.Forms.Application]::DoEvents()
         Assert-Equal $f.ClientSize $formSize
+        Assert-Equal $reply.Bounds $replyBounds
         $script:askWorker.Commands.Clear()
         [void]$script:askWorker.AddScript('"Heading`n`n- First detail`n- Second detail"')
         $script:askJob = $script:askWorker.BeginInvoke()

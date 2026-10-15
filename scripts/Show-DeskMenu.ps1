@@ -2,7 +2,7 @@
 # Status: each service has Start and Stop. Rate and GPU are readouts.
 # STT/TTS is the CPU voice door on :8001. The 27B vision tower stays off
 # unless the model page checkbox is saved and that model is started.
-# Model page picks 27B text, 8B vision, Qwen-Image-2.1, or Uncensored. Status starts that pick.
+# Model page selects the Qwen EXL3 models or Qwen-Image-2.1. Status starts that pick.
 # Clips page runs the deadtime scan. Lyrics starts capture, waits for loopback,
 # waits the preroll, then Shift+P into the running ncspot.
 # Stop holds kernel and RAG against Watch (logs/*-pause.txt) until Start.
@@ -17,7 +17,9 @@ param(
     [object]$MonitorRequest,
     [object]$DisplayRequest,
     [ValidateSet('Start', 'Stop', 'Open')]
-    [string]$AirPlayRequest
+    [string]$AirPlayRequest,
+    [ValidateSet('Start', 'Stop', 'Inbox', 'Library', 'Copy', 'Login')]
+    [string]$ClipShareRequest
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +30,7 @@ $StopModel = Join-Path $Kit "paper-godbrain\Stop-Qwen.ps1"
 $Repo = Split-Path $PSScriptRoot -Parent
 $StartVl = Join-Path $Repo "scripts\Start-QwenVL.ps1"
 $StartImage = Join-Path $Repo "scripts\Start-QwenImage.ps1"
+$StartQfn = Join-Path $Repo "scripts\Start-QwenFlashNext.ps1"
 $Lyrics = Join-Path $Repo "scripts\Invoke-LyricsLoop.ps1"
 $Pwsh = "C:\pwsh\pwsh.exe"
 $cs2Helper = Join-Path $Repo "GodBrain-Cs2.ps1"
@@ -39,6 +42,7 @@ if (Test-Path -LiteralPath $mouthHelper) { . $mouthHelper }
 . (Join-Path $PSScriptRoot "GodBrain-DeskMonitor.ps1")
 . (Join-Path $PSScriptRoot "GodBrain-DisplayProfiles.ps1")
 . (Join-Path $PSScriptRoot "GodBrain-AirPlay.ps1")
+. (Join-Path $PSScriptRoot "GodBrain-ClipShare.ps1")
 $script:modelPick = "27b"
 
 function Test-Port([int]$Port) {
@@ -542,6 +546,7 @@ function Get-DeskStatus {
         ("Tailscale {0}" -f (Get-TailscaleLine))
         ("Serve {0}" -f (Get-TailscaleServeLine))
         ("AirPlay {0}" -f (Get-GodBrainAirPlayLine))
+        ("ClipShare {0}" -f (Get-GodBrainClipShareLine))
     ) -join "`r`n"
 }
 
@@ -567,6 +572,7 @@ function Get-DeskSnapshot {
         Web = Get-HttpLine
         Whisper = Get-WhisperLine
         AirPlay = Get-GodBrainAirPlayLine
+        ClipShare = Get-GodBrainClipShareLine
     }
     $modelConfig = "Live context/MTP unavailable"
     try {
@@ -575,7 +581,15 @@ function Get-DeskSnapshot {
             $draft = if ($health.drafting.mode -eq "none") { "off" } else { "$($health.drafting.mode)/$($health.drafting.num_draft_tokens)" }
             $modelConfig = "Live: ctx=$($health.context_length)  KV=$($health.cache_quant)  draft=$draft  vision=$($health.vision)"
         } elseif (Test-Port 8871) { $modelConfig = "Live: image diffusion; no token context/MTP" }
-        else { $modelConfig = "Live: text/image model down" }
+        else {
+            $modelConfig = "Live: text/image model down"
+            $launch = Read-DeskQfnLaunchStatus
+            if ($launch) {
+                $modelConfig = "Last QFN launch ($($launch.state)): $($launch.message)"
+                if ($launch.state -eq "failed") { $rows.Model = "Qwen3.8-Flash-Next failed (see Model)" }
+                elseif ($launch.state -in @("checking", "loading")) { $rows.Model = "Qwen3.8-Flash-Next $($launch.state)" }
+            }
+        }
     } catch { $modelConfig = "Live context/MTP unread: $($_.Exception.Message)" }
     [pscustomobject]@{ Rows = [pscustomobject]$rows; TokenSample = $script:tokSample; ModelConfig = $modelConfig }
 }
@@ -820,6 +834,11 @@ function Invoke-DeskAsk($Request) {
     throw "Kernel returned no chat response."
 }
 
+if ($ClipShareRequest) {
+    Invoke-GodBrainClipShare -Action $ClipShareRequest
+    return
+}
+
 if ($AirPlayRequest) {
     Invoke-GodBrainAirPlay -Action $AirPlayRequest
     return
@@ -910,7 +929,9 @@ function Stop-Door {
             [System.Windows.Forms.MessageBoxButtons]::YesNo)
         if ($ask -ne [System.Windows.Forms.DialogResult]::Yes) { return $false }
     }
+    [void](Stop-DeskQfnLauncher)
     & $Pwsh -NoProfile -File $StopModel
+    if ($LASTEXITCODE -ne 0) { throw "The model stop failed; the replacement was not started." }
     $image = Get-PortListener 8871
     if ($image -and $image.CommandLine -like "*qwen_image_server.py*" -and $image.CommandLine -like "*$Repo*") {
         $parentId = [int]$image.ParentProcessId
@@ -1024,6 +1045,7 @@ function Get-ModelPickFile {
         "vl" { return $StartVl }
         "image" { return $StartImage }
         "uncensored" { return $StartUncensored }
+        "qfn" { return $StartQfn }
         default { return $Start27 }
     }
 }
@@ -1033,7 +1055,8 @@ function Stop-ActiveModel {
         Stop-ImageDoor
         return
     }
-    if (-not (Test-Port 8888)) {
+    $qfnLoading = @(Get-DeskQfnLaunchers).Count -gt 0
+    if (-not (Test-Port 8888) -and -not $qfnLoading) {
         [System.Windows.Forms.MessageBox]::Show("The model on :8888 is already down.")
         return
     }
@@ -1044,6 +1067,7 @@ function Stop-ActiveModel {
         "Stop the model on :8888?"
     }
     if (-not (Confirm-Stop $ask "Model")) { return }
+    if (Stop-DeskQfnLauncher) { Update-Status; return }
     & $Pwsh -NoProfile -File $StopModel
     Update-Status
 }
@@ -1052,6 +1076,10 @@ function Start-ImageDoor {
     if (Test-Port 8871) {
         [System.Windows.Forms.MessageBox]::Show("Qwen-Image-2.1 is already up on :8871.")
         return
+    }
+    if (-not (Test-Port 8888) -and @(Get-DeskQfnLaunchers).Count) {
+        if (-not (Confirm-Stop "Stop the loading Flash Next model so Qwen-Image-2.1 can take the GPU slot?" "Model")) { return }
+        [void](Stop-DeskQfnLauncher)
     }
     if (Test-Port 8000) {
         $holder = Get-PortListener 8000
@@ -1063,6 +1091,7 @@ function Start-ImageDoor {
     }
     if (Test-Port 8888) {
         if (-not (Confirm-Stop "Stop the model on :8888 so Qwen-Image-2.1 can take the GPU slot?" "Model")) { return }
+        [void](Stop-DeskQfnLauncher)
         & $Pwsh -NoProfile -File $StopModel
         $deadline = (Get-Date).AddSeconds(20)
         while ((Test-Port 8888) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }
@@ -1108,6 +1137,10 @@ function Start-SelectedModel {
         $options = Get-DeskModelLaunchOptions $script:modelPick $script:modelProfiles[$script:modelPick]
         Test-DeskModelLauncher (Get-ModelPickFile) $options
         $profile = $script:modelProfiles[$script:modelPick]
+        if ($script:modelPick -eq "qfn") {
+            Test-DeskQfnPrerequisites $profile
+            if (@(Get-DeskQfnLaunchers).Count) { throw "Flash Next is already loading/running. Use Stop before starting it again." }
+        }
         $context = [int]$profile.Context
         if ($script:modelPick -eq "27b" -and $profile.Vision) {
             if (-not (Confirm-Stop "Load the 27B vision tower on this start? It uses about 0.3 GB plus image prefill on the same GPU. The speech door still does OCR on the CPU when the tower is off or this box is unchecked." "Vision tower")) { return }
@@ -1122,8 +1155,14 @@ function Start-SelectedModel {
         return
     }
     if (-not (Enable-DeskAfterCs2)) { return }
-    if (-not (Stop-Door)) { return }
-    Start-Door (Get-ModelPickFile) $options
+    try {
+        if (-not (Stop-Door)) { return }
+        if ($script:modelPick -eq "qfn") {
+            Start-HiddenPwsh (@("-NoProfile", "-File", ('"' + (Get-ModelPickFile) + '"'), "-DeskLaunch") + $options)
+        } else { Start-Door (Get-ModelPickFile) $options }
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("Model was not started: $($_.Exception.Message)")
+    }
     Update-Status
 }
 
@@ -1185,16 +1224,49 @@ function Start-AirPlayOperation([string]$Action) {
 
 function Update-AirPlayOperation {
     if (-not $script:airPlayJob -or -not $script:airPlayJob.IsCompleted) { return }
+    $job = $script:airPlayJob
+    $script:airPlayJob = $null
     try {
-        $result = @($script:airPlayWorker.EndInvoke($script:airPlayJob))
+        $result = @($script:airPlayWorker.EndInvoke($job))
         if ($script:airPlayWorker.HadErrors -or $result.Count -ne 1) { throw 'AirPlay operation returned no valid result.' }
         $rowAirPlay.Text = [string]$result[0]
     } catch {
         $rowAirPlay.Text = 'AirPlay operation failed'
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'AirPlay')
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.GetBaseException().Message, 'AirPlay')
     } finally {
-        $script:airPlayJob = $null
         foreach ($button in $script:airPlayButtons.Values) { $button.Enabled = $true }
+        Update-Status
+    }
+}
+
+function Start-ClipShareOperation([string]$Action) {
+    if ($script:clipShareJob) { return }
+    if ($Action -eq 'Stop' -and -not (Confirm-Stop 'Stop ClipShare? Active playback ends and an in-progress conversion is cancelled; originals remain untouched.' 'ClipShare')) { return }
+    $script:clipShareWorker.Commands.Clear()
+    $script:clipShareWorker.Streams.Error.Clear()
+    [void]$script:clipShareWorker.AddCommand($PSCommandPath).AddParameter('ClipShareRequest', $Action)
+    $script:clipShareJob = $script:clipShareWorker.BeginInvoke()
+    foreach ($button in $script:clipShareButtons) { $button.Enabled = $false }
+    $rowClipShare.Text = "$Action in progress..."
+    $script:clipShareMessage.Text = "$Action in progress..."
+}
+
+function Update-ClipShareOperation {
+    if (-not $script:clipShareJob -or -not $script:clipShareJob.IsCompleted) { return }
+    $job = $script:clipShareJob
+    $script:clipShareJob = $null
+    try {
+        $result = @($script:clipShareWorker.EndInvoke($job))
+        if ($script:clipShareWorker.HadErrors -or $result.Count -ne 1) {
+            $details = ($script:clipShareWorker.Streams.Error | Out-String).Trim()
+            throw "ClipShare returned no valid operation receipt. $details"
+        }
+        $script:clipShareMessage.Text = [string]$result[0]
+    } catch {
+        $script:clipShareMessage.Text = $_.Exception.Message
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.GetBaseException().Message, 'ClipShare')
+    } finally {
+        foreach ($button in $script:clipShareButtons) { $button.Enabled = $true }
         Update-Status
     }
 }
@@ -1518,10 +1590,12 @@ function New-Page {
 $pageStatus = New-Page
 $pageModel = New-Page
 $pageAsk = New-Page
+$pageAsk.Height = $f.ClientSize.Height
 $pageLyrics = New-Page
 $pageClips = New-Page
 $pageMonitor = New-Page
 $pageDisplayLayouts = New-Page
+$pageShare = New-Page
 $pages.Status = $pageStatus
 $pages.Model = $pageModel
 $pages.Ask = $pageAsk
@@ -1529,6 +1603,7 @@ $pages.Lyrics = $pageLyrics
 $pages.Clips = $pageClips
 $pages.Monitor = $pageMonitor
 $pages.Layouts = $pageDisplayLayouts
+$pages.Share = $pageShare
 
 $script:railMarks = @()
 $script:railTip = New-Object System.Windows.Forms.ToolTip
@@ -1581,6 +1656,7 @@ Add-Rail "Model" ([char]0xE706) 64
 Add-Rail "Ask" ([char]0xE8BD) 112
 Add-Rail "Lyrics" ([char]0xE189) 160
 Add-Rail "Clips" ([char]0xE714) 208
+Add-Rail "Share" ([char]0xE72D) 248
 Add-Rail "Monitor" ([char]0xE7F4) 296
 
 $script:micRail = New-Object System.Windows.Forms.Button
@@ -1647,6 +1723,7 @@ function Add-Row([System.Windows.Forms.Control]$parent, [string]$name, [int]$y) 
     $v.AutoEllipsis = $true
     $v.Location = New-Object System.Drawing.Point(96, $y)
     $v.Size = New-Object System.Drawing.Size(312, 22)
+    $v.Anchor = "Top, Left, Right"
     $parent.Controls.Add($l)
     $parent.Controls.Add($v)
     return $v
@@ -1667,6 +1744,7 @@ function Add-Pair([System.Windows.Forms.Control]$parent, [string]$name, [int]$y,
     $v.AutoEllipsis = $true
     $v.Location = New-Object System.Drawing.Point(96, $y)
     $v.Size = New-Object System.Drawing.Size(312, 22)
+    $v.Anchor = "Top, Left, Right"
     $parent.Controls.Add($l)
     $parent.Controls.Add($v)
     $small = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -1679,6 +1757,7 @@ function Add-Pair([System.Windows.Forms.Control]$parent, [string]$name, [int]$y,
         $b.Font = $small
         $b.Location = New-Object System.Drawing.Point([int]$pair.X, ($y - 2))
         $b.Size = New-Object System.Drawing.Size(70, 24)
+        $b.Anchor = "Top, Right"
         Paint-Button $b ([bool]$pair.Primary)
         $b.Add_Click($pair.Click)
         $parent.Controls.Add($b)
@@ -1712,6 +1791,7 @@ function Style-Box([System.Windows.Forms.TextBox]$t) {
 
 Add-Head $pageStatus "Status" 16
 Add-Button $pageStatus "Galaxy" ($script:pageW - 100) 8 84 { Start-Process "http://127.0.0.1:8083/" } $false
+($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Galaxy" }).Anchor = "Top, Right"
 $rowModel = Add-Pair $pageStatus "Model" 48 { Start-SelectedModel } { Stop-ActiveModel }
 $rowGpu = Add-Row $pageStatus "GPU" 80
 $rowTok = Add-Row $pageStatus "Rate" 112
@@ -1771,14 +1851,23 @@ $airPlayOpen.Text = 'Open'
 $airPlayOpen.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $airPlayOpen.Location = [Drawing.Point]::new(354, 558)
 $airPlayOpen.Size = [Drawing.Size]::new(70, 24)
+$airPlayOpen.Anchor = "Top, Right"
 Paint-Button $airPlayOpen $false
 $airPlayOpen.Add_Click({ Start-AirPlayOperation 'Open' })
 $pageStatus.Controls.Add($airPlayOpen)
 $script:airPlayButtons.Open = $airPlayOpen
+$script:clipShareWorker = [PowerShell]::Create()
+$script:clipShareJob = $null
+$script:clipShareButtons = @()
+$rowClipShare = Add-Pair $pageStatus "ClipShare" 592 { Start-ClipShareOperation 'Start' } { Start-ClipShareOperation 'Stop' }
+foreach ($button in @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Top -eq 590 })) {
+    $script:clipShareButtons += $button
+}
 $afkGym = New-Object System.Windows.Forms.CheckBox
 $afkGym.Text = "Recover Qwen + gym while AFK (opt-in)"
-$afkGym.Location = New-Object System.Drawing.Point(16, 596)
+$afkGym.Location = New-Object System.Drawing.Point(16, 616)
 $afkGym.Size = New-Object System.Drawing.Size(($script:pageW - 32), 24)
+$afkGym.Anchor = "Top, Left, Right"
 $afkGym.ForeColor = $ink
 $afkGym.BackColor = $bg
 $afkGymFile = Join-Path $Repo "logs\afk-gym.txt"
@@ -1795,7 +1884,7 @@ $script:statusRows = [ordered]@{
     Model = $rowModel; Tok = $rowTok; Kernel = $rowKernel; Rag = $rowRag
     Mongo = $rowMongo; Gym = $rowGym; Cs2 = $rowCs2; Mouth = $rowMouth
     Gpu = $rowGpu; Rust = $rowRust; Ssh = $rowSsh; Tail = $rowTail
-    Serve = $rowServe; Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper; AirPlay = $rowAirPlay
+    Serve = $rowServe; Watch = $rowWatch; Web = $rowWeb; Whisper = $rowWhisper; AirPlay = $rowAirPlay; ClipShare = $rowClipShare
 }
 $script:statusWorker = [PowerShell]::Create()
 $script:statusJob = $null
@@ -1811,11 +1900,16 @@ function Update-Status([switch]$Poll) {
             $snapshot = $result[0]
             foreach ($entry in $script:statusRows.GetEnumerator()) {
                 if ($entry.Key -eq 'AirPlay' -and $script:airPlayJob) { continue }
+                if ($entry.Key -eq 'ClipShare' -and $script:clipShareJob) { continue }
                 $entry.Value.Text = [string]$snapshot.Rows.($entry.Key)
                 $script:statusTip.SetToolTip($entry.Value, $entry.Value.Text)
+                if ($entry.Key -eq 'ClipShare') { $script:clipShareStatus.Text = $entry.Value.Text }
             }
             $script:tokSample = $snapshot.TokenSample
-            if ($script:modelLive) { $script:modelLive.Text = [string]$snapshot.ModelConfig }
+            if ($script:modelLive) {
+                $script:modelLive.Text = [string]$snapshot.ModelConfig
+                $script:statusTip.SetToolTip($script:modelLive, $script:modelLive.Text)
+            }
             Update-MicMark
         } catch {
             foreach ($label in $script:statusRows.Values) {
@@ -1839,15 +1933,52 @@ function Update-Status([switch]$Poll) {
 Update-Status
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
-$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation })
+$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation; Update-ClipShareOperation })
 $timer.Start()
+
+Add-Head $pageShare "ClipShare" 16
+$script:clipShareStatus = New-Object System.Windows.Forms.Label
+$script:clipShareStatus.Location = [Drawing.Point]::new(20, 54)
+$script:clipShareStatus.Size = [Drawing.Size]::new(($script:pageW - 40), 40)
+$script:clipShareStatus.Anchor = "Top, Left, Right"
+$script:clipShareStatus.Text = 'Reading status...'
+$pageShare.Controls.Add($script:clipShareStatus)
+foreach ($item in @(
+    @{Text='Start'; Action='Start'; X=20; Y=104},
+    @{Text='Stop'; Action='Stop'; X=200; Y=104},
+    @{Text='Inbox'; Action='Inbox'; X=20; Y=152},
+    @{Text='Library'; Action='Library'; X=200; Y=152},
+    @{Text='Copy link'; Action='Copy'; X=20; Y=200},
+    @{Text='Copy login'; Action='Login'; X=200; Y=200}
+)) {
+    $button = New-Object System.Windows.Forms.Button
+    $button.Text = $item.Text
+    $button.Tag = $item.Action
+    $button.Location = [Drawing.Point]::new($item.X, $item.Y)
+    $button.Size = [Drawing.Size]::new(160, 34)
+    Paint-Button $button ($item.Action -eq 'Start')
+    $button.Add_Click({ param($sender, $event); Start-ClipShareOperation ([string]$sender.Tag) })
+    $pageShare.Controls.Add($button)
+    $script:clipShareButtons += $button
+}
+$script:clipShareMessage = New-Object System.Windows.Forms.Label
+$script:clipShareMessage.Location = [Drawing.Point]::new(20, 252)
+$script:clipShareMessage.Size = [Drawing.Size]::new(($script:pageW - 40), 80)
+$script:clipShareMessage.Text = 'Drop downloaded clips/audio into Inbox. Copy link uses the latest completed share.'
+$pageShare.Controls.Add($script:clipShareMessage)
+$shareHint = New-Object System.Windows.Forms.Label
+$shareHint.Location = [Drawing.Point]::new(20, 348)
+$shareHint.Size = [Drawing.Size]::new(($script:pageW - 40), 180)
+$shareHint.ForeColor = $mute
+$shareHint.Text = "Background user app, not a Windows service. Closing Desk leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nDefault is local-only on 127.0.0.1:3923. External HTTPS is not configured automatically. Share links expire after 7 days; files are not auto-deleted."
+$pageShare.Controls.Add($shareHint)
 
 Add-Head $pageModel "Model" 16
 $modelHint = New-Object System.Windows.Forms.Label
 $modelHint.Text = "Pick one. Status starts and stops it. One GPU slot."
 $modelHint.ForeColor = $mute
-$modelHint.Location = New-Object System.Drawing.Point(20, 48)
-$modelHint.Size = New-Object System.Drawing.Size(($script:pageW - 40), 22)
+$modelHint.Location = New-Object System.Drawing.Point(100, 55)
+$modelHint.Size = New-Object System.Drawing.Size(($script:pageW - 120), 22)
 $pageModel.Controls.Add($modelHint)
 $script:modelButtons = @{}
 function Set-ModelPick([string]$Name) {
@@ -1874,10 +2005,16 @@ function Add-ModelPick([string]$key, [string]$text, [int]$x, [int]$y, [int]$w) {
     $pageModel.Controls.Add($b)
     $script:modelButtons[$key] = $b
 }
-Add-ModelPick "27b" "27B text" 20 80 112
-Add-ModelPick "vl" "8B vision" 140 80 112
-Add-ModelPick "image" "Qwen-Image-2.1" 260 80 184
-Add-ModelPick "uncensored" "Qwen3.8-27B-Uncensored" 20 124 ($script:pageW - 40)
+Add-ModelPick "image" "Qwen-Image-2.1" 304 16 272
+$exlHeading = [System.Windows.Forms.Label]::new()
+$exlHeading.Text = "EXL3"
+$exlHeading.Location = [Drawing.Point]::new(20, 55)
+$exlHeading.Size = [Drawing.Size]::new(72, 22)
+$pageModel.Controls.Add($exlHeading)
+Add-ModelPick "27b" "Qwen3.8-27B" 20 80 272
+Add-ModelPick "vl" "Qwen3-VL-8B" 304 80 272
+Add-ModelPick "uncensored" "Qwen3.8-27B-Uncensored" 20 124 272
+Add-ModelPick "qfn" "Qwen3.8-Flash-Next" 304 124 272
 Set-ModelPick "27b"
 
 $script:modelSettingsPath = Join-Path $Repo "logs\desk-model-settings.json"
@@ -1925,6 +2062,7 @@ $script:modelBudget.Size = [Drawing.Size]::new(168, 26)
 Style-Box $script:modelBudget
 $pageModel.Controls.Add($script:modelBudget)
 Add-ModelLabel "RAM prefix cache GiB (reuse only)" 304
+$script:modelCpuLabel = $pageModel.Controls[$pageModel.Controls.Count - 1]
 $pageModel.Controls[$pageModel.Controls.Count - 1].Location = [Drawing.Point]::new(208, 304)
 $pageModel.Controls[$pageModel.Controls.Count - 1].Size = [Drawing.Size]::new(368, 22)
 $script:modelCpuCache = [System.Windows.Forms.TextBox]::new()
@@ -1951,6 +2089,7 @@ function Save-DeskModelControls([switch]$MemoryOnly) {
     $profile = @{ Context = $script:modelContext.Text; CacheQuant = [string]$script:modelCache.SelectedItem
         Mtp = [bool]$script:modelMtp.Checked; Budget = $script:modelBudget.Text; CpuCache = $script:modelCpuCache.Text }
     if ($script:modelPick -eq "27b") { $profile.Vision = [bool]$script:modelVision.Checked }
+    if ($script:modelPick -eq "qfn") { $profile.CpuExperts = $script:modelCpuCache.Text; $profile.CpuCache = "0" }
     [void](Get-DeskModelLaunchOptions $script:modelPick $profile)
     $script:modelProfiles[$script:modelPick] = $profile
     if (-not $MemoryOnly) {
@@ -1967,8 +2106,11 @@ function Show-DeskModelControls {
     $script:modelVision.Enabled = $enabled -and $script:modelPick -eq "27b"
     $script:modelBudget.Enabled = $enabled -and $script:modelPick -ne "vl"
     foreach ($button in $pageModel.Controls) {
-        if ($button.Text -eq "Large text (~70k)") { $button.Enabled = $enabled -and $script:modelPick -ne "vl" }
-        if ($button.Text -eq "Max context (kit)") { $button.Enabled = $enabled -and $script:modelPick -eq "27b" }
+        if ($button.Text -eq "Large text (~70k)") { $button.Enabled = $enabled -and $script:modelPick -in @("27b", "uncensored") }
+        if ($button.Text -in @("Max context (kit)", "Quality preset")) {
+            $button.Enabled = $enabled -and $script:modelPick -in @("27b", "qfn")
+            $button.Text = if ($script:modelPick -eq "qfn") { "Quality preset" } else { "Max context (kit)" }
+        }
         if ($button.Text -eq "Save") { $button.Enabled = $enabled }
     }
     if ($enabled) {
@@ -1979,11 +2121,15 @@ function Show-DeskModelControls {
         $script:modelCache.SelectedItem = [string]$profile.CacheQuant
         $script:modelMtp.Checked = [bool]$profile.Mtp
         $script:modelBudget.Text = [string]$profile.Budget
-        $script:modelCpuCache.Text = if ($profile.ContainsKey("CpuCache")) { [string]$profile.CpuCache } else { "0" }
+        $script:modelCpuCache.Text = if ($script:modelPick -eq "qfn") { [string]$profile.CpuExperts } elseif ($profile.ContainsKey("CpuCache")) { [string]$profile.CpuCache } else { "0" }
         $script:modelVision.Checked = $script:modelPick -eq "27b" -and $profile.ContainsKey("Vision") -and [bool]$profile.Vision
     } else { $script:modelVision.Checked = $false }
+    $script:modelCpuLabel.Text = if ($script:modelPick -eq "qfn") { "CPU experts (400/416/432/448/464)" } else { "RAM prefix cache GiB (reuse only)" }
+    $script:modelMtp.Text = if ($script:modelPick -eq "qfn") { "MTP enabled (draft window 3)" } else { "MTP enabled (draft window 4)" }
     $script:modelSettingsHint.Text = if ($script:modelSettingsError) { $script:modelSettingsError } elseif (-not $enabled) {
         "Image diffusion does not have token context or MTP controls."
+    } elseif ($script:modelPick -eq "qfn") {
+        "3.05 weights unchanged; FP16 KV prioritizes quality, not context.`r`nCPU experts + hot GPU placement; both embeddings stream from disk.`r`n432 CPU needs 43 GiB free RAM; 4 GiB reserve, no RAM prefix tier.`r`nNo silent KV downgrade. Fit is unproven until a real generation."
     } else {
         "~70k: int4 KV, MTP/vision off; unchanged weights. Max is a kit plan.`r`nRAM cache reuses prefixes, not live context. No dense weight spill.`r`nVision/OCR applies on next 27B Start; speech stays CPU.`r`nReasoning applies next request; tools, pictures and /edit stay off."
     }
@@ -1998,6 +2144,16 @@ Add-Button $pageModel "Large text (~70k)" 20 370 168 {
     $script:modelCpuCache.Text = "4"
 } $false
 Add-Button $pageModel "Max context (kit)" 200 370 180 {
+    if ($script:modelPick -eq "qfn" -and -not $script:modelSettingsError) {
+        $profile = Get-DeskModelDefaults "qfn"
+        $script:modelContext.Text = [string]$profile.Context
+        $script:modelCache.SelectedItem = $profile.CacheQuant
+        $script:modelMtp.Checked = $profile.Mtp
+        $script:modelVision.Checked = $false
+        $script:modelBudget.Text = $profile.Budget.ToString([Globalization.CultureInfo]::InvariantCulture)
+        $script:modelCpuCache.Text = [string]$profile.CpuExperts
+        return
+    }
     if ($script:modelPick -ne "27b" -or $script:modelSettingsError) {
         [System.Windows.Forms.MessageBox]::Show("The kit's measured planner applies only to the standard 27B checkpoint.")
         return
@@ -2120,36 +2276,14 @@ $reply = New-Object System.Windows.Forms.TextBox
 $reply.Multiline = $true
 $reply.ScrollBars = "Vertical"
 $reply.Location = New-Object System.Drawing.Point(20, 188)
-$reply.Size = New-Object System.Drawing.Size(($script:pageW - 40), 306)
+$reply.Size = New-Object System.Drawing.Size(($script:pageW - 40), ($pageAsk.ClientSize.Height - $reply.Top - 20))
 $reply.MaxLength = 0
 Style-Box $reply
 $pageAsk.Controls.Add($reply)
-$cwdLabel = New-Object System.Windows.Forms.Label
-$cwdLabel.Text = "Grok folder"
-$cwdLabel.ForeColor = $mute
-$cwdLabel.Location = New-Object System.Drawing.Point(20, 508)
-$cwdLabel.AutoSize = $true
-$pageAsk.Controls.Add($cwdLabel)
-$cwd = New-Object System.Windows.Forms.TextBox
-$cwd.Text = $Repo
-$cwd.Location = New-Object System.Drawing.Point(20, 530)
-$cwd.Size = New-Object System.Drawing.Size(($script:pageW - 164), 26)
-Style-Box $cwd
-$pageAsk.Controls.Add($cwd)
-Add-Button $pageAsk "Open Grok" ($script:pageW - 132) 526 112 {
-    $dir = $cwd.Text
-    if (-not (Test-Path -LiteralPath $dir)) { [System.Windows.Forms.MessageBox]::Show("No such folder: $dir"); return }
-    $grok = (Get-Command grok -ErrorAction SilentlyContinue).Source
-    if (-not $grok) { [System.Windows.Forms.MessageBox]::Show("grok is not on PATH"); return }
-    Start-Process -FilePath $grok -WorkingDirectory $dir | Out-Null
-} $false
 
 foreach ($control in @($askPath, $prompt, $reviewFile)) { $control.Anchor = "Top, Left, Right" }
 $send.Anchor = "Top, Right"
 $reply.Anchor = "Top, Bottom, Left, Right"
-$cwdLabel.Anchor = "Bottom, Left"
-$cwd.Anchor = "Bottom, Left, Right"
-($pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Open Grok" }).Anchor = "Bottom, Right"
 
 Add-Head $pageLyrics "Lyrics" 16
 function Add-Field([string]$label, [string]$value, [int]$x, [int]$y, [int]$w) {
@@ -2838,6 +2972,8 @@ try {
     $script:askWorker.Dispose()
     $script:airPlayWorker.Stop()
     $script:airPlayWorker.Dispose()
+    $script:clipShareWorker.Stop()
+    $script:clipShareWorker.Dispose()
     $script:monitorWorker.Stop()
     $script:monitorWorker.Dispose()
     Clear-DisplayHotkeys
