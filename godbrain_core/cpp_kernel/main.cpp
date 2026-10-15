@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <ntsecapi.h>
 #include <tlhelp32.h>
 #include <iostream>
 #include <string>
@@ -76,10 +77,12 @@ struct LastOracleTurn {
     bool ok = false;
     bool stored = false;
     bool complete = true;
+    bool retain_requested = false;
 };
 constexpr size_t kMaxOracleTurns = 8;
 static std::mutex g_last_oracle_mu;
 static std::vector<LastOracleTurn> g_oracle_turns;
+static std::function<json(const json&)> g_oracle_save = memory::save_thought;
 
 static json last_oracle_json();
 static json last_oracle_turns_json();
@@ -185,6 +188,9 @@ static json oracle_turn_to_json(const LastOracleTurn& turn) {
         {"complete", turn.complete},
         {"stable_id", turn.stable_id},
         {"status", turn.status},
+        {"retain_requested", turn.retain_requested},
+        {"retention", turn.stored ? "retained" :
+                          (turn.retain_requested ? "requested" : "local_only")},
     };
 }
 
@@ -216,8 +222,8 @@ static std::string last_oracle_path() {
 
 // Replace the file in place. Never unlink the live file first — a failed
 // write must leave the previous turns readable (the Gemini-class footgun).
-static void persist_oracle_turns_locked() {
-    json body = {{"version", 1}, {"turns", json::array()}};
+static bool persist_oracle_turns_locked() {
+    json body = {{"version", 2}, {"turns", json::array()}};
     for (const auto& turn : g_oracle_turns) {
         body["turns"].push_back(oracle_turn_to_json(turn));
     }
@@ -227,13 +233,13 @@ static void persist_oracle_turns_locked() {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) {
             std::cerr << "[MEMORY] could not write " << tmp << std::endl;
-            return;
+            return false;
         }
         out << body.dump(2);
         out.flush();
         if (!out) {
             std::cerr << "[MEMORY] incomplete write " << tmp << std::endl;
-            return;
+            return false;
         }
     }
     if (MoveFileExA(
@@ -243,8 +249,12 @@ static void persist_oracle_turns_locked() {
         std::cerr << "[MEMORY] could not replace " << path
                   << " (win32=" << GetLastError() << "); previous file kept"
                   << std::endl;
+        return false;
     }
+    return true;
 }
+
+static void note_local_oracle(const LastOracleTurn& turn);
 
 static void load_oracle_turns() {
     const std::string path = last_oracle_path();
@@ -266,6 +276,7 @@ static void load_oracle_turns() {
             turn.complete = item.value("complete", true);
             turn.stable_id = item.value("stable_id", "");
             turn.status = item.value("status", "candidate");
+            turn.retain_requested = item.value("retain_requested", false);
             if (turn.question.empty() && turn.answer.empty()) continue;
             g_oracle_turns.push_back(std::move(turn));
         }
@@ -284,6 +295,7 @@ static void load_oracle_turns() {
                 cleaned = true;
             }
         }
+        for (const auto& turn : g_oracle_turns) note_local_oracle(turn);
         if (cleaned) persist_oracle_turns_locked();
         std::cout << "[MEMORY] Loaded " << g_oracle_turns.size()
                   << " oracle turns from " << path << std::endl;
@@ -299,6 +311,14 @@ static std::string oracle_turn_body(
                        "\nA: " + answer;
     if (body.size() > 2000) body.resize(2000);
     return body;
+}
+
+static void note_local_oracle(const LastOracleTurn& turn) {
+    if (!turn.ok || !turn.complete || turn.answer.empty()) return;
+    const std::string body = oracle_turn_body(turn.question, turn.answer);
+    const std::string hash = browser_evidence::keccak_hex(body);
+    memory::note_session(hash, "local-oracle:" + hash, body,
+                         turn.status == "rejected" ? "rejected" : "candidate");
 }
 
 static void mark_oracle_stored(
@@ -335,12 +355,15 @@ static bool mark_oracle_status(const std::string& id, const std::string& to) {
 
 static void store_oracle_turn_async(
     const std::string& question, const std::string& answer) {
-    std::thread([question, answer]() {
+    const auto save = g_oracle_save;
+    std::thread([question, answer, save]() {
         try {
-            const json receipt = memory::save_thought(
+            const json receipt = save(
                 {{"content", oracle_turn_body(question, answer)},
                  {"sector", "oracle"}});
-            mark_oracle_stored(question, answer, receipt.value("stable_id", ""));
+            const std::string id = receipt.value("stable_id", "");
+            if (id.empty()) throw std::runtime_error("Oracle receipt has no stable_id");
+            mark_oracle_stored(question, answer, id);
         } catch (const std::exception& error) {
             std::cerr << "[MEMORY] oracle turn not stored: " << error.what()
                       << std::endl;
@@ -355,17 +378,23 @@ static std::string ensure_last_oracle_id() {
         for (auto it = g_oracle_turns.rbegin(); it != g_oracle_turns.rend();
              ++it) {
             if (!is_displayable_oracle_turn(*it)) continue;
+            if (!it->ok || !it->complete || it->answer.empty()) return "";
+            if (it->stored && !it->stable_id.empty()) return it->stable_id;
+            it->retain_requested = true;
+            if (!persist_oracle_turns_locked()) {
+                throw std::runtime_error(
+                    "could not persist Oracle retention request; candidate not sent");
+            }
             turn = *it;
             break;
         }
         if (turn.question.empty() && turn.answer.empty()) return "";
-        if (!turn.stable_id.empty()) return turn.stable_id;
     }
-    if (!turn.ok || turn.answer.empty()) return "";
-    const json receipt = memory::save_thought(
+    const json receipt = g_oracle_save(
         {{"content", oracle_turn_body(turn.question, turn.answer)},
          {"sector", "oracle"}});
     const std::string stable_id = receipt.value("stable_id", "");
+    if (stable_id.empty()) throw std::runtime_error("Oracle receipt has no stable_id");
     mark_oracle_stored(turn.question, turn.answer, stable_id);
     return stable_id;
 }
@@ -396,17 +425,22 @@ static void note_oracle_partial(
     persist_oracle_turns_locked();
 }
 
-static void retry_unstored_oracle_turns() {
+static std::vector<std::pair<std::string, std::string>> oracle_retention_requests() {
     std::vector<std::pair<std::string, std::string>> pending;
     {
         std::lock_guard<std::mutex> lock(g_last_oracle_mu);
         for (const auto& turn : g_oracle_turns) {
-            if (turn.ok && turn.complete && !turn.stored &&
+            if (turn.retain_requested && turn.ok && turn.complete && !turn.stored &&
                 !turn.question.empty() && !turn.answer.empty()) {
                 pending.emplace_back(turn.question, turn.answer);
             }
         }
     }
+    return pending;
+}
+
+static void retry_unstored_oracle_turns() {
+    const auto pending = oracle_retention_requests();
     for (const auto& item : pending) {
         std::cout << "[MEMORY] Retrying unstored oracle turn" << std::endl;
         store_oracle_turn_async(item.first, item.second);
@@ -439,8 +473,7 @@ static void remember_oracle_turn(
         }
         persist_oracle_turns_locked();
     }
-    if (!turn.ok) return;
-    store_oracle_turn_async(question, answer);
+    note_local_oracle(turn);
 }
 
 static std::string trim_copy(std::string value) {
@@ -1801,16 +1834,55 @@ static std::string chain_path() {
     return repo_root_from_exe() + "\\logs\\last-chain.json";
 }
 
-static std::string mint_chain_id(const std::string& goal) {
-    uint32_t h = 2166136261u;
-    for (unsigned char ch : goal) {
-        h ^= ch;
-        h *= 16777619u;
+static std::mutex g_chain_mu;
+
+static json read_chain_unlocked() {
+    std::ifstream in(chain_path(), std::ios::binary);
+    if (!in) {
+        const DWORD attributes = GetFileAttributesA(chain_path().c_str());
+        const DWORD error = GetLastError();
+        if (attributes != INVALID_FILE_ATTRIBUTES ||
+            (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)) {
+            throw std::runtime_error("task ledger is unreadable; inspect before continuing");
+        }
+        return json::object();
     }
-    h ^= GetTickCount();
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%08x%04x", h, GetTickCount() & 0xffff);
-    return std::string(buf, 12);
+    in.seekg(0, std::ios::end);
+    const auto size = in.tellg();
+    if (size < 0 || size > 128 * 1024) {
+        throw std::runtime_error("task ledger has invalid size; inspect before continuing");
+    }
+    in.seekg(0);
+    try {
+        const json body = json::parse(in);
+        if (!body.is_object()) throw std::runtime_error("task ledger must be an object");
+        if (body.contains("verification") &&
+            (!body["verification"].is_object() ||
+             body["verification"].value("status", "") != "not_run" ||
+             body["verification"].value("scope", "") != "task_outcome")) {
+            throw std::runtime_error("task ledger claims an unsupported verifier");
+        }
+        if (body.value("skill_promote_eligible", false)) {
+            throw std::runtime_error("task ledger cannot grant skill promotion");
+        }
+        return body;
+    } catch (const json::exception&) {
+        throw std::runtime_error("task ledger is invalid; inspect before continuing");
+    }
+}
+
+static std::string mint_chain_id() {
+    unsigned char random[6]{};
+    if (!RtlGenRandom(random, sizeof(random))) {
+        throw std::runtime_error("could not generate task identity");
+    }
+    constexpr char hex[] = "0123456789abcdef";
+    std::string id;
+    for (const unsigned char byte : random) {
+        id += hex[byte >> 4];
+        id += hex[byte & 15];
+    }
+    return id;
 }
 
 static std::string utc_stamp() {
@@ -1828,7 +1900,9 @@ static std::string core_events_path() {
 
 static std::mutex g_core_events_mu;
 
-static void append_core_event(const std::string& kind, const std::string& detail) {
+static void append_core_event(
+    const std::string& kind, const std::string& detail,
+    const std::string& task_id = "", const json& evidence = json::object()) {
     if (kind.empty()) return;
     std::lock_guard<std::mutex> lock(g_core_events_mu);
     const std::string dir = repo_root_from_exe() + "\\logs";
@@ -1850,8 +1924,20 @@ static void append_core_event(const std::string& kind, const std::string& detail
         {"kind", kind.substr(0, 32)},
         {"detail", detail.substr(0, 240)},
     };
+    if (!task_id.empty()) row["task_id"] = task_id;
+    if (!evidence.empty()) row["evidence"] = evidence;
     std::ofstream out(path, std::ios::binary | std::ios::app);
-    if (out) out << row.dump() << "\n";
+    if (out) {
+        out << row.dump() << "\n";
+        out.flush();
+    }
+    if (!out) {
+        std::cerr << "[EVENTS] could not persist " << kind << std::endl;
+        if (!task_id.empty()) {
+            throw std::runtime_error(
+                "could not persist task event; inspect task state before retrying");
+        }
+    }
 }
 
 static std::vector<json> load_core_event_tail(size_t n) {
@@ -1878,35 +1964,69 @@ static std::vector<json> load_core_event_tail(size_t n) {
     return all;
 }
 
+struct ChainEvidence {
+    std::string task_id;
+    std::string attempt_id;
+    bool history_complete = true;
+    json results = json::array();
+    size_t omitted = 0;
+};
+
+static void record_tool_evidence(
+    ChainEvidence& evidence, const std::vector<local_tools::Call>& calls,
+    const std::unordered_set<std::string>& advertised, bool executor_ok,
+    const std::string& result) {
+    json names = json::array();
+    for (const auto& call : calls) {
+        if (names.size() >= 16) break;
+        names.push_back(advertised.count(call.name) ? call.name : "(alias or unadvertised)");
+    }
+    const json row = {
+        {"attempt_id", evidence.attempt_id},
+        {"ordinal", evidence.results.size() + evidence.omitted + 1},
+        {"requested_calls", calls.size()},
+        {"requested_tool_names", names},
+        {"executor_ok", executor_ok},
+        {"result_bytes", result.size()},
+        {"result_keccak256", browser_evidence::keccak_hex(result)},
+        {"content_retained", false},
+        {"verification", "not_run"},
+    };
+    if (evidence.results.size() < 128) {
+        evidence.results.push_back(row);
+    } else {
+        ++evidence.omitted;
+    }
+    append_core_event("tool_result", "executor metadata; not task verification",
+                      evidence.task_id, row);
+}
+
 static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops,
-                       const std::string& phase = "", bool hops_ok = true) {
-    json prev;
-    {
-        std::ifstream in(chain_path(), std::ios::binary);
-        if (in) {
-            try {
-                prev = json::parse(in);
-            } catch (const json::exception&) {
-            }
-        }
-    }
+                       const std::string& phase = "", bool hops_ok = true,
+                       const ChainEvidence* evidence = nullptr) {
+    std::lock_guard<std::mutex> lock(g_chain_mu);
+    const json prev = read_chain_unlocked();
     std::string id = prev.value("id", "");
     const std::string prev_goal = prev.value("goal", "");
     const std::string prev_status = prev.value("status", "");
     const bool same_flight =
-        !id.empty() && (goal == prev_goal || is_continue_command(goal));
+        !id.empty() && (evidence ? evidence->task_id == id :
+                       (goal == prev_goal || is_continue_command(goal)));
     if (prev_status == "cancelled" && same_flight) {
         return;
     }
     const bool reuse = prev_status == "running" && same_flight;
-    if (!reuse) id = mint_chain_id(goal);
+    if (evidence) id = evidence->task_id;
+    else if (!reuse) id = mint_chain_id();
+    const bool continuing = same_flight && is_continue_command(goal);
+    const std::string saved_goal = continuing ? prev_goal : goal;
     std::string status = "running";
     if (!answer.empty()) status = hops_ok ? "done" : "failed";
     json doc = {
         {"id", id},
         {"status", status},
-        {"goal", goal.substr(0, 500)},
+        {"goal", saved_goal.substr(0, 500)},
         {"ledger", ledger.substr(0, 4000)},
         {"answer", answer.substr(0, 2000)},
         {"hops", hops},
@@ -1914,35 +2034,52 @@ static void save_chain(const std::string& goal, const std::string& ledger,
         {"phase", phase.empty() ? (answer.empty() ? "after" : "final") : phase},
         {"at", utc_stamp()},
         {"at_tick", static_cast<int>(GetTickCount())},
+        {"goal_hash", continuing ? prev.value("goal_hash", browser_evidence::keccak_hex(saved_goal))
+                                  : browser_evidence::keccak_hex(goal)},
+        {"execution", {{"outcome", status == "done" ? "completed" : status},
+                       {"basis", "answer_and_executor_flags"}}},
+        {"verification", {{"status", "not_run"},
+                          {"scope", "task_outcome"}}},
+        {"skill_promote_eligible", false},
     };
+    if (evidence) {
+        doc["attempt_id"] = evidence->attempt_id;
+        doc["tool_evidence"] = evidence->results;
+        doc["evidence_omitted"] = evidence->omitted;
+        doc["evidence_history_complete"] = evidence->history_complete && evidence->omitted == 0;
+        doc["evidence_scope"] = "executor_result_metadata_only";
+    }
     const std::string path = chain_path();
     const std::string tmp = path + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return;
-        out << doc.dump();
+        if (out) {
+            out << doc.dump();
+            out.flush();
+        }
+        if (!out) throw std::runtime_error(
+            "could not write task ledger; inspect task state before retrying");
     }
-    MoveFileExA(tmp.c_str(), path.c_str(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    if (!MoveFileExA(tmp.c_str(), path.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        throw std::runtime_error(
+            "could not replace task ledger; previous evidence kept");
+    }
     append_core_event("chain", doc.value("status", "") + " hops=" +
-                                   std::to_string(hops));
+                                   std::to_string(hops), id);
 }
 
 static bool chain_is_cancelled(const std::string& goal) {
     const json ch = load_chain();
     if (ch.value("status", "") != "cancelled") return false;
     const std::string prev_goal = ch.value("goal", "");
-    return goal == prev_goal || is_continue_command(goal);
+    return goal == prev_goal || is_continue_command(goal) ||
+           browser_evidence::keccak_hex(goal) == ch.value("goal_hash", "");
 }
 
 static json load_chain() {
-    std::ifstream in(chain_path(), std::ios::binary);
-    if (!in) return json::object();
-    try {
-        return json::parse(in);
-    } catch (const json::exception&) {
-        return json::object();
-    }
+    std::lock_guard<std::mutex> lock(g_chain_mu);
+    return read_chain_unlocked();
 }
 
 static json read_cs2_pause_file() {
@@ -2434,6 +2571,8 @@ static void write_chain_glance(httplib::Response& res, json body) {
         reply << "chain=" << body.value("id", "")
               << " " << body.value("status", "?")
               << " hops=" << body.value("hops", 0);
+        reply << " verify="
+              << body.value("verification", json::object()).value("status", "unknown");
         if (body.contains("hop_ok") && !body.value("hop_ok", true)) {
             reply << " hop_ok=0";
         }
@@ -2498,23 +2637,36 @@ static void handle_events(const httplib::Request&, httplib::Response& res) {
 }
 
 static void handle_cancel_chain(const httplib::Request&, httplib::Response& res) {
-    json body = load_chain();
+    std::unique_lock<std::mutex> lock(g_chain_mu);
+    json body = read_chain_unlocked();
     if (body.empty() || !body.contains("id")) {
+        lock.unlock();
         write_chain_glance(res, json::object());
         return;
     }
     if (body.value("status", "") == "running") {
         body["status"] = "cancelled";
+        body["execution"] = {{"outcome", "cancelled"}};
+        body["verification"] = {{"status", "not_run"}, {"scope", "task_outcome"}};
+        body["skill_promote_eligible"] = false;
         body["at"] = utc_stamp();
         const std::string path = chain_path();
         const std::string tmp = path + ".tmp";
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-            if (out) out << body.dump();
+            if (out) {
+                out << body.dump();
+                out.flush();
+            }
+            if (!out) throw std::runtime_error("could not persist task cancellation");
         }
-        MoveFileExA(tmp.c_str(), path.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        if (!MoveFileExA(tmp.c_str(), path.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            throw std::runtime_error("could not replace task cancellation ledger");
+        }
+        append_core_event("chain", "cancelled", body.value("id", ""));
     }
+    lock.unlock();
     write_chain_glance(res, body);
 }
 
@@ -3399,12 +3551,18 @@ std::string run_colibri_serve(
         messages = base_messages;
     }
     bool hops_ok = true;
+    ChainEvidence evidence;
+    evidence.task_id = mint_chain_id();
+    evidence.attempt_id = mint_chain_id();
     {
         const json prev_ch = load_chain();
         if (prev_ch.value("status", "") == "running" &&
-            (chain_goal == prev_ch.value("goal", "") ||
+            (browser_evidence::keccak_hex(chain_goal) == prev_ch.value("goal_hash", "") ||
+             chain_goal == prev_ch.value("goal", "") ||
              is_continue_command(chain_goal))) {
             hops_ok = prev_ch.value("hop_ok", true);
+            evidence.task_id = prev_ch.value("id", evidence.task_id);
+            evidence.history_complete = false;
         }
     }
     bool unused49_seen = false;
@@ -3775,7 +3933,7 @@ std::string run_colibri_serve(
             break;
         }
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
-                   chain_hops + 1, "before", hops_ok);
+                   chain_hops + 1, "before", hops_ok, &evidence);
         std::string tool_out;
         bool hop_ok = true;
         for (size_t i = 0; i < tcs.size(); ++i) {
@@ -3788,8 +3946,9 @@ std::string run_colibri_serve(
             const std::string one =
                 one_calls.empty() ? std::string("unknown tool\n")
                                   : local_tools::execute_calls(one_calls, &one_ok,
-                                                               &advertised);
+                                                               &advertised, evidence.task_id);
             if (one_calls.empty()) one_ok = false;
+            record_tool_evidence(evidence, one_calls, advertised, one_ok, one);
             hop_ok = hop_ok && one_ok;
             tool_out += one;
         }
@@ -3801,7 +3960,7 @@ std::string run_colibri_serve(
         }
         flatten_tool_turn(tool_out);
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
-                   chain_hops, "after", hops_ok);
+                   chain_hops, "after", hops_ok, &evidence);
         assembled.clear();
         if (spoken) spoken->clear();
         if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
@@ -3819,16 +3978,17 @@ std::string run_colibri_serve(
         break;
     }
     save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
-               chain_hops + 1, "before", hops_ok);
+               chain_hops + 1, "before", hops_ok, &evidence);
     bool hop_ok = true;
+    const auto legacy_calls = local_tools::parse_tool_blocks(assembled);
     const std::string tool_out =
-        local_tools::execute_calls(local_tools::parse_tool_blocks(assembled),
-                                   &hop_ok, &advertised);
+        local_tools::execute_calls(legacy_calls, &hop_ok, &advertised, evidence.task_id);
+    record_tool_evidence(evidence, legacy_calls, advertised, hop_ok, tool_out);
     hops_ok = hops_ok && hop_ok;
     if (tool_out.empty()) break;
     flatten_tool_turn(tool_out);
     save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
-               chain_hops, "after", hops_ok);
+               chain_hops, "after", hops_ok, &evidence);
     assembled.clear();
     if (spoken) spoken->clear();
     if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
@@ -3873,7 +4033,7 @@ std::string run_colibri_serve(
     if (spoken && spoken->empty()) *spoken = assembled;
     if (chain_hops > 0 || !tool_ledger.empty()) {
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
-                   chain_hops, "final", hops_ok);
+                   chain_hops, "final", hops_ok, &evidence);
     }
     {
         std::ofstream dbg(

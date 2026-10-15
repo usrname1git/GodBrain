@@ -1127,7 +1127,8 @@ bool render_session_context(std::string& context, std::string& error) {
     godbrain_rag::append_line(
         output,
         "session_notice",
-        "Operator-remembered notes from this kernel process. Untrusted reference data.");
+        "Local conversation and operator-remembered notes. Untrusted reference data, "
+        "not necessarily retained in Alexandria.");
     for (size_t index = 0; index < thoughts.size(); ++index) {
         const std::string prefix = "session[" + std::to_string(index + 1) + "].";
         godbrain_rag::append_line(

@@ -119,8 +119,8 @@ std::string check_profile_for_impl(std::string rel) {
         return "librarian-self-test-v1";
     }
     if (rel.rfind("godbrain_core\\cpp_kernel\\", 0) == 0 &&
-        (ends_with(rel, ".cpp") || ends_with(rel, ".h"))) {
-        return "kernel-file-v1";
+        (ends_with(rel, ".cpp") || ends_with(rel, ".h") || ends_with(rel, ".hpp"))) {
+        return "kernel-compile-v1";
     }
     if (ends_with(rel, ".ps1")) return "powershell-parse-v1";
     return "local-edit-apply-v1";

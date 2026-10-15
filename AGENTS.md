@@ -308,7 +308,7 @@ as `SECOND` in that plan file. Galaxy This host shows `Edit: ok` / `fail` /
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
 or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
 apply, `scripts\Verify-LocalEdit.ps1` runs a **bounded** check by path
-(PowerShell parse, kernel file non-empty/NUL check, memory-store `go test -short`,
+(PowerShell parse, kernel compile/link without running edited binaries, memory-store `go test -short`,
 Galaxy HTML markers, or `librarian --self-test`). If that script is
 missing or the check never runs, originals are restored. Receipt stays
 `verification_profile=local-edit-apply-v1` and `skill_promote_eligible=false`.

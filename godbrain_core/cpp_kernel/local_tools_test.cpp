@@ -802,6 +802,13 @@ int main() {
         local_tools::parse_tool_blocks(pyfail), &fail_ok);
     pass &= expect(pyfailr.find("exit=7") != std::string::npos, "python exit=7");
     pass &= expect(!fail_ok, "execute_calls all_ok false on exit 7");
+    const std::string pynegative =
+        "*** TOOL\nname: run_python\n<<<<\nimport sys\nsys.exit(-7)\n>>>>\n*** END\n";
+    bool negative_ok = true;
+    const std::string negative_result = local_tools::execute_calls(
+        local_tools::parse_tool_blocks(pynegative), &negative_ok);
+    pass &= expect(!negative_ok && negative_result.find("exit=-7") != std::string::npos,
+                   "negative process exit is not successful completion");
 
     bool miss_ok = true;
     const std::string miss_block =

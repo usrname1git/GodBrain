@@ -157,6 +157,51 @@ phone glance. The iPhone Shortcut should show the first line.
 Pending lists candidate Oracle turns, a candidate host card, and newest
 unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 
+## Task evidence and deliberate retention
+
+The tool loop keeps the existing `last-chain.json` status for compatibility,
+but `done` means an answer and successful executor flags, **not** a verified
+task outcome. `/chain` now shows `verify=not_run`. The ledger records separate
+`execution` and `verification` objects and never makes a chain skill-promotable.
+Ordinary tools cannot supply an independent task-outcome verdict by printing
+"verified" or returning exit code zero.
+No task-outcome verifier is registered yet: persisted `passed` or promotion
+claims are rejected, not accepted as trusted evidence from an editable file.
+
+Each native tool call or legacy TOOL batch records the returned result's byte
+count and Keccak-256 before the 12 KiB prompt / 4 KiB ledger presentation clips.
+These are **metadata only**, not retained stdout or a reconstructable complete
+trace. Up to 128 result rows fit in the latest ledger; omitted counts and
+incomplete resumed history are explicit. A stable task ID connects the ledger,
+tool audit and bounded, rotating core-event journal; a distinct attempt ID
+identifies continuation attempts. Long goals use a full-content hash rather
+than the displayed 500-byte goal for identity. Corrupt/unreadable task state
+or failed task-evidence writes fail visibly; failed replacement keeps the
+previous ledger. Cancellation and saves share one process mutex.
+
+File-tool denials, missing/unreadable files, invalid operations and capped
+batches no longer leave `all_ok=true`. An empty readable file remains a
+successful read. These executor facts still do not prove the requested result.
+
+Normal Oracle replies stay in the bounded local `last_oracle.json` history,
+with `retention=local_only`, instead of automatically becoming Alexandria
+candidates. Complete local turns continue as explicitly untrusted session
+notes, including after restart; they are not verified RAG. `/last` and
+continuation remain local. `/verify last` and `/reject last` deliberately
+retain the selected complete turn before the existing authorized judgment.
+Explicit `/remember` and ingestion are unchanged. Failed explicit retention
+persists `retain_requested` and remains retryable; startup retries only that
+intent, never ordinary or incomplete replies. Legacy stored IDs and records
+remain intact; legacy unstored replies do not acquire retention intent.
+`/pending` lists retained candidates, not all unretained conversation.
+
+This is the evidence/retention foundation, not an autonomous learning engine.
+Freshness-aware skill routing, model TaskReview, an improvement backlog and
+gated self-editing are not implemented here. No extra inference pass or
+background model is started. Offline native coverage is in
+`scripts\Test-KernelReplies.ps1`, with the wider tool/edit rollback cases in
+`scripts\Test-JarvisLoop.ps1`.
+
 ## Local edits and CS2
 
 Galaxy This host shows `Edit: ok` / `Edit: fail` / `Edit: none` from
@@ -179,9 +224,19 @@ truncates; LF hunks match CRLF files. The second pass uses that same operator-hi
 git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
 enough to promote a skill. A path-selected bounded check
-(`powershell-parse-v1`, `kernel-file-v1`, `memory-store-go-v1`,
+(`powershell-parse-v1`, `kernel-compile-v1`, `memory-store-go-v1`,
 `galaxy-html-static-v1`, `librarian-self-test-v1`) may run after apply;
 `check_ok` is recorded separately and still cannot promote.
+The kernel profile now compiles and links the native kernel/reply fixture,
+rather than accepting nonempty/NUL-free bytes alone. Edited extra translation
+units and headers are also compiled, so an unrelated successful build cannot
+hide an uncompiled changed file. The automatic path uses
+`Test-KernelReplies.ps1 -CompileOnly`: it never runs the model-modifiable
+native binaries. Behavioral fixtures remain an explicit CLI gate, not an
+implicit grant to execute model-written C++ with host authority.
+This is scoped compile/link evidence, not proof of task correctness.
+A missing compiler, missing runner, compile/link error or the existing
+70-second check timeout fails closed and restores the original edit bytes.
 
 Librarian may extract `skills_extracted`; they land as candidate knowledge
 nodes (`kind=skill`). `PromoteSkill` requires a verified origin node, a

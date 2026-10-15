@@ -228,6 +228,256 @@ int main() {
                 check(message.at("role") != "tool", "tool history was not flattened");
             }
         }
+        const auto native_chain = load_chain();
+        check(native_chain["execution"]["outcome"] == "completed" &&
+                  native_chain["verification"]["status"] == "not_run" &&
+                  native_chain["skill_promote_eligible"] == false &&
+                  native_chain["tool_evidence"].size() == 1 &&
+                  native_chain["tool_evidence"][0]["executor_ok"] == true,
+              "tool completion was confused with independently verified task success");
+        const auto events = load_core_event_tail(20);
+        bool correlated = false;
+        for (const auto& row : events) {
+            if (row.value("kind", "") == "tool_result" &&
+                row.value("task_id", "") == native_chain["id"]) {
+                correlated = row["evidence"]["attempt_id"] == native_chain["attempt_id"];
+            }
+        }
+        check(correlated, "tool evidence lost task/attempt correlation");
+        const auto native_call = [&](const std::string& name, const json& args) {
+            MockCompletion reply = completion(private_text, "", "tool_calls");
+            reply.deltas.push_back({{"tool_calls", json::array({{
+                {"id", "fixture"}, {"type", "function"},
+                {"function", {{"name", name}, {"arguments", args.dump()}}}
+            }})}});
+            return reply;
+        };
+        const auto artifact = root / "wrong-outcome.txt";
+        const auto execute_fixture = [&](const std::string& name, const json& args,
+                                         bool expected_ok) {
+            const auto request = native_call(name, args);
+            const auto parsed = local_tools::calls_from_openai(request.deltas.back()["tool_calls"]);
+            bool ok = !expected_ok;
+            local_tools::execute_calls(parsed, &ok);
+            check(ok == expected_ok, "typed executor flag disagreed with fixture outcome");
+        };
+        std::ofstream(artifact, std::ios::trunc);
+        execute_fixture("read_local_file", {{"path", artifact.string()}}, true);
+        execute_fixture("get_file_info", {{"path", (root / "absent.txt").string()}}, false);
+        execute_fixture("list_local_dir", {{"path", artifact.string()}}, false);
+        execute_fixture("edit_local_file", {{"path", artifact.string()},
+                                          {"old_text", "missing"}, {"content", "new"}}, false);
+        execute_fixture("create_local_dir", {{"path", (artifact / "child").string()}}, false);
+        execute_fixture("search_local", {{"path", root.string()}, {"args", ""}}, false);
+        execute_fixture("unknown_fixture_tool", json::object(), false);
+        HANDLE locked = CreateFileA(artifact.string().c_str(), GENERIC_READ, 0,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(locked != INVALID_HANDLE_VALUE, "could not lock read fixture");
+        execute_fixture("read_local_file", {{"path", artifact.string()}}, false);
+        execute_fixture("write_local_file", {{"path", artifact.string()}, {"content", "blocked"}}, false);
+        CloseHandle(locked);
+        const auto audit_path = logs / "tool-audit.jsonl";
+        const auto audit_backup = logs / "audit.fixture-backup";
+        std::filesystem::rename(audit_path, audit_backup);
+        std::filesystem::create_directory(audit_path);
+        execute_fixture("write_local_file", {{"path", artifact.string()}, {"content", "blocked"}}, false);
+        std::filesystem::remove(audit_path);
+        std::filesystem::rename(audit_backup, audit_path);
+        check(std::filesystem::file_size(artifact) == 0, "failed read/audit changed the file");
+        std::ofstream(artifact) << "original";
+        run({native_call("write_local_file", {{"path", artifact.string()},
+                                            {"content", "wrong outcome"}}),
+             completion("", "The required correct outcome is verified.")},
+            "on", "Fixture writing task.");
+        std::ifstream wrong(artifact);
+        std::string wrong_text((std::istreambuf_iterator<char>(wrong)), {});
+        wrong.close();
+        check(wrong_text == "wrong outcome" &&
+                  load_chain()["execution"]["outcome"] == "completed" &&
+                  load_chain()["verification"]["status"] == "not_run",
+              "a model success claim upgraded the wrong artifact to verified");
+
+        run({native_call("read_local_file", {{"path", (root / "absent.txt").string()}}),
+             completion("", "Everything succeeded.")}, "on", "Fixture missing-file task.");
+        check(load_chain()["status"] == "failed" &&
+                  load_chain()["tool_evidence"][0]["executor_ok"] == false &&
+                  load_chain()["verification"]["status"] == "not_run",
+              "a failed executor became success because of the model's final answer");
+
+        const std::string large_text = "RAW_FIXTURE_KEEP_LOCAL " + std::string(30000, 'x');
+        std::ofstream(artifact, std::ios::binary | std::ios::trunc) << large_text;
+        const auto large_call = native_call("read_local_file", {{"path", artifact.string()}});
+        const auto calls = local_tools::calls_from_openai(large_call.deltas.back()["tool_calls"]);
+        bool read_ok = false;
+        const auto full_result = local_tools::execute_calls(calls, &read_ok);
+        check(read_ok && full_result.size() > 12000, "large result fixture did not exceed clipping");
+        run({large_call, completion("", "Read complete.")}, "on", "Fixture large read.");
+        const auto large_chain = load_chain();
+        check(large_chain["tool_evidence"][0]["result_bytes"] == full_result.size() &&
+                  large_chain["tool_evidence"][0]["result_keccak256"] ==
+                      browser_evidence::keccak_hex(full_result) &&
+                  large_chain["ledger"].get<std::string>().size() <= 4000 &&
+                  large_chain["tool_evidence"][0]["content_retained"] == false,
+              "executor evidence was taken after presentation clipping");
+        for (const auto& row : load_core_event_tail(20)) {
+            check(row.dump().find("RAW_FIXTURE_KEEP_LOCAL") == std::string::npos,
+                  "raw tool content escaped into the metadata journal");
+        }
+
+        run({completion(private_text, "*** TOOL\nname: list_granted_roots\n*** END\n"),
+             completion("", "Legacy tool complete.")}, "on", "Fixture legacy tools.");
+        check(load_chain()["tool_evidence"].size() == 1 &&
+                  load_chain()["tool_evidence"][0]["executor_ok"] == true &&
+                  load_chain()["verification"]["status"] == "not_run",
+              "legacy TOOL execution bypassed evidence capture");
+
+        run({completion(private_text, "*** TOOL\nname: list_granted_roots\n*** END\n")},
+            "on", "No tools. Fixture prohibited call.");
+        check(load_chain()["tool_evidence"][0]["executor_ok"] == false &&
+                  load_chain()["status"] == "failed",
+              "streamed TOOL text escaped its empty advertised tool set");
+
+        const std::string long_goal = "Fixture resumable task " + std::string(600, 'z');
+        save_chain(long_goal, "prior ledger", "", 1, "after");
+        const auto resume_id = load_chain()["id"];
+        run({tool_reply, completion("", "Resumed.")}, "on", long_goal);
+        check(load_chain()["id"] == resume_id &&
+                  load_chain()["evidence_history_complete"] == false,
+              "restart/long-goal continuation lost identity or claimed complete history");
+        ChainEvidence bounded;
+        bounded.task_id = mint_chain_id();
+        bounded.attempt_id = mint_chain_id();
+        for (int i = 0; i < 129; ++i) {
+            record_tool_evidence(bounded, {}, {}, true, "synthetic result metadata");
+        }
+        save_chain("bounded evidence", "", "answer", 1, "final", true, &bounded);
+        check(load_chain()["tool_evidence"].size() == 128 &&
+                  load_chain()["evidence_omitted"] == 1 &&
+                  load_chain()["evidence_history_complete"] == false,
+              "bounded evidence silently claimed complete retained history");
+
+        ChainEvidence cancelled;
+        cancelled.task_id = mint_chain_id();
+        cancelled.attempt_id = mint_chain_id();
+        save_chain(long_goal, "", "", 1, "before", true, &cancelled);
+        httplib::Response cancel_response;
+        handle_cancel_chain({}, cancel_response);
+        save_chain(long_goal, "later output", "done", 1, "final", true, &cancelled);
+        check(load_chain()["status"] == "cancelled" &&
+                  load_chain()["execution"]["outcome"] == "cancelled" &&
+                  chain_is_cancelled(long_goal),
+              "in-flight save overwrote cancellation or missed the unclipped goal");
+
+        for (const auto& invalid : {std::string("{"), std::string("[]"),
+                                    std::string(R"({"verification":{"status":"passed","scope":"task_outcome"}})"),
+                                    std::string(R"({"skill_promote_eligible":true})"),
+                                    std::string(128 * 1024 + 1, ' ')}) {
+            std::ofstream(chain_path(), std::ios::binary | std::ios::trunc) << invalid;
+            bool rejected = false;
+            try { load_chain(); } catch (const std::runtime_error&) { rejected = true; }
+            check(rejected, "invalid task state or a forged verifier/promotion claim was accepted");
+        }
+        std::ofstream(chain_path(), std::ios::trunc) << "{}";
+        save_chain("persist fixture", "", "", 1);
+        const auto preserved = load_chain();
+        const auto tmp_chain = std::filesystem::path(chain_path() + ".tmp");
+        std::filesystem::create_directory(tmp_chain);
+        bool write_failed = false;
+        try { save_chain("must fail", "", "", 1); }
+        catch (const std::runtime_error&) { write_failed = true; }
+        std::filesystem::remove(tmp_chain);
+        check(write_failed && load_chain() == preserved,
+              "failed evidence write replaced the previous task or returned success");
+        const auto event_path = std::filesystem::path(core_events_path());
+        const auto event_backup = logs / "events.fixture-backup";
+        std::filesystem::rename(event_path, event_backup);
+        std::filesystem::create_directory(event_path);
+        bool journal_failed = false;
+        try {
+            run({native_call("write_local_file", {{"path", artifact.string()},
+                                                {"content", "must not execute"}})},
+                "on", "Fixture blocked journal.");
+        } catch (const std::runtime_error&) { journal_failed = true; }
+        std::filesystem::remove(event_path);
+        std::filesystem::rename(event_backup, event_path);
+        std::ifstream unchanged(artifact, std::ios::binary);
+        const std::string kept((std::istreambuf_iterator<char>(unchanged)), {});
+        unchanged.close();
+        check(journal_failed && kept == large_text && load_chain()["phase"] == "before",
+              "a tool ran without durable admission evidence");
+        std::ofstream(chain_path(), std::ios::trunc) << "{}";
+
+        int saved_oracles = 0;
+        bool fail_save = false;
+        const std::string oracle_id(64, 'a');
+        g_oracle_save = [&](const json& payload) {
+            ++saved_oracles;
+            check(payload["sector"] == "oracle", "Oracle retention changed sector");
+            check(payload["content"].get<std::string>().find("PRIVATE_REASONING") == std::string::npos,
+                  "private reasoning entered a retained candidate");
+            if (fail_save) throw std::runtime_error("synthetic store failure");
+            return json{{"status", "success"}, {"stable_id", oracle_id}};
+        };
+        const std::string local_reply =
+            "A local reply that remains available without being retained.";
+        remember_oracle_turn("Fixture ordinary conversation.", local_reply, 1);
+        check(saved_oracles == 0 && last_oracle_json()["retention"] == "local_only" &&
+                  oracle_retention_requests().empty(),
+              "ordinary chat was automatically retained or queued for retry");
+        std::string local_context, local_error;
+        check(memory::render_session_context(local_context, local_error) &&
+                  local_context.find(local_reply) != std::string::npos &&
+                  local_context.find("candidate") != std::string::npos,
+              "selective retention broke untrusted local session continuity");
+        {
+            std::lock_guard<std::mutex> lock(g_last_oracle_mu);
+            g_oracle_turns.clear();
+        }
+        load_oracle_turns();
+        check(last_oracle_json()["answer"] == local_reply &&
+                  oracle_retention_requests().empty(),
+              "restart lost local history or requeued intentionally unretained replies");
+        fail_save = true;
+        bool save_failed = false;
+        try { ensure_last_oracle_id(); }
+        catch (const std::runtime_error&) { save_failed = true; }
+        check(save_failed && last_oracle_json()["retention"] == "requested" &&
+                  last_oracle_json()["stored"] == false,
+              "failed explicit retention returned a stored candidate or lost intent");
+        load_oracle_turns();
+        check(oracle_retention_requests().size() == 1,
+              "explicit failed retention was not recoverable after restart");
+        fail_save = false;
+        std::string judgment_error;
+        check(resolve_judgment_id("last", judgment_error) == oracle_id &&
+                  judgment_error.empty() && last_oracle_json()["stored"] == true &&
+                  oracle_retention_requests().empty(),
+              "lazy explicit judgment did not retain the selected local turn");
+        const int saved_before_repeat = saved_oracles;
+        check(ensure_last_oracle_id() == oracle_id && saved_oracles == saved_before_repeat,
+              "repeated judgment duplicated candidate retention");
+        check(mark_oracle_status(oracle_id, "verified"), "local judgment state was not updated");
+        load_oracle_turns();
+        check(last_oracle_json()["status"] == "verified", "explicit judgment was lost on restart");
+        remember_oracle_turn("Fixture incomplete.",
+                             "An unfinished reply intentionally left without a final sentence [cut", 1);
+        check(ensure_last_oracle_id().empty() && saved_oracles == saved_before_repeat,
+              "an incomplete reply was retained for judgment");
+
+        std::ofstream(last_oracle_path(), std::ios::binary | std::ios::trunc) <<
+            json({{"version", 1}, {"turns", json::array({
+                {{"question", "Legacy unstored"},
+                 {"answer", "This old reply was not deliberately selected for retention."},
+                 {"ok", true}, {"complete", true}, {"stored", false}},
+                {{"question", "Legacy stored"},
+                 {"answer", "This old candidate must keep its existing stored identity."},
+                 {"ok", true}, {"stored", true}, {"stable_id", oracle_id}}
+            })}}).dump();
+        load_oracle_turns();
+        check(oracle_retention_requests().empty() && last_oracle_json()["stored"] == true &&
+                  last_oracle_json()["stable_id"] == oracle_id,
+              "legacy migration retried automatic clutter or discarded existing candidate identity");
+        g_oracle_save = memory::save_thought;
 
         const auto edit = run({
             completion(private_text, "*** APPLY\npath: docs\\fixture.md\n<<<<\nold\n====\nnew", "length"),
@@ -264,8 +514,9 @@ int main() {
         check(unused.answer == "Fixture partial" && unused.requests.size() == 1 &&
                   unused.tokens.find("unused49") == std::string::npos,
               "private unused49 guard no longer stops continuation");
-        std::cout << "reply_stream_test ok: answer-only callbacks/history, explicit incomplete "
-                     "replies, preferences, limits, tool/edit continuation and private loop guards"
+        std::cout << "reply_stream_test ok: answer-only channels, execution-not-verification, "
+                     "preclip evidence, correlation/resume/cancel, fail-closed persistence, "
+                     "selective/lazy/restart retention, legacy migration and tool/edit guards"
                   << std::endl;
     } catch (const std::exception& error) {
         std::cerr << "reply fixture " << case_index << ": " << error.what() << std::endl;

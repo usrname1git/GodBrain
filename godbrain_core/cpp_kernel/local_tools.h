@@ -28,7 +28,8 @@ std::vector<Call> parse_tool_blocks(const std::string& text);
 bool has_tool_block(const std::string& text);
 std::string execute_calls(
     const std::vector<Call>& calls, bool* all_ok = nullptr,
-    const std::unordered_set<std::string>* allowed = nullptr);
+    const std::unordered_set<std::string>* allowed = nullptr,
+    const std::string& task_id = "");
 std::string run_tools_from_text(const std::string& model_text);
 std::string tool_system_addendum();
 std::string tool_system_addendum_for(const std::string& user_msg);
