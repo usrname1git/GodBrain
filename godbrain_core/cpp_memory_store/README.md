@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 13)
+# C++ Alexandria Memory Store (cut 14)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -64,6 +64,17 @@ Cut 13: offline snapshot self-test ports Go `http_test.go` searchConsistently
 cases (stable snapshot, partial interleave, retry-fresh, rebuild bound, hybrid
 identity). `search_before_gate` / `search_after_gate` are shared with
 `rag-service`.
+
+Cut 14: skill lookup rechecks current verified committed origin, exact
+content/hash/version and latest passing profile/suite evidence. Relevance
+within a bounded 100-promotion pool precedes recency. Stale, personal and
+apply-only origins/evidence do not route. `memory-store query_skills` and
+`rag-service /v1/skills` share the same read implementation; no read-time
+writes or schema migration. Go rollback uses the same parity fixtures.
+
+`cpp_skill_lookup` exercises actual joins in a uniquely named test database
+when `MONGODB_TEST_URI` points at a disposable MongoDB instance; otherwise
+CTest reports it skipped. Never use the live vault for integration tests.
 
 Start/Heal prefer this tree's Release exes, then Go.
 

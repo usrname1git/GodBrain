@@ -542,6 +542,43 @@ int current_passing_fixture_count(const std::vector<SkillRunLite>& runs) {
     return n;
 }
 
+std::vector<std::string> skill_query_terms(const std::string& query) {
+    const std::string stops = "|a|an|and|are|can|could|for|from|help|how|in|is|it|of|on|please|the|this|to|using|what|with|";
+    std::vector<std::string> terms;
+    std::string word;
+    const auto add = [&]() {
+        if (word.size() >= 2 && word.size() <= 64 &&
+            stops.find("|" + word + "|") == std::string::npos &&
+            std::find(terms.begin(), terms.end(), word) == terms.end() && terms.size() < 8) {
+            terms.push_back(word);
+        }
+        word.clear();
+    };
+    for (unsigned char c : query) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c >= 128) word += static_cast<char>(c);
+        else if (c >= 'A' && c <= 'Z') word += static_cast<char>(c + ('a' - 'A'));
+        else add();
+    }
+    add();
+    return terms;
+}
+
+int skill_relevance(const std::string& query, const std::string& name, const std::string& content) {
+    const auto lower = [](std::string s) {
+        for (char& c : s) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        return s;
+    };
+    const std::string n = lower(name), text = lower(content), q = lower(query);
+    int score = 0;
+    if (!q.empty() && n.find(q) != std::string::npos) score += 40;
+    if (!q.empty() && text.find(q) != std::string::npos) score += 8;
+    for (const auto& term : skill_query_terms(query)) {
+        if (n.find(term) != std::string::npos) score += 10;
+        if (text.find(term) != std::string::npos) score += 2;
+    }
+    return score;
+}
+
 bool validate_record_skill_run(const RecordSkillRunRequest& r, std::string* err) {
     auto fail_run = [&]() {
         if (err) *err = "skill verification run is invalid";

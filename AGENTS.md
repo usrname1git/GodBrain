@@ -484,7 +484,8 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 (`--jinja` is already on; `--no-cache-prompt` so a dead slot cannot
 unused49 the next chat; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
-**file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO,
+**file jail plus read-only skill lookup** (list/read/write/info/search/edit/mkdir
+and `query_godbrain_skills`) unless YOLO,
 the ask is host inspect (SysInternals/reg/events/schtasks), or the message
 contains an `https://` / `http://` URL or `github.com/`. That URL hop also
 gets `fetch_url` (HTTPS page text, or GitHub README plus the top tree; a
@@ -910,6 +911,10 @@ not be treated as baseline validation.
   rewrite), and a passing latest `skill_verification_runs` row for that
   skill name. Apply-only `/edit` (`local-edit-apply-v1`) is not enough to
   promote.
+- Promoted-skill lookup rechecks current origin/hash/version, committed links
+  and latest passing profile/suite evidence. Personal/stale origins are not
+  technical procedures. `query_godbrain_skills` returns an untrusted reference,
+  never permission or proof that the current task passed.
 - A committed ingestion is acknowledged only after its active
   `rag_documents`/`rag_provenance` projection is confirmed. Projection failure
   leaves the run committed, returns an explicit failure, and is repaired by an

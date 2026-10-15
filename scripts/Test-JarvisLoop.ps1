@@ -1,4 +1,4 @@
-# Jarvis loop score. Default is no GPU (tools + hop + edit + browser evidence).
+# Jarvis loop score. Default is no GPU (tools + RAG + hop + edit + browser evidence).
 # Each offline test is compiled from the current sources. Objects go to
 # %TEMP%. The exe runs from cpp_kernel so repo_root() is this repo, then
 # the exe is removed. A leftover exe is not the score.
@@ -120,6 +120,7 @@ Invoke-CompiledTest "surgery_outcome_test" @("surgery_outcome_test.cpp", "surger
 Invoke-CompiledTest "jarvis_job_test" @("jarvis_job_test.cpp", "jarvis_job.cpp")
 Invoke-CompiledTest "mouth_select_test" @("mouth_select_test.cpp")
 Invoke-CompiledTest "local_tools_test" @("local_tools_test.cpp", "local_tools.cpp")
+Invoke-CompiledTest "rag_client_test" @("rag_client_test.cpp")
 Invoke-CompiledTest "tool_round_test" @("tool_round_test.cpp")
 Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")
 Invoke-CompiledTest "browser_evidence_test" @("browser_evidence_test.cpp")

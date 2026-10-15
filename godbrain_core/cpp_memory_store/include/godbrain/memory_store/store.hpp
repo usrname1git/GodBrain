@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+struct _mongoc_client_t;
+
 namespace godbrain::memory {
 
 struct StoreReceipt {
@@ -50,6 +52,8 @@ struct QuerySkillHit {
     std::string origin_node_id;
     std::string origin_hash;
     std::string verification_profile;
+    std::string origin_version;
+    std::string verification_run_id;
 };
 
 struct QuerySkillsReceiptOut {
@@ -93,6 +97,9 @@ bool store_promote_skill(
     StoreHandle* h, const PromoteSkillRequest& request, PromoteSkillReceiptOut* receipt, std::string* err);
 bool store_query_skills(
     StoreHandle* h, const QuerySkillsRequest& request, QuerySkillsReceiptOut* receipt, std::string* err);
+bool store_query_skills(
+    _mongoc_client_t* client, const std::string& db_name,
+    const QuerySkillsRequest& request, QuerySkillsReceiptOut* receipt, std::string* err);
 
 bool store_rebuild(StoreHandle* h, std::string* json_out, std::string* err);
 

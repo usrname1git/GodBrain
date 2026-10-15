@@ -1,4 +1,5 @@
 #include "local_tools.h"
+#include "rag_client.h"
 
 #include <fstream>
 #include <iostream>
@@ -622,6 +623,71 @@ int main() {
         pass &= expect(jail.count("list_granted_roots") == 1,
                        "file jail advertises roots");
         pass &= expect(jail.count("run_pwsh") == 0, "file jail omits pwsh");
+        pass &= expect(jail.count("query_godbrain_skills") == 1, "bounded hop advertises read-only skill lookup");
+        local_tools::Call skill_lookup;
+        skill_lookup.name = "query_godbrain_skills";
+        skill_lookup.args = std::string(513, 'x');
+        bool skill_ok = true;
+        const std::string skill_out = local_tools::execute_calls({skill_lookup}, &skill_ok, &jail);
+        pass &= expect(!skill_ok && skill_out.find("query or limit is invalid") != std::string::npos,
+                       "invalid skill lookup fails before any transport");
+        const std::unordered_set<std::string> no_tools;
+        skill_lookup.args = "display rollback";
+        const std::string denied_skill = local_tools::execute_calls({skill_lookup}, &skill_ok, &no_tools);
+        pass &= expect(!skill_ok && denied_skill.find("not advertised") != std::string::npos,
+                       "unadvertised skill lookup is denied before transport");
+        int queries = 0;
+        int skill_status = 200;
+        std::string malformed;
+        nlohmann::json skill_response = {
+            {"query", "display rollback"}, {"count", 1},
+            {"skills", nlohmann::json::array({{
+                {"name", "display-rollback"}, {"content", "Inspect the saved layout before rollback."},
+                {"origin_node_id", "0123456789abcdef01234567"}, {"origin_hash", std::string(64, 'a')},
+                {"verification_profile", "desk-v1"}, {"untrusted", true}
+            }})}
+        };
+        godbrain_rag::Client skill_client(godbrain_rag::default_transport, godbrain_rag::default_get_transport,
+            [&](const std::string& body) {
+                ++queries;
+                const auto request = nlohmann::json::parse(body);
+                if (request != nlohmann::json({{"query", "display rollback"}, {"limit", 1}})) {
+                    return godbrain_rag::HttpResult{};
+                }
+                return godbrain_rag::HttpResult{true, skill_status, "application/json",
+                    malformed.empty() ? skill_response.dump() : malformed};
+            });
+        const std::string current_skill = local_tools::execute_calls(
+            {skill_lookup}, &skill_ok, &jail, "", &skill_client);
+        pass &= expect(skill_ok && queries == 1 && current_skill.find("Untrusted procedure references") != std::string::npos &&
+                           current_skill.find("Inspect the saved layout") != std::string::npos,
+                       "skill tool returns bounded untrusted results without minting a task verdict");
+        const auto fallback = local_tools::parse_tool_blocks(
+            "tool_call query_godbrain_skills {\"args\":\"display rollback\"}");
+        pass &= expect(fallback.size() == 1 && fallback[0].name == skill_lookup.name &&
+                          fallback[0].args == skill_lookup.args, "legacy skill call retains its query");
+        skill_response["skills"][0]["content"] = std::string(8192, '\n');
+        const std::string oversized_skill = local_tools::execute_calls(
+            {skill_lookup}, &skill_ok, &jail, "", &skill_client);
+        pass &= expect(!skill_ok && oversized_skill.find("no partial procedure returned") != std::string::npos,
+                       "oversized encoded skill fails instead of clipping instructions");
+        skill_response["skills"] = nlohmann::json::array();
+        skill_response["count"] = 0;
+        const std::string empty_skill = local_tools::execute_calls(
+            {skill_lookup}, &skill_ok, &jail, "", &skill_client);
+        pass &= expect(skill_ok && empty_skill.find("\"skills\":[]") != std::string::npos,
+                       "zero current skills is a successful lookup, not a procedure");
+        skill_status = 503;
+        const std::string unavailable_skill = local_tools::execute_calls(
+            {skill_lookup}, &skill_ok, &jail, "", &skill_client);
+        pass &= expect(!skill_ok && unavailable_skill.find("unavailable") != std::string::npos,
+                       "unavailable skills cannot look like an empty successful lookup");
+        skill_status = 200;
+        malformed = "{";
+        local_tools::execute_calls({skill_lookup}, &skill_ok, &jail, "", &skill_client);
+        pass &= expect(!skill_ok, "malformed skill response is failed execution");
+        local_tools::execute_calls({skill_lookup}, &skill_ok, &no_tools, "", &skill_client);
+        pass &= expect(!skill_ok && queries == 5, "unadvertised lookup makes no injected transport call");
         local_tools::Call roots;
         roots.name = "list_granted_roots";
         bool roots_ok = false;
@@ -847,7 +913,7 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 11, "files hop 11 tools");
+    pass &= expect(files.is_array() && files.size() == 12, "bounded hop 11 file tools plus one skill lookup");
     bool files_has_sysint = false;
     bool files_has_info = false;
     bool files_has_roots = false;

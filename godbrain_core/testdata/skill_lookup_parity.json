@@ -1,0 +1,31 @@
+{
+  "ranking": [
+    {"query":"rollback display","name":"display-rollback","content":"Steps to rollback the display safely.","score":24},
+    {"query":"rollback display","name":"display-guide","content":"Steps to rollback the display safely.","score":14},
+    {"query":"DESK","name":"desk-repair","content":"Desk repair.","score":60},
+    {"query":"[x]","name":"literal-reference","content":"Use [x] literally.","score":8},
+    {"query":"please how can the","name":"unrelated","content":"Nothing applicable.","score":0}
+  ],
+  "eligibility": [
+    {"mutation":"fresh","eligible":true},
+    {"mutation":"later-pass","eligible":true},
+    {"mutation":"later-fail","eligible":false},
+    {"mutation":"stale-origin","eligible":false},
+    {"mutation":"candidate-origin","eligible":false},
+    {"mutation":"missing-origin","eligible":false},
+    {"mutation":"personal-origin","eligible":false},
+    {"mutation":"uncommitted","eligible":false},
+    {"mutation":"missing-link","eligible":false},
+    {"mutation":"hash-mismatch","eligible":false},
+    {"mutation":"version-mismatch","eligible":false},
+    {"mutation":"rewritten-content","eligible":false},
+    {"mutation":"missing-run","eligible":false},
+    {"mutation":"missing-promotion-evidence","eligible":false},
+    {"mutation":"apply-only","eligible":false},
+    {"mutation":"unknown-profile","eligible":false},
+    {"mutation":"profile-mismatch","eligible":false},
+    {"mutation":"broad-one","eligible":false},
+    {"mutation":"broad-two","eligible":true},
+    {"mutation":"broad-stale-fixture","eligible":false}
+  ]
+}

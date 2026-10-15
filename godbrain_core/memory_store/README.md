@@ -292,9 +292,27 @@ corpus (same watermarks as search). Body is one JSON object:
 ```
 
 `query` is required (max 512 UTF-8 bytes). `limit` defaults to 5 and is rejected
-outside 1–25. Each hit includes name, origin node/hash, optional verification
+outside 1–25. Each hit includes name, origin node/hash, verification
 profile, procedure `content`, and `untrusted: true`. Apply-only
 `local-edit-apply-v1` evidence cannot appear here because it cannot promote.
+
+Both HTTP and stdin queries now recheck the current origin and latest
+verification evidence, not just the fact that a promotion once existed.
+Origins must remain verified, non-personal, linked to committed ingestion,
+and match the promoted content, version and Keccak hash. The latest run must
+pass under the promoted profile; broad profiles still require two distinct
+currently passing fixtures. A later failure withdraws eligibility. A later
+pass with the same profile may retain eligibility. No read promotes or
+rewrites records.
+
+Up to 100 recent matching promotions are considered. At most eight distinct
+lexical query terms plus the literal phrase match name/content; relevance
+precedes recency, with deterministic name ties. This is bounded lexical
+lookup, not an exhaustive semantic catalogue. Shared fixtures are in
+`godbrain_core\testdata\skill_lookup_parity.json`; current-state integration
+coverage uses uniquely named test databases and requires a disposable
+`MONGODB_TEST_URI`. Service/database errors fail explicitly rather than
+returning an empty success.
 
 ## Deterministic evaluation
 

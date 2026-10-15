@@ -2,6 +2,7 @@
 #include "godbrain/memory_store/state_machine.hpp"
 
 #include <cctype>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -183,6 +184,12 @@ bool store_promote_skill(StoreHandle*, const PromoteSkillRequest&, PromoteSkillR
     return false;
 }
 bool store_query_skills(StoreHandle*, const QuerySkillsRequest&, QuerySkillsReceiptOut*, std::string* err) {
+    if (err) *err = "mongo-c-driver not linked";
+    return false;
+}
+
+bool store_query_skills(
+    _mongoc_client_t*, const std::string&, const QuerySkillsRequest&, QuerySkillsReceiptOut*, std::string* err) {
     if (err) *err = "mongo-c-driver not linked";
     return false;
 }
@@ -1344,7 +1351,9 @@ static bool require_passing_skill_run(
     const std::string& skill_name,
     std::string* run_id,
     std::string* profile,
-    std::string* err) {
+    std::string* err,
+    bool* unavailable = nullptr) {
+    if (unavailable) *unavailable = false;
     bson_t filter = BSON_INITIALIZER;
     BSON_APPEND_UTF8(&filter, "origin_node_id", origin_node_id.c_str());
     BSON_APPEND_UTF8(&filter, "skill_name", skill_name.c_str());
@@ -1359,12 +1368,15 @@ static bool require_passing_skill_run(
     const bson_t* doc = nullptr;
     bool found = mongoc_cursor_next(cur, &doc);
     if (!found) {
+        bson_error_t error{};
+        const bool failed = mongoc_cursor_error(cur, &error);
         mongoc_cursor_destroy(cur);
         mongoc_collection_destroy(c);
         bson_destroy(&filter);
         bson_destroy(&sort);
         bson_destroy(&opts);
-        if (err) *err = "skill has no passing verification run";
+        if (unavailable) *unavailable = failed;
+        if (err) *err = failed ? error.message : "skill has no passing verification run";
         return false;
     }
     std::string result, rid, prof;
@@ -1378,6 +1390,10 @@ static bool require_passing_skill_run(
     bson_destroy(&opts);
     if (result != kSkillRunPassed) {
         if (err) *err = "latest skill verification run is not passed";
+        return false;
+    }
+    if (!skill_profile_allowed(prof) || rid.empty()) {
+        if (err) *err = "latest skill verification evidence is invalid";
         return false;
     }
     if (skill_profile_apply_only(prof)) {
@@ -1405,11 +1421,18 @@ static bool require_passing_skill_run(
             iter_utf8(sdoc, "result", &lite.result);
             runs.push_back(std::move(lite));
         }
+        bson_error_t error{};
+        const bool failed = mongoc_cursor_error(scur, &error);
         mongoc_cursor_destroy(scur);
         mongoc_collection_destroy(sc);
         bson_destroy(&sf);
         bson_destroy(&ssort);
         bson_destroy(&sopts);
+        if (failed) {
+            if (unavailable) *unavailable = true;
+            if (err) *err = error.message;
+            return false;
+        }
         if (current_passing_fixture_count(runs) < 2) {
             if (err) *err = "broad skill needs passing runs on two fixtures";
             return false;
@@ -1648,6 +1671,64 @@ bool store_promote_skill(
     return true;
 }
 
+static bool skill_is_current(StoreHandle* h, const QuerySkillHit& skill, bool* unavailable, std::string* err) {
+    *unavailable = false;
+    if (skill.name.empty() || skill.content.empty() || skill.content.size() > 8192 ||
+        skill.origin_node_id.empty() || skill.origin_version.empty() || skill.verification_run_id.empty() ||
+        !skill_profile_allowed(skill.verification_profile) || skill_profile_apply_only(skill.verification_profile)) return false;
+    bson_t query = BSON_INITIALIZER;
+    append_node_lookup(&query, skill.origin_node_id);
+    mongoc_collection_t* nodes = coll(h, "knowledge_nodes");
+    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(nodes, &query, nullptr, nullptr);
+    const bson_t* node = nullptr;
+    const bool found = mongoc_cursor_next(cursor, &node);
+    bson_error_t error{};
+    *unavailable = mongoc_cursor_error(cursor, &error);
+    std::string status, version, content, sector, id;
+    if (found) {
+        iter_utf8(node, "status", &status);
+        iter_utf8(node, "version", &version);
+        iter_utf8(node, "content", &content);
+        iter_utf8(node, "sector", &sector);
+        bson_iter_t it;
+        if (bson_iter_init_find(&it, node, "_id") && BSON_ITER_HOLDS_OID(&it)) {
+            char hex[25];
+            bson_oid_to_string(bson_iter_oid(&it), hex);
+            id = hex;
+        }
+    }
+    mongoc_cursor_destroy(cursor);
+    mongoc_collection_destroy(nodes);
+    bson_destroy(&query);
+    if (*unavailable) { if (err) *err = error.message; return false; }
+    if (!found || id.empty() || status != kStatusVerified || sector == "personal" ||
+        version != skill.origin_version || content != skill.content || keccak256_hex(content) != skill.origin_hash) return false;
+
+    const std::string pipeline_json =
+        "{\"pipeline\":[{\"$match\":{\"node_id\":{\"$oid\":\"" + id + "\"}}},"
+        "{\"$lookup\":{\"from\":\"ingestion_runs\",\"localField\":\"run_id\",\"foreignField\":\"run_id\",\"as\":\"run\"}},"
+        "{\"$match\":{\"run.status\":\"committed\"}},{\"$limit\":1},{\"$project\":{\"_id\":1}}]}";
+    bson_t* pipeline = bson_new_from_json(
+        reinterpret_cast<const uint8_t*>(pipeline_json.data()), static_cast<ssize_t>(pipeline_json.size()), &error);
+    if (!pipeline) { *unavailable = true; if (err) *err = error.message; return false; }
+    bson_t opts = BSON_INITIALIZER;
+    BSON_APPEND_INT32(&opts, "maxTimeMS", 1000);
+    mongoc_collection_t* links = coll(h, "run_node_links");
+    cursor = mongoc_collection_aggregate(links, MONGOC_QUERY_NONE, pipeline, &opts, nullptr);
+    const bson_t* link = nullptr;
+    const bool committed = mongoc_cursor_next(cursor, &link);
+    *unavailable = mongoc_cursor_error(cursor, &error);
+    mongoc_cursor_destroy(cursor);
+    mongoc_collection_destroy(links);
+    bson_destroy(&opts);
+    bson_destroy(pipeline);
+    if (*unavailable) { if (err) *err = error.message; return false; }
+    if (!committed) return false;
+    std::string run_id, profile;
+    if (!require_passing_skill_run(h, skill.origin_node_id, skill.name, &run_id, &profile, err, unavailable)) return false;
+    return profile == skill.verification_profile;
+}
+
 bool store_query_skills(
     StoreHandle* h, const QuerySkillsRequest& request, QuerySkillsReceiptOut* receipt, std::string* err) {
     if (h == nullptr || receipt == nullptr) {
@@ -1664,11 +1745,18 @@ bool store_query_skills(
     if (query.empty()) {
         filter = &empty;
     } else {
-        std::string pattern = regex_quote_store(query);
+        std::vector<std::string> patterns = skill_query_terms(query);
+        patterns.push_back(query);
         std::ostringstream fj;
-        fj << "{\"$or\":[{\"name\":{\"$regex\":\"" << json_escape(pattern)
-           << "\",\"$options\":\"i\"}},{\"content\":{\"$regex\":\"" << json_escape(pattern)
-           << "\",\"$options\":\"i\"}}]}";
+        fj << "{\"$or\":[";
+        bool first = true;
+        for (const auto& pattern : patterns) for (const char* field : {"name", "content"}) {
+            if (!first) fj << ",";
+            first = false;
+            fj << "{\"" << field << "\":{\"$regex\":\"" << json_escape(regex_quote_store(pattern))
+               << "\",\"$options\":\"i\"}}";
+        }
+        fj << "]}";
         bson_error_t error{};
         filter = bson_new_from_json(
             reinterpret_cast<const uint8_t*>(fj.str().data()), static_cast<ssize_t>(fj.str().size()), &error);
@@ -1680,12 +1768,14 @@ bool store_query_skills(
     }
     bson_t sort = BSON_INITIALIZER;
     BSON_APPEND_INT32(&sort, "created_at", -1);
+    BSON_APPEND_INT32(&sort, "name", 1);
     bson_t opts = BSON_INITIALIZER;
     BSON_APPEND_DOCUMENT(&opts, "sort", &sort);
-    BSON_APPEND_INT64(&opts, "limit", static_cast<int64_t>(limit));
+    BSON_APPEND_INT64(&opts, "limit", 100);
     mongoc_collection_t* skills = coll(h, "skills");
     mongoc_cursor_t* cur = mongoc_collection_find_with_opts(skills, filter, &opts, nullptr);
     const bson_t* doc = nullptr;
+    std::vector<QuerySkillHit> candidates;
     while (mongoc_cursor_next(cur, &doc)) {
         QuerySkillHit hit;
         iter_utf8(doc, "name", &hit.name);
@@ -1700,7 +1790,9 @@ bool store_query_skills(
         }
         iter_utf8(doc, "origin_hash", &hit.origin_hash);
         iter_utf8(doc, "verification_profile", &hit.verification_profile);
-        if (!hit.name.empty()) receipt->skills.push_back(std::move(hit));
+        iter_utf8(doc, "origin_version", &hit.origin_version);
+        iter_utf8(doc, "verification_run_id", &hit.verification_run_id);
+        if (!hit.name.empty()) candidates.push_back(std::move(hit));
     }
     bson_error_t error{};
     bool cerr = mongoc_cursor_error(cur, &error);
@@ -1714,10 +1806,35 @@ bool store_query_skills(
         if (err) *err = error.message;
         return false;
     }
+    std::stable_sort(candidates.begin(), candidates.end(), [&](const auto& a, const auto& b) {
+        return skill_relevance(query, a.name, a.content) > skill_relevance(query, b.name, b.content);
+    });
+    std::vector<QuerySkillHit> current;
+    for (const auto& candidate : candidates) {
+        if (!query.empty() && skill_relevance(query, candidate.name, candidate.content) == 0) continue;
+        bool unavailable = false;
+        if (skill_is_current(h, candidate, &unavailable, err)) current.push_back(candidate);
+        else if (unavailable) return false;
+        if (static_cast<int>(current.size()) >= limit) break;
+    }
+    receipt->skills = std::move(current);
     receipt->status = "ok";
     receipt->count = static_cast<int>(receipt->skills.size());
     receipt->timestamp = utc_now();
     return true;
+}
+
+bool store_query_skills(
+    _mongoc_client_t* client, const std::string& db_name,
+    const QuerySkillsRequest& request, QuerySkillsReceiptOut* receipt, std::string* err) {
+    if (!client || db_name.empty()) {
+        if (err) *err = "store not open";
+        return false;
+    }
+    StoreHandle borrowed;
+    borrowed.client = client;
+    borrowed.db_name = db_name;
+    return store_query_skills(&borrowed, request, receipt, err);
 }
 
 bool store_rebuild(StoreHandle* h, std::string* json_out, std::string* err) {

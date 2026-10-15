@@ -316,6 +316,43 @@ int main() {
         return 1;
     }
 
+    json skill_body = {{"query", "display rollback"}, {"count", 1}, {"skills", json::array({{
+        {"name", "display-rollback"}, {"content", "Inspect the saved layout before rollback."},
+        {"origin_node_id", "0123456789abcdef01234567"}, {"origin_hash", std::string(64, 'a')},
+        {"verification_profile", "desk-v1"}, {"untrusted", true}
+    }})}};
+    int skill_posts = 0;
+    Client skill_client(godbrain_rag::default_transport, godbrain_rag::default_get_transport,
+        [&](const std::string& body) {
+            ++skill_posts;
+            const json request = json::parse(body);
+            if (request != json({{"query", "display rollback"}, {"limit", 3}})) return HttpResult{};
+            return HttpResult{true, 200, "application/json", skill_body.dump()};
+        });
+    if (!expect(skill_client.skills("display rollback", 3, response, error), "valid skill references rejected")) return 1;
+    const json original_skill_body = skill_body;
+    for (const char* field : {"untrusted", "origin_hash", "verification_profile", "content"}) {
+        skill_body = original_skill_body;
+        if (std::string(field) == "untrusted") skill_body["skills"][0][field] = false;
+        else if (std::string(field) == "content") skill_body["skills"][0][field] = std::string(8193, 'x');
+        else skill_body["skills"][0][field] = "invalid";
+        if (!expect(!skill_client.skills("display rollback", 3, response, error), "bad skill accepted")) return 1;
+    }
+    skill_body = original_skill_body;
+    skill_body["skills"].push_back(skill_body["skills"][0]);
+    skill_body["count"] = 2;
+    if (!expect(!skill_client.skills("display rollback", 3, response, error), "duplicate skill accepted")) return 1;
+    skill_body = original_skill_body;
+    skill_body["query"] = "another query";
+    if (!expect(!skill_client.skills("display rollback", 3, response, error), "wrong skill query accepted")) return 1;
+    const int before_invalid = skill_posts;
+    if (!expect(!skill_client.skills(std::string(513, 'x'), 3, response, error) &&
+                    skill_posts == before_invalid, "invalid skill query reached transport")) return 1;
+    skill_body = {{"query", "display rollback"}, {"count", 0}, {"skills", json::array()}};
+    if (!expect(skill_client.skills("display rollback", 3, response, error), "empty skill matches treated as failure")) return 1;
+    Client failed_skills(godbrain_rag::default_transport, godbrain_rag::default_get_transport,
+        [](const std::string&) { return HttpResult{true, 503, "application/json", "{}"}; });
+    if (!expect(!failed_skills.skills("display rollback", 3, response, error), "unavailable skills silently succeeded")) return 1;
     std::cout << "C++ canonical RAG contract tests passed." << std::endl;
     return 0;
 }

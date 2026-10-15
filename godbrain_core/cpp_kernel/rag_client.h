@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <initializer_list>
 #include <sstream>
+#include <set>
 #include <string>
 
 #ifdef _MSC_VER
@@ -29,6 +30,7 @@ constexpr const char* kEndpoint = "http://127.0.0.1:8084/v1/search";
 constexpr const char* kPath = "/v1/search";
 constexpr const char* kGraphPath = "/v1/graph";
 constexpr const char* kDocumentPath = "/v1/document";
+constexpr const char* kSkillsPath = "/v1/skills";
 constexpr const char* kProjectionVersion = "hybrid-v1";
 constexpr const char* kProjectionSchema = "rag-document-v2";
 constexpr const char* kRetrievalMode = "auto";
@@ -577,12 +579,12 @@ inline void configure_loopback_rag(httplib::Client& client) {
     client.set_follow_location(false);
 }
 
-inline HttpResult default_transport(const std::string& request_body) {
+inline HttpResult default_post_transport(const char* path, const std::string& request_body) {
     httplib::Client client("127.0.0.1", 8084);
     configure_loopback_rag(client);
     const httplib::Headers headers = {{"Accept", "application/json"}};
     const auto response =
-        client.Post(kPath, headers, request_body, "application/json");
+        client.Post(path, headers, request_body, "application/json");
     if (!response) return {};
     return {
         true,
@@ -590,6 +592,14 @@ inline HttpResult default_transport(const std::string& request_body) {
         response->get_header_value("Content-Type"),
         response->body,
     };
+}
+
+inline HttpResult default_transport(const std::string& request_body) {
+    return default_post_transport(kPath, request_body);
+}
+
+inline HttpResult default_skill_transport(const std::string& request_body) {
+    return default_post_transport(kSkillsPath, request_body);
 }
 
 inline HttpResult default_get_transport(const std::string& path) {
@@ -802,9 +812,42 @@ class Client {
 public:
     explicit Client(
         Transport transport = default_transport,
-        GetTransport get_transport = default_get_transport)
+        GetTransport get_transport = default_get_transport,
+        Transport skill_transport = default_skill_transport)
         : transport_(std::move(transport)),
-          get_transport_(std::move(get_transport)) {}
+          get_transport_(std::move(get_transport)),
+          skill_transport_(std::move(skill_transport)) {}
+
+    bool skills(const std::string& query, int limit, json& response, std::string& error) const {
+        if (!valid_string(json(query), 512, true) || limit < 1 || limit > 25) {
+            error = "skill query or limit is invalid";
+            return false;
+        }
+        const HttpResult http = skill_transport_(json({{"query", query}, {"limit", limit}}).dump());
+        if (!http.available || http.status != 200) {
+            error = "canonical RAG skills are unavailable";
+            return false;
+        }
+        if (!decode_json_body(http, response, error)) return false;
+        if (!has_exact_keys(response, {"query", "count", "skills"}) || response["query"] != query ||
+            !response["count"].is_number_integer() || !response["skills"].is_array() ||
+            response["count"] != response["skills"].size() || response["skills"].size() > static_cast<size_t>(limit)) {
+            error = "canonical RAG skill response has an invalid schema";
+            return false;
+        }
+        std::set<std::string> names;
+        for (const auto& skill : response["skills"]) {
+            if (!has_exact_keys(skill, {"name", "content", "origin_node_id", "origin_hash", "verification_profile", "untrusted"}) ||
+                !valid_token(skill["name"], 64) || !valid_string(skill["content"], 8192, true) ||
+                !valid_token(skill["origin_node_id"], 64) || !valid_lower_hex(skill["origin_hash"], 64) ||
+                !string_is_one_of(skill["verification_profile"], {"desk-v1", "galaxy-html-v1", "frontend-spa-v1", "frontend-nextjs-v1"}) ||
+                skill["untrusted"] != true || !names.insert(skill["name"].get<std::string>()).second) {
+                error = "canonical RAG skill has invalid bounds, identity or trust metadata";
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool search(
         const std::string& query,
@@ -934,6 +977,7 @@ public:
 private:
     Transport transport_;
     GetTransport get_transport_;
+    Transport skill_transport_;
 };
 
 }  // namespace godbrain_rag

@@ -196,11 +196,46 @@ remain intact; legacy unstored replies do not acquire retention intent.
 `/pending` lists retained candidates, not all unretained conversation.
 
 This is the evidence/retention foundation, not an autonomous learning engine.
-Freshness-aware skill routing, model TaskReview, an improvement backlog and
-gated self-editing are not implemented here. No extra inference pass or
+Model TaskReview, an improvement backlog and gated self-editing are not
+implemented here. No extra inference pass or
 background model is started. Offline native coverage is in
 `scripts\Test-KernelReplies.ps1`, with the wider tool/edit rollback cases in
 `scripts\Test-JarvisLoop.ps1`.
+
+## Current skill routing
+
+The built-in `query_godbrain_skills` read tool uses the canonical loopback
+`POST /v1/skills` door, not Mongo shell access or another model. It is available
+on ordinary tool-enabled hops alongside file tools; `No tools` and speak-only
+hops still cannot dispatch it. Technical procedures are directed to this
+lookup before reinventing a playbook. The model chooses when to call it;
+there is no hidden pre-query or extra generation.
+
+C++ and Go qualify promoted rows again at lookup: the origin must still be
+verified, non-personal, content/hash/version-bound and linked to committed
+ingestion. The latest run for that skill/origin must pass under the promoted
+profile, and broad profiles still need two current distinct passing fixtures.
+Later failures withdraw a skill; later passing evidence under the same
+profile may keep it eligible. Apply-only, missing and unknown evidence
+cannot qualify. These are point-in-time checks, not an execution lease.
+
+Lookup considers at most 100 recent matching promotions, with at most eight
+distinct query terms plus the literal phrase. Bounded lexical name/content
+relevance ranks before recency; this is not semantic/vector skill search or
+an exhaustive catalogue scan. The model gets one full reference, explicitly
+untrusted. Oversized tool context fails rather than presenting a clipped
+procedure. Zero eligible matches is normal; service/protocol failures are
+explicit failed tool results. Neither a returned procedure nor a successful
+lookup verifies the current task, grants tools, edits production or promotes
+new knowledge. Existing stdin and HTTP envelope field names are unchanged.
+The kernel and canonical backend must be deployed together; an older running
+backend does not acquire these read-time checks from a kernel source change.
+
+Shared C++/Go ranking and eligibility fixtures are
+`godbrain_core\testdata\skill_lookup_parity.json`. The native
+`cpp_skill_lookup` test requires `MONGODB_TEST_URI` and uses only its own
+uniquely named test database; absent that opt-in it is reported skipped.
+Never point integration tests at the live vault.
 
 ## Local edits and CS2
 
