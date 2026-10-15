@@ -3459,7 +3459,8 @@ std::string run_colibri_serve(
     const char* serve_host = kColibriServeHost,
     int serve_port = kColibriServePort,
     const std::string& serve_model = {},
-    bool exl3_mouth = false) {
+    bool exl3_mouth = false,
+    const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth) {
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3657,7 +3658,7 @@ std::string run_colibri_serve(
                     err = "Error: EXL3 on :8888 returned no body. Ask again. "
                           "Gemma stays paused.";
                 } else {
-                    maybe_restart_mouth();
+                    restart_mouth(false);
                     err = colibri_serve_up()
                               ? "Error: llama-server returned no body (cut or timeout). "
                                 "Ask again. Not Colibri."
@@ -3684,11 +3685,16 @@ std::string run_colibri_serve(
                 if (msg.contains("content") && msg["content"].is_string()) {
                     assembled = msg["content"].get<std::string>();
                 }
+                if (msg.contains("reasoning_content") && msg["reasoning_content"].is_string()) {
+                    reasoning_piece = msg["reasoning_content"].get<std::string>();
+                }
+                if (unused49::contains(reasoning_piece)) unused49_seen = true;
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
                     tool_acc = msg["tool_calls"];
                     finish_reason = "tool_calls";
                 }
                 if (trim_copy(assembled).empty() && tool_acc.empty()) {
+                    if (unused49_seen && llama_mouth && !exl3_mouth) restart_mouth(true);
                     return no_final_answer(finish_reason);
                 }
             } catch (const json::exception&) {
@@ -3740,7 +3746,7 @@ std::string run_colibri_serve(
                     return err;
                 }
                 if (llama_mouth) {
-                    maybe_restart_mouth();
+                    restart_mouth(false);
                     std::string err =
                         colibri_serve_up()
                             ? "Error: llama-server returned no body (cut or timeout). "
@@ -3783,6 +3789,9 @@ std::string run_colibri_serve(
         last_reason = finish_reason;
         if (trim_copy(piece).empty() && !reasoning_piece.empty() &&
             tool_acc.empty()) {
+            if (unused49::contains(reasoning_piece) && llama_mouth && !exl3_mouth) {
+                restart_mouth(true);
+            }
             return no_final_answer(finish_reason);
         }
         if (piece.empty()) {
@@ -3965,7 +3974,7 @@ std::string run_colibri_serve(
         if (spoken) spoken->clear();
         if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
             std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
-            maybe_restart_mouth(true);
+            restart_mouth(true);
             Sleep(5000);
             wait_mouth_up();
         }
@@ -3993,7 +4002,7 @@ std::string run_colibri_serve(
     if (spoken) spoken->clear();
     if (llama_mouth && !exl3_mouth && !local_tools::yolo_active()) {
         std::cout << "[TOOLS] recycle mouth before next hop" << std::endl;
-        maybe_restart_mouth(true);
+        restart_mouth(true);
         Sleep(5000);
         wait_mouth_up();
     }
@@ -4016,7 +4025,7 @@ std::string run_colibri_serve(
     }
     if (hit49 && unused49::keep_count(assembled) < 24) assembled.clear();
     if (hit49 && spoken && unused49::keep_count(*spoken) < 24) spoken->clear();
-    if ((unused49_seen || hit49) && llama_mouth) maybe_restart_mouth(true);
+    if ((unused49_seen || hit49) && llama_mouth && !exl3_mouth) restart_mouth(true);
     if (assembled.empty()) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         if (local_tools::looks_like_jarvis_need_ask(hop_hint)) {

@@ -16,6 +16,7 @@ struct ReplyResult {
     std::string tokens;
     std::vector<json> requests;
     int pings = 0;
+    int recoveries = 0;
 };
 
 int main() {
@@ -113,7 +114,8 @@ int main() {
                          const std::string& question = "No tools. Fixture question.",
                          const std::string& system = "Fixture system.",
                          bool capture_spoken = true,
-                         bool exl3 = true) {
+                         bool exl3 = true,
+                         bool llama = false) {
         ++case_index;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -121,13 +123,19 @@ int main() {
             requests.clear();
         }
         std::ofstream(logs / "thinking.txt", std::ios::binary) << preference << "\n";
+        std::ofstream(logs / "mouth.txt") << (llama ? "llama\n" : "fixture\n");
         ReplyResult result;
         result.answer = run_colibri_serve(
             system, question,
             [&](const std::string& token) { result.tokens += token; },
             [&] { ++result.pings; }, "", "",
             capture_spoken ? &result.spoken : nullptr,
-            question, "127.0.0.1", port, "fixture", exl3);
+            question, "127.0.0.1", port, "fixture", exl3,
+            [&](bool force) {
+                check(force, "fixture unexpectedly requested ordinary mouth recovery");
+                ++result.recoveries;
+                return false;
+            });
         {
             std::lock_guard<std::mutex> lock(mutex);
             result.requests = requests;
@@ -135,7 +143,7 @@ int main() {
         for (const auto& body : result.requests) {
             check(body.dump().find("PRIVATE_REASONING") == std::string::npos,
                   "private reasoning entered a subsequent request");
-            check(body.at("max_tokens") == (exl3 ? kLlamaChunkTokens : kColiChunkTokens),
+            check(body.at("max_tokens") == ((exl3 || llama) ? kLlamaChunkTokens : kColiChunkTokens),
                   "output budget changed");
         }
         check(result.answer.find("PRIVATE_REASONING") == std::string::npos &&
@@ -514,9 +522,24 @@ int main() {
         check(unused.answer == "Fixture partial" && unused.requests.size() == 1 &&
                   unused.tokens.find("unused49") == std::string::npos,
               "private unused49 guard no longer stops continuation");
+        for (const bool native : {false, true}) {
+            const auto hidden_tag = run({
+                completion("PRIVATE_REASONING <unused49>", "", "length")
+            }, "on", native ? "Fixture tool question." : "No tools. Fixture question.",
+               "Fixture system.", true, false, true);
+            check(hidden_tag.answer.compare(0, 6, "Error:") == 0 &&
+                      hidden_tag.spoken == hidden_tag.answer && hidden_tag.tokens.empty() &&
+                      hidden_tag.requests.size() == 1 && hidden_tag.recoveries == 1,
+                  "hidden reasoning-only unused49 did not recover the llama slot exactly once");
+        }
+        const auto exl3_tag = run({
+            completion("PRIVATE_REASONING <unused49>", "", "length")
+        }, "on", "No tools. Fixture question.", "Fixture system.", true, true, true);
+        check(exl3_tag.answer.compare(0, 6, "Error:") == 0 && exl3_tag.recoveries == 0,
+              "EXL3 hidden tag attempted to start the paused llama mouth");
         std::cout << "reply_stream_test ok: answer-only channels, execution-not-verification, "
                      "preclip evidence, correlation/resume/cancel, fail-closed persistence, "
-                     "selective/lazy/restart retention, legacy migration and tool/edit guards"
+                     "selective/lazy/restart retention, private recovery and tool/edit guards"
                   << std::endl;
     } catch (const std::exception& error) {
         std::cerr << "reply fixture " << case_index << ": " << error.what() << std::endl;
