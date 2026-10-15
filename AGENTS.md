@@ -7,6 +7,10 @@
   This quarter: C++ kernel / Alexandria and the gym. Experimental Go/Rust
   routers on `:8082` are parked (`godbrain_core/go_router`,
   `godbrain_core/rust_router`). Do not spend the quarter staffing them.
+- Current operator priority is high-quality, up-to-date evidence available to
+  RAG inference, with less routine manual crowning. Phone streaming and live
+  translation are parked brainstorms, not implementation work. See
+  [`docs/rag-priorities-and-phone-brainstorm.md`](docs/rag-priorities-and-phone-brainstorm.md).
 - Read the nearest README, manifest, and tests before editing a nested project.
   Keep changes scoped: the routers, Alexandria pipeline, market research tools,
   smart contracts, and vendored Colibri tree have different trust boundaries.
