@@ -84,6 +84,12 @@ func TestCurrentSkillLookupParity(t *testing.T) {
 		t.Helper()
 		id := primitive.NewObjectID()
 		content := "Steps to rollback the display safely."
+		switch mutation {
+		case "pin-expired":
+			content += "\nos_pin=fixture/123.450\n"
+		case "pin-current":
+			content += "\nos_pin=fixture/123.45\n"
+		}
 		profile := "desk-v1"
 		switch {
 		case strings.HasPrefix(mutation, "broad-"):
@@ -101,6 +107,8 @@ func TestCurrentSkillLookupParity(t *testing.T) {
 			node.Status = "candidate"
 		case "personal-origin":
 			node.Sector = "personal"
+		case "pin-expired", "pin-current":
+			node.Sector = "windows-sre"
 		}
 		if mutation != "missing-origin" {
 			insert("knowledge_nodes", node)
@@ -186,5 +194,36 @@ func TestCurrentSkillLookupParity(t *testing.T) {
 	skills, err = store.QueryPromotedSkills(ctx, ".*", 25)
 	if err != nil || len(skills) != 0 {
 		t.Fatalf("regex query was not literal: %+v, %v", skills, err)
+	}
+	if err := db.Drop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seed("pin-expired", "display-expired", 1)
+	seed("pin-current", "display-current", 1)
+	var extra []any
+	for i := 0; i < 500; i++ {
+		status := StatusVerified
+		if i == 0 {
+			status = StatusStale
+		}
+		extra = append(extra, KnowledgeNode{ID: primitive.NewObjectID(), Status: status,
+			Sector: "windows-sre", Content: "Host fixture\nos_pin=fixture/old\n"})
+	}
+	if _, err := db.Collection("knowledge_nodes").InsertMany(ctx, extra); err != nil {
+		t.Fatal(err)
+	}
+	skills, err = store.QueryPromotedSkills(ctx, "rollback display", 25)
+	if err != nil || len(skills) != 2 {
+		t.Fatalf("pin fixtures were not initially eligible: %+v, %v", skills, err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		ids, err := store.StaleMismatchedPins(ctx, "windows-sre", "fixture/123.45", "live fixture pin no longer matches")
+		if err != nil || len(ids) != 501 {
+			t.Fatalf("pin sweep %d did not return the complete mismatch set: count=%d err=%v", attempt, len(ids), err)
+		}
+	}
+	skills, err = store.QueryPromotedSkills(ctx, "rollback display", 25)
+	if err != nil || len(skills) != 1 || skills[0].Name != "display-current" {
+		t.Fatalf("pin applicability did not withdraw only the out-of-scope skill: %+v, %v", skills, err)
 	}
 }

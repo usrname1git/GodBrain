@@ -11,7 +11,10 @@ This Go module contains two boundaries:
   immutable Alexandria source-of-truth records. It also accepts a
   `set_status` judgment that changes only `candidate`/`verified`/`rejected`/`stale`.
   `stale_pins` marks verified `windows-sre` nodes whose `os_pin=` no longer
-  matches the live Windows build.
+  matches the live Windows build. All ASCII-whitespace-delimited pin values must
+  match exactly, including repeated values. The complete sweep uses Mongo `_id`
+  ordering and 100-document cursor batches, not a 500-card result limit;
+  already-stale mismatches remain available for projection-repair retries.
 - `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.

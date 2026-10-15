@@ -1245,7 +1245,11 @@ bool store_stale_pins(
     BSON_APPEND_DOCUMENT(&filter, "status", &in);
     BSON_APPEND_REGEX(&filter, "content", "os_pin=", "");
     bson_t opts = BSON_INITIALIZER;
-    BSON_APPEND_INT64(&opts, "limit", 500);
+    BSON_APPEND_INT32(&opts, "batchSize", 100);
+    bson_t sort = BSON_INITIALIZER;
+    BSON_APPEND_INT32(&sort, "_id", 1);
+    BSON_APPEND_DOCUMENT(&opts, "sort", &sort);
+    bson_destroy(&sort);
     mongoc_collection_t* nodes = coll(h, "knowledge_nodes");
     mongoc_cursor_t* cur = mongoc_collection_find_with_opts(nodes, &filter, &opts, nullptr);
     const bson_t* doc = nullptr;

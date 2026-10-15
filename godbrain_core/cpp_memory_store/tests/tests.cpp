@@ -94,6 +94,20 @@ int run_identity_fixture() {
                           << "\n";
                 ++failed;
             }
+        } else if (p[0] == "pin") {
+            godbrain::memory::Json content;
+            std::string err;
+            if (p.size() != 5 || (p[4] != "stale" && p[4] != "current") ||
+                !godbrain::memory::parse_json(p[2], &content, &err) ||
+                content.kind != godbrain::memory::Json::Kind::String) {
+                std::cerr << "FAIL pin fixture " << p[1] << "\n";
+                ++failed;
+                continue;
+            }
+            if (godbrain::memory::has_mismatched_os_pin(content.str, p[3]) != (p[4] == "stale")) {
+                std::cerr << "FAIL pin applicability " << p[1] << "\n";
+                ++failed;
+            }
         } else if (p[0] == "span") {
             if (p.size() < 5) {
                 std::cerr << "FAIL span fields\n";

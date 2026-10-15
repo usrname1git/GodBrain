@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 
@@ -39,7 +40,9 @@ static void seed(mongoc_database_t* db, const std::string& mutation,
     bson_oid_init(&oid, nullptr);
     char id[25];
     bson_oid_to_string(&oid, id);
-    const std::string content = "Steps to rollback the display safely.";
+    std::string content = "Steps to rollback the display safely.";
+    if (mutation == "pin-expired") content += "\nos_pin=fixture/123.450\n";
+    if (mutation == "pin-current") content += "\nos_pin=fixture/123.45\n";
     const std::string profile = mutation.find("broad-") == 0 ? "galaxy-html-v1" :
         mutation == "apply-only" ? "local-edit-apply-v1" :
         mutation == "unknown-profile" ? "unknown" : "desk-v1";
@@ -47,7 +50,8 @@ static void seed(mongoc_database_t* db, const std::string& mutation,
     BSON_APPEND_OID(&node, "_id", &oid);
     BSON_APPEND_UTF8(&node, "status", mutation == "stale-origin" ? "stale" :
         mutation == "candidate-origin" ? "candidate" : "verified");
-    BSON_APPEND_UTF8(&node, "sector", mutation == "personal-origin" ? "personal" : "test");
+    BSON_APPEND_UTF8(&node, "sector", mutation == "personal-origin" ? "personal" :
+        mutation.find("pin-") == 0 ? "windows-sre" : "test");
     BSON_APPEND_UTF8(&node, "version", "v1");
     BSON_APPEND_UTF8(&node, "content", content.c_str());
     if (mutation != "missing-origin") insert(db, "knowledge_nodes", &node);
@@ -103,6 +107,7 @@ static void seed(mongoc_database_t* db, const std::string& mutation,
 int main() {
     const char* uri = std::getenv("MONGODB_TEST_URI");
     if (!uri || !*uri) return 77;
+    const std::string test_uri(uri);
     mongoc_init();
     auto* client = mongoc_client_new(uri);
     if (!client) return 1;
@@ -181,7 +186,57 @@ int main() {
         invalid.body = "{\"query\":\"display\",\"limit\":1.5}";
         check(rag_handle_request(&engine, invalid).status == 400, "fractional skill limit accepted");
         clear(db);
-        std::cout << "PASS skill lookup: shared ranking/eligibility matrix and current Mongo joins\n";
+        seed(db, "pin-expired", "display-expired");
+        seed(db, "pin-current", "display-current");
+        for (int i = 0; i < 500; ++i) {
+            bson_t node = BSON_INITIALIZER;
+            bson_oid_t id;
+            bson_oid_init(&id, nullptr);
+            BSON_APPEND_OID(&node, "_id", &id);
+            BSON_APPEND_UTF8(&node, "status", i == 0 ? "stale" : "verified");
+            BSON_APPEND_UTF8(&node, "sector", "windows-sre");
+            BSON_APPEND_UTF8(&node, "content", "Host fixture\nos_pin=fixture/old\n");
+            insert(db, "knowledge_nodes", &node);
+            bson_destroy(&node);
+        }
+        request.query = "rollback display";
+        request.limit = 25;
+        check(store_query_skills(client, db_name, request, &receipt, &error), error);
+        check(receipt.skills.size() == 2, "pin fixtures were not initially eligible");
+        check(rebuild_rag_projection(client, db_name, &projection, &error), error);
+#ifdef _WIN32
+        check(_putenv_s("MONGODB_URI", test_uri.c_str()) == 0 &&
+              _putenv_s("MONGODB_DB_NAME", db_name.c_str()) == 0, "test store environment");
+#else
+        check(setenv("MONGODB_URI", test_uri.c_str(), 1) == 0 &&
+              setenv("MONGODB_DB_NAME", db_name.c_str(), 1) == 0, "test store environment");
+#endif
+        std::unique_ptr<StoreHandle, decltype(&store_close)> store(store_open(&error), store_close);
+        check(store != nullptr, error);
+        StalePinsRequest sweep;
+        sweep.command = kStalePinsCommand;
+        sweep.sector = "windows-sre";
+        sweep.pin = "fixture/123.45";
+        sweep.reasoning = "live fixture pin no longer matches";
+        StalePinsReceiptOut swept;
+        check(store_stale_pins(store.get(), sweep, &swept, &error), error);
+        check(swept.stale == 501, "pin sweep stopped before the complete 501-card mismatch set");
+        check(store_query_skills(client, db_name, request, &receipt, &error), error);
+        check(receipt.skills.size() == 1 && receipt.skills[0].name == "display-current",
+              "out-of-scope origin remained eligible or current origin was withdrawn");
+        auto* documents = mongoc_database_get_collection(db, "rag_documents");
+        bson_t stale_filter = BSON_INITIALIZER;
+        BSON_APPEND_UTF8(&stale_filter, "status", "stale");
+        bson_error_t count_error{};
+        const auto projected_stale = mongoc_collection_count_documents(
+            documents, &stale_filter, nullptr, nullptr, nullptr, &count_error);
+        bson_destroy(&stale_filter);
+        mongoc_collection_destroy(documents);
+        check(projected_stale == 1, "pin invalidation did not synchronize its committed projection");
+        check(store_stale_pins(store.get(), sweep, &swept, &error), error);
+        check(swept.stale == 501, "pin sweep retry lost already-stale projection repair candidates");
+        clear(db);
+        std::cout << "PASS skill lookup and pin freshness: parity, current joins, complete sweep and withdrawal\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL skill lookup: " << error.what() << "\n";
         result = 1;

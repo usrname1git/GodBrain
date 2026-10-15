@@ -41,6 +41,11 @@ Cut 8: stdin `stale_pins`. Kernel `/observe` uses this when `os_pin` moves:
 verified `windows-sre` cards that carry a different `os_pin=` become `stale`
 (not deleted). Learn-class cards without `os_pin=` stay verified. Already-stale
 mismatches are counted so RAG projection can resync.
+Every ASCII-whitespace-delimited pin value must match exactly; a build-number
+prefix or a second conflicting pin cannot keep a card current. Sweeps stream
+the complete matching corpus in Mongo `_id` order and 100-document batches,
+rather than silently stopping after 500 cards. Cursor/projection errors fail
+the request; this does not introduce new automatic verification.
 
 Cut 9: search citations load bounded `sources` and emit `evidence` spans
 (`byte_valid` / `not_provided` / `invalid` / `partial`). Citation status is
