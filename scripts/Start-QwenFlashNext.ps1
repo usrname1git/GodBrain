@@ -157,6 +157,23 @@ namespace GodBrain {
 '@
 }
 
+function Enter-QfnAdmission {
+    param([string]$Name = "Global\GodBrain.QfnAdmission.v1")
+    $mutex = [Threading.Mutex]::new($false, $Name)
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] {
+            $acquired = $true
+            Write-Warning "Previous QFN supervisor exited; rechecking live processes and memory."
+        }
+        if (-not $acquired) { throw "Another QFN launch owns admission. No model was started." }
+        return $mutex
+    } catch {
+        $mutex.Dispose()
+        throw
+    }
+}
+
 function Write-QfnLaunchStatus {
     param($Spec, [ValidateSet("checking", "loading", "stopped", "failed")][string]$State, [string]$Message)
     $path = Join-Path $Spec.RepoRoot "logs\qfn-last-launch.json"
@@ -323,7 +340,7 @@ function Get-QfnHardware {
     $loading = @(Get-CimInstance Win32_Process -ErrorAction Stop |
         Where-Object { (Test-Cs2ModelProcess $_ $RepoRoot) -or ($Server -and (Test-Cs2ScriptProcess $_ $Server)) })
     return [pscustomobject]@{
-        AvailableRamGiB = $os.FreePhysicalMemory / 1MB
+        AvailableRamGiB = [double]$os.FreePhysicalMemory / 1MB
         AvailableVramGiB = $freeMiB / 1024.0
         BusyPorts = @($ports | Select-Object -ExpandProperty LocalPort -Unique)
         LoadingPids = @($loading | Select-Object -ExpandProperty ProcessId)
@@ -401,7 +418,9 @@ $process.StartInfo = $spec.Info
 $started = $false
 $attached = $false
 $scope = $null
+$admission = $null
 try {
+    if (-not $CheckOnly) { $admission = Enter-QfnAdmission }
     if ($DeskLaunch) { Write-QfnLaunchStatus $spec "checking" "Checking QFN snapshot, runtime and memory." }
     $preflight = Get-QfnPreflight $spec
     $preflight | ConvertTo-Json -Depth 4
@@ -433,14 +452,21 @@ try {
     }
     if ($DeskLaunch) { Write-QfnLaunchStatus $spec "stopped" "QFN server exited." }
 } catch {
-    if ($DeskLaunch) { Write-QfnLaunchStatus $spec "failed" $_.Exception.Message }
+    if ($DeskLaunch -and $admission) { Write-QfnLaunchStatus $spec "failed" $_.Exception.Message }
     throw
 } finally {
-    if ($scope) { $scope.Dispose() }
-    if ($started -and $attached) { $process.WaitForExit() }
-    elseif ($started -and -not $process.HasExited) {
-        $process.Kill($true)
-        $process.WaitForExit()
+    try {
+        if ($scope) { $scope.Dispose() }
+        if ($started -and $attached) { $process.WaitForExit() }
+        elseif ($started -and -not $process.HasExited) {
+            $process.Kill($true)
+            $process.WaitForExit()
+        }
+        $process.Dispose()
+    } finally {
+        if ($admission) {
+            $admission.ReleaseMutex()
+            $admission.Dispose()
+        }
     }
-    $process.Dispose()
 }

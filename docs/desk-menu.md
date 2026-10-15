@@ -128,6 +128,9 @@ with full details on the live-settings tooltip. Loading is not readiness:
 the model must answer its actual `/health` endpoint. A Windows kill-on-close
 Job owns the server and CPU workers, including workers surviving server exit.
 Desk Stop/model switches and CS2 release that scope; CS2 never resumes it.
+QFN holds host-wide, cross-session launch admission from preflight through
+Job/child cleanup; a competing launch fails without replacing the owner's
+launch status.
 
 The console remains attached for a manual launch; Ctrl+C closes that same
 owned scope. Once `/health` is ready, run

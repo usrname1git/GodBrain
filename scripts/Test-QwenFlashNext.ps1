@@ -93,6 +93,103 @@ try {
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ("qfn-offline-" + [guid]::NewGuid().ToString("N"))
 [void][IO.Directory]::CreateDirectory($fixture)
 try {
+    & {
+        function Get-CimInstance {
+            param($ClassName, $ErrorAction)
+            if ($ClassName -eq "Win32_OperatingSystem") {
+                return [pscustomobject]@{ FreePhysicalMemory = [uint64]45088768 }
+            }
+            return @()
+        }
+        function Get-NetTCPConnection { return @() }
+        function Get-Process { return @() }
+        function nvidia-smi { $global:LASTEXITCODE = 0; "16384, 15360" }
+        $script:integralHardware = Get-QfnHardware $repo "C:\fixture\serve_openai.py"
+        Assert ($script:integralHardware.AvailableRamGiB -is [double] -and
+            $script:integralHardware.AvailableRamGiB -eq 43.0) "An exact GiB hardware reading was not a Double."
+    }
+    $supervisorFixture = Join-Path $fixture "supervisor.ps1"
+    $workerFixture = Join-Path $fixture "worker.ps1"
+    [IO.File]::WriteAllText($workerFixture, @'
+param($Root, $Role)
+[IO.File]::WriteAllText((Join-Path $Root ("worker-" + $Role)), [string]$PID)
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
+while (-not (Test-Path -LiteralPath (Join-Path $Root "release"))) {
+    if ([DateTime]::UtcNow -ge $deadline) { exit 17 }
+    Start-Sleep -Milliseconds 20
+}
+'@)
+    [IO.File]::WriteAllText($supervisorFixture, @'
+param($Launcher, $Root, $AdmissionName, $Role)
+$ErrorActionPreference = "Stop"
+. $Launcher
+$originalAdmission = ${function:Enter-QfnAdmission}
+function Enter-QfnAdmission { & $originalAdmission -Name $AdmissionName }
+function Get-QfnPreflight {
+    [IO.File]::WriteAllText((Join-Path $Root ("preflight-" + $Role)), "called")
+    return @{ready_to_attempt=$true;blockers=@()}
+}
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($Launcher, [ref]$tokens, [ref]$errors)
+$main = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] })[-1]
+$spec = New-QfnLaunchSpec $Root $Root $Root
+$spec.Info.FileName = (Get-Process -Id $PID).Path
+$spec.Info.ArgumentList.Clear()
+foreach ($arg in @("-NoLogo", "-NoProfile", "-File", (Join-Path $Root "worker.ps1"), $Root, $Role)) {
+    $spec.Info.ArgumentList.Add($arg)
+}
+$process = [Diagnostics.Process]::new()
+$process.StartInfo = $spec.Info
+$DeskLaunch = $true; $CheckOnly = $false
+$started = $false; $attached = $false; $scope = $null; $admission = $null
+try { & ([scriptblock]::Create($main.Extent.Text)) }
+catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
+'@)
+    $admissionName = "Global\GodBrain.QfnFixture." + [guid]::NewGuid().ToString("N")
+    $supervisors = [Collections.Generic.List[Diagnostics.Process]]::new()
+    function Start-FixtureSupervisor([string]$Role) {
+        $info = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        foreach ($arg in @("-NoLogo", "-NoProfile", "-File", $supervisorFixture,
+            (Join-Path $PSScriptRoot "Start-QwenFlashNext.ps1"), $fixture, $admissionName, $Role)) {
+            $info.ArgumentList.Add($arg)
+        }
+        $child = [Diagnostics.Process]::Start($info)
+        $supervisors.Add($child)
+        return @{ Process = $child; Out = $child.StandardOutput.ReadToEndAsync(); Err = $child.StandardError.ReadToEndAsync() }
+    }
+    try {
+        $owner = Start-FixtureSupervisor "owner"
+        $statusPath = Join-Path $fixture "logs\qfn-last-launch.json"
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not (Test-Path -LiteralPath (Join-Path $fixture "worker-owner"))) {
+            Assert (-not $owner.Process.HasExited) "Owner supervisor failed before starting its fixture worker."
+            Assert ([DateTime]::UtcNow -lt $deadline) "Owner supervisor did not start its fixture worker."
+            Start-Sleep -Milliseconds 20
+        }
+        $beforeStatus = [IO.File]::ReadAllText($statusPath)
+        Assert (($beforeStatus | ConvertFrom-Json).state -eq "loading") "Owner did not publish loading status."
+        $loser = Start-FixtureSupervisor "competitor"
+        Assert ($loser.Process.WaitForExit(10000)) "Competing QFN launch did not fail promptly."
+        Assert ($loser.Process.ExitCode -eq 1 -and
+            $loser.Err.GetAwaiter().GetResult() -match "Another QFN launch owns admission") "Concurrent launch was not rejected by admission."
+        Assert (-not (Test-Path -LiteralPath (Join-Path $fixture "preflight-competitor")) -and
+            -not (Test-Path -LiteralPath (Join-Path $fixture "worker-competitor"))) "Competing launch reached preflight or started a model."
+        Assert ([IO.File]::ReadAllText($statusPath) -ceq $beforeStatus) "Competing launch overwrote the owner's status."
+        Assert (-not $owner.Process.HasExited) "Rejected competitor terminated the owner."
+        [IO.File]::WriteAllText((Join-Path $fixture "release"), "release")
+        Assert ($owner.Process.WaitForExit(10000) -and $owner.Process.ExitCode -eq 0) "Owner did not finish cleanly."
+        $released = Enter-QfnAdmission -Name $admissionName
+        $released.ReleaseMutex()
+        $released.Dispose()
+    } finally {
+        foreach ($supervisor in $supervisors) {
+            if (-not $supervisor.HasExited) { $supervisor.Kill($true); $supervisor.WaitForExit() }
+            $supervisor.Dispose()
+        }
+    }
     $childSpec = New-QfnLaunchSpec $fixture $fixture $repo
     $childInfo = $childSpec.Info
     $childInfo.FileName = (Get-Process -Id $PID).Path
@@ -164,6 +261,9 @@ try {
         $spec = $modelSpec
         $process = [Diagnostics.Process]::new()
         $started = $false; $attached = $false; $scope = $null
+        $admission = $null
+        $originalAdmission = ${function:Enter-QfnAdmission}
+        function Enter-QfnAdmission { & $originalAdmission -Name $admissionName }
         Assert-Fails { & ([scriptblock]::Create($main.Extent.Text)) } "fixture insufficient RAM"
         $failure = Get-Content -LiteralPath (Join-Path $fixture "logs\qfn-last-launch.json") -Raw | ConvertFrom-Json
         Assert ($failure.state -ceq "failed" -and $failure.message -like "*fixture insufficient RAM*") "Real launcher failure path did not publish the Desk error."
@@ -244,6 +344,8 @@ try {
         $script:hardware = @{AvailableRamGiB=44.0;AvailableVramGiB=15.0;BusyPorts=@();LoadingPids=@();Cs2Held=$false}
         $ready = Get-QfnPreflight $spec
         Assert ($ready.ready_to_attempt -and -not $ready.inference_fit_proven) "Preflight pretended to prove inference."
+        $script:hardware = $script:integralHardware
+        Assert ((Get-QfnPreflight $spec).ready_to_attempt) "Exact GiB hardware reading failed typed preflight."
         foreach ($port in @(8000,8871,8888)) {
             $script:hardware.BusyPorts = @($port)
             Assert (-not (Get-QfnPreflight $spec).ready_to_attempt) "Busy port $port accepted."
