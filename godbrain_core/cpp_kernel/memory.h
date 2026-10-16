@@ -5,6 +5,8 @@
 
 using json = nlohmann::json;
 
+namespace godbrain_rag { class Client; }
+
 namespace memory {
     json save_thought(const json& payload);
     json observe_host();
@@ -19,8 +21,12 @@ namespace memory {
     json promote_skill(const json& payload);
     json query_skills(const json& payload);
     json session_snapshot(int limit);
+    json session_snapshot(int limit, const godbrain_rag::Client& client);
     json hydrate_session_from_rag();
+    json hydrate_session_from_rag(const godbrain_rag::Client& client);
     bool render_session_context(std::string& context, std::string& error);
+    bool render_session_context(
+        std::string& context, std::string& error, const godbrain_rag::Client& client);
     void note_session(
         const std::string& source_hash,
         const std::string& stable_id,

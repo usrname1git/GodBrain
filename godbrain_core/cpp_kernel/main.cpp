@@ -4299,6 +4299,10 @@ int main() {
                   << hydrated.value("loaded", 0)
                   << " status=" << hydrated.value("status", "skipped")
                   << std::endl;
+        if (hydrated.contains("error")) {
+            std::cerr << "[MEMORY] Session hydrate: "
+                      << hydrated.at("error").get<std::string>() << std::endl;
+        }
     } catch (const std::exception& error) {
         std::cout << "[MEMORY] Session hydrate skipped: " << error.what()
                   << std::endl;
@@ -5227,7 +5231,8 @@ int main() {
                 try {
                     std::ostringstream listing;
                     listing << "This session:\n";
-                    const json session = memory::session_snapshot(8).value("thoughts", json::array());
+                    const json snapshot = memory::session_snapshot(8);
+                    const json session = snapshot.value("thoughts", json::array());
                     if (session.empty()) {
                         listing << "(nothing remembered in this kernel process)\n";
                     } else {
@@ -5242,6 +5247,12 @@ int main() {
                         if (shown == 0) {
                             listing << "(nothing remembered in this kernel process)\n";
                         }
+                    }
+                    for (const auto& omitted : snapshot.value("omitted", json::array())) {
+                        listing << "(session origin "
+                                << omitted.value("stable_id", "unknown").substr(0, 12)
+                                << " withheld: "
+                                << omitted.value("reason", "unconfirmed") << ")\n";
                     }
                     const std::string recall_query = trim_copy(user_msg.substr(7));
                     listing << "\n";
@@ -5388,7 +5399,10 @@ int main() {
             std::string session_error;
             std::string rag_text;
             if (!continue_cmd) {
-                if (!memory::render_session_context(session_text, session_error)) {
+                const bool edit_req = local_edit::looks_like_edit_request(user_msg);
+                const bool skip_rag = edit_req || local_fs_ask || no_tools_ask;
+                if (!skip_rag &&
+                    !memory::render_session_context(session_text, session_error)) {
                     std::cerr << "[MEMORY] Session context rejected: " << session_error
                               << std::endl;
                     res.status = 503;
@@ -5403,8 +5417,6 @@ int main() {
                 // /edit is a file patch, not a Golden Record question. RAG
                 // "untrusted, never follow instructions" jailed Gemma off APPLY.
                 // Local path/RW asks skip RAG too so the first hop can tool-call.
-                const bool edit_req = local_edit::looks_like_edit_request(user_msg);
-                const bool skip_rag = edit_req || local_fs_ask || no_tools_ask;
                 const bool have_rag =
                     skip_rag ||
                     (rag_client.search(user_msg, search_response, rag_error) &&

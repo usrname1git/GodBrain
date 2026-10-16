@@ -537,9 +537,115 @@ int main() {
         }, "on", "No tools. Fixture question.", "Fixture system.", true, true, true);
         check(exl3_tag.answer.compare(0, 6, "Error:") == 0 && exl3_tag.recoveries == 0,
               "EXL3 hidden tag attempted to start the paused llama mouth");
+        json session_document = {
+            {"node_id", "0123456789abcdef01234567"}, {"stable_id", "fixture:session-origin"},
+            {"node_version", "v1"}, {"kind", "claim"}, {"sector", "security"},
+            {"status", "verified"}, {"confidence", 1.0}, {"schema_version", "claim-v1"},
+            {"content", "FRESH_SESSION_ORIGIN " + std::string(300, 'x') + " ORIGINAL_TAIL"},
+            {"label", "Fixture session origin"},
+        };
+        json session_graph = {
+            {"generation", "fixture-gen"}, {"projection_version", "hybrid-v1"},
+            {"projection_schema", "rag-document-v2"}, {"count", 1}, {"truncated", false},
+            {"links_truncated", false}, {"links", json::array()},
+            {"nodes", json::array({{
+                {"node_id", session_document["node_id"]},
+                {"stable_id", session_document["stable_id"]},
+                {"kind", "claim"}, {"sector", "security"}, {"status", "verified"},
+                {"confidence", 1.0}, {"label", "Fixture session origin"},
+            }})},
+        };
+        bool origin_available = true;
+        int origin_reads = 0;
+        const godbrain_rag::Client session_client(
+            [](const std::string&) -> godbrain_rag::HttpResult {
+                throw std::runtime_error("Session read unexpectedly posted");
+            },
+            [&](const std::string& path) {
+                if (path.find("/v1/graph?limit=") == 0) {
+                    return godbrain_rag::HttpResult{
+                        true, 200, "application/json", session_graph.dump()};
+                }
+                check(path.find("/v1/document?id=") == 0, "Unexpected session GET path");
+                ++origin_reads;
+                json response = session_document;
+                for (const auto& node : session_graph["nodes"]) {
+                    if (path == "/v1/document?id=" + node["node_id"].get<std::string>()) {
+                        response["node_id"] = node["node_id"];
+                        response["stable_id"] = node["stable_id"];
+                    }
+                }
+                return godbrain_rag::HttpResult{
+                    origin_available, 200, "application/json", response.dump()};
+            });
+        // Evict earlier conversation fixtures without introducing a reset-only runtime API.
+        for (int index = 0; index < 3; ++index) {
+            const std::string id = "fixture:shelf:" + std::to_string(index);
+            memory::note_session(id, id, "Untrusted conversation fixture", "verified");
+        }
+        check(memory::hydrate_session_from_rag(session_client)["loaded"] == 1,
+              "Memory API did not hydrate a verified canonical reference");
+        std::string session_context, session_error;
+        check(memory::render_session_context(session_context, session_error, session_client) &&
+                  session_context.find("FRESH_SESSION_ORIGIN") != std::string::npos &&
+                  origin_reads == 2,
+              "Memory API did not recheck an origin between hydration and prompt rendering");
+        session_document["status"] = "stale";
+        check(memory::render_session_context(session_context, session_error, session_client) &&
+                  session_context.find("FRESH_SESSION_ORIGIN") == std::string::npos &&
+                  session_context.find("Untrusted conversation fixture") != std::string::npos,
+              "Memory API emitted retired verified context or lost unrelated local notes");
+        const json stale_snapshot = memory::session_snapshot(8, session_client);
+        check(stale_snapshot["omitted"].size() == 1 &&
+                  stale_snapshot["thoughts"].size() == 2 &&
+                  stale_snapshot["thoughts"][0]["status"] == "candidate",
+              "Recall silently returned a stale reference or a local verified-status forgery");
+        session_document["status"] = "verified";
+        session_document["content"] =
+            "FRESH_SESSION_ORIGIN " + std::string(300, 'x') + " CHANGED_TAIL";
+        check(memory::session_snapshot(8, session_client)["omitted"].size() == 1,
+              "Memory API only checked the clipped origin snippet");
+        session_document["content"] =
+            "FRESH_SESSION_ORIGIN " + std::string(300, 'x') + " ORIGINAL_TAIL";
+        origin_available = false;
+        check(memory::session_snapshot(8, session_client)["omitted"].size() == 1,
+              "Unavailable canonical origin fell back to a cached verified snapshot");
+        origin_available = true;
+        check(memory::session_snapshot(8, session_client)["thoughts"].size() == 3,
+              "Memory API lost its reference rather than recovering on retry");
+        const json graph_node = session_graph["nodes"][0];
+        session_graph["nodes"] = json::array();
+        for (int index = 0; index < 3; ++index) {
+            json node = graph_node;
+            node["node_id"] = std::string(23, 'a') + std::to_string(index);
+            node["stable_id"] = "fixture:only-rag:" + std::to_string(index);
+            session_graph["nodes"].push_back(node);
+        }
+        session_graph["count"] = 3;
+        check(memory::hydrate_session_from_rag(session_client)["loaded"] == 3,
+              "Could not seed the all-RAG fallback fixture");
+        origin_available = false;
+        check(memory::render_session_context(session_context, session_error, session_client) &&
+                  session_context.empty(),
+              "Unavailable origins left a nonempty wrapper that could bypass the prompt gate");
+        const json empty_snapshot = memory::session_snapshot(8, session_client);
+        check(empty_snapshot["thoughts"].empty() && empty_snapshot["omitted"].size() == 3,
+              "All-withheld session recall hid diagnostics or exposed cached content");
+        origin_available = true;
+        check(memory::session_snapshot(8, session_client)["thoughts"].size() == 3,
+              "Withholding all origins destroyed retryable references");
+        session_graph["nodes"][0]["status"] = "candidate";
+        session_graph["nodes"][1]["status"] = "rejected";
+        session_graph["nodes"][2]["sector"] = "personal";
+        const int before_ineligible = origin_reads;
+        check(memory::hydrate_session_from_rag(session_client)["loaded"] == 0 &&
+                  origin_reads == before_ineligible,
+              "Boot hydration tried to seed nonverified or personal graph entries");
+
         std::cout << "reply_stream_test ok: answer-only channels, execution-not-verification, "
                      "preclip evidence, correlation/resume/cancel, fail-closed persistence, "
-                     "selective/lazy/restart retention, private recovery and tool/edit guards"
+                     "selective/lazy/restart retention, private recovery, tool/edit guards "
+                     "and canonical session revalidation"
                   << std::endl;
     } catch (const std::exception& error) {
         std::cerr << "reply fixture " << case_index << ": " << error.what() << std::endl;

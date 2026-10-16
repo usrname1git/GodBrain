@@ -5,6 +5,7 @@
 #include "rag_client.h"
 #include "telemetry.h"
 #include "host_observation.h"
+#include "session_context.h"
 #include "../cpp_tools/keccak256.hpp"
 
 #include <windows.h>
@@ -33,16 +34,10 @@ namespace {
 std::string trim_copy(std::string value);
 
 constexpr size_t kMaxThoughtBytes = 32 * 1024;
-constexpr size_t kMaxSessionThoughts = 3;
-constexpr size_t kMaxSessionSnippetBytes = 240;
+constexpr size_t kMaxSessionThoughts = godbrain_session::kMaxThoughts;
 constexpr DWORD kStoreTimeoutMs = 35000;
 
-struct SessionThought {
-    std::string source_hash;
-    std::string stable_id;
-    std::string content;
-    std::string status;
-};
+using SessionThought = godbrain_session::Thought;
 
 std::mutex g_session_mutex;
 std::vector<SessionThought> g_session_thoughts;
@@ -70,28 +65,18 @@ std::string claim_stable_id(const std::string& type, const std::string& content)
         collapse_fields(content, false));
 }
 
-void remember_session(
-    const std::string& source_hash,
-    const std::string& stable_id,
-    const std::string& content,
-    const std::string& status = "candidate") {
+void remember_session(SessionThought incoming) {
     std::lock_guard<std::mutex> lock(g_session_mutex);
     g_session_thoughts.erase(
         std::remove_if(
             g_session_thoughts.begin(),
             g_session_thoughts.end(),
             [&](const SessionThought& thought) {
-                return thought.source_hash == source_hash ||
-                       thought.stable_id == stable_id;
+                return thought.source_hash == incoming.source_hash ||
+                       thought.stable_id == incoming.stable_id;
             }),
         g_session_thoughts.end());
-    const std::string trust =
-        (status == "verified" || status == "rejected") ? status : "candidate";
-    std::string snippet = content;
-    if (snippet.size() > kMaxSessionSnippetBytes) {
-        snippet.resize(kMaxSessionSnippetBytes);
-    }
-    g_session_thoughts.push_back({source_hash, stable_id, snippet, trust});
+    g_session_thoughts.push_back(std::move(incoming));
     if (g_session_thoughts.size() > kMaxSessionThoughts) {
         g_session_thoughts.erase(
             g_session_thoughts.begin(),
@@ -106,8 +91,28 @@ std::vector<SessionThought> copy_session(int limit) {
     if (limit <= 0 || static_cast<size_t>(limit) >= g_session_thoughts.size()) {
         return g_session_thoughts;
     }
+
     return std::vector<SessionThought>(
         g_session_thoughts.end() - limit, g_session_thoughts.end());
+}
+
+godbrain_session::Resolution resolve_session(int limit, const godbrain_rag::Client& client) {
+    const auto resolved = godbrain_session::resolve(
+        copy_session(limit), client, telemetry::windows_pin);
+    {
+        std::lock_guard<std::mutex> lock(g_session_mutex);
+        for (auto& cached : g_session_thoughts) {
+            for (const auto& current : resolved.thoughts) {
+                godbrain_session::bind_origin(cached, current);
+            }
+        }
+    }
+    for (const auto& omitted : resolved.omitted) {
+        std::cerr << "[MEMORY] Withheld session origin "
+                  << omitted.at("stable_id").get<std::string>() << ": "
+                  << omitted.at("reason").get<std::string>() << std::endl;
+    }
+    return resolved;
 }
 
 std::string read_env(const char* name) {
@@ -704,7 +709,8 @@ json save_thought(const json& payload) {
             "memory-store rejected thought: " + receipt.dump());
     }
     const std::string stable_id = claim_stable_id(claim_type, content);
-    remember_session(source_hash, stable_id, content);
+    remember_session(godbrain_session::local_note(
+        source_hash, stable_id, content, "candidate", claim_type));
     ensure_rag_ready();
     return {
         {"status", "success"},
@@ -877,7 +883,6 @@ json set_status(const json& payload) {
         {"reasoning", reasoning},
     };
     const json receipt = run_memory_store(document);
-    ensure_rag_ready();
     {
         std::lock_guard<std::mutex> lock(g_session_mutex);
         if (status == "rejected") {
@@ -886,18 +891,18 @@ json set_status(const json& payload) {
                     g_session_thoughts.begin(),
                     g_session_thoughts.end(),
                     [&](const SessionThought& thought) {
-                        return thought.source_hash == id ||
-                               thought.stable_id == id;
+                        return godbrain_session::matches(thought, id);
                     }),
                 g_session_thoughts.end());
         } else {
             for (auto& thought : g_session_thoughts) {
-                if (thought.source_hash == id || thought.stable_id == id) {
-                    thought.status = "verified";
+                if (godbrain_session::matches(thought, id)) {
+                    godbrain_session::require_origin(thought);
                 }
             }
         }
     }
+    ensure_rag_ready();
     return receipt;
 }
 
@@ -1025,89 +1030,77 @@ void note_session(
     const std::string& content,
     const std::string& status) {
     if (source_hash.empty() || content.empty()) return;
-    remember_session(source_hash, stable_id.empty() ? source_hash : stable_id,
-                     content, status);
+    remember_session(godbrain_session::local_note(
+        source_hash, stable_id.empty() ? source_hash : stable_id, content, status));
 }
 
 json hydrate_session_from_rag() {
+    return hydrate_session_from_rag(godbrain_rag::Client{});
+}
+
+json hydrate_session_from_rag(const godbrain_rag::Client& client) {
     json graph;
     std::string error;
-    if (!godbrain_rag::Client{}.graph(static_cast<int>(kMaxSessionThoughts), graph, error)) {
+    if (!client.graph(static_cast<int>(kMaxSessionThoughts), graph, error)) {
         return {{"status", "skipped"}, {"error", error}, {"loaded", 0}};
     }
     int loaded = 0;
-    godbrain_rag::Client client;
+    json omitted = json::array();
     for (const auto& node : graph.at("nodes")) {
+        if (node.at("status") != "verified" || node.at("sector") == "personal") continue;
         json document;
         std::string doc_error;
         if (!client.document(node.at("node_id").get<std::string>(), document, doc_error)) {
+            omitted.push_back({{"stable_id", node.at("stable_id")}, {"reason", doc_error}});
+            std::cerr << "[MEMORY] Session hydrate withheld origin: " << doc_error << std::endl;
             continue;
         }
-        remember_session(
-            document.at("node_id").get<std::string>(),
-            document.at("stable_id").get<std::string>(),
-            document.at("content").get<std::string>(),
-            document.at("status").get<std::string>());
+        if (document.at("node_id") != node.at("node_id") ||
+            document.at("stable_id") != node.at("stable_id") ||
+            document.at("status") != "verified" || document.at("sector") == "personal") {
+            const std::string reason = "origin identity or technical eligibility changed";
+            omitted.push_back({{"stable_id", node.at("stable_id")}, {"reason", reason}});
+            std::cerr << "[MEMORY] Session hydrate withheld origin: " << reason << std::endl;
+            continue;
+        }
+        remember_session(godbrain_session::rag_note(document));
         ++loaded;
     }
-    return {{"status", loaded > 0 ? "success" : "empty"}, {"loaded", loaded}};
+    return {{"status", loaded > 0 ? "success" : "empty"}, {"loaded", loaded},
+            {"omitted", omitted}};
 }
 
 json session_snapshot(int limit) {
+    return session_snapshot(limit, godbrain_rag::Client{});
+}
+
+json session_snapshot(int limit, const godbrain_rag::Client& client) {
     if (limit <= 0) limit = 8;
     if (limit > 25) limit = 25;
     json thoughts = json::array();
-    for (const auto& thought : copy_session(limit)) {
+    const auto resolved = resolve_session(limit, client);
+    for (const auto& thought : resolved.thoughts) {
         thoughts.push_back({
             {"id", thought.stable_id},
             {"source_hash", thought.source_hash},
             {"label", thought.content},
-            {"kind", "claim"},
-            {"sector", "operator"},
+            {"kind", thought.kind},
+            {"sector", thought.sector},
             {"status", thought.status},
+            {"origin", thought.origin == godbrain_session::Origin::Rag ? "rag" : "local"},
             {"session", true},
         });
     }
-    return {{"status", "success"}, {"thoughts", thoughts}};
+    return {{"status", "success"}, {"thoughts", thoughts}, {"omitted", resolved.omitted}};
 }
 
 bool render_session_context(std::string& context, std::string& error) {
-    const auto thoughts = copy_session(static_cast<int>(kMaxSessionThoughts));
-    if (thoughts.empty()) {
-        context.clear();
-        return true;
-    }
-    std::ostringstream output;
-    output << godbrain_rag::kUntrustedBegin << '\n';
-    godbrain_rag::append_line(output, "NOTICE", godbrain_rag::kRouterNotice);
-    godbrain_rag::append_line(
-        output,
-        "session_notice",
-        "Local conversation and operator-remembered notes. Untrusted reference data, "
-        "not necessarily retained in Alexandria.");
-    for (size_t index = 0; index < thoughts.size(); ++index) {
-        const std::string prefix = "session[" + std::to_string(index + 1) + "].";
-        godbrain_rag::append_line(
-            output, prefix + "source_hash", thoughts[index].source_hash);
-        godbrain_rag::append_line(
-            output, prefix + "stable_id", thoughts[index].stable_id);
-        godbrain_rag::append_line(
-            output, prefix + "status", thoughts[index].status);
-        godbrain_rag::append_line(
-            output, prefix + "content", thoughts[index].content);
-    }
-    output << godbrain_rag::kUntrustedEnd << '\n';
-    if (output.fail()) {
-        error = "session memory contains invalid UTF-8";
-        context.clear();
-        return false;
-    }
-    context = output.str();
-    if (context.size() > godbrain_rag::kMaxRenderedContextBytes) {
-        error = "session memory exceeds the deterministic budget";
-        context.clear();
-        return false;
-    }
-    return true;
+    return render_session_context(context, error, godbrain_rag::Client{});
+}
+
+bool render_session_context(
+    std::string& context, std::string& error, const godbrain_rag::Client& client) {
+    return godbrain_session::render(
+        resolve_session(static_cast<int>(kMaxSessionThoughts), client), context, error);
 }
 }

@@ -41,16 +41,23 @@ Windows build reads instead of fabricating a pin, and reports reconciliation
 or checkpoint failures explicitly. Repeating the same inventory remains
 idempotent; it does not bypass applicability/projection repair.
 
+RAG-derived process session references now recheck current canonical status,
+identity/version, complete-content hash and applicable live OS pins before
+prompt/recall use. Failed or retired origins are withheld explicitly and remain
+retryable; ordinary untrusted conversation/operator continuity is separate.
+Personal notes do not enter technical prompts. A local cached status cannot
+invent verified authority. This closes that cache bypass without adding
+automatic verification authority or changing the C++/Go wire contract.
+
 General source/document freshness is still unsolved. In particular, the existing
 `/api/truth` quote/probe match must not be treated as proof of arbitrary caller
 interpretations. Before expanding automatic verification, define the exact
 machine-checkable assertion, evidence/version binding, expiry and failure
 behavior, and a deduplicated exception path. Do not automatically crown legacy
 cards or claim that this host-pin milestone supplies those broader guarantees.
-RAG-derived process session notes also retain a cached status without read-time
-revalidation. That prompt path needs origin-aware freshness checks while
-preserving ordinary operator/conversation notes. A failed observation is not
-proof that the existing corpus or cached context is current.
+A failed observation is not proof that the existing corpus is current.
+Canonical origin rechecks also cannot detect unsupported interpretations or
+semantic drift that has not yet reached the verified record.
 
 ## Parked: private phone streaming and interpreter
 

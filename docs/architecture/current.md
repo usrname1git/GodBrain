@@ -202,6 +202,28 @@ intent, never ordinary or incomplete replies. Legacy stored IDs and records
 remain intact; legacy unstored replies do not acquire retention intent.
 `/pending` lists retained candidates, not all unretained conversation.
 
+The three-entry process cache separates ordinary untrusted notes from
+RAG-required references. Boot hydration binds canonical node/stable IDs,
+node/schema versions, sector/kind and a Keccak-256 of the full content before
+UTF-8-safe snippet clipping. Prompt rendering and session recall copy state
+under the mutex, then perform at most three canonical `/v1/document` reads
+outside it. Each reference needs a still-verified, nonpersonal, unchanged
+origin. Windows SRE records carrying `os_pin=` require every full-content
+token to match one successful live sensor read for that batch. Sensor and
+origin failures produce omission reasons and permit retry, not cached truth.
+An authorized judgment converts a matching saved local note into an
+origin-required reference; its first matching read also binds the canonical
+version. This is point-in-time validation, not an atomic lease covering later
+generation, and it does not establish broader semantic freshness.
+
+Ordinary conversation/operator notes cannot acquire verified authority from
+a cached status string and remain usable without RAG. Actual sectors are
+preserved; personal notes can appear on their local shelf but never in the
+technical prompt. If all references are withheld and no ordinary notes remain,
+rendering returns truly empty context so the existing fail-closed gate holds.
+File/edit/`No tools` requests bypass session-origin I/O along with RAG search.
+`/recall` reports withheld origins without displaying their old snippets.
+
 This is the evidence/retention foundation, not an autonomous learning engine.
 Model TaskReview, an improvement backlog and gated self-editing are not
 implemented here. No extra inference pass or

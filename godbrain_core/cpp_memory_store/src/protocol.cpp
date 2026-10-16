@@ -1,5 +1,6 @@
 #include "godbrain/memory_store/protocol.hpp"
 #include "godbrain/memory_store/embedding.hpp"
+#include "os_pin.h"
 #include "godbrain/memory_store/json.hpp"
 #include "godbrain/memory_store/state_machine.hpp"
 #include "godbrain/memory_store/embedding.hpp"
@@ -489,15 +490,7 @@ bool valid_os_pin(const std::string& pin) {
 }
 
 bool has_mismatched_os_pin(const std::string& content, const std::string& pin) {
-    size_t position = 0;
-    while ((position = content.find("os_pin=", position)) != std::string::npos) {
-        position += 7;
-        const size_t end = content.find_first_of(" \t\r\n\f\v", position);
-        const std::string value = content.substr(
-            position, end == std::string::npos ? std::string::npos : end - position);
-        if (value != pin) return true;
-    }
-    return false;
+    return godbrain_pin::has_mismatched_os_pin(content, pin);
 }
 
 bool validate_stale_pins(const StalePinsRequest& r, std::string* err) {

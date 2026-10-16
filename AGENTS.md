@@ -385,8 +385,13 @@ Golden Records from the canonical loopback RAG service, talks to the desk
 mouth on `:8888` while `logs/mouth-pause.txt` is `on` (otherwise `:8000`),
 authenticates privileged `command_type` requests, and delegates
 recognized commands to `GodBrainKernel`. Chat fails closed when RAG is
-unavailable **and** this process has no session notes; non-empty session notes
-may still go to the mouth without a fresh Golden Record hit.
+unavailable **and** this process has no usable session notes. Ordinary local
+notes remain explicitly untrusted continuity. RAG-derived references require
+a current verified, nonpersonal canonical origin with matching identity,
+version and complete-content hash; pinned Windows SRE content must also match
+the live OS pin. Failed reads withhold only affected references with explicit
+reasons, never a nonempty empty-context wrapper. Personal notes stay off the
+technical prompt path. File/edit/`No tools` advisory requests remain RAG-free.
 
 `kernel.cpp` is the command dispatcher. It requires a non-blank `reasoning`
 string for `execute_godbrain_script`,
@@ -651,8 +656,10 @@ An empty token fail-closes those writes. The token is never written to
 
 `POST /api/truth` writes host_fact / doc_fact / playbook claims: host
 probes and Learn quotes can promote; playbooks stay candidate. Kernel
-boot loads the newest Golden Records into the process session buffer so
-chat still knows the host after a restart. `/api/status` reports the
+boot seeds at most three verified, nonpersonal origin-bound Golden Records
+into the process session buffer, rechecked before prompt/recall use.
+Canonical I/O and live-pin reads run outside the session mutex; a local note's
+status cannot grant verified authority. `/api/status` reports the
 host card and Tailscale remember URL.
 
 The Tailscale shortcuts door binds when `GODBRAIN_API_TOKEN` is set and
