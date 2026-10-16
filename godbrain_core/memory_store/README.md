@@ -15,6 +15,10 @@ This Go module contains two boundaries:
   match exactly, including repeated values. The complete sweep uses Mongo `_id`
   ordering and 100-document cursor batches, not a 500-card result limit;
   already-stale mismatches remain available for projection-repair retries.
+  The C++ kernel invokes this on every valid host observation, independent of a
+  missing/unchanged disk checkpoint. Failed Windows build reads do not fabricate
+  a pin or authorize inventory writes; source/document-version freshness remains
+  a separate milestone.
 - `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.

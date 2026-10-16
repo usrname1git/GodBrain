@@ -37,7 +37,8 @@ and gates as Go (`desk-v1` one fixture; `galaxy-html-v1` / `frontend-*-v1` two
 distinct passing fixtures; `local-edit-apply-v1` cannot promote). Origin must be
 verified, content-hash bound, linked to a committed run.
 
-Cut 8: stdin `stale_pins`. Kernel `/observe` uses this when `os_pin` moves:
+Cut 8: stdin `stale_pins`. Kernel `/observe` uses this on every valid observation,
+not only when a disk checkpoint says `os_pin` moved:
 verified `windows-sre` cards that carry a different `os_pin=` become `stale`
 (not deleted). Learn-class cards without `os_pin=` stay verified. Already-stale
 mismatches are counted so RAG projection can resync.
@@ -46,6 +47,9 @@ prefix or a second conflicting pin cannot keep a card current. Sweeps stream
 the complete matching corpus in Mongo `_id` order and 100-document batches,
 rather than silently stopping after 500 cards. Cursor/projection errors fail
 the request; this does not introduce new automatic verification.
+Missing or unchanged kernel checkpoints cannot suppress reconciliation.
+Unconfirmed Windows build reads fail before reconciliation or inventory writes;
+this does not add source/document-version freshness or a new trust schema.
 
 Cut 9: search citations load bounded `sources` and emit `evidence` spans
 (`byte_valid` / `not_provided` / `invalid` / `partial`). Citation status is

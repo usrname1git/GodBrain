@@ -32,6 +32,26 @@ Existing authorization, verification, provenance and C++/Go compatibility
 gates remain unchanged. This note does not authorize bulk auto-verification
 of Librarian output.
 
+### Implemented foundation, not yet deployed
+
+The isolated evidence foundation rechecks current skill origins and exact
+OS-pin applicability across the complete matching corpus. Host observation now
+reconciles even with a missing or unchanged disk checkpoint, rejects unavailable
+Windows build reads instead of fabricating a pin, and reports reconciliation
+or checkpoint failures explicitly. Repeating the same inventory remains
+idempotent; it does not bypass applicability/projection repair.
+
+General source/document freshness is still unsolved. In particular, the existing
+`/api/truth` quote/probe match must not be treated as proof of arbitrary caller
+interpretations. Before expanding automatic verification, define the exact
+machine-checkable assertion, evidence/version binding, expiry and failure
+behavior, and a deduplicated exception path. Do not automatically crown legacy
+cards or claim that this host-pin milestone supplies those broader guarantees.
+RAG-derived process session notes also retain a cached status without read-time
+revalidation. That prompt path needs origin-aware freshness checks while
+preserving ordinary operator/conversation notes. A failed observation is not
+proof that the existing corpus or cached context is current.
+
 ## Parked: private phone streaming and interpreter
 
 Status: brainstorm / possible future feature. No implementation or model

@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "rag_client.h"
 #include "telemetry.h"
+#include "host_observation.h"
 #include "../cpp_tools/keccak256.hpp"
 
 #include <windows.h>
@@ -45,6 +46,7 @@ struct SessionThought {
 
 std::mutex g_session_mutex;
 std::vector<SessionThought> g_session_thoughts;
+std::mutex g_observe_mutex;
 
 std::string collapse_fields(std::string value, bool lower) {
     std::string out;
@@ -147,7 +149,9 @@ std::string read_pin_file() {
 
 void write_pin_file(const std::string& pin) {
     std::ofstream out(pin_file_path(), std::ios::trunc);
-    if (out) out << pin << '\n';
+    if (!out || !(out << pin << '\n').flush()) {
+        throw std::runtime_error("Failed to write Windows pin checkpoint");
+    }
 }
 
 bool valid_os_pin(const std::string& pin) {
@@ -713,60 +717,12 @@ json save_thought(const json& payload) {
 }
 
 json observe_host() {
+    std::lock_guard<std::mutex> lock(g_observe_mutex);
     const json inventory = telemetry::get_host_inventory();
     const json live = telemetry::get_current_state();
-    const std::string pin = inventory.value("os_pin", "");
-    std::ostringstream body;
-    body << "Windows host inventory\n"
-         << "claim_class=host_fact\n"
-         << "os_pin=" << pin << '\n'
-         << "computer_name="
-         << inventory.at("computer_name").get<std::string>() << '\n'
-         << "edition_id=" << inventory.value("edition_id", "") << '\n'
-         << "product_name=" << inventory.value("product_name", "") << '\n'
-         << "display_version=" << inventory.value("display_version", "") << '\n'
-         << "current_build=" << inventory.value("current_build", "") << '\n'
-         << "ubr=" << inventory.value("ubr", 0) << '\n'
-         << "total_physical_ram_gb="
-         << inventory.at("total_physical_ram_gb").get<int>() << '\n'
-         << "logical_processors="
-         << inventory.at("logical_processors").get<int>() << '\n';
-    const json volumes = inventory.value("volumes", json::array());
-    for (const auto& volume : volumes) {
-        body << "volume=" << volume.value("letter", "?")
-             << " type=" << volume.value("type", "fixed")
-             << " label=" << volume.value("label", "")
-             << " total_gb=" << volume.value("total_gb", 0) << '\n';
-    }
-    json stored = save_thought({
-        {"content", body.str()},
-        {"sector", "windows-sre"},
-    });
-    if (!pin.empty() && !stored.value("stable_id", "").empty()) {
-        try {
-            json judged = set_status({
-                {"id", stored.value("stable_id", "")},
-                {"status", "verified"},
-                {"reasoning", "live host read os_pin=" + pin},
-            });
-            stored["judgment"] = judged;
-            stored["trust"] = "verified";
-        } catch (const std::exception& error) {
-            stored["trust"] = "candidate";
-            stored["judgment_error"] = error.what();
-        }
-    }
-    const std::string previous = read_pin_file();
-    json stale_receipt = json::object();
-    if (valid_os_pin(pin) && !previous.empty() && previous != pin) {
-        stale_receipt = stale_mismatched_pins(
-            pin, "os_pin changed " + previous + " -> " + pin);
-    }
-    if (valid_os_pin(pin)) write_pin_file(pin);
-    stored["inventory"] = inventory;
-    stored["live"] = live;
-    stored["stale"] = stale_receipt;
-    return stored;
+    return godbrain_host::observe(
+        inventory, live, read_pin_file(), save_thought, set_status,
+        stale_mismatched_pins, write_pin_file);
 }
 
 json stale_mismatched_pins(const std::string& pin, const std::string& reasoning) {

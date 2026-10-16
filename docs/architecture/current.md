@@ -113,10 +113,17 @@ is verified-only and does not lock a sector unless the caller sends one; b-line
 on this host is still Windows SRE / OS-network, not tanks.
 `/verify` and `/reject` are the human door
 for playbooks and fights. `rejected` is terminal. Content never changes; only
-status does. When `os_pin` moves, verified `windows-sre` cards with a different
-pin become `stale` (not deleted).
+status does. Every valid `/observe` reconciles verified `windows-sre` cards with
+a different pin to `stale` (not deleted), even after a missing/unchanged disk
+checkpoint or a previous interrupted sweep. Already-stale mismatches remain
+available for projection repair.
 
-Host inventory (`/observe`) auto-verifies the live pin.
+Host inventory (`/observe`) auto-verifies the live pin only after successful
+Windows build reads. Missing EditionID/CurrentBuild/UBR cannot become a
+fabricated `unknown/0.0` pin; a successfully read UBR=0 remains valid. Failed
+reconciliation or checkpoint writes return errors rather than successful
+maintenance. The checkpoint is written after reconciliation, ingestion and
+the existing explicit judgment result.
 `POST /api/truth` auto-verifies a `host_fact` when an allowlisted probe matches,
 or a `doc_fact` when a Learn/support quote is actually on the page. Playbooks
 stay candidate.

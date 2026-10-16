@@ -634,10 +634,15 @@ handler and restores the previous Serve configuration, without a model restart.
 
 `/observe` persists stable host inventory including
 `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
-If the pin moved, verified `windows-sre` cards that carry a different
-`os_pin=` become `stale` (not deleted). Logon (`Start-GodBrain.ps1`)
-posts `/api/observe` once the kernel is listening; unchanged inventory
-is an idempotent no-op.
+Every valid observation reconciles verified `windows-sre` cards carrying a
+different `os_pin=` to `stale` (not deleted), including when the disk checkpoint
+is missing or unchanged. The checkpoint is history, never an applicability gate.
+Failed Windows build reads cannot manufacture `unknown/0.0` or an unread UBR=0;
+a successfully read zero revision is valid. Failed reconciliation or checkpoint
+writes fail the request and remain retryable. Logon (`Start-GodBrain.ps1`)
+posts `/api/observe` once the kernel is listening; unchanged inventory ingestion
+is idempotent, but applicability and projection repair still run.
+`host_observation_test.cpp` is part of the no-GPU Jarvis gate.
 
 WMI process start passes `GODBRAIN_API_TOKEN` in the child environment
 so Heal/Watch/logon boot a kernel that can authorize loopback writes.
