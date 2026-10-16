@@ -392,6 +392,10 @@ version and complete-content hash; pinned Windows SRE content must also match
 the live OS pin. Failed reads withhold only affected references with explicit
 reasons, never a nonempty empty-context wrapper. Personal notes stay off the
 technical prompt path. File/edit/`No tools` advisory requests remain RAG-free.
+Ordinary chat (including follow-ups with history) sends current evidence to
+every runner within one 4 KiB budget. Never slice a serialized context by
+raw byte count: preserve UTF-8, sanitizer escapes and complete untrusted
+framing. Mark clipping; the optional session pointer has lower priority.
 
 `kernel.cpp` is the command dispatcher. It requires a non-blank `reasoning`
 string for `execute_godbrain_script`,

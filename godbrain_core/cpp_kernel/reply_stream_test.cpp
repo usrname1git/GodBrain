@@ -115,7 +115,9 @@ int main() {
                          const std::string& system = "Fixture system.",
                          bool capture_spoken = true,
                          bool exl3 = true,
-                         bool llama = false) {
+                         bool llama = false,
+                         const std::string& evidence_context = {},
+                         bool with_history = false) {
         ++case_index;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -126,9 +128,11 @@ int main() {
         std::ofstream(logs / "mouth.txt") << (llama ? "llama\n" : "fixture\n");
         ReplyResult result;
         result.answer = run_colibri_serve(
-            system, question,
+            system, evidence_context.empty() ? question : evidence_context + "\n\n" + question,
             [&](const std::string& token) { result.tokens += token; },
-            [&] { ++result.pings; }, "", "",
+            [&] { ++result.pings; },
+            with_history ? "Prior fixture question." : "",
+            with_history ? "Prior untrusted answer." : "",
             capture_spoken ? &result.spoken : nullptr,
             question, "127.0.0.1", port, "fixture", exl3,
             [&](bool force) {
@@ -614,6 +618,43 @@ int main() {
         check(memory::session_snapshot(8, session_client)["thoughts"].size() == 3,
               "Memory API lost its reference rather than recovering on retry");
         const json graph_node = session_graph["nodes"][0];
+        json prompt_records = {{"results", json::array({{
+            {"status", "verified"}, {"sector", "security"},
+            {"snippet", "FRESH_FACT_PAST_160: keep the inspected boundary."},
+        }})}};
+        std::string prompt_rag, prompt_context, prompt_error;
+        check(godbrain_rag::render_coli_notes(prompt_records, prompt_rag, prompt_error),
+              "Could not render prompt-evidence fixture");
+        check(memory::render_session_context(session_context, session_error, session_client),
+              "Could not render current session for prompt-evidence fixture");
+        check(godbrain_rag::compose_prompt_context(
+                  prompt_rag, session_context, std::string(4000, 'd'),
+                  prompt_context, prompt_error) &&
+                  prompt_context.find("FRESH_FACT_PAST_160", 161) != std::string::npos &&
+                  prompt_context.find("Untrusted conversation fixture") != std::string::npos &&
+                  prompt_context.find("pointer_omitted=true") != std::string::npos &&
+                  prompt_context.size() <= godbrain_rag::kContextBytes,
+              "Prompt budgeting lost useful evidence, continuity or its deterministic bound");
+        for (const bool exl3 : {false, true}) {
+            for (const bool llama : {false, true}) {
+                for (const bool with_history : {false, true}) {
+                    const auto evidence_reply = run(
+                        {completion("", "Fixture evidence received.")}, "off",
+                        "No tools. Explain the fixture fact.", "Fixture system.", true,
+                        exl3, llama, prompt_context, with_history);
+                    const auto& messages = evidence_reply.requests.at(0).at("messages");
+                    const std::string sent = messages.back().at("content");
+                    check(sent == prompt_context + "\n\nNo tools. Explain the fixture fact." &&
+                              sent.find("FRESH_FACT_PAST_160") != std::string::npos &&
+                              sent.find("Untrusted conversation fixture") != std::string::npos &&
+                              sent.find(godbrain_rag::kUntrustedEnd) <
+                                  sent.find("\n\nNo tools.") &&
+                              !evidence_reply.requests[0].contains("tools") &&
+                              messages.size() == (with_history ? 4 : 2),
+                          "Serialized model request lost current evidence, framing or history");
+                }
+            }
+        }
         session_graph["nodes"] = json::array();
         for (int index = 0; index < 3; ++index) {
             json node = graph_node;

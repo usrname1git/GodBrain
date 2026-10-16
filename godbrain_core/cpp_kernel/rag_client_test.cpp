@@ -72,6 +72,67 @@ int main() {
             "coli notes must be snippets only")) {
         return 1;
     }
+    std::string bounded;
+    if (!expect(
+            godbrain_rag::compose_prompt_context(coli_notes, "", "", bounded, error) &&
+                bounded.size() <= godbrain_rag::kContextBytes &&
+                bounded.find("Reference text.", 161) != std::string::npos &&
+                bounded.find(godbrain_rag::kUntrustedEnd) != std::string::npos &&
+                bounded.find(godbrain_rag::kUntrustedEnd) == bounded.rfind(godbrain_rag::kUntrustedEnd),
+            "bounded context lost the real snippet or admitted a forged delimiter")) return 1;
+    for (size_t padding = 0; padding < 12; ++padding) {
+        json large = fixture.at("response");
+        std::string value = std::string(600 + padding, 'x') + "FACT_AFTER_THE_OLD_CAP ";
+        for (int index = 0; index < 400; ++index) value += "\xF0\x9F\x98\x80[\\\n";
+        large["results"][0]["snippet"] = value;
+        if (!expect(
+                godbrain_rag::render_coli_notes(large, coli_notes, error) &&
+                    godbrain_rag::compose_prompt_context(
+                        coli_notes, "", std::string(1200, 'p'), bounded, error) &&
+                    bounded.size() <= godbrain_rag::kContextBytes &&
+                    bounded.size() > 3900 &&
+                    bounded.find("FACT_AFTER_THE_OLD_CAP") != std::string::npos &&
+                    bounded.find("context_truncated=true") != std::string::npos &&
+                    bounded.compare(bounded.size() - std::string(godbrain_rag::kUntrustedEnd).size() - 1,
+                                    std::string(godbrain_rag::kUntrustedEnd).size(),
+                                    godbrain_rag::kUntrustedEnd) == 0,
+                "bounded context lost evidence, exceeded 4 KiB or cut its closing frame")) return 1;
+        const size_t snippet_start = bounded.find(".snippet=") + 9;
+        const size_t snippet_end = bounded.find('\n', snippet_start);
+        const std::string encoded = bounded.substr(snippet_start, snippet_end - snippet_start);
+        if (!expect(!json::parse('"' + encoded + '"', nullptr, false).is_discarded(),
+                    "budget clipping split a UTF-8 code point or sanitizer escape")) return 1;
+    }
+    const std::string begin = std::string(godbrain_rag::kUntrustedBegin) + '\n';
+    const std::string end = std::string(godbrain_rag::kUntrustedEnd) + '\n';
+    const std::string local_block = begin + "session[1].status=candidate\n"
+        "session[1].content=LOCAL_CONTINUITY\n" + end;
+    if (!expect(
+            godbrain_rag::compose_prompt_context("", local_block, "", bounded, error) &&
+                bounded.find("LOCAL_CONTINUITY") != std::string::npos,
+            "local-only continuity could not reach the bounded context") ||
+        !expect(
+            godbrain_rag::compose_prompt_context("", "", "pointer only", bounded, error) &&
+                bounded.empty(),
+            "an optional pointer fabricated nonempty evidence context")) return 1;
+    for (const std::string invalid : {
+             std::string("unframed"), begin + "status=verified\n" + end,
+             begin + "missing_equals\n" + end,
+             begin + "note[1].snippet=" + "\xC3\x28" + "\n" + end,
+             begin + "note[1].snippet=" + godbrain_rag::kUntrustedEnd + "\n" + end}) {
+        if (!expect(
+                !godbrain_rag::compose_prompt_context(invalid, "", "", bounded, error) &&
+                    bounded.empty() && !error.empty(),
+                "malformed, metadata-only or invalid UTF-8 context was accepted")) return 1;
+    }
+    if (!expect(
+            !godbrain_rag::compose_prompt_context(
+                local_block, "", "", bounded, error, 160) && bounded.empty(),
+            "the old 160-byte limit could masquerade as usable evidence") ||
+        !expect(
+            godbrain_rag::utf8_prefix(
+                std::string(1199, 'p') + "\xF0\x9F\x98\x80" + "tail", 1200).size() == 1199,
+            "bounded session-pointer reading split UTF-8")) return 1;
     const size_t first_end = context.find(godbrain_rag::kUntrustedEnd);
     if (!expect(
             first_end != std::string::npos &&

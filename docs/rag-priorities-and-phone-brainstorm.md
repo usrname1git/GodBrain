@@ -48,6 +48,10 @@ retryable; ordinary untrusted conversation/operator continuity is separate.
 Personal notes do not enter technical prompts. A local cached status cannot
 invent verified authority. This closes that cache bypass without adding
 automatic verification authority or changing the C++/Go wire contract.
+The prompt path also uses a shared, frame-safe 4 KiB evidence budget for
+all runners, rather than silently cutting non-llama context at 160 bytes.
+Ordinary follow-ups keep current evidence alongside prior chat history.
+The optional file pointer cannot displace evidence; clipping is explicit.
 
 General source/document freshness is still unsolved. In particular, the existing
 `/api/truth` quote/probe match must not be treated as proof of arbitrary caller

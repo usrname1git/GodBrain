@@ -78,9 +78,14 @@ an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` with a
 If Job Object setup fails it still terminates the `pwsh` it created. Chat advertises OpenAI `tools` to llama-server (`--jinja`). Gemma 4 native
 `tool_calls` / `tool_responses` are executed by the kernel. Copilot MCP is
 not a runtime on this desk; GodBrain replaces that client. Do not dual-run.
-Llama chat prepends `logs/where-we-are.md` (session pointer) and verified
-RAG hits so the mouth can RTFM Golden Records (4 KiB cap). That is the
-manual, not an internet majority vote. Coli/GLM stays at 160 bytes.
+All ordinary chat runners receive bounded current RAG/session evidence
+within the same 4 KiB budget, including when previous chat is sent as
+history. Complete untrusted-data framing survives clipping; UTF-8 and
+sanitizer escape sequences are never split, and clipping is marked.
+Llama's optional `logs/where-we-are.md` pointer is escaped inside that
+untrusted block only if evidence leaves room; it cannot displace facts.
+That is the manual, not an internet majority vote. Explicit Continue still
+resumes its prior turn/ledger without a new RAG lookup.
 `query_constellation` is an alias of `query_recent_thoughts`. There is no
 Node constellation viewer. `*** TOOL` text is a fallback.
 Allowlist: FS under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,

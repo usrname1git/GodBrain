@@ -5435,14 +5435,7 @@ int main() {
                 }
             }
 
-            std::string context_text = rag_text;
-            if (!local_fs_ask && !no_tools_ask && !session_text.empty()) {
-                if (!context_text.empty()) context_text += '\n';
-                context_text += session_text;
-            }
-            // Constellation-lite: session pointer + RAG hits. Coli/GLM on
-            // 16 GB still cannot eat a wiki dump (prefill tax). Llama 12B
-            // can take a few KiB. Do not dump the whole vault.
+            std::string session_pointer;
             const bool llama_ctx = load_mouth().value("label", "") == "llama";
             if (llama_ctx && !list_only_ask && !no_tools_ask) {
                 const std::string digest_path =
@@ -5450,25 +5443,34 @@ int main() {
                 std::ifstream din(digest_path, std::ios::binary);
                 if (din) {
                     std::string digest;
-                    digest.resize(1200);
+                    digest.resize(1201);
                     din.read(&digest[0], static_cast<std::streamsize>(digest.size()));
                     digest.resize(static_cast<size_t>(din.gcount()));
+                    digest = godbrain_rag::utf8_prefix(digest, 1200);
                     while (!digest.empty() &&
                            (digest.back() == '\n' || digest.back() == '\r' ||
                             digest.back() == ' ')) {
                         digest.pop_back();
                     }
                     if (!digest.empty()) {
-                        const std::string head =
-                            "Session pointer (file, not a Golden Record):\n" +
-                            digest + "\n";
-                        context_text = head + context_text;
+                        session_pointer = digest;
                     }
                 }
             }
-            const size_t cap = llama_ctx ? 4096u : 160u;
-            if (context_text.size() > cap) {
-                context_text.resize(cap);
+            std::string context_text, context_error;
+            if (!godbrain_rag::compose_prompt_context(
+                    rag_text, session_text, session_pointer, context_text, context_error)) {
+                std::cerr << "[RAG] Prompt context rejected: " << context_error << std::endl;
+                res.status = 503;
+                res.set_content(
+                    "{\"response\":\"Bounded evidence context is unavailable.\"}",
+                    "application/json");
+                return;
+            }
+            if (context_text.find("\ncontext_truncated=true\n") != std::string::npos ||
+                context_text.find("\npointer_omitted=true\n") != std::string::npos) {
+                std::cout << "[RAG] Context bounded to " << godbrain_rag::kContextBytes
+                          << " bytes; clipping or pointer omission is marked." << std::endl;
             }
 
             const std::string hostname =
@@ -5560,11 +5562,10 @@ int main() {
                 have_prior && !prior_q.empty() && !prior_a.empty() &&
                 !local_fs_ask && !no_tools_ask &&
                 (continue_cmd || prior_q != user_msg);
-            // Follow-ups send the previous turn as chat history so Colibri
-            // reuses the KV prefix instead of a 78-layer re-prefill.
-            // CONTINUE must not go to RAG as a new query (that is how
-            // "Oracle" + "Continue" became SQL partitions).
-            std::string user_prompt = user_msg;
+            // History is continuity, not a substitute for this turn's evidence.
+            // Explicit CONTINUE still resumes without a new RAG query.
+            std::string user_prompt =
+                context_text.empty() ? user_msg : context_text + "\n\n" + user_msg;
             std::string asked = user_msg;
             if (continue_cmd) {
                 const json ch = load_chain();
@@ -5584,8 +5585,6 @@ int main() {
                 }
             } else if (local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
-            } else if (!follow_up && !context_text.empty()) {
-                user_prompt = context_text + "\n\n" + user_msg;
             }
             std::string tool_hint = asked;
             if (local_fs_ask && !no_tools_ask && !continue_cmd &&

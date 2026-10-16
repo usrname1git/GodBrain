@@ -37,10 +37,7 @@ struct Thought {
 };
 
 inline std::string snippet(const std::string& content) {
-    if (content.size() <= kMaxSnippetBytes) return content;
-    size_t end = kMaxSnippetBytes;
-    while (end > 0 && (static_cast<unsigned char>(content[end]) & 0xc0) == 0x80) --end;
-    return content.substr(0, end);
+    return godbrain_rag::utf8_prefix(content, kMaxSnippetBytes);
 }
 
 inline Thought local_note(
