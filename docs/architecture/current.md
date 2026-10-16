@@ -129,6 +129,9 @@ fabricated `unknown/0.0` pin; a successfully read UBR=0 remains valid. Failed
 reconciliation or checkpoint writes return errors rather than successful
 maintenance. The checkpoint is written after reconciliation, ingestion and
 the existing explicit judgment result.
+Ordinary chat reads its hostname independently; an unavailable build sensor
+still blocks observation/applicability, but not RAG-free advisory, file or edit
+requests merely constructing the Oracle prompt.
 `POST /api/truth` auto-verifies a `host_fact` when an allowlisted probe matches,
 or a `doc_fact` when a Learn/support quote is actually on the page. Playbooks
 stay candidate.
@@ -172,7 +175,8 @@ unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 ## Task evidence and deliberate retention
 
 The tool loop keeps the existing `last-chain.json` status for compatibility,
-but `done` means an answer and successful executor flags, **not** a verified
+but `done` means an answer, successful executor flags and bounded current-result
+delivery, **not** a verified
 task outcome. `/chain` now shows `verify=not_run`. The ledger records separate
 `execution` and `verification` objects and never makes a chain skill-promotable.
 Ordinary tools cannot supply an independent task-outcome verdict by printing
@@ -181,9 +185,15 @@ No task-outcome verifier is registered yet: persisted `passed` or promotion
 claims are rejected, not accepted as trusted evidence from an editable file.
 
 Each native tool call or legacy TOOL batch records the returned result's byte
-count and Keccak-256 before the 12 KiB prompt / 4 KiB ledger presentation clips.
+count and Keccak-256 before bounded context selection.
 These are **metadata only**, not retained stdout or a reconstructable complete
-trace. Up to 128 result rows fit in the latest ledger; omitted counts and
+trace. The separate tool-context ledger is bounded to 12,000 bytes and saved
+intact for Continue. Whole earlier result groups are explicitly omitted when
+needed to retain complete current results. Individually oversized results or
+atomic legacy batches are replaced by an explicit omission, with delivery
+failure reflected in chain status, never a partial procedure. Serialized state
+must also fit the 128 KiB reader bound before replacing the previous ledger.
+Up to 128 result rows fit in the latest ledger; omitted counts and
 incomplete resumed history are explicit. A stable task ID connects the ledger,
 tool audit and bounded, rotating core-event journal; a distinct attempt ID
 identifies continuation attempts. Long goals use a full-content hash rather
@@ -257,7 +267,10 @@ Lookup considers at most 100 recent matching promotions, with at most eight
 distinct query terms plus the literal phrase. Bounded lexical name/content
 relevance ranks before recency; this is not semantic/vector skill search or
 an exhaustive catalogue scan. The model gets one full reference, explicitly
-untrusted. Oversized tool context fails rather than presenting a clipped
+untrusted. Procedure identity comes from the actual tool call, not text markers;
+quoted tool names cannot trigger repo-map/listing replacement. Whole-result
+budgeting preserves references across batches, later hops, persistence and
+Continue, or explicitly omits them; oversized context never presents a clipped
 procedure. Zero eligible matches is normal; service/protocol failures are
 explicit failed tool results. Neither a returned procedure nor a successful
 lookup verifies the current task, grants tools, edits production or promotes
@@ -296,13 +309,17 @@ enough to promote a skill. A path-selected bounded check
 (`powershell-parse-v1`, `kernel-compile-v1`, `memory-store-go-v1`,
 `galaxy-html-static-v1`, `librarian-self-test-v1`) may run after apply;
 `check_ok` is recorded separately and still cannot promote.
-The kernel profile now compiles and links the native kernel/reply fixture,
+The kernel profile compiles and links the actual production sources with the
+Windows subsystem and `mainCRTStartup` entry point,
 rather than accepting nonempty/NUL-free bytes alone. Edited extra translation
 units and headers are also compiled, so an unrelated successful build cannot
 hide an uncompiled changed file. The automatic path uses
 `Test-KernelReplies.ps1 -CompileOnly`: it never runs the model-modifiable
 native binaries. Behavioral fixtures remain an explicit CLI gate, not an
 implicit grant to execute model-written C++ with host authority.
+The explicit gate also links production without the reply fixture's entry
+point, and tests unavailable UBR using a copied telemetry source in an isolated
+native fixture, without modifying the registry or running the production kernel.
 This is scoped compile/link evidence, not proof of task correctness.
 A missing compiler, missing runner, compile/link error or the existing
 70-second check timeout fails closed and restores the original edit bytes.

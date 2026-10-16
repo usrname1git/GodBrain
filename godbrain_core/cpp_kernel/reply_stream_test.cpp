@@ -96,6 +96,7 @@ int main() {
         return 1;
     }
     std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
     const auto check = [](bool ok, const char* why) {
         if (!ok) throw std::runtime_error(why);
     };
@@ -117,7 +118,8 @@ int main() {
                          bool exl3 = true,
                          bool llama = false,
                          const std::string& evidence_context = {},
-                         bool with_history = false) {
+                         bool with_history = false,
+                         const godbrain_rag::Client* skill_client = nullptr) {
         ++case_index;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -139,7 +141,7 @@ int main() {
                 check(force, "fixture unexpectedly requested ordinary mouth recovery");
                 ++result.recoveries;
                 return false;
-            });
+            }, skill_client);
         {
             std::lock_guard<std::mutex> lock(mutex);
             result.requests = requests;
@@ -159,6 +161,25 @@ int main() {
     const std::string private_text = "PRIVATE_REASONING: inspect the harmless fixture first.";
     int result = 0;
     try {
+        const std::string hostname = telemetry::get_computer_name();
+        check(!hostname.empty() &&
+                  oracle_system_prompt().find("Hostname " + hostname + " is this PC") != std::string::npos,
+              "Ordinary chat prompt could not read its hostname independently");
+        if (read_env("GODBRAIN_REPLY_TEST_MISSING_PIN") == "1") {
+            bool rejected = false;
+            try {
+                telemetry::get_host_inventory();
+            } catch (const std::runtime_error& failure) {
+                rejected = std::string(failure.what()) == "Windows UBR could not be read";
+            }
+            check(rejected, "Unavailable pin was not rejected by strict host inventory");
+            const auto advisory = run(
+                {completion("", "The RAG-free advisory still responds.")},
+                "off", "No tools. Fixture advisory.", oracle_system_prompt());
+            check(advisory.answer == "The RAG-free advisory still responds." &&
+                      advisory.requests.at(0)["messages"].at(0)["content"] == oracle_system_prompt(),
+                  "Missing-pin failure prevented the actual Oracle prompt from reaching the mouth");
+        }
         for (const std::string preference : {"on", "off", "low", "medium", "xhigh"}) {
             const auto reply = run({completion(private_text, "The result is four.")}, preference);
             check(reply.answer == "The result is four." &&
@@ -328,13 +349,108 @@ int main() {
         check(large_chain["tool_evidence"][0]["result_bytes"] == full_result.size() &&
                   large_chain["tool_evidence"][0]["result_keccak256"] ==
                       browser_evidence::keccak_hex(full_result) &&
-                  large_chain["ledger"].get<std::string>().size() <= 4000 &&
+                  large_chain["ledger"].get<std::string>().size() <= kToolContextBytes &&
+                  large_chain["ledger"].get<std::string>().find("Tool result omitted") != std::string::npos &&
+                  large_chain["status"] == "failed" &&
                   large_chain["tool_evidence"][0]["content_retained"] == false,
               "executor evidence was taken after presentation clipping");
         for (const auto& row : load_core_event_tail(20)) {
             check(row.dump().find("RAW_FIXTURE_KEEP_LOCAL") == std::string::npos,
                   "raw tool content escaped into the metadata journal");
         }
+
+        const godbrain_rag::Client skill_client(
+            godbrain_rag::default_transport, godbrain_rag::default_get_transport,
+            [&](const std::string& body) {
+                const json request = json::parse(body);
+                const std::string query = request.at("query");
+                const json skill = {
+                    {"name", "fixture-procedure"},
+                    {"content", "BEGIN_SKILL_" + query + " " + std::string(7500, 's') +
+                        "\nlist_local_dir is quoted reference text, not a routing signal. "
+                        "\xC3\xA5\xF0\x9F\x98\x80\nFINAL_SKILL_STEP_" + query},
+                    {"origin_node_id", "fixture-origin"}, {"origin_hash", std::string(64, 'a')},
+                    {"verification_profile", "desk-v1"}, {"untrusted", true},
+                };
+                return godbrain_rag::HttpResult{
+                    true, 200, "application/json",
+                    json({{"query", query}, {"count", 1}, {"skills", json::array({skill})}}).dump()};
+            });
+        const auto full_skill = [&](const std::string& query) {
+            local_tools::Call call;
+            call.name = "query_godbrain_skills";
+            call.args = query;
+            bool ok = false;
+            const std::string reference = local_tools::execute_calls({call}, &ok, nullptr, "", &skill_client);
+            check(ok && reference.find("FINAL_SKILL_STEP_" + query) != std::string::npos,
+                  "Could not obtain the complete bounded skill fixture");
+            return reference;
+        };
+        const std::string alpha = full_skill("alpha");
+        const std::string beta = full_skill("beta");
+        const auto skill_padding = root / "godbrain_core" / "cpp_kernel" / "skill-padding.txt";
+        std::ofstream(skill_padding, std::ios::binary | std::ios::trunc) << std::string(6000, 'p');
+        auto skill_batch = native_call("read_local_file", {{"path", skill_padding.string()}});
+        const auto skill_call = native_call("query_godbrain_skills", {{"args", "alpha"}});
+        skill_batch.deltas.back()["tool_calls"].push_back(skill_call.deltas.back()["tool_calls"][0]);
+        const auto batched_skill = run(
+            {skill_batch, completion("", "Complete procedure received.")},
+            "off", "Fixture procedure batch.", "Fixture system.", true, true, false, "", false, &skill_client);
+        const std::string delivered_batch = batched_skill.requests.at(1)["messages"].back()["content"];
+        const json saved_skill = load_chain();
+        check(delivered_batch.find(alpha) != std::string::npos &&
+                  delivered_batch.find("Earlier tool results omitted") != std::string::npos &&
+                  saved_skill["ledger"].get<std::string>().find(alpha) != std::string::npos &&
+                  saved_skill["hop_ok"] == true &&
+                  saved_skill["tool_evidence"].size() == 2 &&
+                  saved_skill["tool_evidence"][1]["result_bytes"] == alpha.size() &&
+                  saved_skill["tool_evidence"][1]["result_keccak256"] == browser_evidence::keccak_hex(alpha) &&
+                  resume_chain_prompt(saved_skill, "Continue fixture.").find(alpha) != std::string::npos,
+              "Same-round batching, persistence or Continue clipped the accepted procedure");
+        const auto later_skill = run(
+            {native_call("read_local_file", {{"path", skill_padding.string()}}), skill_call,
+             completion("", "Complete later procedure received.")},
+            "off", "Fixture later procedure.", "Fixture system.", true, true, false, "", false, &skill_client);
+        check(later_skill.requests.at(2)["messages"].back()["content"].get<std::string>().find(alpha) != std::string::npos,
+              "Accumulated earlier rounds clipped the current procedure");
+        const std::string analysis_question = "Explain this procedure in " + root.string();
+        check(local_tools::looks_like_local_fs_ask(analysis_question) &&
+                  !local_tools::looks_like_list_only_ask(analysis_question),
+              "Procedure presentation fixture did not enter the analysis route");
+        const auto analysis_skill = run(
+            {skill_call, completion("", "The reference was not replaced by a repo map.")},
+            "off", analysis_question, "Fixture system.", true, true, false, "", false, &skill_client);
+        check(analysis_skill.requests.at(0)["messages"].back()["content"].get<std::string>().find(
+                  "Kernel repo map") != std::string::npos &&
+                  analysis_skill.requests.at(1)["messages"].back()["content"].get<std::string>().find(alpha) != std::string::npos,
+              "Quoted list_local_dir procedure text triggered a repo-map replacement");
+        auto two_skills = skill_call;
+        two_skills.deltas.back()["tool_calls"].push_back(
+            native_call("query_godbrain_skills", {{"args", "beta"}}).deltas.back()["tool_calls"][0]);
+        const auto newest_skill = run(
+            {two_skills, completion("", "Newest complete procedure received.")},
+            "off", "Fixture multiple procedures.", "Fixture system.", true, true, false, "", false, &skill_client);
+        const std::string delivered_newest = newest_skill.requests.at(1)["messages"].back()["content"];
+        check(delivered_newest.find(beta) != std::string::npos &&
+                  delivered_newest.find("BEGIN_SKILL_alpha") == std::string::npos &&
+                  delivered_newest.find("Earlier tool results omitted") != std::string::npos,
+              "Multiple accepted procedures left an unmarked partial reference");
+        const auto legacy_skill = run(
+            {completion("", "*** TOOL\nname: query_godbrain_skills\nargs: alpha\n*** END\n"),
+             completion("", "Legacy complete procedure received.")},
+            "off", "Fixture legacy procedure.", "Fixture system.", true, true, false, "", false, &skill_client);
+        check(legacy_skill.requests.at(1)["messages"].back()["content"].get<std::string>().find(alpha) != std::string::npos,
+              "Legacy TOOL flattening clipped the complete procedure");
+        const auto legacy_oversize = run(
+            {completion("", "*** TOOL\nname: query_godbrain_skills\nargs: alpha\n*** END\n"
+                            "*** TOOL\nname: query_godbrain_skills\nargs: beta\n*** END\n"),
+             completion("", "Oversized procedure batch was omitted.")},
+            "off", "Fixture oversized legacy procedures.", "Fixture system.", true, true, false, "", false, &skill_client);
+        const std::string delivered_omission = legacy_oversize.requests.at(1)["messages"].back()["content"];
+        check(delivered_omission.find("No partial output or procedure returned") != std::string::npos &&
+                  delivered_omission.find("BEGIN_SKILL_") == std::string::npos &&
+                  load_chain()["status"] == "failed",
+              "Oversized legacy batch returned a partial procedure or hid delivery failure");
 
         run({completion(private_text, "*** TOOL\nname: list_granted_roots\n*** END\n"),
              completion("", "Legacy tool complete.")}, "on", "Fixture legacy tools.");
@@ -392,6 +508,21 @@ int main() {
         std::ofstream(chain_path(), std::ios::trunc) << "{}";
         save_chain("persist fixture", "", "", 1);
         const auto preserved = load_chain();
+        ChainEvidence oversized;
+        oversized.task_id = mint_chain_id();
+        oversized.attempt_id = mint_chain_id();
+        oversized.results = json::array({{{"oversized_fixture", std::string(128 * 1024, 'x')}}});
+        bool size_rejected = false;
+        try { save_chain("oversized fixture", "", "", 1, "after", true, &oversized); }
+        catch (const std::runtime_error& failure) {
+            size_rejected = std::string(failure.what()).find("readable bound") != std::string::npos;
+        }
+        check(size_rejected && load_chain() == preserved,
+              "An unreadable serialized ledger replaced the previous task");
+        size_rejected = false;
+        try { resume_chain_prompt({{"ledger", std::string(kToolContextBytes + 1, 'x')}}, "Continue."); }
+        catch (const std::runtime_error&) { size_rejected = true; }
+        check(size_rejected, "Continue silently clipped oversized persisted context");
         const auto tmp_chain = std::filesystem::path(chain_path() + ".tmp");
         std::filesystem::create_directory(tmp_chain);
         bool write_failed = false;
@@ -686,7 +817,8 @@ int main() {
         std::cout << "reply_stream_test ok: answer-only channels, execution-not-verification, "
                      "preclip evidence, correlation/resume/cancel, fail-closed persistence, "
                      "selective/lazy/restart retention, private recovery, tool/edit guards "
-                     "and canonical session revalidation"
+                     "and canonical session revalidation, whole-procedure context/Continue "
+                     "and hostname/pin isolation"
                   << std::endl;
     } catch (const std::exception& error) {
         std::cerr << "reply fixture " << case_index << ": " << error.what() << std::endl;

@@ -2005,6 +2005,9 @@ static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops,
                        const std::string& phase = "", bool hops_ok = true,
                        const ChainEvidence* evidence = nullptr) {
+    if (ledger.size() > kToolContextBytes) {
+        throw std::runtime_error("task context exceeds its bound; no partial result saved");
+    }
     std::lock_guard<std::mutex> lock(g_chain_mu);
     const json prev = read_chain_unlocked();
     std::string id = prev.value("id", "");
@@ -2027,7 +2030,7 @@ static void save_chain(const std::string& goal, const std::string& ledger,
         {"id", id},
         {"status", status},
         {"goal", saved_goal.substr(0, 500)},
-        {"ledger", ledger.substr(0, 4000)},
+        {"ledger", ledger},
         {"answer", answer.substr(0, 2000)},
         {"hops", hops},
         {"hop_ok", hops_ok},
@@ -2037,7 +2040,7 @@ static void save_chain(const std::string& goal, const std::string& ledger,
         {"goal_hash", continuing ? prev.value("goal_hash", browser_evidence::keccak_hex(saved_goal))
                                   : browser_evidence::keccak_hex(goal)},
         {"execution", {{"outcome", status == "done" ? "completed" : status},
-                       {"basis", "answer_and_executor_flags"}}},
+                       {"basis", "answer_executor_flags_and_context_delivery"}}},
         {"verification", {{"status", "not_run"},
                           {"scope", "task_outcome"}}},
         {"skill_promote_eligible", false},
@@ -2051,10 +2054,14 @@ static void save_chain(const std::string& goal, const std::string& ledger,
     }
     const std::string path = chain_path();
     const std::string tmp = path + ".tmp";
+    const std::string serialized = doc.dump();
+    if (serialized.size() > 128 * 1024) {
+        throw std::runtime_error("task ledger exceeds its readable bound; previous evidence kept");
+    }
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (out) {
-            out << doc.dump();
+            out << serialized;
             out.flush();
         }
         if (!out) throw std::runtime_error(
@@ -2080,6 +2087,16 @@ static bool chain_is_cancelled(const std::string& goal) {
 static json load_chain() {
     std::lock_guard<std::mutex> lock(g_chain_mu);
     return read_chain_unlocked();
+}
+
+static std::string resume_chain_prompt(const json& chain, const std::string& continuation) {
+    if (!chain.contains("ledger") || !chain["ledger"].is_string()) return continuation;
+    const std::string ledger = chain["ledger"];
+    if (ledger.size() > kToolContextBytes) {
+        throw std::runtime_error("saved tool context exceeds its bound");
+    }
+    return ledger.empty() ? continuation :
+        "Prior chain ledger:\n" + ledger + "\n\n" + continuation;
 }
 
 static json read_cs2_pause_file() {
@@ -3460,7 +3477,8 @@ std::string run_colibri_serve(
     int serve_port = kColibriServePort,
     const std::string& serve_model = {},
     bool exl3_mouth = false,
-    const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth) {
+    const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth,
+    const godbrain_rag::Client* skill_client = nullptr) {
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3576,15 +3594,14 @@ std::string run_colibri_serve(
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
         std::string seed = local_tools::analysis_observe(hop_hint0);
         if (seed.empty()) seed = local_tools::complete_fs_listing(hop_hint0, "");
-        if (seed.size() > 12000) seed.resize(12000);
-        tool_ledger = seed;
-        last_tool_out = seed;
+        hops_ok = append_tool_context(tool_ledger, seed) && hops_ok;
+        last_tool_out = tool_ledger;
         chain_hops = 1;
         messages = base_messages;
         messages.push_back(json{
             {"role", "user"},
             {"content",
-             std::string("Kernel repo map (observe, not a listing):\n") + seed +
+             std::string("Kernel repo map (observe, not a listing):\n") + tool_ledger +
                  "\n\nOperator question:\n" + hop_hint0 +
                  "\nWrite Z as a technical note: what is live, leftovers, "
                  "what is next. Sentences. If you still need a granted file, "
@@ -3870,13 +3887,15 @@ std::string run_colibri_serve(
             }
         }
     }
-    auto flatten_tool_turn = [&](std::string tool_out) {
+    auto flatten_tool_turn = [&](std::vector<std::string> results, bool has_procedure) {
+        std::string tool_out;
+        for (const auto& result : results) tool_out += result;
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         const bool analysis =
             !fix_job &&
             local_tools::looks_like_local_fs_ask(hop_hint) &&
             !local_tools::looks_like_list_only_ask(hop_hint);
-        if (analysis) {
+        if (!has_procedure && analysis) {
             const std::string map = local_tools::analysis_observe(hop_hint);
             if (!map.empty() &&
                 (tool_out.find("list_local_dir") != std::string::npos ||
@@ -3887,15 +3906,17 @@ std::string run_colibri_serve(
                 if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
                 tool_out += map;
             }
-        } else if (!fix_job) {
+        } else if (!has_procedure && !fix_job) {
             tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
         }
-        if (tool_out.size() > 12000) tool_out.resize(12000);
-        last_tool_out = tool_out;
+        if (!has_procedure) results = {tool_out};
+        last_tool_out.clear();
+        for (const auto& result : results) {
+            const bool retained = append_tool_context(tool_ledger, result);
+            append_tool_context(last_tool_out, result);
+            hops_ok = hops_ok && retained;
+        }
         ++chain_hops;
-        if (!tool_ledger.empty()) tool_ledger += "\n";
-        tool_ledger += tool_out;
-        if (tool_ledger.size() > 12000) tool_ledger.resize(12000);
         messages = base_messages;
         const bool stayed = fix_job && fix_test_stayed_up(tool_ledger);
         if (stayed && max_tool_rounds > tool_round + 2) {
@@ -3943,7 +3964,8 @@ std::string run_colibri_serve(
         }
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                    chain_hops + 1, "before", hops_ok, &evidence);
-        std::string tool_out;
+        std::vector<std::string> tool_results;
+        bool has_procedure = false;
         bool hop_ok = true;
         for (size_t i = 0; i < tcs.size(); ++i) {
             if (chain_is_cancelled(chain_goal)) {
@@ -3955,11 +3977,15 @@ std::string run_colibri_serve(
             const std::string one =
                 one_calls.empty() ? std::string("unknown tool\n")
                                   : local_tools::execute_calls(one_calls, &one_ok,
-                                                               &advertised, evidence.task_id);
+                                                               &advertised, evidence.task_id,
+                                                               skill_client);
             if (one_calls.empty()) one_ok = false;
             record_tool_evidence(evidence, one_calls, advertised, one_ok, one);
             hop_ok = hop_ok && one_ok;
-            tool_out += one;
+            tool_results.push_back(one);
+            for (const auto& call : one_calls) {
+                has_procedure = has_procedure || call.name == "query_godbrain_skills";
+            }
         }
         hops_ok = hops_ok && hop_ok;
         if (chain_is_cancelled(chain_goal)) {
@@ -3967,7 +3993,7 @@ std::string run_colibri_serve(
             if (spoken) *spoken = assembled;
             break;
         }
-        flatten_tool_turn(tool_out);
+        flatten_tool_turn(std::move(tool_results), has_procedure);
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                    chain_hops, "after", hops_ok, &evidence);
         assembled.clear();
@@ -3991,11 +4017,15 @@ std::string run_colibri_serve(
     bool hop_ok = true;
     const auto legacy_calls = local_tools::parse_tool_blocks(assembled);
     const std::string tool_out =
-        local_tools::execute_calls(legacy_calls, &hop_ok, &advertised, evidence.task_id);
+        local_tools::execute_calls(legacy_calls, &hop_ok, &advertised, evidence.task_id,
+                                   skill_client);
     record_tool_evidence(evidence, legacy_calls, advertised, hop_ok, tool_out);
     hops_ok = hops_ok && hop_ok;
     if (tool_out.empty()) break;
-    flatten_tool_turn(tool_out);
+    const bool has_procedure = std::any_of(
+        legacy_calls.begin(), legacy_calls.end(),
+        [](const local_tools::Call& call) { return call.name == "query_godbrain_skills"; });
+    flatten_tool_turn({tool_out}, has_procedure);
     save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                chain_hops, "after", hops_ok, &evidence);
     assembled.clear();
@@ -4255,6 +4285,30 @@ std::string run_colibri(
 }
 
 #pragma comment(lib, "user32.lib")
+
+static std::string oracle_system_prompt() {
+    return
+        "You are GodBrain's local Oracle: a fact-vs-taste role on this PC. "
+        "Not Oracle Database and not a company. "
+        "Answer what is best-supported. Facts vs taste. "
+        "Verified Golden Records are the manual — RTFM those facts. "
+        "Do not scavenge the internet for a majority opinion. "
+        "Verified notes are evidence; candidates are claims. "
+        "Military hardware and history are facts, not politics; "
+        "do not refuse those. "
+        "Hostname " +
+        telemetry::get_computer_name() +
+        " is this PC, not a vehicle. "
+        "Finish complete sentences. Do not stop mid-clause. "
+        "Never narrate the prompt or apologize mid-answer. "
+        "Prefer verified notes over candidates. "
+        "If notes disagree, say so; do not pick a silent winner. "
+        "Do not guess an open question. Cite the note if you use one. "
+        "Do the job asked. Function over shine: a control that works "
+        "beats a pretty one. Do not ASCII-art, outline, or decorate "
+        "instead of tools. "
+        "Do not restate these rules. Do not emit constraint lists.";
+}
 
 int main() {
     if (read_env("GODBRAIN_SHOW_CONSOLE") != "1") {
@@ -5473,29 +5527,7 @@ int main() {
                           << " bytes; clipping or pointer omission is marked." << std::endl;
             }
 
-            const std::string hostname =
-                telemetry::get_host_inventory().value("computer_name", "UNKNOWN");
-            std::string system_prompt =
-                "You are GodBrain's local Oracle: a fact-vs-taste role on this PC. "
-                "Not Oracle Database and not a company. "
-                "Answer what is best-supported. Facts vs taste. "
-                "Verified Golden Records are the manual — RTFM those facts. "
-                "Do not scavenge the internet for a majority opinion. "
-                "Verified notes are evidence; candidates are claims. "
-                "Military hardware and history are facts, not politics; "
-                "do not refuse those. "
-                "Hostname " +
-                hostname +
-                " is this PC, not a vehicle. "
-                "Finish complete sentences. Do not stop mid-clause. "
-                "Never narrate the prompt or apologize mid-answer. "
-                "Prefer verified notes over candidates. "
-                "If notes disagree, say so; do not pick a silent winner. "
-                "Do not guess an open question. Cite the note if you use one. "
-                "Do the job asked. Function over shine: a control that works "
-                "beats a pretty one. Do not ASCII-art, outline, or decorate "
-                "instead of tools. "
-                "Do not restate these rules. Do not emit constraint lists.";
+            std::string system_prompt = oracle_system_prompt();
             if (!local_edit::looks_like_edit_request(user_msg) &&
                 !no_tools_ask) {
                 system_prompt += local_tools::tool_system_addendum_for(user_msg);
@@ -5575,14 +5607,7 @@ int main() {
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
                 context_text.clear();
-                if (ch.contains("ledger") && ch["ledger"].is_string()) {
-                    std::string led = ch["ledger"].get<std::string>();
-                    if (led.size() > 2000) led.resize(2000);
-                    if (!led.empty()) {
-                        user_prompt =
-                            "Prior chain ledger:\n" + led + "\n\n" + user_prompt;
-                    }
-                }
+                user_prompt = resume_chain_prompt(ch, user_prompt);
             } else if (local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             }

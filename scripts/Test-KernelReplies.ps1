@@ -14,7 +14,7 @@ $unitDir = Join-Path $build 'parser'
 $nativeDir = Join-Path $build 'godbrain_core\cpp_kernel'
 $null = New-Item -ItemType Directory -Path $unitDir, $nativeDir
 $previous = @{}
-foreach ($name in 'GODBRAIN_REPLY_TEST_ROOT', 'GODBRAIN_COLIBRI_KEY', 'COLI_API_KEY') {
+foreach ($name in 'GODBRAIN_REPLY_TEST_ROOT', 'GODBRAIN_REPLY_TEST_MISSING_PIN', 'GODBRAIN_COLIBRI_KEY', 'COLI_API_KEY') {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 try {
@@ -31,26 +31,41 @@ try {
         [string]$Directory, [string]$Name, [string[]]$Sources,
         [string]$Link = '', [switch]$ObjectOnly
     ) {
-        $paths = @($Sources | ForEach-Object { '"' + (Join-Path $source $_) + '"' })
+        $paths = @($Sources | ForEach-Object {
+            $path = if ([IO.Path]::IsPathFullyQualified($_)) { $_ } else { Join-Path $source $_ }
+            '"' + $path + '"'
+        })
         $output = if ($ObjectOnly) { '/c /TP /Fo:' } else { '/Fe:' }
-        $command = $prefix + 'cd /d "' + $Directory + '" && cl /nologo /std:c++17 /EHsc /W4 ' +
+        $command = $prefix + 'cd /d "' + $Directory + '" && cl /nologo /std:c++17 /EHsc /W4 /I"' + $source + '" ' +
             $output + $Name + ' ' + ($paths -join ' ') + $Link
         & (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') /c $command
         if ($LASTEXITCODE -ne 0) { throw "Reply test build failed: $Name (exit $LASTEXITCODE)." }
     }
-    Invoke-ReplyTestBuild $unitDir 'coli-sse-test.exe' @('coli_sse_test.cpp')
-    if (-not $CompileOnly) {
+    $implementationSources = @(
+        'kernel.cpp', 'surgery.cpp', 'telemetry.cpp', 'memory.cpp',
+        'local_edit.cpp', 'local_tools.cpp', 'phone_desk.cpp'
+    )
+    $libraries = ' pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib iphlpapi.lib'
+    $productionLink = ' /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup' + $libraries
+    if ($CompileOnly) {
+        $compiled = @('main.cpp') + $implementationSources
+        Invoke-ReplyTestBuild $nativeDir 'godbrain-kernel.exe' $compiled $productionLink
+    } else {
+        Invoke-ReplyTestBuild $unitDir 'coli-sse-test.exe' @('coli_sse_test.cpp')
         & (Join-Path $unitDir 'coli-sse-test.exe')
         if ($LASTEXITCODE -ne 0) { throw 'SSE parser regressions failed.' }
-    }
 
-    $nativeSources = @(
-        'reply_stream_test.cpp', 'kernel.cpp', 'surgery.cpp', 'telemetry.cpp',
-        'memory.cpp', 'local_edit.cpp', 'local_tools.cpp', 'phone_desk.cpp'
-    )
-    Invoke-ReplyTestBuild $nativeDir 'reply-stream-test.exe' $nativeSources `
-        ' /link pdh.lib dxgi.lib winhttp.lib advapi32.lib user32.lib iphlpapi.lib'
-    $compiled = @('main.cpp', 'coli_sse_test.cpp') + $nativeSources
+        $nativeSources = @('reply_stream_test.cpp') + $implementationSources
+        Invoke-ReplyTestBuild $nativeDir 'reply-stream-test.exe' $nativeSources (' /link' + $libraries)
+        Invoke-ReplyTestBuild $unitDir 'kernel-main.obj' @('main.cpp') -ObjectOnly
+        $productionObjects = @((Join-Path $unitDir 'kernel-main.obj')) + @(
+            $implementationSources | ForEach-Object {
+                Join-Path $nativeDir ([IO.Path]::ChangeExtension($_, '.obj'))
+            }
+        )
+        Invoke-ReplyTestBuild $nativeDir 'godbrain-kernel.exe' $productionObjects $productionLink
+        $compiled = @('main.cpp', 'coli_sse_test.cpp') + $nativeSources
+    }
     $sourceRoot = [IO.Path]::GetFullPath($source).TrimEnd('\') + '\'
     $index = 0
     foreach ($changed in $ChangedPath) {
@@ -67,14 +82,39 @@ try {
         $index++
     }
     if ($CompileOnly) {
-        Write-Host 'PASS: Kernel compile/link (no native fixture execution)'
+        Write-Host 'PASS: Kernel production compile/link (no native fixture execution)'
     } else {
         $env:GODBRAIN_REPLY_TEST_ROOT = $build
         $env:GODBRAIN_COLIBRI_KEY = $null
         $env:COLI_API_KEY = $null
+        $env:GODBRAIN_REPLY_TEST_MISSING_PIN = $null
         & (Join-Path $nativeDir 'reply-stream-test.exe')
         if ($LASTEXITCODE -ne 0) { throw 'Native reply-channel regressions failed.' }
-        Write-Host 'PASS: Kernel reply channels (isolated mock HTTP, no GPU/vault)'
+
+        $missingPinRoot = Join-Path $build 'missing-pin'
+        $missingPinNative = Join-Path $missingPinRoot 'godbrain_core\cpp_kernel'
+        $null = New-Item -ItemType Directory -Path $missingPinNative
+        $telemetry = [IO.File]::ReadAllText((Join-Path $source 'telemetry.cpp'))
+        $pinRead = 'const auto ubr = reg_dword(HKEY_LOCAL_MACHINE, key, L"UBR");'
+        if (($telemetry.Split($pinRead, [StringSplitOptions]::None).Count - 1) -ne 1) {
+            throw 'Missing-pin fixture no longer matches the production sensor read.'
+        }
+        $missingPinSource = Join-Path $missingPinNative 'telemetry.cpp'
+        [IO.File]::WriteAllText($missingPinSource,
+            $telemetry.Replace($pinRead, 'const std::optional<std::uint32_t> ubr;'),
+            [Text.UTF8Encoding]::new($false))
+        Invoke-ReplyTestBuild $missingPinNative 'telemetry.obj' @($missingPinSource) -ObjectOnly
+        $missingPinObjects = @((Join-Path $missingPinNative 'telemetry.obj')) + @(
+            $nativeSources | Where-Object { $_ -ne 'telemetry.cpp' } | ForEach-Object {
+                Join-Path $nativeDir ([IO.Path]::ChangeExtension($_, '.obj'))
+            }
+        )
+        Invoke-ReplyTestBuild $missingPinNative 'reply-stream-test.exe' $missingPinObjects (' /link' + $libraries)
+        $env:GODBRAIN_REPLY_TEST_ROOT = $missingPinRoot
+        $env:GODBRAIN_REPLY_TEST_MISSING_PIN = '1'
+        & (Join-Path $missingPinNative 'reply-stream-test.exe')
+        if ($LASTEXITCODE -ne 0) { throw 'Missing-pin chat isolation regressions failed.' }
+        Write-Host 'PASS: Kernel reply channels (production link, mock HTTP, missing-pin isolation, no GPU/vault)'
     }
 } finally {
     foreach ($name in $previous.Keys) {

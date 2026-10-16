@@ -934,7 +934,11 @@ not be treated as baseline validation.
 - Promoted-skill lookup rechecks current origin/hash/version, committed links
   and latest passing profile/suite evidence. Personal/stale origins are not
   technical procedures. `query_godbrain_skills` returns an untrusted reference,
-  never permission or proof that the current task passed.
+  never permission or proof that the current task passed. Tool-context budgeting
+  preserves whole procedures or explicitly omits them, including on Continue;
+  executor metadata is recorded before presentation selection. Compile-only
+  local-edit checks must link the production entry point, never execute native
+  fixtures. Hostname-only chat reads must not require a successful OS-pin probe.
 - A committed ingestion is acknowledged only after its active
   `rag_documents`/`rag_provenance` projection is confirmed. Projection failure
   leaves the run committed, returns an explicit failure, and is repaired by an

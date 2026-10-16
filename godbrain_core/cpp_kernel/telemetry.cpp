@@ -181,13 +181,16 @@ namespace telemetry {
         };
     }
 
-    json get_host_inventory() {
+    std::string get_computer_name() {
         char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
         DWORD name_size = MAX_COMPUTERNAME_LENGTH + 1;
         if (GetComputerNameA(name, &name_size) == 0) {
             throw std::runtime_error("Host computer name could not be read");
         }
+        return std::string(name);
+    }
 
+    json get_host_inventory() {
         MEMORYSTATUSEX memory{};
         memory.dwLength = sizeof(memory);
         if (!GlobalMemoryStatusEx(&memory)) {
@@ -205,7 +208,7 @@ namespace telemetry {
 
         const json pin = read_windows_pin();
         return {
-            {"computer_name", std::string(name)},
+            {"computer_name", get_computer_name()},
             {"total_physical_ram_gb", total_ram_gb},
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
             {"edition_id", pin.value("edition_id", "")},
