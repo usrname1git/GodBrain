@@ -7,9 +7,12 @@
   This quarter: C++ kernel / Alexandria and the gym. Experimental Go/Rust
   routers on `:8082` are parked (`godbrain_core/go_router`,
   `godbrain_core/rust_router`). Do not spend the quarter staffing them.
-- Current operator priority is high-quality, up-to-date evidence available to
-  RAG inference, with less routine manual crowning. Phone streaming and live
-  translation are parked brainstorms, not implementation work. See
+- Current operator priority is autonomous maintenance of high-quality, current
+  RAG evidence. Routine provenance onboarding, rechecks, retries and bounded
+  recovery belong to the loop, not a new operator workload. Escalate concrete
+  unresolved failures or genuine authority decisions, not per-card upkeep.
+  This is the target, not a claim that freshness is already implemented.
+  Phone streaming and live translation remain parked brainstorms. See
   [`docs/rag-priorities-and-phone-brainstorm.md`](docs/rag-priorities-and-phone-brainstorm.md).
 - Read the nearest README, manifest, and tests before editing a nested project.
   Keep changes scoped: the routers, Alexandria pipeline, market research tools,

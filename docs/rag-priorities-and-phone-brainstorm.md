@@ -5,9 +5,11 @@ implementation report or permission to deploy new services.
 
 ## Active priority: better evidence, less routine crowning
 
-Improve the quality and freshness of data available to inference. The goal is
-for the operator to judge meaningful exceptions, not manually crown an
-ever-growing queue of routine cards.
+Improve the quality and freshness of data available to inference autonomously.
+The operator should correct concrete failures the system could not resolve,
+not manage another abstraction or an ever-growing queue of routine cards.
+Routine provenance onboarding, rechecks, retries and bounded recovery are the
+system's work. This is the goal, not a report that the runtime already does it.
 
 Prefer evidence-backed maintenance:
 
@@ -19,11 +21,20 @@ Prefer evidence-backed maintenance:
   must not leave obsolete claims silently eligible for inference.
 - Extend existing Golden Records instead of generating near-duplicates.
   Preserve immutable sources, provenance and explicit contradictions.
+- Onboard legacy provenance automatically wherever a supported source/checker
+  can be established. An unmanaged category must not become a permanent manual
+  lane, and onboarding must not silently discard the existing manual.
 - Keep unproven interpretations, conflicting claims and playbooks that need
-  judgment out of verified inference. Surface a bounded, useful exception
-  queue rather than transferring the entire ingestion workload to the operator.
+  judgment out of verified inference. Pursue bounded automatic evidence
+  gathering and recovery first. A deduplicated queue is internal loop state,
+  not per-card homework: surface an actionable incident only after safe
+  automatic resolution is exhausted or a genuine authority decision is needed.
 - Measure supported, current retrieval and operator burden, not card volume,
   model confidence or how often a claim is repeated.
+
+Autonomy does not let a model certify its own interpretation. Unknown or
+unsupported results stay explicitly unproven. Existing deployment and protected
+host-operation authorization remains separate from routine maintenance.
 
 This prioritizes canonical RAG data maintenance over new phone features and
 autonomous self-editing. The evidence/retention and current-skill foundations
@@ -53,7 +64,7 @@ all runners, rather than silently cutting non-llama context at 160 bytes.
 Ordinary follow-ups keep current evidence alongside prior chat history.
 The optional file pointer cannot displace evidence; clipping is explicit.
 
-The next source-only increment closes `/api/truth` assertion authority:
+The source-only verifier increment closes `/api/truth` assertion authority:
 caller interpretations remain candidates; matching checks verify only a
 separate canonical observation bound to complete source/probe evidence and a
 checker version. Complete document read failures and unacknowledged
