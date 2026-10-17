@@ -52,7 +52,7 @@ Existing authorization, verification, provenance and C++/Go compatibility
 gates remain unchanged. This note does not authorize bulk auto-verification
 of Librarian output.
 
-### Implemented foundation, not yet deployed
+### Implemented foundations and runtime boundaries
 
 The isolated evidence foundation rechecks current skill origins and exact
 OS-pin applicability across the complete matching corpus. Host observation now
@@ -73,22 +73,23 @@ all runners, rather than silently cutting non-llama context at 160 bytes.
 Ordinary follow-ups keep current evidence alongside prior chat history.
 The optional file pointer cannot displace evidence; clipping is explicit.
 
-The source-only verifier increment closes `/api/truth` assertion authority:
+The verifier increment closes `/api/truth` assertion authority:
 caller interpretations remain candidates; matching checks verify only a
 separate canonical observation bound to complete source/probe evidence and a
 checker version. Complete document read failures and unacknowledged
 ingestion/judgment fail explicitly. Offline counterexamples cover unrelated
 prose, incomplete evidence, exact probes, retry identities and the unchanged
-C++/Go ingestion contract. This increment is not deployed.
+C++/Go ingestion contract. Source checks alone do not establish live deployment.
 
 The separate source-maintenance increment now supplies version/hash-bound
 expiry and renewal, automatic supported-provenance onboarding, lease-safe retries
 and deduplicated incidents in both stores. Its temporal policy is enabled by the
 first authenticated maintenance tick, not by rewriting legacy judgments.
 Canonical retrieval/skill admission and cached session/Continue references
-respect the check. It is source-only and has not been deployed.
+respect the check. Unsupported historical evidence is withheld from current
+technical retrieval without deleting its source or rewriting its judgment.
 
-The next source-only increment adds bounded primary-source discovery and
+The primary-source increment adds bounded discovery and
 local semantic selection in the same Heal/kernel loop, not another daemon.
 The existing EXL3 27B passed eleven protected curation cases after native
 compact reference labels replaced error-prone model copying of opaque hashes.
@@ -100,7 +101,8 @@ This is bounded qualification, not proof of general Internet research or
 semantic truth. Automatic authority still covers source quote presence only;
 conflicts/questions remain candidates, and comparisons cover a bounded current
 reference set rather than the entire corpus. AFK is discovery-only and never
-loads a model. No research runtime or source-maintenance policy is deployed.
+loads a model. Runtime rollout requires separate live receipts and preserves
+existing model holds; discovery readiness is not a curation or qualification pass.
 A failed observation is not proof that the existing corpus is current.
 Canonical origin rechecks also cannot detect unsupported interpretations or
 semantic drift that has not yet reached the verified record.

@@ -186,7 +186,7 @@ candidates remain available for idempotent retry, not automatic rollback or
 success. No legacy cards are silently reclassified. No model pass or GPU is
 involved in these assertion checks.
 
-### Autonomous source maintenance (source-only)
+### Autonomous source maintenance
 
 Authenticated loopback `POST /api/evidence` accepts only `{}` and runs bounded
 serial work in the existing Heal/kernel loop. `GET /api/evidence` reports
@@ -229,7 +229,7 @@ This is not a continuous research crawler or semantic conflict adjudicator.
 The bounded discovery/curation increment below is separate; unsupported
 interpretations cannot be upgraded just to avoid an exception.
 
-### Local primary-source discovery and curation (source-only)
+### Local primary-source discovery and curation
 
 Authenticated loopback `POST /api/research` accepts only an optional boolean
 `inference`; it never accepts caller-selected URLs, prompts or verdicts.
@@ -286,7 +286,8 @@ schema, stdin protocol, new service or automatic host-policy authority.
 publication-boundary tests. `-LiveResearch -ResearchPort 8888` explicitly runs
 the real protected suite against an already-running model. A mock pass is not
 local-model qualification, and passing these fixtures does not establish general
-semantic reliability. The increment is not deployed.
+semantic reliability. Deployment requires separate live readiness, authorization
+and maintenance receipts; passing source fixtures alone does not establish it.
 
 Galaxy graph links are provenance co-occurrence (`same_source` / `same_run`),
 not typed knowledge-graph edges.
