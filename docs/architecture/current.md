@@ -226,9 +226,57 @@ withheld. Process/session origins inherit canonical revalidation, and Continue
 rechecks cached procedures. Freshness is not a creation-time ranking score.
 
 This is not a continuous research crawler or semantic conflict adjudicator.
-Finding new material and qualifying the local 27B as a selective Librarian
-remain separate work; unsupported interpretations cannot be upgraded just to
-avoid an exception.
+The bounded discovery/curation increment below is separate; unsupported
+interpretations cannot be upgraded just to avoid an exception.
+
+### Local primary-source discovery and curation (source-only)
+
+Authenticated loopback `POST /api/research` accepts only an optional boolean
+`inference`; it never accepts caller-selected URLs, prompts or verdicts.
+`GET /api/research` is a no-GPU frontier/incident glance with historical
+qualification results, not a claim of current runner readiness. These doors
+are not exposed through the phone or Tailscale write surfaces.
+
+The existing Heal loop searches three fixed public Windows-SRE topics through
+the free Learn search endpoint, one five-result page per hour. Only canonical
+English Windows Learn paths enter the 64-entry frontier. Search snippets and
+remote pagination links are not evidence; no host/private query reaches search.
+One due source is processed per tick. Complete source reads, whole normalized
+text (24,000-byte limit) and up to five complete current canonical references
+(16,000 bytes combined) are required; oversized/incomplete input fails explicitly.
+Comparison is against that bounded reference set, not proof of corpus-wide novelty.
+
+Curation uses only the existing idle local mouth, serially under the kernel
+generate-slot guard, with no tools, thinking, cold start or paid API. CS2 holds,
+busy/unhealthy mouths and conflicting model listeners prevent inference.
+AFK supplies `inference=false`: discovery only, no page curation or vault writes.
+Before real curation, the current runner must pass eleven protected selection,
+paraphrase, extension, conflict, question, irrelevance and injection fixtures.
+Qualification binds the fixture/prompt hash and runner PID/start-time/model,
+expires after six hours, and is rechecked after replacement. Each completion
+rechecks process and model identity. Compact per-request reference labels resolve
+only through the native canonical-ID table; the model cannot invent database IDs.
+
+Exact bounded source sentences become the existing separately checked
+quote-presence observations, not verified semantic interpretations. Duplicates
+and irrelevant material add no record. Unresolved conflict/question candidates
+retain complete immutable source/reference evidence and a source-hash link to
+the planned observation. Their acknowledged commit precedes observation
+verification, so a partial publication cannot hide a lost conflict behind its
+own newly verified duplicate. Those candidates never receive automatic judgment.
+
+The ignored `research-frontier.json` is atomically checkpointed before external
+work. Source and canonical-reference hashes invalidate cached decisions;
+unchanged evidence avoids repeated generation. Failed stages remain retryable
+at 1/2/4/8/16 minutes, then daily, with at most eight grouped exhausted-recovery
+incidents. An interrupted worker retains its attempt. This introduces no Mongo
+schema, stdin protocol, new service or automatic host-policy authority.
+
+`scripts\Test-JarvisLoop.ps1` includes deterministic offline loop, transport and
+publication-boundary tests. `-LiveResearch -ResearchPort 8888` explicitly runs
+the real protected suite against an already-running model. A mock pass is not
+local-model qualification, and passing these fixtures does not establish general
+semantic reliability. The increment is not deployed.
 
 Galaxy graph links are provenance co-occurrence (`same_source` / `same_run`),
 not typed knowledge-graph edges.

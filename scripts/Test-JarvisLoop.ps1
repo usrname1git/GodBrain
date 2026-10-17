@@ -19,7 +19,9 @@ param(
     [string]$RepoRoot = $PSScriptRoot,
     [string]$Base = "http://127.0.0.1:8083",
     [switch]$LiveMouth,
-    [switch]$LiveJarvis
+    [switch]$LiveJarvis,
+    [switch]$LiveResearch,
+    [ValidateSet(8000, 8888)][int]$ResearchPort = 8888
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,7 +73,7 @@ function Get-ClPrefix([string]$TaskName) {
     return "call `"$vcvars`" >nul && "
 }
 
-function Invoke-CompiledTest([string]$Name, [string[]]$Sources) {
+function Invoke-CompiledTest([string]$Name, [string[]]$Sources, [string[]]$Arguments = @()) {
     $objDir = Join-Path $env:TEMP ("GodBrain-" + $Name)
     if (-not (Test-Path -LiteralPath $objDir)) {
         New-Item -ItemType Directory -Path $objDir | Out-Null
@@ -99,7 +101,10 @@ function Invoke-CompiledTest([string]$Name, [string[]]$Sources) {
             Add-Task $Name $false $sw.ElapsedMilliseconds "compile exit $LASTEXITCODE"
             return
         }
-        $p = Start-Process -FilePath $exe -WorkingDirectory $kernelDir -Wait -PassThru -NoNewWindow
+        $start = @{ FilePath = $exe; WorkingDirectory = $kernelDir
+            Wait = $true; PassThru = $true; NoNewWindow = $true }
+        if ($Arguments.Count -gt 0) { $start.ArgumentList = $Arguments }
+        $p = Start-Process @start
         $sw.Stop()
         Add-Task $Name ($p.ExitCode -eq 0) $sw.ElapsedMilliseconds $(
             if ($p.ExitCode -eq 0) { "ok" } else { "exit $($p.ExitCode)" }
@@ -124,6 +129,7 @@ Invoke-CompiledTest "rag_client_test" @("rag_client_test.cpp")
 Invoke-CompiledTest "host_observation_test" @("host_observation_test.cpp")
 Invoke-CompiledTest "truth_assertion_test" @("truth_assertion_test.cpp")
 Invoke-CompiledTest "evidence_maintenance_test" @("evidence_maintenance_test.cpp")
+Invoke-CompiledTest "research_curation_test" @("research_curation_test.cpp")
 Invoke-CompiledTest "session_context_test" @("session_context_test.cpp")
 Invoke-CompiledTest "tool_round_test" @("tool_round_test.cpp")
 Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")
@@ -139,6 +145,10 @@ try {
 } catch {
     $replyWatch.Stop()
     Add-Task "reply-channels" $false $replyWatch.ElapsedMilliseconds "$_"
+}
+
+if ($LiveResearch) {
+    Invoke-CompiledTest "research_qualification" @("research_curation_test.cpp") @("--qualify", "$ResearchPort")
 }
 
 if ($LiveMouth) {

@@ -33,6 +33,7 @@
 #include "telemetry.h"
 #include "phone_desk.h"
 #include "mouth_select.h"
+#include "research_mouth.h"
 
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
@@ -67,6 +68,8 @@ static std::string g_frontend_dir;
 // Tick when this kernel process started the in-flight serve generate.
 // /status reads it from another httplib thread so busy stops looking dead.
 static std::atomic<DWORD> g_coli_job_started_ms{0};
+static std::mutex g_research_qualification_mu;
+static json g_research_qualification = {{"state", "not_run"}, {"pass", false}};
 
 struct LastOracleTurn {
     std::string question;
@@ -1503,6 +1506,84 @@ static void handle_truth(const httplib::Request& req, httplib::Response& res) {
     } catch (const json::exception&) {
         res.status = 400;
         res.set_content(json({{"error", "truth body must be JSON"}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void handle_research(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    json payload;
+    try {
+        payload = req.body.empty() ? json::object()
+                                  : godbrain_research::strict_json(req.body, 512);
+        if (!godbrain_rag::has_exact_keys(payload, {}, {"inference"}) ||
+            (payload.contains("inference") && !payload.at("inference").is_boolean()))
+            throw std::runtime_error("research accepts only an optional boolean inference flag");
+    } catch (const std::exception& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        return;
+    }
+    try {
+        if (cs2_should_sleep_mouth()) {
+            res.status = 503;
+            res.set_content(json({{"error", "research waits while CS2 holds the box"}}).dump(),
+                            "application/json");
+            return;
+        }
+        struct Slot {
+            bool held = false;
+            ~Slot() {
+                if (held) g_coli_job_started_ms.store(0, std::memory_order_release);
+            }
+        } slot;
+        godbrain_research::Infer infer;
+        std::string model;
+        std::string deferred = "inference_disabled";
+        if (payload.value("inference", true)) {
+            const int port = mouth_paused() ? 8888 : 8000;
+            deferred = "local_mouth_down";
+            if (telemetry::tcp_loopback_open(8871, 200) ||
+                telemetry::tcp_loopback_open(port == 8888 ? 8000 : 8888, 200)) {
+                deferred = "conflicting_model_listener";
+            } else if (telemetry::tcp_loopback_open(port, 200)) {
+                DWORD expected = 0;
+                const DWORD stamp = (std::max)(DWORD{1}, GetTickCount());
+                slot.held = g_coli_job_started_ms.compare_exchange_strong(
+                    expected, stamp, std::memory_order_acq_rel);
+                deferred = "generate_slot_busy";
+                if (slot.held) {
+                    const auto runner = godbrain_research_mouth::connect(port);
+                    model = runner.model;
+                    infer = [runner](const json& request) {
+                        static std::string qualified_instance;
+                        static ULONGLONG checked_at = 0;
+                        static bool passed = false;
+                        if (qualified_instance != runner.identity() ||
+                            GetTickCount64() - checked_at >= 6 * 60 * 60 * 1000ULL) {
+                            const auto proof = godbrain_research::qualify(
+                                [&](const json& fixture) { return runner.infer(fixture); });
+                            qualified_instance = runner.identity();
+                            checked_at = GetTickCount64();
+                            passed = proof.at("pass").get<bool>();
+                            auto receipt = proof;
+                            receipt["model_id"] = runner.model;
+                            receipt["instance"] = runner.instance;
+                            std::lock_guard<std::mutex> lock(g_research_qualification_mu);
+                            g_research_qualification = std::move(receipt);
+                        }
+                        if (!passed)
+                            throw std::runtime_error("local model failed protected curation fixtures");
+                        return runner.infer(request);
+                    };
+                }
+            }
+        }
+        auto receipt = memory::research_tick(infer, model);
+        if (!infer) receipt["deferred"] = deferred;
+        res.set_content(receipt.dump(), "application/json");
     } catch (const std::exception& error) {
         res.status = 503;
         res.set_content(json({{"error", error.what()}}).dump(), "application/json");
@@ -4622,6 +4703,25 @@ int main() {
     svr.Post("/api/evidence", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_evidence(req, res);
+    });
+
+    svr.Post("/api/research", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_research(req, res);
+    });
+    svr.Get("/api/research", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        try {
+            auto status = memory::research_status();
+            {
+                std::lock_guard<std::mutex> lock(g_research_qualification_mu);
+                status["last_qualification"] = g_research_qualification;
+            }
+            res.set_content(status.dump(), "application/json");
+        } catch (const std::exception& error) {
+            res.status = 503;
+            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        }
     });
 
     svr.Get("/api/evidence", [&](const httplib::Request& req, httplib::Response& res) {

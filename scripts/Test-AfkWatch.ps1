@@ -217,6 +217,32 @@ $global:AfkTest.calls.Add("start:$Only/keep:$KeepPause")
         Assert-Equal $script:routes.Count 8
     }
 
+    $researchTry = $heal.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.TryStatementAst] -and
+        $node.Extent.Text.Contains('http://127.0.0.1:8083/api/research')
+    }, $true)
+    & {
+        $script:researchFlags = @()
+        $logDir = Join-Path $fixture "logs"
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $obsHeaders = @{ "Content-Type" = "application/json" }
+        function Invoke-RestMethod {
+            param($Uri, $Method, $Headers, $Body, $TimeoutSec)
+            if ($Uri -ne "http://127.0.0.1:8083/api/research") { throw "Unexpected research route" }
+            $script:researchFlags += ($Body | ConvertFrom-Json).inference
+            return [pscustomobject]@{
+                status = "discovered"
+                summary = [pscustomobject]@{ queued = 1; exceptions = [pscustomobject]@{} }
+            }
+        }
+        $Afk = $true
+        . ([scriptblock]::Create($researchTry.Extent.Text))
+        $Afk = $false
+        . ([scriptblock]::Create($researchTry.Extent.Text))
+        Assert-Equal ($script:researchFlags -join ",") "False,True"
+    }
+
     & {
         . (Join-Path $repo "scripts\GodBrain-HostServices.ps1")
         $script:rustExe = "C:\Program Files\RustDesk\rustdesk.exe"
