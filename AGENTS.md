@@ -11,7 +11,12 @@
   RAG evidence. Routine provenance onboarding, rechecks, retries and bounded
   recovery belong to the loop, not a new operator workload. Escalate concrete
   unresolved failures or genuine authority decisions, not per-card upkeep.
-  This is the target, not a claim that freshness is already implemented.
+  This target is broader than the source-maintenance cut; continuous discovery
+  and semantic curation remain unfinished.
+  Research/Librarian inference is local-first: use the existing local mouth
+  when idle, with no paid cloud-model or search-API dependency. Qualify the
+  available 27B on actual curation tasks; do not assume capability from size.
+  Deterministic evidence gates, not model confidence, control admission.
   Phone streaming and live translation remain parked brainstorms. See
   [`docs/rag-priorities-and-phone-brainstorm.md`](docs/rag-priorities-and-phone-brainstorm.md).
 - Read the nearest README, manifest, and tests before editing a nested project.
@@ -417,6 +422,19 @@ candidate and uses that door only for a separate generated observation bound
 to the complete source/probe evidence and checker version, never an arbitrary
 interpretation. `query_recent_thoughts`
 reads the active RAG graph. Oracle search is verified-only.
+
+Source maintenance is native and serial in Heal: authenticated loopback
+`POST /api/evidence` takes only `{}`, and GET reports grouped incidents.
+The first tick enables a versioned temporal policy in Mongo; after cutover
+verified technical search/document/graph/skills require current exact-origin
+proof. `evidence_checks` is mutable lease/expiry/retry state;
+`evidence_check_runs` is append-only evidence, not a semantic judgment.
+Documents expire after 24h and host observations after 15m; renewal is due
+halfway through. Failed checks back off 1/2/4/8/16m, escalate on attempt six,
+and retry daily. Supported legacy provenance is discovered automatically.
+Old judgments/sources remain intact; expired document/graph references appear
+stale, and cached procedures are rechecked on Continue. This source-only cut
+does not implement open-web discovery or qualify a local research model.
 
 ### Galaxy chat and GET doors (no GPU)
 

@@ -1509,6 +1509,25 @@ static void handle_truth(const httplib::Request& req, httplib::Response& res) {
     }
 }
 
+static void handle_evidence(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        const auto body = req.body.empty() ? json::object() : json::parse(req.body);
+        if (!body.is_object() || !body.empty()) {
+            res.status = 400;
+            res.set_content("{\"error\":\"evidence maintenance accepts only an empty object\"}", "application/json");
+            return;
+        }
+        res.set_content(memory::maintain_evidence().dump(), "application/json");
+    } catch (const json::exception&) {
+        res.status = 400;
+        res.set_content("{\"error\":\"evidence body must be JSON\"}", "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
 static std::string format_last_text() {
     const json turns = last_oracle_turns_json();
     std::ostringstream reply;
@@ -2087,6 +2106,53 @@ static bool chain_is_cancelled(const std::string& goal) {
 static json load_chain() {
     std::lock_guard<std::mutex> lock(g_chain_mu);
     return read_chain_unlocked();
+}
+
+static json revalidate_chain_references(json chain, const godbrain_rag::Client& client) {
+    if (!chain.contains("ledger") || !chain["ledger"].is_string()) return chain;
+    const auto ledger = chain["ledger"].get<std::string>();
+    if (ledger.size() > kToolContextBytes)
+        throw std::runtime_error("saved tool context exceeds its bound");
+    std::string refreshed;
+    size_t start = 0;
+    while (start < ledger.size()) {
+        const auto end = ledger.find('\n', start);
+        const auto line = ledger.substr(start, end == std::string::npos ? end : end - start);
+        const auto cached = json::parse(line, nullptr, false);
+        bool retain = true;
+        if (cached.is_object() && cached.contains("skills") && cached["skills"].is_array() &&
+            !cached["skills"].empty()) {
+            json current;
+            std::string error;
+            retain = cached.contains("query") && cached["query"].is_string() &&
+                     client.skills(cached["query"].get<std::string>(), 1, current, error);
+            if (retain) {
+                for (const auto& old : cached["skills"]) {
+                    bool found = false;
+                    for (const auto& candidate : current["skills"]) {
+                        bool same = old.is_object();
+                        for (const char* field : {"name", "content", "origin_node_id", "origin_hash",
+                                                  "verification_profile"}) {
+                            same = same && old.contains(field) && candidate.contains(field) &&
+                                   old[field] == candidate[field];
+                        }
+                        found = found || same;
+                    }
+                    retain = retain && found;
+                }
+            }
+        }
+        refreshed += retain ? line :
+            "[Cached procedure withheld: current origin/evidence is unavailable or changed. "
+            "Query query_godbrain_skills again.]";
+        if (end == std::string::npos) break;
+        refreshed += '\n';
+        start = end + 1;
+    }
+    if (refreshed.size() > kToolContextBytes)
+        throw std::runtime_error("revalidated tool context exceeds its bound");
+    chain["ledger"] = std::move(refreshed);
+    return chain;
 }
 
 static std::string resume_chain_prompt(const json& chain, const std::string& continuation) {
@@ -4553,6 +4619,21 @@ int main() {
         handle_truth(req, res);
     });
 
+    svr.Post("/api/evidence", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_evidence(req, res);
+    });
+
+    svr.Get("/api/evidence", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        try {
+            res.set_content(memory::evidence_status().dump(), "application/json");
+        } catch (const std::exception& error) {
+            res.status = 503;
+            res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        }
+    });
+
     svr.Post("/api/observe", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_observe(req, res);
@@ -5595,19 +5676,19 @@ int main() {
                 !local_fs_ask && !no_tools_ask &&
                 (continue_cmd || prior_q != user_msg);
             // History is continuity, not a substitute for this turn's evidence.
-            // Explicit CONTINUE still resumes without a new RAG query.
+            // Continue rechecks retained procedures through the canonical reader.
             std::string user_prompt =
                 context_text.empty() ? user_msg : context_text + "\n\n" + user_msg;
             std::string asked = user_msg;
             if (continue_cmd) {
-                const json ch = load_chain();
+                const json ch = revalidate_chain_references(load_chain(), godbrain_rag::Client{});
                 if (prior_q.empty()) asked = ch.value("goal", user_msg);
                 else asked = prior_q;
                 user_prompt = local_edit::looks_like_edit_request(asked)
                                   ? make_edit_continue_prompt(prior_a)
                                   : make_continue_prompt(prior_a);
-                context_text.clear();
                 user_prompt = resume_chain_prompt(ch, user_prompt);
+                if (!context_text.empty()) user_prompt = context_text + "\n\n" + user_prompt;
             } else if (local_edit::looks_like_edit_request(user_msg)) {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             }

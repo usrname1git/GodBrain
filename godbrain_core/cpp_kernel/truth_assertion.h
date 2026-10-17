@@ -305,6 +305,37 @@ inline json assertion_document(const json& observation, const json& evidence,
     return document;
 }
 
+template <class Ingest, class Judge>
+json publish_assertion(const json& document, Ingest ingest, Judge judge) {
+    json assertion = ingest(document);
+    const auto id = assertion.value("stable_id", "");
+    const auto status = assertion.value("store_status", "");
+    if (assertion.value("status", "") != "success" ||
+        (status != "committed" && status != "idempotent_noop") || id.size() != 64 ||
+        id.find_first_not_of("0123456789abcdef") != std::string::npos ||
+        assertion.value("source_hash", "") != document.at("payload").at("provenance").at("source_hash") ||
+        assertion.value("run_id", "").empty() || assertion.value("record_id", "").empty()) {
+        throw std::runtime_error("assertion ingestion did not acknowledge its bound source");
+    }
+    const auto judgment = judge(json{
+        {"id", id}, {"status", "verified"},
+        {"reasoning", std::string(kProfile) + "/" + kVersion +
+                          " checked observation only; source_keccak256=" +
+                          assertion.at("source_hash").get<std::string>()}});
+    const auto judgment_status = judgment.value("status", "");
+    if ((judgment_status != "judged" && judgment_status != "idempotent_noop") ||
+        judgment.value("stable_id", "") != id || judgment.value("to", "") != "verified") {
+        throw std::runtime_error("assertion judgment did not acknowledge this observation");
+    }
+    assertion["judgment"] = judgment;
+    assertion["trust"] = "verified";
+    assertion["promoted"] = true;
+    assertion["profile"] = kProfile;
+    assertion["checker_version"] = kVersion;
+    assertion["content"] = document.at("payload").at("claims").at(0).at("content");
+    return assertion;
+}
+
 template <class Fetch, class ReadProbe, class Pin, class Save, class Ingest, class Judge>
 json promote(const json& payload, Fetch fetch, ReadProbe read_probe, Pin read_pin, Save save,
              Ingest ingest, Judge judge) {
@@ -391,35 +422,7 @@ json promote(const json& payload, Fetch fetch, ReadProbe read_probe, Pin read_pi
     if (!matched) return stored;
 
     const auto document = assertion_document(observation, evidence, sector, claim_class);
-    json assertion = ingest(document);
-    const auto id = assertion.value("stable_id", "");
-    const auto status = assertion.value("store_status", "");
-    if (assertion.value("status", "") != "success" ||
-        (status != "committed" && status != "idempotent_noop") || id.size() != 64 ||
-        id.find_first_not_of("0123456789abcdef") != std::string::npos ||
-        assertion.value("source_hash", "") !=
-            document.at("payload").at("provenance").at("source_hash") ||
-        assertion.value("run_id", "").empty() || assertion.value("record_id", "").empty()) {
-        throw std::runtime_error("assertion ingestion did not acknowledge its bound source");
-    }
-    const auto judgment =
-        judge(json{{"id", id},
-                   {"status", "verified"},
-                   {"reasoning", std::string(kProfile) + "/" + kVersion +
-                                     " checked observation only; source_keccak256=" +
-                                     assertion.at("source_hash").get<std::string>()}});
-    const auto judgment_status = judgment.value("status", "");
-    if ((judgment_status != "judged" && judgment_status != "idempotent_noop") ||
-        judgment.value("stable_id", "") != id || judgment.value("to", "") != "verified") {
-        throw std::runtime_error("assertion judgment did not acknowledge this observation");
-    }
-    assertion["judgment"] = judgment;
-    assertion["trust"] = "verified";
-    assertion["promoted"] = true;
-    assertion["profile"] = kProfile;
-    assertion["checker_version"] = kVersion;
-    assertion["content"] = document.at("payload").at("claims").at(0).at("content");
-    stored["assertion"] = std::move(assertion);
+    stored["assertion"] = publish_assertion(document, ingest, judge);
     return stored;
 }
 } // namespace godbrain_truth

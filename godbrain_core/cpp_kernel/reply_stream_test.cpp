@@ -190,7 +190,24 @@ int main() {
             httplib::Response malformed;
             handle_truth(request, malformed);
             check(malformed.status == 400, "Truth route did not report malformed input");
+            request.body = R"({"outcome":"fresh","ttl":999999,"id":"caller-selected"})";
+            httplib::Response supplied_result;
+            handle_evidence(request, supplied_result);
+            check(supplied_result.status == 400,
+                  "Maintenance accepted a caller-selected verdict or source");
+            request.body = "[";
+            httplib::Response malformed_evidence;
+            handle_evidence(request, malformed_evidence);
+            check(malformed_evidence.status == 400, "Maintenance accepted malformed JSON");
+            request.body = "{}";
+            request.headers.clear();
+            httplib::Response missing_evidence_token;
+            handle_evidence(request, missing_evidence_token);
+            check(missing_evidence_token.status == 401, "Maintenance accepted a missing bearer");
             g_api_token.clear();
+            httplib::Response unconfigured_evidence;
+            handle_evidence(request, unconfigured_evidence);
+            check(unconfigured_evidence.status == 401, "Maintenance accepted an unconfigured bearer");
         }
         const std::string hostname = telemetry::get_computer_name();
         check(!hostname.empty() &&
@@ -429,6 +446,21 @@ int main() {
             "off", "Fixture procedure batch.", "Fixture system.", true, true, false, "", false, &skill_client);
         const std::string delivered_batch = batched_skill.requests.at(1)["messages"].back()["content"];
         const json saved_skill = load_chain();
+        const auto renewed_skill = revalidate_chain_references(saved_skill, skill_client);
+        check(renewed_skill["ledger"].get<std::string>().find(alpha) != std::string::npos,
+              "Canonical-current procedure was dropped on Continue");
+        const godbrain_rag::Client expired_skill_client(
+            godbrain_rag::default_transport, godbrain_rag::default_get_transport,
+            [](const std::string& body) {
+                const auto query = json::parse(body).at("query");
+                return godbrain_rag::HttpResult{
+                    true, 200, "application/json",
+                    json({{"query", query}, {"count", 0}, {"skills", json::array()}}).dump()};
+            });
+        const auto expired_skill = revalidate_chain_references(saved_skill, expired_skill_client);
+        check(expired_skill["ledger"].get<std::string>().find("BEGIN_SKILL_alpha") == std::string::npos &&
+                  expired_skill["ledger"].get<std::string>().find("Cached procedure withheld") != std::string::npos,
+              "Expired or revoked procedure survived Continue");
         check(delivered_batch.find(alpha) != std::string::npos &&
                   delivered_batch.find("Earlier tool results omitted") != std::string::npos &&
                   saved_skill["ledger"].get<std::string>().find(alpha) != std::string::npos &&

@@ -11,6 +11,15 @@ not manage another abstraction or an ever-growing queue of routine cards.
 Routine provenance onboarding, rechecks, retries and bounded recovery are the
 system's work. This is the goal, not a report that the runtime already does it.
 
+Discovery must also find new relevant primary material, not merely poll known
+URLs. The research/Librarian model runs locally: qualify the available 27B
+against real curation fixtures before assuming it can do the work. No paid
+cloud-model or search-API dependency belongs in this loop. Use the existing
+mouth serially when idle; do not load another model alongside the desk or gym.
+Immutable sources, extracted candidate claims, eligible current knowledge and
+maintenance work are separate Mongo concerns. A fetched page is not knowledge,
+and repeated web copies are not independent proof.
+
 Prefer evidence-backed maintenance:
 
 - Reuse and strengthen machine-checkable host facts and scoped,
@@ -72,11 +81,17 @@ ingestion/judgment fail explicitly. Offline counterexamples cover unrelated
 prose, incomplete evidence, exact probes, retry identities and the unchanged
 C++/Go ingestion contract. This increment is not deployed.
 
-General source/document freshness is still unsolved. Before expanding automatic
-verification further, define expiry/renewal, retrieval and cache eligibility,
-source/semantic-drift handling and a deduplicated exception path. Do not
-automatically crown legacy cards or claim that checked snapshots supply those
-broader guarantees.
+The separate source-maintenance increment now supplies version/hash-bound
+expiry and renewal, automatic supported-provenance onboarding, lease-safe retries
+and deduplicated incidents in both stores. Its temporal policy is enabled by the
+first authenticated maintenance tick, not by rewriting legacy judgments.
+Canonical retrieval/skill admission and cached session/Continue references
+respect the check. It is source-only and has not been deployed.
+
+The wider research goal remains unsolved: discover new relevant material,
+compare it against the manual, curate novelty and flag semantic conflicts
+using a qualified local model. These source-maintenance checks do not claim
+that capability or establish that the available 27B can do it reliably.
 A failed observation is not proof that the existing corpus is current.
 Canonical origin rechecks also cannot detect unsupported interpretations or
 semantic drift that has not yet reached the verified record.

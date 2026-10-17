@@ -678,6 +678,18 @@ if ($after.kernel) {
         } catch {
             Write-Host "heal observe skipped: $_"
         }
+        try {
+            $maintenance = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/evidence" `
+                -Method POST -Headers $obsHeaders -Body "{}" -TimeoutSec 150
+            Write-Host ("heal evidence {0} checks={1}" -f $maintenance.status, @($maintenance.checks).Count)
+            [IO.File]::WriteAllText((Join-Path $logDir "last-evidence.json"),
+                ($maintenance | ConvertTo-Json -Depth 12 -Compress), $utf8)
+            if (@($maintenance.checks | Where-Object { $_.escalated -eq $true }).Count -gt 0) {
+                Write-Warning "Evidence maintenance exhausted bounded recovery; actionable incidents: http://127.0.0.1:8083/api/evidence"
+            }
+        } catch {
+            Write-Warning "heal evidence maintenance failed; durable leases remain retryable: $_"
+        }
     }
     # Refresh on-disk glances BEFORE the desk verifier so this tick is what it checks.
     foreach ($pair in @(

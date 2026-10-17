@@ -432,6 +432,10 @@ func (s *Store) skillIsCurrent(ctx context.Context, skill Skill) (bool, error) {
 		node.Content != skill.Content || hex.EncodeToString(hash.Sum(nil)) != skill.OriginHash {
 		return false, nil
 	}
+	current, err := s.EvidenceCurrent(ctx, node.ID, node.Version, node.Content)
+	if err != nil || !current {
+		return false, err
+	}
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: bson.M{"node_id": node.ID}}},
 		{{Key: "$lookup", Value: bson.M{"from": "ingestion_runs", "localField": "run_id", "foreignField": "run_id", "as": "run"}}},

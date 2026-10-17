@@ -177,9 +177,52 @@ sector reuse source/node identities even if caller prose changes; changed source
 bytes change the evidence identity.
 Ingestion/projection or judgment failures fail the request; already-written
 candidates remain available for idempotent retry, not automatic rollback or
-success. No legacy cards are silently reclassified. These are checked
-snapshots, not automatic expiry, renewal or semantic-drift detection; those
-remain a separate freshness milestone. No model pass or GPU is involved.
+success. No legacy cards are silently reclassified. No model pass or GPU is
+involved in these assertion checks.
+
+### Autonomous source maintenance (source-only)
+
+Authenticated loopback `POST /api/evidence` accepts only `{}` and runs bounded
+serial work in the existing Heal/kernel loop. `GET /api/evidence` reports
+maintenance counts and at most eight deduplicated incidents. No model, service
+starter, new daemon or paid API is required for a recheck.
+
+The first maintenance tick persists a versioned policy cutover; before cutover
+readers preserve their prior behavior. After it, verified technical retrieval
+also requires current maintenance evidence. Automatic provenance discovery scans
+32 nonpersonal verified canonical nodes at a time with a durable wrapping cursor.
+`evidence_checks` stores exact node/version/content-hash and source/run bindings,
+leases, next-check times and failure state. `evidence_check_runs` retains
+append-only results. Neither is a substitute for immutable sources or judgment.
+
+Document checks expire after 24 hours, host checks after 15 minutes, with renewal
+scheduled halfway through. Exact source/probe changes cannot refresh an old
+version. A changed supported observation can produce a separately ingested and
+judged exact observation; caller interpretations remain candidates. Legacy
+inventory and exact-body Learn/Support provenance are onboarded automatically.
+Unsupported evidence is not guessed current or deleted.
+
+Checks use expiring leases and compare-and-swap completion. Repeat deliveries
+are idempotent; late workers cannot replace newer checks. Failures use bounded
+1/2/4/8/16-minute retries, escalate after six attempts and continue daily recovery.
+Crashes cannot keep work leased forever. Incidents group by reason/source instead
+of making every historical card an operator approval chore.
+
+Both native and Go rollback search/document/graph and skill paths enforce the
+same policy. Current canonical identity, status, sector, committed linkage,
+complete-content hash, proof pointer, checker version and expiry must match.
+Candidate queries filter temporal eligibility before lexical/vector limits,
+then recheck full authority before returning results; old high-score versions
+cannot consume the entire candidate budget.
+Historical document/graph reads show a temporal `stale` status without rewriting
+the original node/judgment; expired technical search hits and procedures are
+withheld. Process/session origins inherit canonical revalidation, and Continue
+rechecks cached procedures. Freshness is not a creation-time ranking score.
+
+This is not a continuous research crawler or semantic conflict adjudicator.
+Finding new material and qualifying the local 27B as a selective Librarian
+remain separate work; unsupported interpretations cannot be upgraded just to
+avoid an exception.
 
 Galaxy graph links are provenance co-occurrence (`same_source` / `same_run`),
 not typed knowledge-graph edges.
@@ -192,7 +235,8 @@ never kills `rag-service`.
 Heal v4: probe TCP then HTTP ready (`rag /health.ready`, mouth `/health`),
 start the allowlist, one `flushdns` after a DNS miss, `rag-rebuild` if the
 projection is unready, drain one `inbox\*.txt` when the mouth is idle,
-quarantine poison files, `POST /api/observe`, `sre_surgeon --diagnose` only
+quarantine poison files, `POST /api/observe`, bounded `POST /api/evidence`,
+`sre_surgeon --diagnose` only
 when layer ≠ ok (15 min cooldown). Remember on act/fail as **candidate**.
 
 Normal Heal may not: kill processes, reboot, `tailscale up`, `--ask`, winsock reset,

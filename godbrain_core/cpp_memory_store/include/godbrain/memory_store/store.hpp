@@ -102,6 +102,8 @@ bool store_query_skills(
     const QuerySkillsRequest& request, QuerySkillsReceiptOut* receipt, std::string* err);
 
 bool store_rebuild(StoreHandle* h, std::string* json_out, std::string* err);
+bool store_evidence(StoreHandle* h, const EvidenceRequest& request,
+                    std::string* json_out, std::string* err);
 
 // Round-trips a string that contains an interior NUL through BSON. No server.
 int run_bson_text_self_test();

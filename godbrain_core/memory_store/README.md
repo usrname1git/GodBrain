@@ -17,8 +17,8 @@ This Go module contains two boundaries:
   already-stale mismatches remain available for projection-repair retries.
   The C++ kernel invokes this on every valid host observation, independent of a
   missing/unchanged disk checkpoint. Failed Windows build reads do not fabricate
-  a pin or authorize inventory writes; source/document-version freshness remains
-  a separate milestone.
+  a pin or authorize inventory writes. Source maintenance uses the separate
+  `evidence` protocol described below.
 - `cmd/rag-service` exposes bounded lexical or measured hybrid retrieval of
   committed Golden Records on `127.0.0.1`. It does not execute commands or
   expose writes.
@@ -44,6 +44,35 @@ Alexandria source-of-truth collections retain their existing guarantees:
 | `source_observations` | Append-only external-source ingestion identities |
 | `ingestion_runs` | Lease-guarded `staging -> validated -> committed` state |
 | `skills` | Verified committed-node promotions only |
+| `evidence_check_runs` | Append-only exact-origin recheck evidence, never a new semantic judgment |
+
+Maintenance state is separate: `evidence_checks` holds version/hash-bound
+leases, expiry and retry state; `evidence_maintenance` holds the policy version
+and wrapping provenance-discovery cursor. Stdin `command=evidence` accepts
+`action=next|complete|status`, with strict string fields, one-document framing
+and no caller clock/TTL. C++ and Go may lease and complete each other's work.
+The first authenticated kernel maintenance tick enables the temporal policy.
+Before cutover reads preserve the previous behavior; after cutover verified
+technical search/document/graph/skill admission requires current exact-origin
+proof and committed linkage. Document/graph reads expose withheld historical
+knowledge as `stale`; they do not mutate original judgments.
+
+Documents have a 24-hour check lifetime and host observations 15 minutes,
+renewed halfway through. Failed checks back off at 1/2/4/8/16 minutes, escalate
+on attempt six, and continue daily recovery. Incidents are deduplicated by
+reason/source. An expired lease, replayed old result, missing proof row, origin
+change or failed read cannot extend freshness. Discovery/onboarding and checks
+run in the existing native Heal/kernel loop, with no model or paid service.
+For supported checked observations, changed evidence creates a separate
+observation rather than re-verifying an unrelated old interpretation.
+
+`TestEvidenceCrossBackendMaintenance` uses `MONGODB_TEST_URI` plus
+`GODBRAIN_CPP_STORE_TEST_EXE` and `GODBRAIN_GO_STORE_TEST_EXE` pointing at
+source-built binaries. It exercises both real stdin doors, lease competition,
+idempotency/expiry, bounded recovery, grouped incidents, and native/Go HTTP
+admission in uniquely named disposable databases. It never contacts the URLs
+in synthetic source fixtures. Open-web discovery and local-model curation
+quality are not claimed by these deterministic source-maintenance checks.
 
 Retrieval uses rebuildable derivative collections:
 

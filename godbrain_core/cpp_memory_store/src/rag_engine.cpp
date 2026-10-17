@@ -1,4 +1,5 @@
 #include "rag_engine.hpp"
+#include "godbrain/memory_store/evidence.hpp"
 
 #include "godbrain/memory_store/json.hpp"
 #include "godbrain/memory_store/protocol.hpp"
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <ctime>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <vector>
 
@@ -87,6 +89,38 @@ HttpResponse api_error(int status, const std::string& message) {
 bool cursor_failed(mongoc_cursor_t* cur) {
     bson_error_t error{};
     return cur != nullptr && mongoc_cursor_error(cur, &error);
+}
+
+mongoc_cursor_t* candidate_cursor(RagEngine* engine, mongoc_collection_t* documents,
+                                 const bson_t* filter, const bson_t* options, std::string* error) {
+    const std::unique_ptr<char, decltype(&bson_free)> filter_json(
+        bson_as_relaxed_extended_json(filter, nullptr), bson_free);
+    const std::unique_ptr<char, decltype(&bson_free)> options_json(
+        bson_as_relaxed_extended_json(options, nullptr), bson_free);
+    if (!filter_json || !options_json) {
+        *error = "candidate query serialization failed";
+        return nullptr;
+    }
+    std::string pipeline_json;
+    if (!evidence_search_pipeline(engine->client, engine->db_name, filter_json.get(),
+                                  options_json.get(), &pipeline_json, error))
+        return nullptr;
+    if (pipeline_json.empty())
+        return mongoc_collection_find_with_opts(documents, filter, options, nullptr);
+    bson_error_t bson_error{};
+    const std::unique_ptr<bson_t, decltype(&bson_destroy)> pipeline(
+        bson_new_from_json(reinterpret_cast<const uint8_t*>(pipeline_json.data()),
+                           static_cast<ssize_t>(pipeline_json.size()), &bson_error), bson_destroy);
+    if (!pipeline) {
+        *error = std::string("candidate pipeline: ") + bson_error.message;
+        return nullptr;
+    }
+    bson_t bounded = BSON_INITIALIZER;
+    BSON_APPEND_INT64(&bounded, "maxTimeMS", 3000);
+    auto* cursor = mongoc_collection_aggregate(
+        documents, MONGOC_QUERY_NONE, pipeline.get(), &bounded, nullptr);
+    bson_destroy(&bounded);
+    return cursor;
 }
 
 struct GLink {
@@ -1157,17 +1191,17 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     BSON_APPEND_INT64(&opts, "limit", limit);
 
     mongoc_collection_t* docs = coll(e, "rag_documents");
-    mongoc_cursor_t* cur = mongoc_collection_find_with_opts(docs, &filter, &opts, nullptr);
+    mongoc_cursor_t* cur = candidate_cursor(e, docs, &filter, &opts, &herr);
     std::vector<Hit> lexical;
     const bson_t* doc = nullptr;
-    while (mongoc_cursor_next(cur, &doc)) {
+    while (cur && mongoc_cursor_next(cur, &doc)) {
         Hit h;
         fill_hit_from_doc(doc, &h);
         if (!valid_hit_shape(h, doc)) continue;
         lexical.push_back(std::move(h));
     }
-    if (cursor_failed(cur)) {
-        mongoc_cursor_destroy(cur);
+    if (!cur || cursor_failed(cur)) {
+        if (cur) mongoc_cursor_destroy(cur);
         mongoc_collection_destroy(docs);
         bson_destroy(&filter);
         bson_destroy(&text);
@@ -1209,12 +1243,12 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         BSON_APPEND_DOCUMENT(&sem_opts, "sort", &sem_sort);
         BSON_APPEND_INT64(&sem_opts, "limit", static_cast<int64_t>(kMaxVectorCorpus) + 1);
         mongoc_collection_t* sem_docs = coll(e, "rag_documents");
-        mongoc_cursor_t* sem_cur = mongoc_collection_find_with_opts(sem_docs, &sem_filter, &sem_opts, nullptr);
+        mongoc_cursor_t* sem_cur = candidate_cursor(e, sem_docs, &sem_filter, &sem_opts, &herr);
         std::vector<Hit> semantic;
         int corpus = 0;
         const bson_t* sdoc = nullptr;
         bool over = false;
-        while (mongoc_cursor_next(sem_cur, &sdoc)) {
+        while (sem_cur && mongoc_cursor_next(sem_cur, &sdoc)) {
             ++corpus;
             if (corpus > kMaxVectorCorpus) {
                 over = true;
@@ -1238,8 +1272,8 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
             h.vector_sim = sim;
             semantic.push_back(std::move(h));
         }
-        if (cursor_failed(sem_cur)) {
-            mongoc_cursor_destroy(sem_cur);
+        if (!sem_cur || cursor_failed(sem_cur)) {
+            if (sem_cur) mongoc_cursor_destroy(sem_cur);
             mongoc_collection_destroy(sem_docs);
             bson_destroy(&sem_filter);
             bson_destroy(&sem_sort);
@@ -1273,6 +1307,15 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
         for (auto& kv : by_node) fused.push_back(std::move(kv.second));
     }
 
+    std::vector<Hit> current_hits;
+    for (auto& hit : fused) {
+        bool current = true;
+        if (hit.status == "verified" && hit.sector != "personal" &&
+            !evidence_current(e->client, e->db_name, hit.node_id, hit.version, hit.content, &current, &herr))
+            return api_error(503, "evidence_eligibility_unavailable");
+        if (current) current_hits.push_back(std::move(hit));
+    }
+    fused = std::move(current_hits);
     const bool hybrid = retrieval == "hybrid";
     for (Hit& h : fused) score_hit(&h, e->preferred_schema, hybrid);
     for (Hit& h : fused) {
@@ -1461,6 +1504,7 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
         double conf = 0;
     };
     std::vector<Node> nodes;
+    bool eligibility_failed = false;
     const bson_t* doc = nullptr;
     while (mongoc_cursor_next(cur, &doc)) {
         Node n;
@@ -1470,17 +1514,27 @@ HttpResponse handle_graph(RagEngine* e, const HttpRequest& req) {
         iter_utf8(doc, "sector", &n.sector);
         iter_utf8(doc, "status", &n.status);
         iter_utf8(doc, "content", &n.content);
+        if (n.status == "verified" && n.sector != "personal") {
+            std::string version;
+            iter_utf8(doc, "node_version", &version);
+            bool current = false;
+            if (!evidence_current(e->client, e->db_name, n.id, version, n.content, &current, &err)) {
+                eligibility_failed = true;
+                break;
+            }
+            if (!current) n.status = "stale";
+        }
         n.conf = iter_double(doc, "confidence", 0);
         nodes.push_back(std::move(n));
     }
-    if (cursor_failed(cur)) {
+    if (cursor_failed(cur) || eligibility_failed) {
         mongoc_cursor_destroy(cur);
         mongoc_collection_destroy(docs);
         bson_destroy(&filter);
         bson_destroy(&ne);
         bson_destroy(&sort);
         bson_destroy(&opts);
-        return api_error(503, "graph_unavailable");
+        return api_error(503, eligibility_failed ? "evidence_eligibility_unavailable" : "graph_unavailable");
     }
     mongoc_cursor_destroy(cur);
     mongoc_collection_destroy(docs);
@@ -1599,6 +1653,12 @@ HttpResponse handle_document(RagEngine* e, const HttpRequest& req) {
     mongoc_cursor_destroy(cur);
     mongoc_collection_destroy(docs);
     bson_destroy(&filter);
+    if (status == "verified" && sector != "personal") {
+        bool current = false;
+        if (!evidence_current(e->client, e->db_name, nid, ver, content, &current, &err))
+            return api_error(503, "evidence_eligibility_unavailable");
+        if (!current) status = "stale";
+    }
     std::ostringstream o;
     o << "{\"node_id\":\"" << json_escape(nid) << "\",\"stable_id\":\"" << json_escape(stable)
       << "\",\"node_version\":\"" << json_escape(ver) << "\",\"kind\":\"" << json_escape(kind)

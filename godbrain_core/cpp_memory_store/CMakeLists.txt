@@ -22,6 +22,7 @@ add_library(cpp_memory_store_core
     src/protocol.cpp
     src/state_machine.cpp
     src/store.cpp
+    src/evidence.cpp
     src/embedding.cpp
     src/rag_snapshot.cpp
 )
@@ -101,6 +102,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(cpp_evidence_policy_tests tests/evidence_policy_tests.cpp)
+    target_link_libraries(cpp_evidence_policy_tests PRIVATE cpp_memory_store_core)
+    if(MSVC)
+        target_compile_options(cpp_evidence_policy_tests PRIVATE /W4 /WX /permissive- /EHsc)
+    endif()
+    add_test(NAME cpp_evidence_policy COMMAND cpp_evidence_policy_tests)
     add_executable(cpp_memory_store_tests tests/tests.cpp)
     target_link_libraries(cpp_memory_store_tests PRIVATE cpp_memory_store_core)
     target_include_directories(cpp_memory_store_tests PRIVATE include ../cpp_tools)

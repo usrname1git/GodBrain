@@ -31,6 +31,7 @@ enum class CommandKind {
     RecordSkillRun,
     PromoteSkill,
     QuerySkills,
+    Evidence,
 };
 
 struct Provenance {
@@ -165,6 +166,19 @@ struct QuerySkillsRequest {
     int limit = 0;
 };
 
+struct EvidenceRequest {
+    std::string command;
+    std::string action;
+    std::string id;
+    std::string lease_token;
+    std::string outcome;
+    std::string reason;
+    std::string observed_hash;
+    std::string successor;
+};
+
+bool validate_evidence_request(const EvidenceRequest& request, std::string* err);
+
 struct SkillRunLite {
     std::string fixture_id;
     std::string result;
@@ -178,6 +192,7 @@ struct Route {
     RecordSkillRunRequest skill_run;
     PromoteSkillRequest promote;
     QuerySkillsRequest query_skills;
+    EvidenceRequest evidence;
 };
 
 std::string keccak256_hex(const std::string& bytes);

@@ -862,6 +862,25 @@ bool classify_and_parse(const std::string& json_text, Route* route, std::string*
             return false;
         }
     }
+    if (command == "evidence") {
+        static const char* const keys[] = {"command", "action", "id", "lease_token", "outcome",
+                                          "reason", "observed_hash", "successor", nullptr};
+        if (!json_reject_unknown_keys(root, keys, err)) return false;
+        route->kind = CommandKind::Evidence;
+        auto& request = route->evidence;
+        request.command = command;
+        for (const auto& field : std::vector<std::pair<const char*, std::string*>>{
+                 {"action", &request.action}, {"id", &request.id},
+                 {"lease_token", &request.lease_token}, {"outcome", &request.outcome},
+                 {"reason", &request.reason}, {"observed_hash", &request.observed_hash},
+                 {"successor", &request.successor}}) {
+            if (json_has(root, field.first) && !json_string(root, field.first, field.second)) {
+                if (err) *err = "evidence fields must be strings";
+                return false;
+            }
+        }
+        return validate_evidence_request(request, err);
+    }
     if (command == kJudgmentCommand) {
         if (!json_reject_unknown_keys(root, kJudgmentKeys, err)) return false;
         route->kind = CommandKind::SetStatus;
