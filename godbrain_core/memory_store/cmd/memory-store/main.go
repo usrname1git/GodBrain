@@ -149,6 +149,17 @@ func run() error {
 	if route.Command == memorystore.QuerySkillsCommand {
 		return runQuerySkills(ctx, db, inputData)
 	}
+	if route.Command == "evidence" {
+		request, err := memorystore.ParseEvidenceRequest(inputData)
+		if err != nil {
+			return failWithEnvelope("Failed to parse evidence payload", err)
+		}
+		receipt, err := memorystore.NewStore(db).RunEvidence(ctx, request)
+		if err != nil {
+			return failWithEnvelope("Evidence maintenance failed", err)
+		}
+		return json.NewEncoder(os.Stdout).Encode(receipt)
+	}
 
 	var payload memorystore.DistillationPayload
 	decoder := json.NewDecoder(bytes.NewReader(inputData))

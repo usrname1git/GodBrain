@@ -7,8 +7,11 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
+
+	memorystore "godbrain_core/memory_store"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -323,6 +326,16 @@ func (e *Engine) Search(ctx context.Context, request SearchRequest) (SearchRespo
 		if !validDocumentShape(candidates[i].Document) {
 			continue
 		}
+		if candidates[i].Status == "verified" && candidates[i].Sector != "personal" {
+			current, checkErr := memorystore.NewStore(e.db).EvidenceCurrent(ctx, candidates[i].NodeID,
+				candidates[i].NodeVersion, candidates[i].Content)
+			if checkErr != nil {
+				return SearchResponse{}, checkErr
+			}
+			if !current {
+				continue
+			}
+		}
 		candidates[i].PrimarySourceHash, err = e.primarySourceHash(ctx, metadata.ActiveGeneration, candidates[i].NodeID)
 		if err != nil {
 			return SearchResponse{}, err
@@ -364,19 +377,12 @@ func (e *Engine) lexicalCandidates(
 	}
 	projection := documentProjection()
 	projection["text_score"] = bson.M{"$meta": "textScore"}
-	cursor, err := e.db.Collection(DocumentsCollection).Find(
-		ctx,
-		filter,
-		options.Find().
-			SetLimit(candidateLimit).
-			SetProjection(projection).
-			SetSort(bson.D{
-				{Key: "text_score", Value: bson.M{"$meta": "textScore"}},
-				{Key: "stable_id", Value: 1},
-				{Key: "node_version", Value: 1},
-				{Key: "node_id", Value: 1},
-			}),
-	)
+	cursor, err := e.candidateCursor(ctx, filter, projection, bson.D{
+		{Key: "text_score", Value: bson.M{"$meta": "textScore"}},
+		{Key: "stable_id", Value: 1},
+		{Key: "node_version", Value: 1},
+		{Key: "node_id", Value: 1},
+	}, candidateLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -402,18 +408,11 @@ func (e *Engine) semanticCandidates(
 		return nil, ErrEmbeddingUnavailable
 	}
 	filter := documentFilter(generation, request)
-	cursor, err := e.db.Collection(DocumentsCollection).Find(
-		ctx,
-		filter,
-		options.Find().
-			SetLimit(MaxVectorCorpusDocuments+1).
-			SetProjection(documentProjection()).
-			SetSort(bson.D{
-				{Key: "stable_id", Value: 1},
-				{Key: "node_version", Value: 1},
-				{Key: "node_id", Value: 1},
-			}),
-	)
+	cursor, err := e.candidateCursor(ctx, filter, documentProjection(), bson.D{
+		{Key: "stable_id", Value: 1},
+		{Key: "node_version", Value: 1},
+		{Key: "node_id", Value: 1},
+	}, MaxVectorCorpusDocuments+1)
 	if err != nil {
 		return nil, err
 	}
@@ -523,6 +522,25 @@ func documentFilter(generation string, request SearchRequest) bson.M {
 		filter["confidence"] = bson.M{"$gte": *request.MinConfidence}
 	}
 	return filter
+}
+
+func (e *Engine) candidateCursor(ctx context.Context, filter, projection bson.M, sort bson.D, limit int64) (*mongo.Cursor, error) {
+	stages, err := memorystore.NewStore(e.db).EvidenceCandidateStages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(stages) == 0 {
+		return e.db.Collection(DocumentsCollection).Find(ctx, filter,
+			options.Find().SetProjection(projection).SetSort(sort).SetLimit(limit))
+	}
+	pipeline := mongo.Pipeline{{{Key: "$match", Value: filter}}}
+	pipeline = append(pipeline, stages...)
+	pipeline = append(pipeline,
+		bson.D{{Key: "$sort", Value: sort}},
+		bson.D{{Key: "$limit", Value: limit}},
+		bson.D{{Key: "$project", Value: projection}},
+	)
+	return e.db.Collection(DocumentsCollection).Aggregate(ctx, pipeline, options.Aggregate().SetMaxTime(3*time.Second))
 }
 
 func documentProjection() bson.M {

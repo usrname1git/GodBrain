@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	memorystore "godbrain_core/memory_store"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -94,13 +96,14 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 		SetSort(bson.D{{Key: "node_created_at", Value: -1}, {Key: "stable_id", Value: 1}}).
 		SetLimit(int64(limit + 1)).
 		SetProjection(bson.M{
-			"node_id":    1,
-			"stable_id":  1,
-			"kind":       1,
-			"sector":     1,
-			"status":     1,
-			"confidence": 1,
-			"content":    1,
+			"node_id":      1,
+			"node_version": 1,
+			"stable_id":    1,
+			"kind":         1,
+			"sector":       1,
+			"status":       1,
+			"confidence":   1,
+			"content":      1,
 		})
 	cursor, err := e.db.Collection(DocumentsCollection).Find(ctx, filter, opts)
 	if err != nil {
@@ -119,6 +122,16 @@ func (e *Engine) Graph(ctx context.Context, limit int) (GraphResponse, error) {
 	nodes := make([]GraphNode, 0, len(documents))
 	nodeIDs := make([]primitive.ObjectID, 0, len(documents))
 	for _, document := range documents {
+		if document.Status == "verified" && document.Sector != "personal" {
+			current, checkErr := memorystore.NewStore(e.db).EvidenceCurrent(ctx, document.NodeID,
+				document.NodeVersion, document.Content)
+			if checkErr != nil {
+				return GraphResponse{}, checkErr
+			}
+			if !current {
+				document.Status = "stale"
+			}
+		}
 		nodes = append(nodes, GraphNode{
 			NodeID:     document.NodeID.Hex(),
 			StableID:   document.StableID,
@@ -173,6 +186,16 @@ func (e *Engine) Document(ctx context.Context, id string) (DocumentResponse, err
 	}
 	if err != nil {
 		return DocumentResponse{}, err
+	}
+	if document.Status == "verified" && document.Sector != "personal" {
+		current, checkErr := memorystore.NewStore(e.db).EvidenceCurrent(ctx, document.NodeID,
+			document.NodeVersion, document.Content)
+		if checkErr != nil {
+			return DocumentResponse{}, checkErr
+		}
+		if !current {
+			document.Status = "stale"
+		}
 	}
 	return DocumentResponse{
 		NodeID:        document.NodeID.Hex(),

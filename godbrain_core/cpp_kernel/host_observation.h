@@ -65,15 +65,7 @@ inline std::string inventory_pin(const json& inventory) {
     return pin;
 }
 
-template<class Save, class Judge, class Reconcile, class Checkpoint>
-json observe(
-    const json& inventory,
-    const json& live,
-    const std::string& previous,
-    Save save,
-    Judge judge,
-    Reconcile reconcile,
-    Checkpoint checkpoint) {
+inline std::string inventory_text(const json& inventory) {
     const std::string pin = inventory_pin(inventory);
     std::ostringstream body;
     body << "Windows host inventory\n"
@@ -93,12 +85,25 @@ json observe(
              << " label=" << volume.value("label", "")
              << " total_gb=" << volume.value("total_gb", 0) << '\n';
     }
+    return body.str();
+}
+
+template<class Save, class Judge, class Reconcile, class Checkpoint>
+json observe(
+    const json& inventory,
+    const json& live,
+    const std::string& previous,
+    Save save,
+    Judge judge,
+    Reconcile reconcile,
+    Checkpoint checkpoint) {
+    const std::string pin = inventory_pin(inventory);
     const std::string reason = previous.empty() ? "initial live host applicability os_pin=" + pin :
         previous == pin ? "recheck live host applicability os_pin=" + pin :
         "os_pin changed " + previous + " -> " + pin;
     // A checkpoint is history, not proof that no mismatched cards have arrived.
     const json stale = reconcile(pin, reason);
-    json stored = save(json{{"content", body.str()}, {"sector", "windows-sre"}});
+    json stored = save(json{{"content", inventory_text(inventory)}, {"sector", "windows-sre"}});
     const std::string stable_id = stored.value("stable_id", "");
     if (stable_id.empty()) throw std::runtime_error("Host observation has no stable ID");
     try {

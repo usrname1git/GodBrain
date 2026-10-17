@@ -1118,6 +1118,13 @@ func (s *Store) PromoteSkill(ctx context.Context, name, content, originNodeID, o
 	if node.Status != "verified" {
 		return nil, ErrSkillOriginNotVerified
 	}
+	current, err := s.EvidenceCurrent(ctx, node.ID, node.Version, node.Content)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, errors.New("skill origin evidence is not current")
+	}
 
 	if node.Version != originVer {
 		return nil, errors.New("origin node version mismatch")

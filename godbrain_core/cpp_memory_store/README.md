@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 14)
+# C++ Alexandria Memory Store (cut 15)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -49,7 +49,7 @@ rather than silently stopping after 500 cards. Cursor/projection errors fail
 the request; this does not introduce new automatic verification.
 Missing or unchanged kernel checkpoints cannot suppress reconciliation.
 Unconfirmed Windows build reads fail before reconciliation or inventory writes;
-this does not add source/document-version freshness or a new trust schema.
+This applicability sweep is independent of the source-maintenance cut below.
 
 Cut 9: search citations load bounded `sources` and emit `evidence` spans
 (`byte_valid` / `not_provided` / `invalid` / `partial`). Citation status is
@@ -84,6 +84,67 @@ writes or schema migration. Go rollback uses the same parity fixtures.
 `cpp_skill_lookup` exercises actual joins in a uniquely named test database
 when `MONGODB_TEST_URI` points at a disposable MongoDB instance; otherwise
 CTest reports it skipped. Never use the live vault for integration tests.
+
+Cut 15: stdin `{"command":"evidence","action":"next|status|complete"}` and
+kernel loopback `POST /api/evidence` / `GET /api/evidence`. The authenticated
+POST takes only `{}`; callers cannot select a source, submit a verdict, choose
+a TTL or supply a clock. Heal runs the bounded serial loop after observation,
+including host-only AFK ticks. No model, new daemon, paid API or GPU is involved.
+
+The first maintenance tick persists the `evidence_maintenance` policy version.
+Before that cutover, readers preserve the previous contract; afterward every
+verified technical search/document/graph/skill read requires a current bound
+check. Missing, expired, changed or failed evidence is withheld from verified
+search and reported as `stale` by document/graph reads. Original source, node,
+judgment and projection records are not rewritten by this temporal overlay.
+Session origins inherit this check through canonical document reads; Continue
+also rechecks cached procedures instead of replaying expired skill references.
+The candidate query excludes temporally ineligible versions before applying
+lexical/vector limits, so historical high-score hits cannot crowd out current
+evidence. Final admission still checks the exact canonical binding and proof.
+
+`evidence_checks` is mutable maintenance state, keyed by the exact node ID,
+version and complete-content Keccak hash. `evidence_check_runs` is append-only
+check evidence, separate from immutable `sources`, candidate claims and the
+rebuildable retrieval projection. Admission rechecks canonical identity,
+sector, status, committed linkage, proof pointer and maintenance version.
+Checks expire after 24 hours for documents and 15 minutes for host observations;
+successful checks schedule renewal halfway through that lifetime.
+
+Discovery scans 32 verified nonpersonal canonical nodes per pass with a durable
+wrapping cursor, joining committed provenance automatically. Reproducible sources
+are preferred before selecting the newest run; an unsupported transcript cannot
+mask an older reproducible source. Changed source bindings reconcile only while
+idle, clear old lease/proof pointers, and require a new check. Equivalent runs
+with the same usable source do not discard current proof.
+Superseded observations retain daily recovery; a returning exact successor is
+re-armed without being made fresh. Previously infinite retirement deadlines are
+repaired during discovery. Content-Type changes require quote rechecking even
+when the document body bytes are identical. Supported sources
+are existing truth observations, host inventory, and legacy exact-body
+Learn/Support sources. A byte change cannot renew the old version. If a
+supported observation can be established again, the kernel ingests and judges
+a separate exact observation through the existing authority path. Unrelated
+interpretations are never automatically verified. Unsupported provenance is
+not labeled fresh or silently discarded.
+
+Claims have expiring exclusive leases. Results use lease-bound CAS and
+idempotent delivery; an old/expired worker cannot overwrite a newer result.
+Failed checks back off for 1, 2, 4, 8 and 16 minutes, escalate on the sixth
+attempt, and retry daily rather than becoming permanent operator-owned cards.
+Repeated crashes also reach this bounded-recovery state. GET reports at most
+eight incidents grouped by reason/source, not a per-card approval list; Heal
+persists `logs\last-evidence.json` and warns on newly exhausted recovery.
+The worker starts at most four checks within a 45-second start budget; each
+network/store operation retains its own timeout. This is not a hard 45-second
+request deadline.
+Replacement publication skips the interactive RAG-rebuild helper; projection
+failures stay explicit and the existing Heal recovery owns rebuilds.
+
+This cut is source maintenance, not continuous open-web discovery or proof of
+semantic correctness. Local-model research/novelty curation remains the next
+separate increment; the available 27B has not been qualified for it here.
+No running deployment is implied by these source changes.
 
 Start/Heal prefer this tree's Release exes, then Go.
 

@@ -1,5 +1,6 @@
 #include "godbrain/memory_store/store.hpp"
 #include "godbrain/memory_store/state_machine.hpp"
+#include "godbrain/memory_store/evidence.hpp"
 
 #include <cctype>
 #include <algorithm>
@@ -154,6 +155,10 @@ std::string query_skills_receipt_json(const QuerySkillsReceiptOut& r) {
 
 bool store_available() { return false; }
 struct StoreHandle {};
+bool store_evidence(StoreHandle*, const EvidenceRequest&, std::string*, std::string* err) {
+    if (err) *err = "mongo-c-driver not linked";
+    return false;
+}
 StoreHandle* store_open(std::string* err) {
     if (err) *err = "mongo-c-driver not linked (install C:\\Tools\\mongo-c-driver)";
     return nullptr;
@@ -204,6 +209,11 @@ struct StoreHandle {
     mongoc_database_t* db = nullptr;
     std::string db_name;
 };
+
+bool store_evidence(StoreHandle* h, const EvidenceRequest& request,
+                    std::string* output, std::string* error) {
+    return h && evidence_command(h->client, h->db_name, request, output, error);
+}
 
 bool store_available() { return true; }
 
@@ -1575,6 +1585,15 @@ bool store_promote_skill(
         if (err) *err = "skill origin node is not verified";
         return false;
     }
+    char origin_hex[25];
+    bson_oid_to_string(&node_oid, origin_hex);
+    bool current_evidence = false;
+    if (!evidence_current(h->client, h->db_name, origin_hex, version, content, &current_evidence, err))
+        return false;
+    if (!current_evidence) {
+        if (err) *err = "skill origin evidence is not current";
+        return false;
+    }
     if (version != trim_store(request.origin_version)) {
         if (err) *err = "origin node version mismatch";
         return false;
@@ -1707,6 +1726,12 @@ static bool skill_is_current(StoreHandle* h, const QuerySkillHit& skill, bool* u
     if (*unavailable) { if (err) *err = error.message; return false; }
     if (!found || id.empty() || status != kStatusVerified || sector == "personal" ||
         version != skill.origin_version || content != skill.content || keccak256_hex(content) != skill.origin_hash) return false;
+    bool current_evidence = false;
+    if (!evidence_current(h->client, h->db_name, id, version, content, &current_evidence, err)) {
+        *unavailable = true;
+        return false;
+    }
+    if (!current_evidence) return false;
 
     const std::string pipeline_json =
         "{\"pipeline\":[{\"$match\":{\"node_id\":{\"$oid\":\"" + id + "\"}}},"

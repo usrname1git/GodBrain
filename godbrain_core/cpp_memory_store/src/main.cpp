@@ -46,7 +46,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     int rc = 1;
-    if (route.kind == godbrain::memory::CommandKind::Ingest) {
+    if (route.kind == godbrain::memory::CommandKind::Evidence) {
+        std::string receipt;
+        if (godbrain::memory::store_evidence(store, route.evidence, &receipt, &err)) {
+            std::cout << receipt;
+            rc = 0;
+        } else {
+            std::cout << godbrain::memory::error_envelope_json("Evidence maintenance failed", err);
+        }
+    } else if (route.kind == godbrain::memory::CommandKind::Ingest) {
         godbrain::memory::StoreReceipt receipt;
         if (godbrain::memory::store_ingest(store, route.ingest, &receipt, &err)) {
             std::cout << godbrain::memory::store_receipt_json(receipt);

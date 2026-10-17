@@ -7,6 +7,7 @@
 #include "host_observation.h"
 #include "session_context.h"
 #include "truth_assertion.h"
+#include "evidence_maintenance.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -36,6 +37,7 @@ namespace memory {
 namespace {
 
 std::string trim_copy(std::string value);
+json set_status_impl(const json& payload, bool repair_projection);
 
 constexpr size_t kMaxThoughtBytes = 32 * 1024;
 constexpr size_t kMaxSessionThoughts = godbrain_session::kMaxThoughts;
@@ -650,7 +652,7 @@ json run_memory_store(const json& payload) {
     }
 }
 
-json commit_candidate(const json& document) {
+json commit_candidate(const json& document, bool repair_projection = true) {
     const auto& claim = document.at("payload").at("claims").at(0);
     const std::string content = claim.at("content").get<std::string>();
     const std::string sector = claim.at("type").get<std::string>();
@@ -671,7 +673,7 @@ json commit_candidate(const json& document) {
     const auto source_hash = document.at("payload").at("provenance").at("source_hash").get<std::string>();
     const auto stable_id = claim_stable_id(sector, content);
     remember_session(godbrain_session::local_note(source_hash, stable_id, content, "candidate", sector));
-    ensure_rag_ready();
+    if (repair_projection) ensure_rag_ready();
     return {
         {"status", "success"}, {"run_id", receipt.value("run_id", "")},
         {"record_id", receipt.value("record_id", "")}, {"store_status", status},
@@ -756,10 +758,47 @@ json stale_mismatched_pins(const std::string& pin, const std::string& reasoning)
 
 json promote_claim(const json& payload) {
     return godbrain_truth::promote(payload, fetch_ms_doc, read_host_probe,
-        telemetry::windows_pin, save_thought, commit_candidate, set_status);
+        telemetry::windows_pin, save_thought,
+        [](const json& document) { return commit_candidate(document); }, set_status);
 }
 
-json set_status(const json& payload) {
+json evidence_status() {
+    return run_memory_store({{"command", "evidence"}, {"action", "status"}});
+}
+
+json maintain_evidence() {
+    static std::mutex maintenance_mutex;
+    std::unique_lock<std::mutex> lock(maintenance_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return {{"status", "busy"}, {"checks", json::array()}};
+    const auto start = GetTickCount64();
+    json results = json::array();
+    for (int count = 0; count < 4 && GetTickCount64() - start < 45000; ++count) {
+        const auto leased = run_memory_store({{"command", "evidence"}, {"action", "next"}});
+        if (leased.value("status", "") == "idle") break;
+        if (leased.value("status", "") != "leased")
+            throw std::runtime_error("invalid evidence lease receipt");
+        const auto& job = leased.at("job");
+        json completion;
+        try {
+            completion = godbrain_evidence::check(
+                job, fetch_ms_doc, read_host_probe, telemetry::windows_pin,
+                telemetry::get_host_inventory,
+                [](const json& document) {
+                    return godbrain_truth::publish_assertion(document,
+                        [](const json& candidate) { return commit_candidate(candidate, false); },
+                        [](const json& judgment) { return set_status_impl(judgment, false); });
+                });
+        } catch (const std::exception& error) {
+            std::cerr << "[MEMORY] Evidence check " << job.at("_id") << ": " << error.what() << '\n';
+            completion = godbrain_evidence::result(job, "unavailable", "check_failed");
+        }
+        results.push_back(run_memory_store(completion));
+    }
+    return {{"status", "ok"}, {"checks", results}, {"summary", evidence_status()}};
+}
+
+namespace {
+json set_status_impl(const json& payload, bool repair_projection) {
     const std::string id = trim_copy(payload.value("id", ""));
     const std::string status = trim_copy(payload.value("status", ""));
     const std::string reasoning = trim_copy(payload.value("reasoning", ""));
@@ -796,8 +835,13 @@ json set_status(const json& payload) {
             }
         }
     }
-    ensure_rag_ready();
+    if (repair_projection) ensure_rag_ready();
     return receipt;
+}
+} // namespace
+
+json set_status(const json& payload) {
+    return set_status_impl(payload, true);
 }
 
 json copy_store_fields(const json& payload, const char* command,

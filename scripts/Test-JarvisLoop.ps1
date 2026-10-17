@@ -123,6 +123,7 @@ Invoke-CompiledTest "local_tools_test" @("local_tools_test.cpp", "local_tools.cp
 Invoke-CompiledTest "rag_client_test" @("rag_client_test.cpp")
 Invoke-CompiledTest "host_observation_test" @("host_observation_test.cpp")
 Invoke-CompiledTest "truth_assertion_test" @("truth_assertion_test.cpp")
+Invoke-CompiledTest "evidence_maintenance_test" @("evidence_maintenance_test.cpp")
 Invoke-CompiledTest "session_context_test" @("session_context_test.cpp")
 Invoke-CompiledTest "tool_round_test" @("tool_round_test.cpp")
 Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")

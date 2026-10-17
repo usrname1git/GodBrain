@@ -5,9 +5,20 @@ implementation report or permission to deploy new services.
 
 ## Active priority: better evidence, less routine crowning
 
-Improve the quality and freshness of data available to inference. The goal is
-for the operator to judge meaningful exceptions, not manually crown an
-ever-growing queue of routine cards.
+Improve the quality and freshness of data available to inference autonomously.
+The operator should correct concrete failures the system could not resolve,
+not manage another abstraction or an ever-growing queue of routine cards.
+Routine provenance onboarding, rechecks, retries and bounded recovery are the
+system's work. This is the goal, not a report that the runtime already does it.
+
+Discovery must also find new relevant primary material, not merely poll known
+URLs. The research/Librarian model runs locally: qualify the available 27B
+against real curation fixtures before assuming it can do the work. No paid
+cloud-model or search-API dependency belongs in this loop. Use the existing
+mouth serially when idle; do not load another model alongside the desk or gym.
+Immutable sources, extracted candidate claims, eligible current knowledge and
+maintenance work are separate Mongo concerns. A fetched page is not knowledge,
+and repeated web copies are not independent proof.
 
 Prefer evidence-backed maintenance:
 
@@ -19,11 +30,20 @@ Prefer evidence-backed maintenance:
   must not leave obsolete claims silently eligible for inference.
 - Extend existing Golden Records instead of generating near-duplicates.
   Preserve immutable sources, provenance and explicit contradictions.
+- Onboard legacy provenance automatically wherever a supported source/checker
+  can be established. An unmanaged category must not become a permanent manual
+  lane, and onboarding must not silently discard the existing manual.
 - Keep unproven interpretations, conflicting claims and playbooks that need
-  judgment out of verified inference. Surface a bounded, useful exception
-  queue rather than transferring the entire ingestion workload to the operator.
+  judgment out of verified inference. Pursue bounded automatic evidence
+  gathering and recovery first. A deduplicated queue is internal loop state,
+  not per-card homework: surface an actionable incident only after safe
+  automatic resolution is exhausted or a genuine authority decision is needed.
 - Measure supported, current retrieval and operator burden, not card volume,
   model confidence or how often a claim is repeated.
+
+Autonomy does not let a model certify its own interpretation. Unknown or
+unsupported results stay explicitly unproven. Existing deployment and protected
+host-operation authorization remains separate from routine maintenance.
 
 This prioritizes canonical RAG data maintenance over new phone features and
 autonomous self-editing. The evidence/retention and current-skill foundations
@@ -53,7 +73,7 @@ all runners, rather than silently cutting non-llama context at 160 bytes.
 Ordinary follow-ups keep current evidence alongside prior chat history.
 The optional file pointer cannot displace evidence; clipping is explicit.
 
-The next source-only increment closes `/api/truth` assertion authority:
+The source-only verifier increment closes `/api/truth` assertion authority:
 caller interpretations remain candidates; matching checks verify only a
 separate canonical observation bound to complete source/probe evidence and a
 checker version. Complete document read failures and unacknowledged
@@ -61,11 +81,17 @@ ingestion/judgment fail explicitly. Offline counterexamples cover unrelated
 prose, incomplete evidence, exact probes, retry identities and the unchanged
 C++/Go ingestion contract. This increment is not deployed.
 
-General source/document freshness is still unsolved. Before expanding automatic
-verification further, define expiry/renewal, retrieval and cache eligibility,
-source/semantic-drift handling and a deduplicated exception path. Do not
-automatically crown legacy cards or claim that checked snapshots supply those
-broader guarantees.
+The separate source-maintenance increment now supplies version/hash-bound
+expiry and renewal, automatic supported-provenance onboarding, lease-safe retries
+and deduplicated incidents in both stores. Its temporal policy is enabled by the
+first authenticated maintenance tick, not by rewriting legacy judgments.
+Canonical retrieval/skill admission and cached session/Continue references
+respect the check. It is source-only and has not been deployed.
+
+The wider research goal remains unsolved: discover new relevant material,
+compare it against the manual, curate novelty and flag semantic conflicts
+using a qualified local model. These source-maintenance checks do not claim
+that capability or establish that the available 27B can do it reliably.
 A failed observation is not proof that the existing corpus is current.
 Canonical origin rechecks also cannot detect unsupported interpretations or
 semantic drift that has not yet reached the verified record.
