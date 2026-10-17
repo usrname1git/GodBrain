@@ -161,6 +161,37 @@ int main() {
     const std::string private_text = "PRIVATE_REASONING: inspect the harmless fixture first.";
     int result = 0;
     try {
+        {
+            httplib::Request request;
+            request.body = R"({"class":"doc_fact","text":"unrelated caller prose","learn_url":"https://example.invalid/","quote":"An unrelated documentation quote."})";
+            request.headers.emplace("Authorization", "Bearer fixture-truth-token");
+            httplib::Response unconfigured;
+            g_api_token.clear();
+            handle_truth(request, unconfigured);
+            check(unconfigured.status == 401, "Truth write accepted an unconfigured bearer gate");
+            g_api_token = "fixture-truth-token";
+            request.headers.clear();
+            httplib::Response absent;
+            handle_truth(request, absent);
+            check(absent.status == 401, "Truth write accepted a missing bearer");
+            request.headers.emplace("Authorization", "Bearer wrong-fixture-token");
+            httplib::Response wrong;
+            handle_truth(request, wrong);
+            check(wrong.status == 403, "Truth write accepted a wrong bearer");
+            request.headers.clear();
+            request.headers.emplace("Authorization", "Bearer fixture-truth-token");
+            httplib::Response invalid_source;
+            handle_truth(request, invalid_source);
+            check(invalid_source.status == 503 &&
+                json::parse(invalid_source.body).at("error").get<std::string>().find("documentation URL") !=
+                    std::string::npos,
+                "Authenticated truth route did not use the production assertion source gate");
+            request.body = "{";
+            httplib::Response malformed;
+            handle_truth(request, malformed);
+            check(malformed.status == 400, "Truth route did not report malformed input");
+            g_api_token.clear();
+        }
         const std::string hostname = telemetry::get_computer_name();
         check(!hostname.empty() &&
                   oracle_system_prompt().find("Hostname " + hostname + " is this PC") != std::string::npos,

@@ -24,7 +24,7 @@ never changes; only status does.
 | Librarian | Transcript or `inbox\*.txt` | Distill claims (not a recap) through the live mouth | Schema/provenance; contradiction and open_question stay **candidate** |
 | Judgment | Last Oracle turns, host card if candidate, and the newest unverified Golden Records | `set_godbrain_status` / `POST /api/judge` | Why string ≥ 4 chars; last-oracle inbox flips with Mongo; cards stay candidate until `/verify` |
 | Named-card | 12-char id in chat | RAG `GET /v1/document` | Return that Golden Record; no GPU; do not mint a new Oracle turn |
-| Truth loop | Host pin / Learn quote / allowlisted probe | `observe` + `POST /api/truth` | Live read or quote match auto-`verified`; pin mismatch → `stale` |
+| Truth loop | Host pin / Learn quote / allowlisted probe | `observe` + `POST /api/truth` | Canonical observation only can auto-verify; caller prose stays candidate; pin mismatch → `stale` |
 
 ## Component inventory
 
@@ -71,7 +71,7 @@ never changes; only status does.
 | `POST` | `/api/remember` | Bearer; 401 if unset | Save a candidate idea, or Brave selected-text evidence (`title`/`url`/`selected`) as untrusted `browser_selection` |
 | `POST` | `/api/librarian` | Bearer; 401 if unset | Distill `text` via live `:8000`; fail-closed if CS2 sleeping, mouth busy, or `:8000` down |
 | `POST` | `/api/observe` | Bearer; 401 if unset | Host inventory (Heal each tick; unchanged is idempotent) |
-| `POST` | `/api/truth` | Bearer; 401 if unset | host_fact / doc_fact / playbook; probes and Learn quotes can promote; playbooks stay candidate |
+| `POST` | `/api/truth` | Bearer; 401 if unset | Caller host_fact / doc_fact / playbook stays candidate; matching quote/probe may return a separate verified `assertion` |
 | `POST` | `/api/judge` | Bearer; 401 if unset | `verified` or `rejected` with reasoning; rewrites `logs/last-pending.json` |
 | `POST` | `/api/chat` | Reads open; bearer for write slashes | RAG plus streamed mouth inference; loopback only. `/yolo` duration and off, `/verify`, and `/reject` need the bearer (401 if unset). Bare `/yolo`, `/yolo status`, and `/yolo ?` stay reads |
 | `POST` | `/api/chat` with `command_type` | Bearer; reasoning for high-risk | Direct privileged kernel dispatch |

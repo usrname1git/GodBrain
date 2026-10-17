@@ -53,12 +53,19 @@ all runners, rather than silently cutting non-llama context at 160 bytes.
 Ordinary follow-ups keep current evidence alongside prior chat history.
 The optional file pointer cannot displace evidence; clipping is explicit.
 
-General source/document freshness is still unsolved. In particular, the existing
-`/api/truth` quote/probe match must not be treated as proof of arbitrary caller
-interpretations. Before expanding automatic verification, define the exact
-machine-checkable assertion, evidence/version binding, expiry and failure
-behavior, and a deduplicated exception path. Do not automatically crown legacy
-cards or claim that this host-pin milestone supplies those broader guarantees.
+The next source-only increment closes `/api/truth` assertion authority:
+caller interpretations remain candidates; matching checks verify only a
+separate canonical observation bound to complete source/probe evidence and a
+checker version. Complete document read failures and unacknowledged
+ingestion/judgment fail explicitly. Offline counterexamples cover unrelated
+prose, incomplete evidence, exact probes, retry identities and the unchanged
+C++/Go ingestion contract. This increment is not deployed.
+
+General source/document freshness is still unsolved. Before expanding automatic
+verification further, define expiry/renewal, retrieval and cache eligibility,
+source/semantic-drift handling and a deduplicated exception path. Do not
+automatically crown legacy cards or claim that checked snapshots supply those
+broader guarantees.
 A failed observation is not proof that the existing corpus is current.
 Canonical origin rechecks also cannot detect unsupported interpretations or
 semantic drift that has not yet reached the verified record.

@@ -75,7 +75,9 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 The runtime default is **one loop**, not an agent graph: discover → plan →
 execute → verify. Heal/Watch keep `:8084`/`:8000`/`:8083` up.
 Oracle chat generates; `/verify last` / `/reject last` is the check for playbooks and fights.
-Host inventory and Learn-backed facts promote themselves when a probe or a quote match is real.
+Host inventory verifies its canonical sensor read. `/api/truth` keeps caller
+claims candidate; a matching probe or documentation quote verifies only a
+separate, source-bound observation, not the caller's interpretation.
 Librarian distills transcripts to **candidates**. The bottleneck is the verifier, not the model.
 A second node is allowed only when a named signal pays for it (Architect vs Surgeon, a second inference runner behind the same kernel door, or a future candidate-vs-verified conflict queue).
 EXL3 on `:8888` is the desk mouth. Colibri and a paused `llama-server` are other runners behind that same kernel door, not a mesh.
