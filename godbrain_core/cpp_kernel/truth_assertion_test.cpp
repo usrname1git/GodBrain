@@ -50,6 +50,9 @@ struct Fixture {
         "text/html; charset=utf-8", true};
     godbrain_truth::Observation observed{true, "running", {{"service_state", 4}}};
     std::string pin = "Core/26100.0";
+    std::optional<std::string> pin_after_probe;
+    bool fail_pin_recheck = false;
+    int pin_reads = 0;
     std::string fail;
     bool noop = false;
     bool persist = false;
@@ -75,7 +78,10 @@ struct Fixture {
             },
             [&] {
                 calls.push_back("pin");
-                if (fail == "pin") throw std::runtime_error("fixture sensor unavailable");
+                ++pin_reads;
+                if (fail == "pin" || (fail_pin_recheck && pin_reads > 1))
+                    throw std::runtime_error("fixture sensor unavailable");
+                if (pin_reads > 1 && pin_after_probe) return *pin_after_probe;
                 return pin;
             },
             [&](const json& input) {
@@ -268,13 +274,38 @@ int main(int argc, char** argv) {
             const auto result = fixture.run(request);
             check_separation(fixture, result);
             check(fixture.calls ==
-                      std::vector<std::string>{"pin", "probe", "save", "ingest", "judge"},
+                      std::vector<std::string>{"pin", "probe", "pin", "save", "ingest", "judge"},
                   "Host verification bypassed its live pin or used document fetching");
             check(result.at("assertion")
                           .at("content")
                           .get<std::string>()
                           .find("os_pin=Core/26100.0\n") != std::string::npos,
                   "Host assertion lost pin applicability");
+        }
+        for (const auto* pin : {"Core/26100.1", ""}) {
+            Fixture fixture;
+            fixture.pin_after_probe = pin;
+            rejects([&] { fixture.run(host_request()); });
+            check(fixture.notes.empty() && fixture.documents.empty() && fixture.judgments.empty(),
+                  "A changed or invalid post-probe OS pin reached persistence");
+        }
+        {
+            Fixture fixture;
+            fixture.fail_pin_recheck = true;
+            rejects([&] { fixture.run(host_request()); });
+            check(fixture.notes.empty() && fixture.documents.empty() && fixture.judgments.empty(),
+                  "An unavailable post-probe OS pin retained verification authority");
+        }
+        for (const std::string& sector :
+             {std::string("WINDOWS") + "\xc2\xa0" + "SRE", std::string("CAF") + "\xc3\x89"}) {
+            for (const bool host : {false, true}) {
+                Fixture fixture;
+                auto request = host ? host_request() : doc_request();
+                request["sector"] = sector;
+                rejects([&] { fixture.run(request); });
+                check(fixture.calls.empty(),
+                      "A sector with incompatible C++/Go normalization reached a source read");
+            }
         }
         {
             Fixture fixture;
