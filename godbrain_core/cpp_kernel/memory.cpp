@@ -6,7 +6,7 @@
 #include "telemetry.h"
 #include "host_observation.h"
 #include "session_context.h"
-#include "../cpp_tools/keccak256.hpp"
+#include "truth_assertion.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -16,16 +16,20 @@
 #pragma comment(lib, "advapi32.lib")
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstring>
 #include <initializer_list>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace memory {
@@ -177,140 +181,106 @@ std::string ascii_lower(std::string value) {
     return value;
 }
 
-std::string collapse_ws(const std::string& raw) {
-    std::string out;
-    bool space = false;
-    for (unsigned char ch : raw) {
-        if (ch <= 32) {
-            space = true;
-            continue;
-        }
-        if (space && !out.empty()) out.push_back(' ');
-        space = false;
-        out.push_back(static_cast<char>(ch));
+[[noreturn]] void windows_error(const char* operation, DWORD code = GetLastError()) {
+    throw std::runtime_error(std::string(operation) + " failed (Win32 " + std::to_string(code) + ")");
+}
+
+std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) return {};
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (count == 0) windows_error("UTF-8 conversion");
+    std::wstring wide(static_cast<size_t>(count), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+            static_cast<int>(text.size()), wide.data(), count) != count) {
+        windows_error("UTF-8 conversion");
     }
-    return out;
+    return wide;
 }
 
-std::string strip_html(const std::string& html) {
-    std::string out;
-    bool tag = false;
-    for (char ch : html) {
-        if (ch == '<') {
-            tag = true;
-            out.push_back(' ');
-            continue;
-        }
-        if (ch == '>') {
-            tag = false;
-            continue;
-        }
-        if (!tag) out.push_back(ch);
+std::string wide_to_utf8(const std::wstring& wide) {
+    if (wide.empty()) return {};
+    if (wide.find(L'\0') != std::wstring::npos) throw std::runtime_error("Embedded NUL in Windows observation");
+    const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
+        static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+    if (count == 0) windows_error("Windows string conversion");
+    std::string text(static_cast<size_t>(count), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide.data(),
+            static_cast<int>(wide.size()), text.data(), count, nullptr, nullptr) != count) {
+        windows_error("Windows string conversion");
     }
-    return collapse_ws(out);
+    return text;
 }
 
-bool host_allowed(const std::string& host) {
-    const std::string lower = ascii_lower(host);
-    return lower == "learn.microsoft.com" || lower == "support.microsoft.com";
-}
-
-bool fetch_ms_doc(const std::string& url, std::string& body, std::string& error) {
+godbrain_truth::Document fetch_ms_doc(const std::string& requested_url) {
+    const auto url = godbrain_truth::document_url(requested_url);
+    const auto wide = utf8_to_wide(url);
     URL_COMPONENTS parts{};
     parts.dwStructSize = sizeof(parts);
-    wchar_t host[256]{};
-    wchar_t path[2048]{};
-    parts.lpszHostName = host;
-    parts.dwHostNameLength = 256;
-    parts.lpszUrlPath = path;
-    parts.dwUrlPathLength = 2048;
-    std::wstring wide(url.begin(), url.end());
-    if (url.size() < 12 || ascii_lower(url.substr(0, 8)) != "https://") {
-        error = "learn/support URL must be https";
-        return false;
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts)) windows_error("Documentation URL parse");
+    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
+    if (parts.dwExtraInfoLength) path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+
+    using HttpHandle = std::unique_ptr<void, decltype(&WinHttpCloseHandle)>;
+    HttpHandle session(WinHttpOpen(L"GodBrain-Truth/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0), WinHttpCloseHandle);
+    if (!session) windows_error("Documentation WinHttpOpen");
+    if (!WinHttpSetTimeouts(session.get(), 5000, 5000, 10000, 10000)) windows_error("Documentation timeouts");
+    HttpHandle connect(WinHttpConnect(session.get(), host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0),
+        WinHttpCloseHandle);
+    if (!connect) windows_error("Documentation WinHttpConnect");
+    HttpHandle request(WinHttpOpenRequest(connect.get(), L"GET", path.c_str(), nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE), WinHttpCloseHandle);
+    if (!request) windows_error("Documentation WinHttpOpenRequest");
+    DWORD redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &redirects, sizeof(redirects))) {
+        windows_error("Documentation redirect policy");
     }
-    if (!WinHttpCrackUrl(wide.c_str(), 0, 0, &parts)) {
-        error = "could not parse URL";
-        return false;
-    }
-    char host_a[256]{};
-    WideCharToMultiByte(CP_UTF8, 0, host, -1, host_a, 256, nullptr, nullptr);
-    if (!host_allowed(host_a)) {
-        error = "only learn.microsoft.com and support.microsoft.com";
-        return false;
-    }
-    HINTERNET session = WinHttpOpen(
-        L"GodBrain-Truth/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) {
-        error = "WinHttpOpen failed";
-        return false;
-    }
-    HINTERNET connect = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!connect) {
-        WinHttpCloseHandle(session);
-        error = "WinHttpConnect failed";
-        return false;
-    }
-    HINTERNET request = WinHttpOpenRequest(
-        connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
-        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-    if (!request) {
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        error = "WinHttpOpenRequest failed";
-        return false;
-    }
-    BOOL sent = WinHttpSendRequest(
-        request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-    if (!sent || !WinHttpReceiveResponse(request, nullptr)) {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        error = "Learn/support fetch failed";
-        return false;
-    }
+    const ULONGLONG started = GetTickCount64();
+    if (!WinHttpSendRequest(request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request.get(), nullptr)) windows_error("Documentation fetch");
     DWORD statusCode = 0;
     DWORD statusSize = sizeof(statusCode);
-    if (!WinHttpQueryHeaders(
-            request,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_HEADER_NAME_BY_INDEX,
-            &statusCode,
-            &statusSize,
-            WINHTTP_NO_HEADER_INDEX) ||
-        statusCode < 200 || statusCode > 299) {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connect);
-        WinHttpCloseHandle(session);
-        error = "Learn/support HTTP " + std::to_string(statusCode);
-        return false;
+    if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX)) {
+        windows_error("Documentation status");
     }
-    constexpr size_t kMax = 1500 * 1024;
-    std::string raw;
-    raw.reserve(64 * 1024);
-    for (;;) {
+    // A 206 or redirect is not a complete snapshot of the requested document.
+    if (statusCode != 200) throw std::runtime_error("Documentation HTTP " + std::to_string(statusCode));
+    DWORD length = 0;
+    DWORD lengthSize = sizeof(length);
+    std::optional<size_t> expected;
+    if (WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &length, &lengthSize, WINHTTP_NO_HEADER_INDEX)) {
+        expected = length;
+    } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) {
+        windows_error("Documentation Content-Length");
+    }
+    std::array<wchar_t, 512> type{};
+    DWORD typeSize = static_cast<DWORD>(sizeof(type));
+    if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
+            type.data(), &typeSize, WINHTTP_NO_HEADER_INDEX)) windows_error("Documentation Content-Type");
+    std::wstring contentType(type.data(), typeSize / sizeof(wchar_t));
+    while (!contentType.empty() && contentType.back() == L'\0') contentType.pop_back();
+    const auto raw = godbrain_truth::read_document([&]() -> std::optional<std::string> {
+        if (GetTickCount64() - started >= 30000) throw std::runtime_error("Documentation fetch deadline exceeded");
         DWORD avail = 0;
-        if (!WinHttpQueryDataAvailable(request, &avail)) break;
-        if (avail == 0) break;
-        if (raw.size() + avail > kMax) {
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connect);
-            WinHttpCloseHandle(session);
-            error = "document too large";
-            return false;
-        }
-        std::string chunk(avail, '\0');
+        if (!WinHttpQueryDataAvailable(request.get(), &avail)) windows_error("Documentation data query");
+        if (avail == 0) return std::nullopt;
+        const DWORD count = (std::min)(avail, DWORD{64 * 1024});
+        std::string chunk(count, '\0');
         DWORD got = 0;
-        if (!WinHttpReadData(request, chunk.data(), avail, &got)) break;
+        if (!WinHttpReadData(request.get(), chunk.data(), count, &got)) windows_error("Documentation body read");
+        if (got == 0) throw std::runtime_error("Documentation read ended before EOF");
         chunk.resize(got);
-        raw.append(chunk);
-    }
-    WinHttpCloseHandle(request);
-    WinHttpCloseHandle(connect);
-    WinHttpCloseHandle(session);
-    body = strip_html(raw);
-    return true;
+        return chunk;
+    }, expected);
+    return {raw, wide_to_utf8(contentType), true};
 }
 
 bool path_under_allowlist(const std::string& path) {
@@ -332,62 +302,47 @@ bool path_under_allowlist(const std::string& path) {
     return false;
 }
 
-bool registry_path_ok(const std::string& path) {
-    if (path.empty() || path.size() > 256) return false;
-    if (path.find("..") != std::string::npos) return false;
-    for (unsigned char ch : path) {
-        if (ch < 32 || ch == '*' || ch == '?' || ch == '/') return false;
-    }
-    return true;
-}
-
-bool probe_registry_key(const std::string& path) {
-    if (!registry_path_ok(path)) return false;
-    std::wstring wide(path.begin(), path.end());
+godbrain_truth::Observation probe_registry_key(const std::string& path) {
+    const auto wide = utf8_to_wide(path);
     HKEY key = nullptr;
     const LONG rc = RegOpenKeyExW(
         HKEY_LOCAL_MACHINE, wide.c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &key);
-    if (rc != ERROR_SUCCESS) return false;
+    if (rc != ERROR_SUCCESS) windows_error("HKLM key observation", static_cast<DWORD>(rc));
     RegCloseKey(key);
-    return true;
+    return {true, "present", {{"hive", "HKLM"}, {"view", "64-bit"}}};
 }
 
-bool probe_registry_value(
-    const std::string& path, const std::string& name, const std::string& expect,
-    std::string& got) {
-    if (!registry_path_ok(path) || name.empty() || name.size() > 128) return false;
-    std::wstring wpath(path.begin(), path.end());
-    std::wstring wname(name.begin(), name.end());
-    wchar_t buffer[512];
-    DWORD bytes = sizeof(buffer);
+godbrain_truth::Observation probe_registry_value(const std::string& path, const std::string& name) {
+    const auto wpath = utf8_to_wide(path);
+    const auto wname = utf8_to_wide(name);
+    std::array<wchar_t, 1024> buffer{};
+    DWORD bytes = static_cast<DWORD>(sizeof(buffer));
     DWORD type = 0;
-    LONG rc = RegGetValueW(
+    const LONG rc = RegGetValueW(
         HKEY_LOCAL_MACHINE, wpath.c_str(), wname.c_str(),
-        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_SUBKEY_WOW6464KEY,
-        &type, buffer, &bytes);
-    if (rc == ERROR_SUCCESS) {
-        const size_t chars = bytes / sizeof(wchar_t);
-        std::wstring raw(buffer, chars > 0 ? chars - 1 : 0);
-        got.clear();
-        for (wchar_t ch : raw) {
-            if (ch < 128) got.push_back(static_cast<char>(ch));
-        }
-        return expect.empty() || ascii_lower(got).find(ascii_lower(expect)) != std::string::npos;
+        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_RT_REG_DWORD |
+            RRF_NOEXPAND | RRF_SUBKEY_WOW6464KEY, &type, buffer.data(), &bytes);
+    if (rc != ERROR_SUCCESS) windows_error("HKLM value observation", static_cast<DWORD>(rc));
+    std::string value;
+    std::string typeName;
+    if (type == REG_DWORD && bytes == sizeof(DWORD)) {
+        DWORD number = 0;
+        std::memcpy(&number, buffer.data(), sizeof(number));
+        value = std::to_string(number);
+        typeName = "REG_DWORD";
+    } else if ((type == REG_SZ || type == REG_EXPAND_SZ) &&
+               bytes >= sizeof(wchar_t) && bytes % sizeof(wchar_t) == 0 &&
+               buffer[bytes / sizeof(wchar_t) - 1] == L'\0') {
+        value = wide_to_utf8(std::wstring(buffer.data(), bytes / sizeof(wchar_t) - 1));
+        typeName = type == REG_SZ ? "REG_SZ" : "REG_EXPAND_SZ";
+    } else {
+        throw std::runtime_error("Unsupported or malformed registry value");
     }
-    DWORD dword = 0;
-    bytes = sizeof(dword);
-    rc = RegGetValueW(
-        HKEY_LOCAL_MACHINE, wpath.c_str(), wname.c_str(),
-        RRF_RT_REG_DWORD | RRF_SUBKEY_WOW6464KEY, &type, &dword, &bytes);
-    if (rc != ERROR_SUCCESS) return false;
-    char num[32];
-    std::snprintf(num, sizeof(num), "%lu", static_cast<unsigned long>(dword));
-    got = num;
-    return expect.empty() || got == expect;
+    return {true, value, {{"hive", "HKLM"}, {"view", "64-bit"},
+        {"value_type", typeName}, {"expansion", "none"}, {"comparison", "exact"}}};
 }
 
-bool probe_appx(const std::string& name) {
-    if (name.empty() || name.size() > 128) return false;
+godbrain_truth::Observation probe_appx(const std::string& name) {
     const wchar_t* roots[] = {
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\InboxApplications",
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\Applications",
@@ -395,57 +350,100 @@ bool probe_appx(const std::string& name) {
     };
     for (const wchar_t* root : roots) {
         HKEY key = nullptr;
-        if (RegOpenKeyExW(
-                HKEY_LOCAL_MACHINE, root, 0, KEY_READ | KEY_WOW64_64KEY, &key) !=
-            ERROR_SUCCESS) {
-            continue;
-        }
-        wchar_t child[512];
-        for (DWORD i = 0;; ++i) {
+        const LONG opened = RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE, root, 0, KEY_READ | KEY_WOW64_64KEY, &key);
+        if (opened == ERROR_FILE_NOT_FOUND) continue;
+        if (opened != ERROR_SUCCESS) windows_error("AppX registry observation", static_cast<DWORD>(opened));
+        const std::unique_ptr<std::remove_pointer_t<HKEY>, decltype(&RegCloseKey)> handle(key, RegCloseKey);
+        for (DWORD i = 0; i < 4096; ++i) {
+            wchar_t child[512]{};
             DWORD len = 512;
-            if (RegEnumKeyExW(key, i, child, &len, nullptr, nullptr, nullptr, nullptr) !=
-                ERROR_SUCCESS) {
-                break;
+            const LONG rc = RegEnumKeyExW(handle.get(), i, child, &len, nullptr, nullptr, nullptr, nullptr);
+            if (rc == ERROR_NO_MORE_ITEMS) break;
+            if (rc != ERROR_SUCCESS) windows_error("AppX registry enumeration", static_cast<DWORD>(rc));
+            const auto entry = wide_to_utf8(std::wstring(child, len));
+            if (ascii_lower(entry).find(ascii_lower(name)) != std::string::npos) {
+                return {true, "present", {
+                    {"hive", "HKLM"}, {"view", "64-bit"}, {"registry_path", wide_to_utf8(root)},
+                    {"matching_subkey", entry}, {"match", "ASCII-case-insensitive substring"},
+                    {"meaning", "registry entry only; not installed-package state"}
+                }};
             }
-            std::string utf8;
-            utf8.reserve(len);
-            for (DWORD n = 0; n < len; ++n) {
-                if (child[n] < 128) utf8.push_back(static_cast<char>(child[n]));
-            }
-            if (ascii_lower(utf8).find(ascii_lower(name)) != std::string::npos) {
-                RegCloseKey(key);
-                return true;
-            }
+            if (i == 4095) throw std::runtime_error("AppX registry enumeration exceeds bound");
         }
-        RegCloseKey(key);
     }
-    return false;
+    throw std::runtime_error("No matching AppX registry entry was established");
 }
 
-bool probe_service(const std::string& name, std::string& state) {
-    if (name.empty() || name.size() > 64) return false;
-    std::wstring wide(name.begin(), name.end());
-    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-    if (!scm) return false;
-    SC_HANDLE svc = OpenServiceW(scm, wide.c_str(), SERVICE_QUERY_STATUS);
-    if (!svc) {
-        CloseServiceHandle(scm);
-        return false;
-    }
+godbrain_truth::Observation probe_service(const std::string& name) {
+    const auto wide = utf8_to_wide(name);
+    using ServiceHandle = std::unique_ptr<std::remove_pointer_t<SC_HANDLE>, decltype(&CloseServiceHandle)>;
+    ServiceHandle scm(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT), CloseServiceHandle);
+    if (!scm) windows_error("SCM observation");
+    ServiceHandle svc(OpenServiceW(scm.get(), wide.c_str(), SERVICE_QUERY_STATUS), CloseServiceHandle);
+    if (!svc) windows_error("Service observation");
     SERVICE_STATUS_PROCESS ssp{};
     DWORD needed = 0;
     const BOOL ok = QueryServiceStatusEx(
-        svc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp),
+        svc.get(), SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp),
         sizeof(ssp), &needed);
-    CloseServiceHandle(svc);
-    CloseServiceHandle(scm);
-    if (!ok) return false;
-    state = (ssp.dwCurrentState == SERVICE_RUNNING) ? "running" : "stopped";
-    return true;
+    if (!ok) windows_error("Service state observation");
+    std::string state;
+    switch (ssp.dwCurrentState) {
+        case SERVICE_STOPPED: state = "stopped"; break;
+        case SERVICE_START_PENDING: state = "start_pending"; break;
+        case SERVICE_STOP_PENDING: state = "stop_pending"; break;
+        case SERVICE_RUNNING: state = "running"; break;
+        case SERVICE_CONTINUE_PENDING: state = "continue_pending"; break;
+        case SERVICE_PAUSE_PENDING: state = "pause_pending"; break;
+        case SERVICE_PAUSED: state = "paused"; break;
+        default: throw std::runtime_error("Unrecognized SCM service state");
+    }
+    return {true, state, {{"service_state", ssp.dwCurrentState}}};
 }
 
-bool probe_file(const std::string& path) {
-    return path_under_allowlist(path) && file_exists(path);
+godbrain_truth::Observation probe_file(const std::string& path) {
+    if (path.size() < 3 || path[1] != ':' || path[2] != '\\' ||
+        path.find_first_of("*?") != std::string::npos || path.find(':', 2) != std::string::npos) {
+        throw std::runtime_error("File observation needs an absolute allowlisted path");
+    }
+    const auto wide = utf8_to_wide(path);
+    std::array<wchar_t, 32768> full{};
+    const DWORD length = GetFullPathNameW(wide.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
+    if (length == 0) windows_error("File path observation");
+    if (length >= full.size()) throw std::runtime_error("File path exceeds bound");
+    if (!path_under_allowlist(wide_to_utf8(std::wstring(full.data(), length)))) {
+        throw std::runtime_error("File observation path is not allowlisted");
+    }
+    const HANDLE opened = CreateFileW(full.data(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (opened == INVALID_HANDLE_VALUE) windows_error("File metadata observation");
+    const std::unique_ptr<void, decltype(&CloseHandle)> file(opened, CloseHandle);
+    std::array<wchar_t, 32768> finalPath{};
+    const DWORD finalLength = GetFinalPathNameByHandleW(file.get(), finalPath.data(),
+        static_cast<DWORD>(finalPath.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (finalLength == 0) windows_error("File final-path observation");
+    if (finalLength >= finalPath.size()) throw std::runtime_error("File final path exceeds bound");
+    std::string final = wide_to_utf8(std::wstring(finalPath.data(), finalLength));
+    if (final.rfind("\\\\?\\", 0) == 0) final.erase(0, 4);
+    if (!path_under_allowlist(final)) throw std::runtime_error("File target escapes observation allowlist");
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(file.get(), &info)) windows_error("File attributes observation");
+    const DWORD attributes = info.dwFileAttributes;
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) throw std::runtime_error("File observation target is a directory");
+    return {true, "present", {{"full_path", wide_to_utf8(std::wstring(full.data(), length))},
+        {"final_path", final}, {"attributes", attributes},
+        {"meaning", "non-directory entry; contents not checked"}}};
+}
+
+godbrain_truth::Observation read_host_probe(const godbrain_truth::Probe& probe) {
+    if (probe.kind == "registry_key") return probe_registry_key(probe.path);
+    if (probe.kind == "registry_value") return probe_registry_value(probe.path, probe.name);
+    if (probe.kind == "appx") return probe_appx(probe.name);
+    if (probe.kind == "service") return probe_service(probe.name);
+    if (probe.kind == "file") return probe_file(probe.path);
+    throw std::runtime_error("Unsupported host observation");
 }
 
 std::string resolve_memory_store();
@@ -652,6 +650,35 @@ json run_memory_store(const json& payload) {
     }
 }
 
+json commit_candidate(const json& document) {
+    const auto& claim = document.at("payload").at("claims").at(0);
+    const std::string content = claim.at("content").get<std::string>();
+    const std::string sector = claim.at("type").get<std::string>();
+    const std::string raw = document.at("raw_transcript").get<std::string>();
+    if (looks_like_secret(content) || looks_like_secret(raw)) {
+        throw std::runtime_error("candidate evidence looks like a secret and was rejected");
+    }
+    if (document.dump().size() > godbrain_truth::kMaxWireBytes) {
+        throw std::runtime_error("candidate exceeds memory-store input limit");
+    }
+    std::cout << "[MEMORY] Committing candidate via memory-store ("
+              << content.size() << " content bytes, " << raw.size() << " source bytes)" << std::endl;
+    const json receipt = run_memory_store(document);
+    const std::string status = receipt.value("status", "");
+    if (status != "committed" && status != "idempotent_noop") {
+        throw std::runtime_error("memory-store rejected candidate: " + receipt.dump());
+    }
+    const auto source_hash = document.at("payload").at("provenance").at("source_hash").get<std::string>();
+    const auto stable_id = claim_stable_id(sector, content);
+    remember_session(godbrain_session::local_note(source_hash, stable_id, content, "candidate", sector));
+    ensure_rag_ready();
+    return {
+        {"status", "success"}, {"run_id", receipt.value("run_id", "")},
+        {"record_id", receipt.value("record_id", "")}, {"store_status", status},
+        {"source_hash", source_hash}, {"stable_id", stable_id},
+    };
+}
+
 }  // namespace
 
 json save_thought(const json& payload) {
@@ -700,26 +727,7 @@ json save_thought(const json& payload) {
           {"opsec_candidates", json::array()}}},
     };
 
-    std::cout << "[MEMORY] Committing operator thought via memory-store ("
-              << content.size() << " bytes)" << std::endl;
-    const json receipt = run_memory_store(document);
-    const std::string status = receipt.value("status", "");
-    if (status != "committed" && status != "idempotent_noop") {
-        throw std::runtime_error(
-            "memory-store rejected thought: " + receipt.dump());
-    }
-    const std::string stable_id = claim_stable_id(claim_type, content);
-    remember_session(godbrain_session::local_note(
-        source_hash, stable_id, content, "candidate", claim_type));
-    ensure_rag_ready();
-    return {
-        {"status", "success"},
-        {"run_id", receipt.value("run_id", "")},
-        {"record_id", receipt.value("record_id", "")},
-        {"store_status", status},
-        {"source_hash", source_hash},
-        {"stable_id", stable_id},
-    };
+    return commit_candidate(document);
 }
 
 json observe_host() {
@@ -747,122 +755,8 @@ json stale_mismatched_pins(const std::string& pin, const std::string& reasoning)
 }
 
 json promote_claim(const json& payload) {
-    const std::string claim_class = ascii_lower(trim_copy(payload.value("class", "")));
-    std::string text = trim_copy(payload.value("text", payload.value("content", "")));
-    const std::string sector = trim_copy(payload.value("sector", "windows-sre"));
-    if (claim_class != "host_fact" && claim_class != "doc_fact" &&
-        claim_class != "playbook") {
-        throw std::runtime_error("class must be host_fact, doc_fact, or playbook");
-    }
-    if (text.empty()) {
-        throw std::runtime_error("claim text is required");
-    }
-
-    json result = {{"class", claim_class}, {"promoted", false}};
-    const std::string pin = telemetry::windows_pin();
-    std::ostringstream body;
-    body << text << '\n'
-         << "claim_class=" << claim_class << '\n';
-
-    if (claim_class == "playbook") {
-        body << "auto_verify=never\n";
-        json stored = save_thought({{"content", body.str()}, {"sector", sector}});
-        stored["trust"] = "candidate";
-        stored["class"] = claim_class;
-        stored["promoted"] = false;
-        return stored;
-    }
-
-    if (claim_class == "doc_fact") {
-        const std::string url = trim_copy(payload.value("learn_url", payload.value("url", "")));
-        const std::string quote = collapse_ws(trim_copy(payload.value("quote", "")));
-        if (url.empty() || quote.size() < 24) {
-            throw std::runtime_error("doc_fact needs learn_url and quote (>=24 chars)");
-        }
-        std::string page;
-        std::string error;
-        if (!fetch_ms_doc(url, page, error)) {
-            throw std::runtime_error(error);
-        }
-        const bool matched =
-            ascii_lower(page).find(ascii_lower(quote)) != std::string::npos;
-        body << "learn_url=" << url << '\n'
-             << "quote=" << quote << '\n'
-             << "quote_matched=" << (matched ? "1" : "0") << '\n';
-        json stored = save_thought({{"content", body.str()}, {"sector", sector}});
-        stored["class"] = claim_class;
-        stored["quote_matched"] = matched;
-        stored["learn_url"] = url;
-        if (matched) {
-            json judged = set_status({
-                {"id", stored.value("stable_id", "")},
-                {"status", "verified"},
-                {"reasoning", "Learn/support quote matched " + url},
-            });
-            stored["judgment"] = judged;
-            stored["trust"] = "verified";
-            stored["promoted"] = true;
-        } else {
-            stored["trust"] = "candidate";
-            stored["promoted"] = false;
-        }
-        return stored;
-    }
-
-    // host_fact: allowlisted live probe, pinned to this build
-    const json probe = payload.value("probe", json::object());
-    const std::string kind = ascii_lower(trim_copy(probe.value("kind", "")));
-    const std::string path = trim_copy(probe.value("path", ""));
-    const std::string name = trim_copy(probe.value("name", ""));
-    const std::string expect = trim_copy(probe.value("expect", ""));
-    bool ok = false;
-    std::string observed;
-    if (kind == "registry_key") {
-        ok = probe_registry_key(path);
-        observed = ok ? "present" : "missing";
-    } else if (kind == "registry_value") {
-        ok = probe_registry_value(path, name, expect, observed);
-    } else if (kind == "appx") {
-        ok = probe_appx(name.empty() ? path : name);
-        observed = ok ? "present" : "missing";
-    } else if (kind == "service") {
-        ok = probe_service(name.empty() ? path : name, observed);
-        if (ok && !expect.empty() && ascii_lower(observed) != ascii_lower(expect)) {
-            ok = false;
-        }
-    } else if (kind == "file") {
-        ok = probe_file(path);
-        observed = ok ? "present" : "missing";
-    } else {
-        throw std::runtime_error(
-            "host_fact probe.kind must be registry_key, registry_value, appx, service, or file");
-    }
-    body << "os_pin=" << pin << '\n'
-         << "probe_kind=" << kind << '\n'
-         << "probe_path=" << path << '\n'
-         << "probe_name=" << name << '\n'
-         << "probe_expect=" << expect << '\n'
-         << "probe_observed=" << observed << '\n'
-         << "probe_ok=" << (ok ? "1" : "0") << '\n';
-    json stored = save_thought({{"content", body.str()}, {"sector", sector}});
-    stored["class"] = claim_class;
-    stored["probe_ok"] = ok;
-    stored["observed"] = observed;
-    stored["os_pin"] = pin;
-    if (ok) {
-        json judged = set_status({
-            {"id", stored.value("stable_id", "")},
-            {"status", "verified"},
-            {"reasoning", "host probe " + kind + " matched on os_pin=" + pin},
-        });
-        stored["judgment"] = judged;
-        stored["trust"] = "verified";
-        stored["promoted"] = true;
-    } else {
-        stored["trust"] = "candidate";
-        stored["promoted"] = false;
-    }
-    return stored;
+    return godbrain_truth::promote(payload, fetch_ms_doc, read_host_probe,
+        telemetry::windows_pin, save_thought, commit_candidate, set_status);
 }
 
 json set_status(const json& payload) {

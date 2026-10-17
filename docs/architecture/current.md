@@ -132,9 +132,49 @@ the existing explicit judgment result.
 Ordinary chat reads its hostname independently; an unavailable build sensor
 still blocks observation/applicability, but not RAG-free advisory, file or edit
 requests merely constructing the Oracle prompt.
-`POST /api/truth` auto-verifies a `host_fact` when an allowlisted probe matches,
-or a `doc_fact` when a Learn/support quote is actually on the page. Playbooks
-stay candidate.
+`POST /api/truth` retains caller `host_fact`, `doc_fact` and `playbook` prose
+as **candidate**. A quote/probe match is not proof of that prose. A passing
+check instead ingests a separate canonical `truth-observation-v1` assertion
+as candidate and verifies that assertion through the existing judgment door.
+The response keeps the caller's `stable_id`, `trust=candidate` and
+`promoted=false`; a nested `assertion` contains the separately verified
+observation ID, content, profile, checker version, source hash and judgment.
+`check_status` is `matched`, `not_matched` or `not_applicable`. Clients must
+not treat `quote_matched` or `probe_ok` as caller-claim verification.
+
+Document assertions establish exact, case-sensitive quote presence in the
+complete source after the stated tag/ASCII-whitespace normalization, not the
+truth of the quote or a procedure's effectiveness. URLs preserve queries,
+drop fragments and permit only default-port HTTPS Learn/support hosts without
+credentials. The fetch disables redirects, accepts HTTP 200 only, bounds reads
+to 1,500 KiB, checks Content-Length when supplied and fails on read errors,
+premature EOF, timeout or unsupported/non-UTF-8 text. The response
+body must validate as UTF-8 even when Learn omits a charset declaration;
+an explicit unsupported charset is rejected. The immutable
+`raw_transcript` retains the complete fetched body, URL, content type,
+observation and checker version; the canonical observation binds both the raw
+body and normalized-text Keccak hashes. This is a source-byte version, not a
+claim that the publisher assigns a version or that the page remains current.
+
+Host assertions describe only the successful allowlisted read, with a confirmed
+OS pin. Registry strings/DWORDs compare exact unexpanded values (UTF-8 strings
+are not stripped to ASCII); SCM observations preserve pending/paused states.
+AppX checks describe the exact matching registry subkey, including whether it
+came from the deprovisioned root, **not** installed-package readiness. File
+checks describe a non-directory entry, not its contents, and recheck the final
+handle target against the allowlist. Missing/inaccessible/oversized reads
+return explicit errors, never purported verified absence. A successful read
+that does not match `expect` retains only the caller candidate.
+
+Candidate ingestion uses the existing strict C++/Go envelope and legacy
+Keccak source hashing. Complete evidence spans, checker identity and canonical
+content are immutable. Identical evidence reuses source/node identities even
+if caller prose changes; changed source bytes change the evidence identity.
+Ingestion/projection or judgment failures fail the request; already-written
+candidates remain available for idempotent retry, not automatic rollback or
+success. No legacy cards are silently reclassified. These are checked
+snapshots, not automatic expiry, renewal or semantic-drift detection; those
+remain a separate freshness milestone. No model pass or GPU is involved.
 
 Galaxy graph links are provenance co-occurrence (`same_source` / `same_run`),
 not typed knowledge-graph edges.

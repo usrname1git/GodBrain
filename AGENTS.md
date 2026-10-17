@@ -408,9 +408,11 @@ wait. `save_godbrain_thought` writes a candidate Golden Record through
 `memory-store.exe`. `set_godbrain_status` is the only status door
 (`verified` / `rejected` / `stale`).
 
-Humans still `/verify` playbooks and fights. Host inventory and
-`/api/truth` host_fact / doc_fact call that door themselves when a live
-probe or a Learn/support quote actually matches. `query_recent_thoughts`
+Humans still `/verify` playbooks and fights. Host inventory verifies its
+canonical sensor read. `/api/truth` host_fact / doc_fact keeps caller prose
+candidate and uses that door only for a separate generated observation bound
+to the complete source/probe evidence and checker version, never an arbitrary
+interpretation. `query_recent_thoughts`
 reads the active RAG graph. Oracle search is verified-only.
 
 ### Galaxy chat and GET doors (no GPU)
@@ -658,8 +660,16 @@ so Heal/Watch/logon boot a kernel that can authorize loopback writes.
 An empty token fail-closes those writes. The token is never written to
 `*.launch.cmd`.
 
-`POST /api/truth` writes host_fact / doc_fact / playbook claims: host
-probes and Learn quotes can promote; playbooks stay candidate. Kernel
+`POST /api/truth` writes host_fact / doc_fact / playbook claims as candidates.
+A matching quote/probe can additionally verify a separate `truth-observation-v1`
+assertion. Top-level `trust=candidate` / `promoted=false` refer to caller prose;
+only the nested `assertion` can report verified. Document reads require complete,
+bounded UTF-8/ASCII HTTP 200 evidence from the exact allowlisted HTTPS host;
+redirects, partial reads, unavailable probes and persistence/judgment failures
+cannot yield verified success. Exact registry values and actual SCM states
+replace substring/state approximations. Historical observations are not a
+general expiry/refresh mechanism; legacy cards are not reclassified. See
+`docs/architecture/current.md`. Kernel
 boot seeds at most three verified, nonpersonal origin-bound Golden Records
 into the process session buffer, rechecked before prompt/recall use.
 Canonical I/O and live-pin reads run outside the session mutex; a local note's
