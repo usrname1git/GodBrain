@@ -157,7 +157,9 @@ body and normalized-text Keccak hashes. This is a source-byte version, not a
 claim that the publisher assigns a version or that the page remains current.
 
 Host assertions describe only the successful allowlisted read, with a confirmed
-OS pin. Registry strings/DWORDs compare exact unexpanded values (UTF-8 strings
+OS pin, rechecked immediately after the probe. Changed, invalid or unavailable
+post-probe pins fail before any candidate or assertion is written.
+Registry strings/DWORDs compare exact unexpanded values (UTF-8 strings
 are not stripped to ASCII); SCM observations preserve pending/paused states.
 AppX checks describe the exact matching registry subkey, including whether it
 came from the deprovisioned root, **not** installed-package readiness. File
@@ -172,7 +174,11 @@ content are immutable. Embedded observation JSON uses compact ASCII with
 significant spaces escaped, preserving exact values through both stores'
 claim-content whitespace normalization. Assertion source/run identity also
 binds the normalized sector: identical evidence in another sector cannot reuse
-a committed run that lacks that sector's node. Identical evidence and canonical
+a committed run that lacks that sector's node. Auto-verifiable assertion sectors
+must be ASCII; non-ASCII sectors fail before source reads or persistence because
+C++ and Go do not share Unicode case/whitespace normalization. This does not
+restrict Unicode observation values, paths, names or evidence, or change the
+ingestion wire schema. Identical evidence and canonical
 sector reuse source/node identities even if caller prose changes; changed source
 bytes change the evidence identity.
 Ingestion/projection or judgment failures fail the request; already-written
