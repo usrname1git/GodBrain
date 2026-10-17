@@ -164,6 +164,40 @@ func TestEvidenceRecovery(t *testing.T) {
 		{"native-leases-go-completes", cpp, rollback}, {"go-leases-native-completes", rollback, cpp},
 	} {
 		t.Run(order.name, func(t *testing.T) {
+			for _, profile := range []string{"host", "document"} {
+				t.Run(profile+"-renewal-before-unsupported-backlog", func(t *testing.T) {
+					f := newEvidenceRecoveryFixture(t, order.lease, order.finish)
+					raw, kind, origin := "Synthetic supported document.", "web_document", url
+					if profile == "host" {
+						raw, kind, origin = "Windows host inventory\nclaim_class=host_fact\nfixture=host", "operator_thought", "host:fixture"
+					}
+					node := f.node(raw, kind, origin)
+					job := f.next()["job"].(map[string]any)
+					f.call(f.finish, f.result(job, "fresh", proofHash(raw), ""), false)
+					backlog := f.node("Synthetic unsupported history.", "session_transcript", "session:backlog")
+					job = f.next()["job"].(map[string]any)
+					f.call(f.finish, f.result(job, "unsupported", "", ""), false)
+					f.update(backlog, bson.M{"next_check_ms": int64(0)})
+					f.update(node, bson.M{"next_check_ms": time.Now().UnixMilli() - 1})
+					job = f.next()["job"].(map[string]any)
+					if job["stable_id"] != node.StableID {
+						t.Fatal("an older unsupported retry displaced a due supported renewal")
+					}
+					waiting := f.next()["job"].(map[string]any)
+					if waiting["stable_id"] != backlog.StableID {
+						t.Fatal("unsupported recovery stopped when no supported renewal was due")
+					}
+					f.call(f.finish, f.result(waiting, "unsupported", "", ""), false)
+					if f.next()["status"] != "idle" {
+						t.Fatal("priority stole an active renewal lease or bypassed a retry deadline")
+					}
+					f.call(f.finish, f.result(job, "fresh", proofHash(raw), ""), false)
+					f.current(node, true)
+					if f.next()["status"] != "idle" {
+						t.Fatal("priority bypassed a retry deadline or leased a future renewal")
+					}
+				})
+			}
 			t.Run("returning-observation-and-retired-deadline", func(t *testing.T) {
 				f := newEvidenceRecoveryFixture(t, order.lease, order.finish)
 				a := f.node("Synthetic exact state A.", "web_document", url)

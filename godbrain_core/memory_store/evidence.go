@@ -378,12 +378,22 @@ func (s *Store) EvidenceNext(ctx context.Context) (bson.M, error) {
 	}
 	token := primitive.NewObjectID().Hex()
 	var row evidenceRow
-	err = s.db.Collection("evidence_checks").FindOneAndUpdate(ctx,
-		bson.M{"next_check_ms": bson.M{"$lte": now}, "lease_until_ms": bson.M{"$lte": now}},
-		bson.M{"$set": bson.M{"lease_token": token, "lease_until_ms": now + EvidenceLeaseMS},
-			"$inc": bson.M{"attempts": 1}},
-		options.FindOneAndUpdate().SetSort(bson.D{{Key: "next_check_ms", Value: 1}, {Key: "_id", Value: 1}}).
-			SetReturnDocument(options.After)).Decode(&row)
+	filter := bson.M{"next_check_ms": bson.M{"$lte": now}, "lease_until_ms": bson.M{"$lte": now}}
+	for _, supported := range []bool{true, false} {
+		if supported {
+			filter["profile"] = bson.M{"$in": []string{"host", "document"}}
+		} else {
+			delete(filter, "profile")
+		}
+		err = s.db.Collection("evidence_checks").FindOneAndUpdate(ctx, filter,
+			bson.M{"$set": bson.M{"lease_token": token, "lease_until_ms": now + EvidenceLeaseMS},
+				"$inc": bson.M{"attempts": 1}},
+			options.FindOneAndUpdate().SetSort(bson.D{{Key: "next_check_ms", Value: 1}, {Key: "_id", Value: 1}}).
+				SetReturnDocument(options.After)).Decode(&row)
+		if !errors.Is(err, mongo.ErrNoDocuments) {
+			break
+		}
+	}
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		return bson.M{"status": "idle"}, nil
 	}

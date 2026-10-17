@@ -213,6 +213,11 @@ are idempotent; late workers cannot replace newer checks. Failures use bounded
 1/2/4/8/16-minute retries, escalate after six attempts and continue daily recovery.
 Crashes cannot keep work leased forever. Incidents group by reason/source instead
 of making every historical card an operator approval chore.
+Due jobs with an already checked host/document source profile are claimed before
+the unsupported backlog, preserving due-time/ID order within each cohort.
+Priority does not refresh a proof or bypass due times, active leases or retries.
+Unsupported recovery still runs when no supported job is due; unseen or rebound
+sources still require their first actual check.
 
 Both native and Go rollback search/document/graph and skill paths enforce the
 same policy. Current canonical identity, status, sector, committed linkage,
