@@ -255,10 +255,19 @@ inline std::string observation_text(const json& observation) {
     return encoded;
 }
 
-inline json assertion_document(const json& observation, const json& evidence,
-                               const std::string& sector, const std::string& claim_class) {
+inline std::string assertion_sector(const std::string& sector) {
     const auto normalized_sector = lower(collapse_ws(sector));
     bounded(normalized_sector, 128, "assertion sector");
+    for (unsigned char ch : normalized_sector) {
+        if (ch >= 128)
+            throw std::runtime_error("assertion sector must be ASCII for C++/Go identity parity");
+    }
+    return normalized_sector;
+}
+
+inline json assertion_document(const json& observation, const json& evidence,
+                               const std::string& sector, const std::string& claim_class) {
+    const auto normalized_sector = assertion_sector(sector);
     const std::string raw = json{
         {"profile", kProfile},
         {"checker_version", kVersion},
@@ -347,6 +356,7 @@ json promote(const json& payload, Fetch fetch, ReadProbe read_probe, Pin read_pi
     if (claim_class != "host_fact" && claim_class != "doc_fact" && claim_class != "playbook") {
         throw std::runtime_error("class must be host_fact, doc_fact, or playbook");
     }
+    if (claim_class != "playbook") (void)assertion_sector(sector);
     json fields = {{"class", claim_class}};
     json observation;
     json evidence;
@@ -383,6 +393,8 @@ json promote(const json& payload, Fetch fetch, ReadProbe read_probe, Pin read_pi
         const Observation read = read_probe(probe);
         if (!read.complete)
             throw std::runtime_error("host probe could not establish an observation");
+        if (checked_pin(read_pin()) != pin)
+            throw std::runtime_error("host OS pin changed during the probe");
         bounded(read.value, 4096, "observed value", false);
         if (!read.details.is_object() || read.details.dump().size() > 8192) {
             throw std::runtime_error("host probe details are invalid");

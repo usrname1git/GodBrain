@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #if defined(GODBRAIN_HAVE_MONGOC)
@@ -118,9 +119,12 @@ struct Database {
         return result;
     }
 
-    json aggregate(const char* collection, const json& pipeline) const {
+    json aggregate(const char* collection, const json& pipeline,
+                   const std::function<bool(const json&)>& accept = {}) const {
         auto query = bson(json{{"pipeline", pipeline}});
-        auto opts = bson(json{{"maxTimeMS", 3000}});
+        json options = {{"maxTimeMS", 3000}};
+        if (accept) options["batchSize"] = 1;
+        auto opts = bson(options);
         const std::unique_ptr<mongoc_collection_t, decltype(&mongoc_collection_destroy)> coll(
             mongoc_client_get_collection(client, name.c_str(), collection),
             mongoc_collection_destroy);
@@ -130,8 +134,13 @@ struct Database {
             mongoc_cursor_destroy);
         json result = json::array();
         const bson_t* row = nullptr;
-        while (mongoc_cursor_next(cursor.get(), &row))
-            result.push_back(decode(row));
+        while (mongoc_cursor_next(cursor.get(), &row)) {
+            auto decoded = decode(row);
+            if (!accept || accept(decoded)) {
+                result.push_back(std::move(decoded));
+                if (accept) break;
+            }
+        }
         bson_error_t error{};
         const bool failed = mongoc_cursor_error(cursor.get(), &error);
         if (failed) throw std::runtime_error(std::string("evidence join: ") + error.message);
@@ -163,24 +172,43 @@ struct Database {
     }
 };
 
+std::string profile(const json& source, const json& row);
+
 json committed_source(const Database& db, const std::string& node, const std::string& run = "",
                       const std::string& hash = "") {
     json match = {{"node_id", oid(node)}};
     if (!run.empty()) match["run_id"] = run;
     json run_match = {{"run.status", "committed"}};
     if (!hash.empty()) run_match["run.source_hash"] = hash;
-    const auto rows = db.aggregate(
-        "run_node_links",
-        json::array({json{{"$match", match}},
+    auto pipeline = json::array({json{{"$match", match}},
                      json{{"$lookup",
                            {{"from", "ingestion_runs"},
                             {"localField", "run_id"},
                             {"foreignField", "run_id"},
                             {"as", "run"}}}},
                      json{{"$unwind", "$run"}}, json{{"$match", run_match}},
-                     json{{"$sort", {{"run.created_at", -1}, {"run.run_id", 1}}}},
-                     json{{"$limit", 1}}, json{{"$replaceRoot", {{"newRoot", "$run"}}}}}));
-    return rows.empty() ? json() : rows.front();
+                     json{{"$sort", {{"run.created_at", -1}, {"run.run_id", 1}}}}});
+    if (!run.empty() || !hash.empty()) {
+        pipeline.push_back({{"$limit", 1}});
+        const auto rows = db.aggregate("run_node_links", pipeline);
+        return rows.empty() ? json() : rows.front().at("run");
+    }
+    pipeline.push_back({{"$lookup",
+                         {{"from", "sources"},
+                          {"localField", "run.source_hash"},
+                          {"foreignField", "source_hash"},
+                          {"as", "source"}}}});
+    json fallback;
+    const auto rows = db.aggregate("run_node_links", pipeline, [&](const json& candidate) {
+        const auto& current = candidate.at("run");
+        if (fallback.is_null()) fallback = current;
+        if (candidate.at("source").empty()) return false;
+        const auto& source = candidate.at("source").front();
+        return keccak256_hex(source.value("content", "")) == current.at("source_hash") &&
+               profile(source, {{"source_url", current.value("external_source_id", "")}}) !=
+                   "unsupported";
+    });
+    return rows.empty() ? fallback : rows.front().at("run");
 }
 
 bool canonical(const Database& db, const json& row) {
@@ -230,6 +258,40 @@ void enroll(const Database& db, std::int64_t now) {
                      {"expires_at_ms", 0},
                      {"reason", "awaiting_check"}}}},
                   true);
+        const auto enrolled = db.find("evidence_checks", {{"_id", binding}}, {{"limit", 1}});
+        if (enrolled.empty()) throw std::runtime_error("evidence enrollment was not retained");
+        const auto& current = enrolled.front();
+        const bool same_source = current.at("source_hash") == run.at("source_hash") &&
+                                 current.value("source_url", "") ==
+                                     run.value("external_source_id", "");
+        const json idle = {{"_id", binding},
+                           {"source_run", current.at("source_run")},
+                           {"source_hash", current.at("source_hash")},
+                           {"source_url", current.value("source_url", "")},
+                           {"lease_until_ms", {{"$lte", now}}}};
+        if (!same_source || !canonical(db, current)) {
+            db.update("evidence_checks", idle,
+                      {{"$set",
+                        {{"source_run", run.at("run_id")},
+                         {"source_hash", run.at("source_hash")},
+                         {"source_url", run.value("external_source_id", "")},
+                         {"state", "pending"},
+                         {"profile", "unsupported"},
+                         {"attempts", 0},
+                         {"next_check_ms", now},
+                         {"lease_until_ms", 0},
+                         {"checked_at_ms", 0},
+                         {"expires_at_ms", 0},
+                         {"reason", "provenance_changed"}}},
+                       {"$unset",
+                        {{"lease_token", ""}, {"last_token", ""}, {"last_result", ""},
+                         {"maintenance_version", ""}}}});
+        } else if (current.value("state", "") == "changed" &&
+                   current.value("next_check_ms", std::int64_t{0}) > now + kDocumentTtlMs) {
+            auto retired = idle;
+            retired["next_check_ms"] = current.at("next_check_ms");
+            db.update("evidence_checks", retired, {{"$set", {{"next_check_ms", now}}}});
+        }
     }
     if (nodes.empty())
         db.update("evidence_maintenance", {{"_id", "scan"}}, {{"$unset", {{"after", ""}}}}, true);
@@ -242,10 +304,11 @@ std::string profile(const json& source, const json& row) {
     const auto raw = source.value("content", "");
     if (source.value("source_type", "") == "kernel_truth_observation") {
         const auto parsed = json::parse(raw, nullptr, false);
-        if (parsed.is_object() && parsed.value("profile", "") == "truth-observation-v1" &&
-            parsed.value("checker_version", "") == "1.0.0" && parsed.contains("observation") &&
+        if (parsed.is_object() && parsed.contains("profile") &&
+            parsed["profile"] == "truth-observation-v1" && parsed.contains("checker_version") &&
+            parsed["checker_version"] == "1.0.0" && parsed.contains("observation") &&
             parsed["observation"].is_object()) {
-            const auto kind = parsed["observation"].value("kind", "");
+            const auto kind = parsed["observation"].value("kind", json());
             if (kind == "document_quote_presence") return "document";
             if (kind == "host_probe_observation") return "host";
         }
@@ -366,9 +429,20 @@ json complete(const Database& db, const EvidenceRequest& request) {
     }
     now = saved.front().at("checked_at_ms").get<std::int64_t>();
     const auto due = fresh                          ? now + ttl / 2
-                     : !request.successor.empty()   ? INT64_MAX / 2
                      : request.outcome == "changed" ? now + kDocumentTtlMs
                                                     : now + evidence_backoff(attempts);
+    if (!request.successor.empty()) {
+        db.command({{"update", "evidence_checks"},
+                    {"updates",
+                     json::array({json{
+                         {"q", {{"stable_id", request.successor},
+                                {"sector", row.at("sector")},
+                                {"source_hash", request.observed_hash},
+                                {"state", {{"$ne", "fresh"}}},
+                                {"lease_until_ms", {{"$lte", now_ms()}}}}},
+                         {"u", {{"$min", {{"next_check_ms", now_ms()}}}}},
+                         {"multi", true}}})}});
+    }
     const auto updated = db.command({{"findAndModify", "evidence_checks"},
                                      {"query",
                                       {{"_id", request.id},

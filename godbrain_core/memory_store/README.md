@@ -65,6 +65,12 @@ change or failed read cannot extend freshness. Discovery/onboarding and checks
 run in the existing native Heal/kernel loop, with no model or paid service.
 For supported checked observations, changed evidence creates a separate
 observation rather than re-verifying an unrelated old interpretation.
+Reproducible committed sources take precedence over newer unsupported runs.
+Enrollment reconciles changed bindings only when idle, invalidates old lease
+and proof pointers, and requires another check; equivalent usable sources keep
+their existing proof. Returning exact observations are re-armed, superseded
+bindings retain daily recovery, and discovery repairs old infinite deadlines.
+Changing Content-Type cannot renew the old quote proof on unchanged body bytes.
 
 `TestEvidenceCrossBackendMaintenance` uses `MONGODB_TEST_URI` plus
 `GODBRAIN_CPP_STORE_TEST_EXE` and `GODBRAIN_GO_STORE_TEST_EXE` pointing at
