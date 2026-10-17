@@ -5,11 +5,11 @@
   "payload": {
     "claims": [
       {
-        "claim_id": "claim:00f7335f3f182e26dbe280cb596ca3b80e37e0233beae1fa2cc36609becf51fe",
+        "claim_id": "claim:797dec6d1a851b83d5806d767edcfe056e7bb9b9a4bbff0f5f2aa4ca20a65fa1",
         "confidence": 1.0,
         "content": "Machine-checked observation only; not proof of caller interpretation.\nclaim_class=host_fact\nassertion_profile=truth-observation-v1\nchecker_version=1.0.0\nos_pin=Core/26100.0\nobservation={\"details\":{\"service_state\":4},\"kind\":\"host_probe_observation\",\"observed\":\"running\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"service\",\"name\":\"FixtureService\",\"path\":\"\"}}\nevidence_keccak256=af4d93c88bc006eb292082f7f0784157b6406880124d48a34005c30758fe8054\n",
         "evidence_spans": [
-          "[0:425]"
+          "[0:448]"
         ],
         "type": "windows-sre"
       }
@@ -22,12 +22,12 @@
       "model_hash": "N/A",
       "model_id": "none",
       "prompt_hash": "N/A",
-      "source_hash": "00f7335f3f182e26dbe280cb596ca3b80e37e0233beae1fa2cc36609becf51fe",
-      "source_id": "truth:00f7335f3f182e26dbe280cb596ca3b80e37e0233beae1fa2cc36609becf51fe",
+      "source_hash": "797dec6d1a851b83d5806d767edcfe056e7bb9b9a4bbff0f5f2aa4ca20a65fa1",
+      "source_id": "truth:797dec6d1a851b83d5806d767edcfe056e7bb9b9a4bbff0f5f2aa4ca20a65fa1",
       "source_type": "kernel_truth_observation"
     },
     "trust_tier": "candidate"
   },
-  "raw_transcript": "{\"checker_version\":\"1.0.0\",\"evidence\":{\"details\":{\"service_state\":4},\"kind\":\"host_probe_observation\",\"observed\":\"running\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"service\",\"name\":\"FixtureService\",\"path\":\"\"}},\"observation\":{\"details\":{\"service_state\":4},\"kind\":\"host_probe_observation\",\"observed\":\"running\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"service\",\"name\":\"FixtureService\",\"path\":\"\"}},\"profile\":\"truth-observation-v1\"}",
+  "raw_transcript": "{\"checker_version\":\"1.0.0\",\"evidence\":{\"details\":{\"service_state\":4},\"kind\":\"host_probe_observation\",\"observed\":\"running\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"service\",\"name\":\"FixtureService\",\"path\":\"\"}},\"observation\":{\"details\":{\"service_state\":4},\"kind\":\"host_probe_observation\",\"observed\":\"running\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"service\",\"name\":\"FixtureService\",\"path\":\"\"}},\"profile\":\"truth-observation-v1\",\"sector\":\"windows-sre\"}",
   "schema_version": "1.0"
 }

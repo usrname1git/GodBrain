@@ -168,8 +168,13 @@ that does not match `expect` retains only the caller candidate.
 
 Candidate ingestion uses the existing strict C++/Go envelope and legacy
 Keccak source hashing. Complete evidence spans, checker identity and canonical
-content are immutable. Identical evidence reuses source/node identities even
-if caller prose changes; changed source bytes change the evidence identity.
+content are immutable. Embedded observation JSON uses compact ASCII with
+significant spaces escaped, preserving exact values through both stores'
+claim-content whitespace normalization. Assertion source/run identity also
+binds the normalized sector: identical evidence in another sector cannot reuse
+a committed run that lacks that sector's node. Identical evidence and canonical
+sector reuse source/node identities even if caller prose changes; changed source
+bytes change the evidence identity.
 Ingestion/projection or judgment failures fail the request; already-written
 candidates remain available for idempotent retry, not automatic rollback or
 success. No legacy cards are silently reclassified. These are checked

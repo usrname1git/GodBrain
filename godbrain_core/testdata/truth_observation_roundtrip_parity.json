@@ -1,0 +1,36 @@
+{
+  "envelope": {
+    "degraded": false,
+    "extractor_id": "Kernel-Truth-CPP",
+    "extractor_version": "1.0.0",
+    "payload": {
+      "claims": [
+        {
+          "claim_id": "claim:f88c1f000cb41d38a66f8efb1c4b404ed15f21b1a5e109433fee209091d52384",
+          "confidence": 1.0,
+          "content": "Machine-checked observation only; not proof of caller interpretation.\nclaim_class=host_fact\nassertion_profile=truth-observation-v1\nchecker_version=1.0.0\nos_pin=Core/26100.0\nobservation={\"details\":{\"detail\\u0020\\u0020key\":\"\\u0020\\u0020exact\\tvalue\\n\",\"value_type\":\"REG_SZ\"},\"kind\":\"host_probe_observation\",\"observed\":\"\\u0020\\u0020two\\u0020\\u0020spaces\\tline\\nnext\\r\\f\\u000b\\u0020\\u00a0\\u2003\\u00c5\\u0020\\u0020\",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"registry_value\",\"name\":\"Fixture\\u0020\\u0020\\u00c5\\u0020Value\",\"path\":\"SOFTWARE\\\\Fixture\\u0020\\u0020Key\"}}\nevidence_keccak256=0de96130cdbf602f5be384a99e3f127478fd77e90ad448712c1049494bff944d\n",
+          "evidence_spans": [
+            "[0:662]"
+          ],
+          "type": "windows-sre"
+        }
+      ],
+      "core_concepts": [],
+      "opsec_candidates": [],
+      "provenance": {
+        "language": "mixed",
+        "llm_temperature": 0.0,
+        "model_hash": "N/A",
+        "model_id": "none",
+        "prompt_hash": "N/A",
+        "source_hash": "f88c1f000cb41d38a66f8efb1c4b404ed15f21b1a5e109433fee209091d52384",
+        "source_id": "truth:f88c1f000cb41d38a66f8efb1c4b404ed15f21b1a5e109433fee209091d52384",
+        "source_type": "kernel_truth_observation"
+      },
+      "trust_tier": "candidate"
+    },
+    "raw_transcript": "{\"checker_version\":\"1.0.0\",\"evidence\":{\"details\":{\"detail  key\":\"  exact\\tvalue\\n\",\"value_type\":\"REG_SZ\"},\"kind\":\"host_probe_observation\",\"observed\":\"  two  spaces\\tline\\nnext\\r\\f\\u000b \u00a0\u2003\u00c5  \",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"registry_value\",\"name\":\"Fixture  \u00c5 Value\",\"path\":\"SOFTWARE\\\\Fixture  Key\"}},\"observation\":{\"details\":{\"detail  key\":\"  exact\\tvalue\\n\",\"value_type\":\"REG_SZ\"},\"kind\":\"host_probe_observation\",\"observed\":\"  two  spaces\\tline\\nnext\\r\\f\\u000b \u00a0\u2003\u00c5  \",\"os_pin\":\"Core/26100.0\",\"probe\":{\"kind\":\"registry_value\",\"name\":\"Fixture  \u00c5 Value\",\"path\":\"SOFTWARE\\\\Fixture  Key\"}},\"profile\":\"truth-observation-v1\",\"sector\":\"windows-sre\"}",
+    "schema_version": "1.0"
+  },
+  "kernel_stable_id": "2295efef55dc12d1340d2d8af4c27048025e887040cb0de6ad695223d4958952"
+}

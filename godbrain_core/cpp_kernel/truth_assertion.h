@@ -241,11 +241,28 @@ inline std::string checked_pin(const std::string& pin) {
     return pin;
 }
 
+inline std::string observation_text(const json& observation) {
+    // Both stores normalize claim whitespace, including inside embedded JSON strings.
+    const auto compact = observation.dump(-1, ' ', true);
+    std::string encoded;
+    encoded.reserve(compact.size());
+    for (char ch : compact) {
+        if (ch == ' ')
+            encoded += "\\u0020";
+        else
+            encoded.push_back(ch);
+    }
+    return encoded;
+}
+
 inline json assertion_document(const json& observation, const json& evidence,
                                const std::string& sector, const std::string& claim_class) {
+    const auto normalized_sector = lower(collapse_ws(sector));
+    bounded(normalized_sector, 128, "assertion sector");
     const std::string raw = json{
         {"profile", kProfile},
         {"checker_version", kVersion},
+        {"sector", normalized_sector},
         {"observation", observation},
         {"evidence", evidence}}.dump();
     const std::string hash = keccak256(raw);
@@ -255,7 +272,7 @@ inline json assertion_document(const json& observation, const json& evidence,
     if (claim_class == "host_fact") {
         content += "os_pin=" + observation.at("os_pin").get<std::string>() + "\n";
     }
-    content += "observation=" + observation.dump() +
+    content += "observation=" + observation_text(observation) +
                "\nevidence_keccak256=" + keccak256(evidence.dump()) + "\n";
     bounded(content, kMaxContentBytes, "assertion content");
     json document = {
@@ -276,7 +293,7 @@ inline json assertion_document(const json& observation, const json& evidence,
             {"model_hash", "N/A"},
             {"llm_temperature", 0.0}}},
           {"claims", json::array({{{"claim_id", "claim:" + hash},
-                                   {"type", sector},
+                                   {"type", normalized_sector},
                                    {"content", content},
                                    {"confidence", 1.0},
                                    {"evidence_spans",

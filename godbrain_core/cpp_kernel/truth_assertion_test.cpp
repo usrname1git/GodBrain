@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #include <iostream>
+#include <map>
+#include <set>
 #include <vector>
 
 using godbrain_truth::json;
@@ -50,6 +52,9 @@ struct Fixture {
     std::string pin = "Core/26100.0";
     std::string fail;
     bool noop = false;
+    bool persist = false;
+    std::map<std::string, std::string> committed_runs;
+    std::set<std::string> nodes;
     json ingest_override = json::object();
     json judgment_override = json::object();
 
@@ -83,9 +88,26 @@ struct Fixture {
                 calls.push_back("ingest");
                 if (fail == "ingest") throw std::runtime_error("fixture projection failed");
                 documents.push_back(input);
+                std::string id(64, 'a');
+                std::string status = noop ? "idempotent_noop" : "committed";
+                if (persist) {
+                    const auto& claim = input.at("payload").at("claims").at(0);
+                    id = keccak256(
+                        std::string("claim") + '\0' + claim.at("type").get<std::string>() + '\0' +
+                        godbrain_truth::collapse_ws(claim.at("content").get<std::string>()));
+                    const auto key =
+                        json::array({input.at("payload").at("provenance").at("source_hash"),
+                                     input.at("extractor_id"), input.at("extractor_version"),
+                                     input.at("schema_version")})
+                            .dump();
+                    if (committed_runs.emplace(key, id).second)
+                        nodes.insert(id);
+                    else
+                        status = "idempotent_noop";
+                }
                 json receipt = {{"status", "success"},
-                                {"store_status", noop ? "idempotent_noop" : "committed"},
-                                {"stable_id", std::string(64, 'a')},
+                                {"store_status", status},
+                                {"stable_id", id},
                                 {"source_hash", input["payload"]["provenance"]["source_hash"]},
                                 {"run_id", "fixture-run"},
                                 {"record_id", "fixture-record"}};
@@ -96,6 +118,9 @@ struct Fixture {
                 calls.push_back("judge");
                 check(input.at("id") != std::string(64, 'c'),
                       "Caller prose reached automatic judgment");
+                if (persist)
+                    check(nodes.count(input.at("id").get<std::string>()) == 1,
+                          "Assertion judgment targeted a node absent from its committed run");
                 if (fail == "judge") throw std::runtime_error("fixture judgment failed");
                 judgments.push_back(input);
                 json receipt = {{"status", noop ? "idempotent_noop" : "judged"},
@@ -133,10 +158,33 @@ static void check_separation(const Fixture& fixture, const json& result) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string(argv[1]) == "--emit-envelope") {
+        if (argc == 2 && (std::string(argv[1]) == "--emit-envelope" ||
+                          std::string(argv[1]) == "--emit-roundtrip")) {
             Fixture fixture;
-            fixture.run(host_request());
-            std::cout << fixture.documents.back().dump(2) << '\n';
+            const bool roundtrip = std::string(argv[1]) == "--emit-roundtrip";
+            auto request = host_request();
+            if (roundtrip) {
+                const std::string value = std::string("  two  spaces\tline\nnext\r\f\v ") +
+                                          "\xc2\xa0" + "\xe2\x80\x83" + "\xc3\x85" + "  ";
+                fixture.observed = {
+                    true, value, {{"value_type", "REG_SZ"}, {"detail  key", "  exact\tvalue\n"}}};
+                request = host_request("registry_value", value);
+                request["probe"]["path"] = "SOFTWARE\\Fixture  Key";
+                request["probe"]["name"] = std::string("Fixture  ") + "\xc3\x85" + " Value";
+            }
+            fixture.run(request);
+            const auto& document = fixture.documents.back();
+            if (roundtrip) {
+                const auto& claim = document.at("payload").at("claims").at(0);
+                const auto id = keccak256(
+                    std::string("claim") + '\0' + claim.at("type").get<std::string>() + '\0' +
+                    godbrain_truth::collapse_ws(claim.at("content").get<std::string>()));
+                std::cout << json{{"envelope", document}, {"kernel_stable_id", id}}.dump(2, ' ',
+                                                                                         true)
+                          << '\n';
+            } else {
+                std::cout << document.dump(2, ' ', true) << '\n';
+            }
             return 0;
         }
         {
@@ -170,6 +218,43 @@ int main(int argc, char** argv) {
                           .at("evidence")
                           .at("body") == fixture.page.body,
                   "Document evidence was truncated to the small thought limit");
+        }
+        {
+            Fixture fixture;
+            fixture.persist = true;
+            const auto first = fixture.run();
+            auto request = doc_request();
+            request["text"] = "UNSUPPORTED: another sector's caller interpretation.";
+            request["sector"] = "operator";
+            const auto second = fixture.run(request);
+            check_separation(fixture, second);
+            check(first.at("assertion").at("source_hash") !=
+                          second.at("assertion").at("source_hash") &&
+                      first.at("assertion").at("stable_id") !=
+                          second.at("assertion").at("stable_id") &&
+                      fixture.committed_runs.size() == 2 && fixture.nodes.size() == 2,
+                  "Distinct sectors reused an assertion run without inserting their own node");
+            request["sector"] = " \tOPERATOR\r\n ";
+            request["text"] = "UNSUPPORTED: revised prose with the same canonical sector.";
+            const auto repeated = fixture.run(request);
+            check(repeated.at("assertion").at("store_status") == "idempotent_noop" &&
+                      repeated.at("assertion").at("source_hash") ==
+                          second.at("assertion").at("source_hash") &&
+                      repeated.at("assertion").at("stable_id") ==
+                          second.at("assertion").at("stable_id") &&
+                      fixture.committed_runs.size() == 2 && fixture.nodes.size() == 2,
+                  "Canonical sector retry changed identity or created another run");
+        }
+        {
+            const json observation = {
+                {"two  spaces", std::string("  exact\tvalue\n") + "\xc2\xa0\xe2\x80\x83"},
+                {"path", "C:\\Fixture  Directory\\value"}};
+            const auto encoded = godbrain_truth::observation_text(observation);
+            check(encoded.find_first_of(" \t\r\n\f\v") == std::string::npos &&
+                      json::parse(encoded) == observation,
+                  "Observation encoding cannot preserve exact values through normalization");
+            for (unsigned char ch : encoded)
+                check(ch < 128, "Observation encoding retained Unicode whitespace");
         }
         for (const auto* kind : {"registry_key", "registry_value", "appx", "service", "file"}) {
             Fixture fixture;

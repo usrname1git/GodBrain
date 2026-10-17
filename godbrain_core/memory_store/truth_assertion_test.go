@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,7 @@ func TestTruthObservationProtocolParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	decode := func(raw []byte) (DistillationPayload, error) {
 		var payload DistillationPayload
 		decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -63,5 +65,55 @@ func TestTruthObservationProtocolParity(t *testing.T) {
 				t.Fatal("invalid assertion envelope was accepted")
 			}
 		})
+	}
+}
+
+func TestTruthObservationRoundTrip(t *testing.T) {
+	input, err := os.ReadFile("../testdata/truth_observation_roundtrip_parity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Envelope       json.RawMessage `json:"envelope"`
+		KernelStableID string          `json:"kernel_stable_id"`
+	}
+	if err := json.Unmarshal(input, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	var payload DistillationPayload
+	decoder := json.NewDecoder(bytes.NewReader(fixture.Envelope))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePreIngestionPayload(payload); err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Observation map[string]any `json:"observation"`
+	}
+	if err := json.Unmarshal([]byte(payload.RawTranscript), &raw); err != nil {
+		t.Fatal(err)
+	}
+	claim := normalizeClaim(payload.Payload.Claims[0])
+	start := strings.Index(claim.Content, "observation=")
+	end := strings.LastIndex(claim.Content, "evidence_keccak256=")
+	if start < 0 || end <= start {
+		t.Fatal("observation framing is missing")
+	}
+	var observed map[string]any
+	if err := json.Unmarshal(
+		[]byte(claim.Content[start+len("observation="):end]), &observed,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(observed, raw.Observation) {
+		t.Fatal("claim normalization changed exact observation values, paths, names or details")
+	}
+	if fixture.KernelStableID == "" || claimStableID(claim) != fixture.KernelStableID {
+		t.Fatal("Go persisted node identity differs from the C++ kernel judgment target")
+	}
+	if err := validateEvidenceSpans(claim.EvidenceSpans, payload.RawTranscript); err != nil {
+		t.Fatal(err)
 	}
 }
