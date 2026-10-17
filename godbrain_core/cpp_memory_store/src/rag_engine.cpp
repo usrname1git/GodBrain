@@ -3,6 +3,7 @@
 #include "godbrain/memory_store/json.hpp"
 #include "godbrain/memory_store/protocol.hpp"
 #include "godbrain/memory_store/snapshot.hpp"
+#include "godbrain/memory_store/store.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -1630,65 +1631,33 @@ HttpResponse handle_skills(RagEngine* e, const HttpRequest& req) {
     int limit = 5;
     if (json_has(root, "limit")) {
         double n = 0;
-        if (!json_number(root, "limit", &n)) return api_error(400, "invalid_request");
+        if (!json_number(root, "limit", &n) || !std::isfinite(n) || n < 1 || n > 25 || std::floor(n) != n) {
+            return api_error(400, "invalid_request");
+        }
         limit = static_cast<int>(n);
     }
     if (limit < 1 || limit > 25) return api_error(400, "skill limit must be between 1 and 25");
     HealthSnap h;
     std::string err;
     if (!fill_health(e, &h, &err) || !h.ready) return api_error(503, "skills_unavailable");
-    std::string pattern = regex_quote(query);
-    std::ostringstream fj;
-    fj << "{\"$or\":[{\"name\":{\"$regex\":\"" << json_escape(pattern)
-       << "\",\"$options\":\"i\"}},{\"content\":{\"$regex\":\"" << json_escape(pattern)
-       << "\",\"$options\":\"i\"}}]}";
-    bson_error_t error{};
-    bson_t* filter = bson_new_from_json(
-        reinterpret_cast<const uint8_t*>(fj.str().data()), static_cast<ssize_t>(fj.str().size()), &error);
-    if (filter == nullptr) return api_error(503, "skills_unavailable");
-    bson_t sort = BSON_INITIALIZER;
-    BSON_APPEND_INT32(&sort, "created_at", -1);
-    bson_t opts = BSON_INITIALIZER;
-    BSON_APPEND_DOCUMENT(&opts, "sort", &sort);
-    BSON_APPEND_INT64(&opts, "limit", static_cast<int64_t>(limit));
-    mongoc_collection_t* skills = coll(e, "skills");
-    mongoc_cursor_t* cur = mongoc_collection_find_with_opts(skills, filter, &opts, nullptr);
-    struct SkillHit {
-        std::string name, content, origin, hash, profile;
-    };
-    std::vector<SkillHit> hits;
-    const bson_t* doc = nullptr;
-    while (mongoc_cursor_next(cur, &doc)) {
-        SkillHit s;
-        iter_utf8(doc, "name", &s.name);
-        iter_utf8(doc, "content", &s.content);
-        if (!iter_utf8(doc, "origin_node_id", &s.origin)) s.origin = oid_hex(doc, "origin_node_id");
-        iter_utf8(doc, "origin_hash", &s.hash);
-        iter_utf8(doc, "verification_profile", &s.profile);
-        if (!s.name.empty()) hits.push_back(std::move(s));
-    }
-    if (mongoc_cursor_error(cur, &error)) {
-        mongoc_cursor_destroy(cur);
-        mongoc_collection_destroy(skills);
-        bson_destroy(filter);
-        bson_destroy(&sort);
-        bson_destroy(&opts);
+    QuerySkillsRequest request;
+    request.command = kQuerySkillsCommand;
+    request.query = query;
+    request.limit = limit;
+    QuerySkillsReceiptOut receipt;
+    if (!store_query_skills(e->client, e->db_name, request, &receipt, &err)) {
         return api_error(503, "skills_unavailable");
     }
-    mongoc_cursor_destroy(cur);
-    mongoc_collection_destroy(skills);
-    bson_destroy(filter);
-    bson_destroy(&sort);
-    bson_destroy(&opts);
+    const auto& hits = receipt.skills;
     std::ostringstream o;
     o << "{\"query\":\"" << json_escape(query) << "\",\"count\":" << hits.size() << ",\"skills\":[";
     for (size_t i = 0; i < hits.size(); ++i) {
         if (i) o << ",";
         o << "{\"name\":\"" << json_escape(hits[i].name) << "\",\"content\":\"" << json_escape(hits[i].content)
-          << "\",\"origin_node_id\":\"" << json_escape(hits[i].origin) << "\",\"origin_hash\":\""
-          << json_escape(hits[i].hash) << "\"";
-        if (!hits[i].profile.empty()) {
-            o << ",\"verification_profile\":\"" << json_escape(hits[i].profile) << "\"";
+          << "\",\"origin_node_id\":\"" << json_escape(hits[i].origin_node_id) << "\",\"origin_hash\":\""
+          << json_escape(hits[i].origin_hash) << "\"";
+        if (!hits[i].verification_profile.empty()) {
+            o << ",\"verification_profile\":\"" << json_escape(hits[i].verification_profile) << "\"";
         }
         o << ",\"untrusted\":true}";
     }

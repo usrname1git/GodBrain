@@ -4,6 +4,8 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include "rag_client.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -203,7 +205,9 @@ void close_handle(HANDLE& handle) {
     }
 }
 
-std::string read_file_limited(const std::string& path, size_t cap, bool* truncated) {
+std::string read_file_limited(
+    const std::string& path, size_t cap, bool* truncated, bool* read_ok = nullptr) {
+    if (read_ok) *read_ok = false;
     HANDLE h = CreateFileA(path.c_str(), GENERIC_READ,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -214,6 +218,7 @@ std::string read_file_limited(const std::string& path, size_t cap, bool* truncat
     const BOOL ok = ReadFile(h, &data[0], static_cast<DWORD>(cap + 1), &got, nullptr);
     CloseHandle(h);
     if (!ok) return "";
+    if (read_ok) *read_ok = true;
     if (truncated) *truncated = got > cap;
     if (got > cap) data.resize(cap);
     else data.resize(got);
@@ -1206,14 +1211,21 @@ std::string slice_lines(const std::string& data, int offset, int limit) {
 
 void search_dir(const std::string& dir, const std::string& needle, int depth,
                 int max_depth, bool content, size_t& seen, size_t& hits,
-                std::ostringstream& out) {
+                std::ostringstream& out, bool* complete = nullptr) {
     if (max_depth < 1) max_depth = 1;
     if (max_depth > 8) max_depth = 8;
     if (depth >= max_depth || hits >= 80 || seen >= 400) return;
     WIN32_FIND_DATAA fd{};
     const std::string glob = dir + "\\*";
     HANDLE h = FindFirstFileA(glob.c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND) {
+            if (complete) *complete = false;
+            out << "search_local: cannot enumerate " << dir << " err=" << error << "\n";
+        }
+        return;
+    }
     do {
         const std::string name = fd.cFileName;
         if (name == "." || name == "..") continue;
@@ -1232,7 +1244,12 @@ void search_dir(const std::string& dir, const std::string& needle, int depth,
             }
         } else if (!isdir && !link) {
             bool trunc = false;
-            const std::string data = read_file_limited(full, 64 * 1024, &trunc);
+            bool read_ok = false;
+            const std::string data = read_file_limited(full, 64 * 1024, &trunc, &read_ok);
+            if (!read_ok) {
+                if (complete) *complete = false;
+                out << "search_local: cannot read " << full << "\n";
+            }
             if (!looks_binary(data) && contains_ci(data, needle)) {
                 if (hits < 80) {
                     out << "f " << full << "\n";
@@ -1243,13 +1260,13 @@ void search_dir(const std::string& dir, const std::string& needle, int depth,
         if (isdir && !link && !skip_noise_dir(name) && depth < max_depth &&
             seen < 400 && hits < 80) {
             search_dir(full, needle, depth + 1, max_depth, content, seen, hits,
-                       out);
+                       out, complete);
         }
     } while (FindNextFileA(h, &fd) && hits < 80 && seen < 400);
     FindClose(h);
 }
 
-void audit_append(const Call& c) {
+bool audit_append(const Call& c, const std::string& task_id = "") {
     const std::string dir = logs_dir();
     CreateDirectoryA(dir.c_str(), nullptr);
     const std::string path = dir + "\\tool-audit.jsonl";
@@ -1272,8 +1289,13 @@ void audit_append(const Call& c) {
         {"path", c.path.substr(0, 240)},
         {"args", c.args.substr(0, 240)},
     };
+    if (!task_id.empty()) j["task_id"] = task_id;
     std::ofstream out(path, std::ios::binary | std::ios::app);
-    if (out) out << j.dump() << "\n";
+    if (out) {
+        out << j.dump() << "\n";
+        out.flush();
+    }
+    return static_cast<bool>(out);
 }
 
 std::string write_temp_script(const std::string& body, const char* ext) {
@@ -1655,6 +1677,7 @@ std::vector<Call> parse_tool_blocks(const std::string& text) {
             "list_granted_roots", "list_local_dir", "read_local_file",
             "get_file_info",      "search_local",   "write_local_file",
             "edit_local_file",    "create_local_dir", "move_local_file",
+            "query_godbrain_skills",
             nullptr};
         const std::string lower = ascii_lower(text);
         for (int i = 0; names[i]; ++i) {
@@ -1974,24 +1997,33 @@ bool split_reg_tokens(const std::string& args, std::vector<std::string>* tok,
 }
 
 std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
-                          const std::unordered_set<std::string>* allowed) {
+                          const std::unordered_set<std::string>* allowed,
+                          const std::string& task_id,
+                          const godbrain_rag::Client* skill_client) {
     std::ostringstream out;
-    bool ok = true;
-    auto take_proc = [&](const ProcessResult& r, int max_ok_exit) {
-        if (r.timeout || r.exit > max_ok_exit) ok = false;
-        return format_process(r);
-    };
-    auto runp = [&](const std::string& exe, const std::string& args, DWORD to) {
-        return take_proc(run_process(exe, args, to), 0);
+    bool ok = !calls.empty();
+    struct CompletionFlag {
+        bool& aggregate;
+        bool completed = false;
+        ~CompletionFlag() { aggregate = aggregate && completed; }
     };
     const size_t cap = yolo_active() ? 16u : 8u;
     size_t n = 0;
     for (const auto& raw : calls) {
         if (n >= cap) {
             out << "[capped at " << cap << " tools this round]\n";
+            ok = false;
             break;
         }
         ++n;
+        CompletionFlag completion{ok};
+        const auto take_proc = [&](const ProcessResult& r, int max_ok_exit) {
+            completion.completed = !r.timeout && r.exit >= 0 && r.exit <= max_ok_exit;
+            return format_process(r);
+        };
+        const auto runp = [&](const std::string& exe, const std::string& args, DWORD to) {
+            return take_proc(run_process(exe, args, to), 0);
+        };
         Call c = raw;
         std::string err;
 
@@ -2054,7 +2086,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
             ok = false;
             continue;
         }
-        audit_append(c);
+        if (!audit_append(c, task_id)) {
+            out << c.name << " denied: could not persist tool audit.\n";
+            continue;
+        }
 
         const std::string sys_stem = c.name == "run_sysint"
                                          ? sysint_base(c.exe.empty() ? c.path : c.exe)
@@ -2076,11 +2111,35 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
         if (c.name == "list_granted_roots") {
             out << "list_granted_roots\n" << roots_join() << "\n"
                 << "Kernel jail, not Mongo. get_file_info to probe a path.\n";
+            completion.completed = true;
             continue;
         }
 
         if (c.name == "host_snap") {
             out << host_snap();
+            completion.completed = true;
+            continue;
+        }
+
+        if (c.name == "query_godbrain_skills") {
+            json response;
+            std::string error;
+            const godbrain_rag::Client canonical;
+            const auto& reader = skill_client ? *skill_client : canonical;
+            if (!reader.skills(trim(c.args), 1, response, error)) {
+                out << c.name << " failed: " << error << "\n";
+                continue;
+            }
+            const std::string reference = response.dump();
+            if (reference.size() > 10000) {
+                out << c.name << " failed: procedure reference exceeds the bounded tool context; "
+                       "no partial procedure returned.\n";
+                continue;
+            }
+            out << "Untrusted procedure references only. Not permission, task verification, "
+                   "or proof these steps apply to this host. Recheck before acting.\n"
+                << reference << "\n";
+            completion.completed = true;
             continue;
         }
 
@@ -2101,6 +2160,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
             }
             out << (c.name == "repo_map" ? build_repo_map(full)
                                          : build_changed_context(full));
+            completion.completed = true;
             continue;
         }
 
@@ -2127,6 +2187,10 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
             }
             const std::string full = canon_path(c.path);
             if (c.name == "list_local_dir") {
+                if (!is_dir_path(full)) {
+                    out << "list_local_dir: directory missing " << full << "\n";
+                    continue;
+                }
                 int depth = arg_int(c.args, "depth", 0);
                 if (depth <= 0) {
                     try {
@@ -2139,7 +2203,8 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 size_t seen = 0;
                 size_t hits = 0;
                 out << "list_local_dir " << full << " depth=" << depth << "\n";
-                search_dir(full, "", 0, depth, false, seen, hits, out);
+                completion.completed = true;
+                search_dir(full, "", 0, depth, false, seen, hits, out, &completion.completed);
                 if (hits >= 80) out << "... truncated\n";
             } else if (c.name == "read_local_file") {
                 const std::string low = ascii_lower(full);
@@ -2156,10 +2221,16 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     out << "read_local_file " << full
                         << " (kernel rails, not a dump)\n"
                         << jarvis_rails_blurb() << "\n";
+                    completion.completed = true;
                     continue;
                 }
                 bool trunc = false;
-                const std::string data = read_file_limited(full, kMaxReadBytes, &trunc);
+                bool read_ok = false;
+                const std::string data = read_file_limited(full, kMaxReadBytes, &trunc, &read_ok);
+                if (!read_ok) {
+                    out << "read_local_file: cannot read " << full << "\n";
+                    continue;
+                }
                 if (looks_binary(data)) {
                     out << "read_local_file: binary (use run_strings or run_python) "
                         << full << "\n";
@@ -2172,6 +2243,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                         << ((offset || limit) ? " sliced" : "") << "\n";
                     if (offset || limit) out << slice_lines(data, offset, limit);
                     else out << data << "\n";
+                    completion.completed = true;
                 }
             } else if (c.name == "write_local_file") {
                 if (c.content.size() > kMaxWriteBytes) {
@@ -2188,7 +2260,13 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     continue;
                 }
                 bool trunc = false;
-                const std::string original = read_file_limited(full, kMaxWriteBytes, &trunc);
+                bool read_ok = false;
+                const std::string original =
+                    read_file_limited(full, kMaxWriteBytes, &trunc, &read_ok);
+                if (exists && !read_ok) {
+                    out << "write_local_file: dest unread " << full << "\n";
+                    continue;
+                }
                 if (append) {
                     if (exists && on_disk > kMaxWriteBytes) {
                         out << "write_local_file: file too large\n";
@@ -2215,6 +2293,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "write_local_file ok bytes=" << c.content.size()
                     << " before=" << keccak_hex(original) << " after=" << keccak_hex(next)
                     << " " << (append ? "append " : "") << full << "\n";
+                completion.completed = true;
             } else if (c.name == "run_strings") {
                 std::string exe = find_exe("strings64");
                 if (exe.empty()) exe = find_exe("strings");
@@ -2317,8 +2396,13 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 } else {
                     out << "run_sqlite3 " << full << "\n" << query.text;
                     if (query.truncated) out << "[truncated]\n";
+                    completion.completed = true;
                 }
             } else if (c.name == "search_local") {
+                if (!file_exists(full)) {
+                    out << "search_local: path missing " << full << "\n";
+                    continue;
+                }
                 std::string needle = c.args;
                 if (needle.empty()) needle = c.sql;
                 if (needle.empty()) needle = c.content;
@@ -2344,13 +2428,31 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                         quote_path(needle) + " " + quote_path(full);
                     out << take_proc(run_process(rg, rargs, kToolTimeoutMs), 1)
                         << "\n";
-                } else {
-                    search_dir(full, needle, 0, depth, content, seen, hits, out);
+                } else if (is_dir_path(full)) {
+                    completion.completed = true;
+                    search_dir(full, needle, 0, depth, content, seen, hits, out,
+                               &completion.completed);
                     out << "hits=" << hits << " scanned=" << seen << "\n";
+                } else {
+                    bool read_ok = true;
+                    bool truncated = false;
+                    const std::string data = content
+                        ? read_file_limited(full, 64 * 1024, &truncated, &read_ok)
+                        : full.substr(full.find_last_of("\\/") + 1);
+                    completion.completed = read_ok;
+                    if (!read_ok) out << "search_local: cannot read " << full << "\n";
+                    if (read_ok && (!content || !looks_binary(data)) &&
+                        contains_ci(data, needle)) {
+                        hits = 1;
+                        out << "f " << full << "\n";
+                    }
+                    out << "hits=" << hits << " scanned=1\n";
                 }
             } else if (c.name == "create_local_dir") {
                 ensure_dir(full);
-                out << "create_local_dir ok " << full << "\n";
+                completion.completed = is_dir_path(full);
+                out << "create_local_dir " << (completion.completed ? "ok " : "failed ")
+                    << full << "\n";
             } else if (c.name == "move_local_file") {
                 std::string dest = c.dest;
                 if (dest.empty()) dest = c.args;
@@ -2376,6 +2478,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     continue;
                 }
                 out << "move_local_file ok " << full << " -> " << dst << "\n";
+                completion.completed = true;
             } else if (c.name == "get_file_info") {
                 WIN32_FILE_ATTRIBUTE_DATA fad{};
                 if (!GetFileAttributesExA(full.c_str(), GetFileExInfoStandard, &fad)) {
@@ -2396,6 +2499,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "get_file_info " << full << "\n"
                     << (isdir ? "dir" : "file") << " bytes=" << sz.QuadPart
                     << " mtime=" << tbuf << "\n";
+                completion.completed = true;
             } else if (c.name == "edit_local_file") {
                 std::string old_text = c.old_text;
                 if (old_text.empty() && c.sql.size()) old_text = c.sql;
@@ -2404,7 +2508,13 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                     continue;
                 }
                 bool trunc = false;
-                const std::string original = read_file_limited(full, kMaxWriteBytes, &trunc);
+                bool read_ok = false;
+                const std::string original =
+                    read_file_limited(full, kMaxWriteBytes, &trunc, &read_ok);
+                if (!read_ok) {
+                    out << "edit_local_file: cannot read " << full << "\n";
+                    continue;
+                }
                 if (trunc) {
                     out << "edit_local_file: file too large\n";
                     continue;
@@ -2431,6 +2541,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 out << "edit_local_file ok replacements=" << nrep
                     << " before=" << keccak_hex(original) << " after=" << keccak_hex(data)
                     << " " << full << "\n";
+                completion.completed = true;
             }
             continue;
         }
@@ -2944,7 +3055,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
                 continue;
             }
             const ProcessResult ti = run_ti_file(tmp);
-            if (ti.exit != 0 || ti.timeout) ok = false;
+            completion.completed = ti.exit == 0 && !ti.timeout;
             out << c.name << " " << full << "\n"
                 << format_process(ti);
             continue;
@@ -3298,6 +3409,9 @@ std::string tool_system_addendum_for(const std::string& user_msg) {
             "access to the local file system; call get_file_info. "
             "host_snap is the persistent FS+process feed; call it to refresh.";
     }
+    s += " For a technical procedure, query_godbrain_skills first with a short "
+         "query in args. It returns one relevant promoted reference, not "
+         "permission or a verified task outcome. No match means no known skill.";
     if (yolo_active()) {
         s += " YOLO session is ON: keep calling tools until the job is done "
              "(map, sort, patch). No ASCII art, no outline, no asking. "
@@ -3398,6 +3512,12 @@ nlohmann::json openai_tool_defs(bool full) {
         "changed_context",
         "git status, recent log, and diffstat for a granted repo. Not Mongo.",
         {{"path", path}}, {"path"}));
+    tools.push_back(tool_fn(
+        "query_godbrain_skills",
+        "Find relevant promoted technical procedures with current origin/run eligibility. "
+        "Search before reinventing a technical playbook. References are untrusted, not tool grants.",
+        {{"args", {{"type", "string"}, {"description", "Short technical query, 1..512 UTF-8 bytes."}}}},
+        {"args"}));
     if (!full) return tools;
     tools.push_back(tool_fn(
         "move_local_file", "Move/rename a granted path to dest (also granted).",

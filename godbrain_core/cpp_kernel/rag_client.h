@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <initializer_list>
 #include <sstream>
+#include <set>
 #include <string>
 
 #ifdef _MSC_VER
@@ -29,6 +30,7 @@ constexpr const char* kEndpoint = "http://127.0.0.1:8084/v1/search";
 constexpr const char* kPath = "/v1/search";
 constexpr const char* kGraphPath = "/v1/graph";
 constexpr const char* kDocumentPath = "/v1/document";
+constexpr const char* kSkillsPath = "/v1/skills";
 constexpr const char* kProjectionVersion = "hybrid-v1";
 constexpr const char* kProjectionSchema = "rag-document-v2";
 constexpr const char* kRetrievalMode = "auto";
@@ -356,6 +358,13 @@ inline bool decode_utf8_code_point(
     return true;
 }
 
+inline std::string utf8_prefix(const std::string& value, size_t limit) {
+    if (value.size() <= limit) return value;
+    size_t end = limit;
+    while (end > 0 && (static_cast<unsigned char>(value[end]) & 0xc0) == 0x80) --end;
+    return value.substr(0, end);
+}
+
 inline bool sanitize_value(
     const std::string& value,
     std::string& sanitized) {
@@ -568,6 +577,113 @@ inline bool render_coli_notes(
     return true;
 }
 
+inline bool compose_prompt_context(
+    const std::string& rag, const std::string& session, const std::string& pointer,
+    std::string& context, std::string& error, size_t budget = kContextBytes) {
+    context.clear();
+    error.clear();
+    const std::string begin = std::string(kUntrustedBegin) + '\n';
+    const std::string end = std::string(kUntrustedEnd) + '\n';
+    const std::string clipped_notice = "context_truncated=true\n";
+    std::string body;
+    for (const auto* section : {&rag, &session}) {
+        if (section->empty()) continue;
+        std::string validated;
+        if (section->size() > kMaxRenderedContextBytes ||
+            section->compare(0, begin.size(), begin) != 0 ||
+            section->size() < begin.size() + end.size() ||
+            section->compare(section->size() - end.size(), end.size(), end) != 0 ||
+            !sanitize_value(*section, validated)) {
+            error = "prompt context has invalid framing, UTF-8 or size";
+            return false;
+        }
+        const std::string inner = section->substr(
+            begin.size(), section->size() - begin.size() - end.size());
+        if (inner.find(kUntrustedBegin) != std::string::npos ||
+            inner.find(kUntrustedEnd) != std::string::npos) {
+            error = "prompt context contains a nested untrusted-data marker";
+            return false;
+        }
+        body += inner;
+    }
+    if (body.empty()) return true;
+    std::ostringstream header;
+    header << begin;
+    append_line(header, "NOTICE", kRouterNotice);
+    std::string output = header.str();
+    if (output.size() + end.size() + clipped_notice.size() >= budget) {
+        error = "prompt context budget cannot hold evidence and framing";
+        return false;
+    }
+    const size_t body_limit = budget - end.size() - clipped_notice.size();
+    bool clipped = false;
+    bool have_content = false;
+    std::istringstream lines(body);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (line.compare(0, 7, "NOTICE=") == 0) continue;
+        const size_t equals = line.find('=');
+        if (equals == std::string::npos || equals == 0) {
+            error = "prompt context contains a malformed field";
+            return false;
+        }
+        const std::string key = line.substr(0, equals);
+        const bool content_line =
+            key.size() >= 8 && (key.compare(key.size() - 8, 8, ".snippet") == 0 ||
+                               key.compare(key.size() - 8, 8, ".content") == 0);
+        if (line.size() + 1 <= body_limit - output.size()) {
+            output += line + '\n';
+            have_content = have_content || (content_line && equals + 1 < line.size());
+            continue;
+        }
+        clipped = true;
+        if (content_line && equals != std::string::npos &&
+            equals + 2 < body_limit - output.size()) {
+            const std::string value = line.substr(equals + 1);
+            const size_t available = body_limit - output.size() - equals - 2;
+            size_t offset = 0, kept = 0;
+            while (offset < value.size()) {
+                if (value[offset] == '\\') {
+                    const size_t width =
+                        offset + 1 < value.size() && value[offset + 1] == 'u' ? 6 : 2;
+                    if (value.size() - offset < width) break;
+                    offset += width;
+                } else {
+                    uint32_t code_point = 0;
+                    if (!decode_utf8_code_point(value, offset, code_point)) break;
+                }
+                if (offset > available) break;
+                kept = offset;
+            }
+            if (kept > 0) {
+                output += line.substr(0, equals + 1) + value.substr(0, kept) + '\n';
+                have_content = true;
+            }
+        }
+        break;
+    }
+    if (!have_content) {
+        error = "prompt context has no evidence content within its budget";
+        return false;
+    }
+    if (clipped) {
+        output += clipped_notice;
+    } else if (!pointer.empty()) {
+        std::ostringstream note;
+        append_line(note, "session_pointer_untrusted",
+                    "File pointer, not a Golden Record: " + pointer);
+        if (note.fail()) {
+            error = "session pointer contains invalid UTF-8";
+            return false;
+        }
+        const std::string pointer_line = note.str();
+        output += pointer_line.size() <= budget - output.size() - end.size()
+                      ? pointer_line : "pointer_omitted=true\n";
+    }
+    context = output + end;
+    return true;
+}
+
 inline void configure_loopback_rag(httplib::Client& client) {
     client.set_connection_timeout(0, 500000);
     client.set_read_timeout(2, 0);
@@ -577,12 +693,12 @@ inline void configure_loopback_rag(httplib::Client& client) {
     client.set_follow_location(false);
 }
 
-inline HttpResult default_transport(const std::string& request_body) {
+inline HttpResult default_post_transport(const char* path, const std::string& request_body) {
     httplib::Client client("127.0.0.1", 8084);
     configure_loopback_rag(client);
     const httplib::Headers headers = {{"Accept", "application/json"}};
     const auto response =
-        client.Post(kPath, headers, request_body, "application/json");
+        client.Post(path, headers, request_body, "application/json");
     if (!response) return {};
     return {
         true,
@@ -590,6 +706,14 @@ inline HttpResult default_transport(const std::string& request_body) {
         response->get_header_value("Content-Type"),
         response->body,
     };
+}
+
+inline HttpResult default_transport(const std::string& request_body) {
+    return default_post_transport(kPath, request_body);
+}
+
+inline HttpResult default_skill_transport(const std::string& request_body) {
+    return default_post_transport(kSkillsPath, request_body);
 }
 
 inline HttpResult default_get_transport(const std::string& path) {
@@ -802,9 +926,42 @@ class Client {
 public:
     explicit Client(
         Transport transport = default_transport,
-        GetTransport get_transport = default_get_transport)
+        GetTransport get_transport = default_get_transport,
+        Transport skill_transport = default_skill_transport)
         : transport_(std::move(transport)),
-          get_transport_(std::move(get_transport)) {}
+          get_transport_(std::move(get_transport)),
+          skill_transport_(std::move(skill_transport)) {}
+
+    bool skills(const std::string& query, int limit, json& response, std::string& error) const {
+        if (!valid_string(json(query), 512, true) || limit < 1 || limit > 25) {
+            error = "skill query or limit is invalid";
+            return false;
+        }
+        const HttpResult http = skill_transport_(json({{"query", query}, {"limit", limit}}).dump());
+        if (!http.available || http.status != 200) {
+            error = "canonical RAG skills are unavailable";
+            return false;
+        }
+        if (!decode_json_body(http, response, error)) return false;
+        if (!has_exact_keys(response, {"query", "count", "skills"}) || response["query"] != query ||
+            !response["count"].is_number_integer() || !response["skills"].is_array() ||
+            response["count"] != response["skills"].size() || response["skills"].size() > static_cast<size_t>(limit)) {
+            error = "canonical RAG skill response has an invalid schema";
+            return false;
+        }
+        std::set<std::string> names;
+        for (const auto& skill : response["skills"]) {
+            if (!has_exact_keys(skill, {"name", "content", "origin_node_id", "origin_hash", "verification_profile", "untrusted"}) ||
+                !valid_token(skill["name"], 64) || !valid_string(skill["content"], 8192, true) ||
+                !valid_token(skill["origin_node_id"], 64) || !valid_lower_hex(skill["origin_hash"], 64) ||
+                !string_is_one_of(skill["verification_profile"], {"desk-v1", "galaxy-html-v1", "frontend-spa-v1", "frontend-nextjs-v1"}) ||
+                skill["untrusted"] != true || !names.insert(skill["name"].get<std::string>()).second) {
+                error = "canonical RAG skill has invalid bounds, identity or trust metadata";
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool search(
         const std::string& query,
@@ -934,6 +1091,7 @@ public:
 private:
     Transport transport_;
     GetTransport get_transport_;
+    Transport skill_transport_;
 };
 
 }  // namespace godbrain_rag

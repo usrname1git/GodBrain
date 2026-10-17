@@ -34,8 +34,8 @@ function Get-EditCheckProfile([string]$Rel) {
     }
     if ($n -eq 'godbrain_core\cpp_tools\librarian.cpp') { return 'librarian-self-test-v1' }
     if ($n.StartsWith('godbrain_core\cpp_kernel\') -and
-        ($n.EndsWith('.cpp') -or $n.EndsWith('.h'))) {
-        return 'kernel-file-v1'
+        ($n.EndsWith('.cpp') -or $n.EndsWith('.h') -or $n.EndsWith('.hpp'))) {
+        return 'kernel-compile-v1'
     }
     if ($n.EndsWith('.ps1')) { return 'powershell-parse-v1' }
     return 'local-edit-apply-v1'
@@ -69,6 +69,18 @@ function Test-KernelFile([string]$Full) {
     $bytes = [System.IO.File]::ReadAllBytes($Full)
     if ($bytes.Length -lt 1) { throw "empty kernel file" }
     if ($bytes -contains 0) { throw "NUL byte in kernel file" }
+}
+
+function Test-KernelCompile([string[]]$Rels) {
+    $runner = Join-Path $RepoRoot 'scripts\Test-KernelReplies.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
+        throw 'missing Test-KernelReplies.ps1'
+    }
+    $changed = @($Rels | Where-Object {
+        (Get-EditCheckProfile $_) -eq 'kernel-compile-v1'
+    })
+    & $runner -RepoRoot $RepoRoot -ChangedPath $changed -CompileOnly
+    if ($LASTEXITCODE -ne 0) { throw "kernel compile/link failed: $LASTEXITCODE" }
 }
 
 function Test-GalaxyHtml([string]$Full) {
@@ -120,7 +132,7 @@ function Invoke-EditChecks([string[]]$Rels) {
         if (-not $profiles.Contains($profile)) { $profiles.Add($profile) }
         switch ($profile) {
             'powershell-parse-v1' { Test-PowerShellParse $full }
-            'kernel-file-v1' { Test-KernelFile $full }
+            'kernel-compile-v1' { Test-KernelFile $full }
             'galaxy-html-static-v1' { Test-GalaxyHtml $full }
             'memory-store-go-v1' { }
             'librarian-self-test-v1' { }
@@ -128,6 +140,7 @@ function Invoke-EditChecks([string[]]$Rels) {
             default { throw "unknown profile $profile" }
         }
     }
+    if ($profiles -contains 'kernel-compile-v1') { Test-KernelCompile $Rels }
     if ($profiles -contains 'memory-store-go-v1') { Test-MemoryStoreGo }
     if ($profiles -contains 'librarian-self-test-v1') { Test-LibrarianSelfTest }
     $joined = [string]::Join('+', $profiles)
@@ -138,8 +151,11 @@ if ($SelfTest) {
     if ((Get-EditCheckProfile 'scripts\Show-SystemFlex.ps1') -ne 'powershell-parse-v1') {
         throw "classify ps1"
     }
-    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\main.cpp') -ne 'kernel-file-v1') {
+    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\main.cpp') -ne 'kernel-compile-v1') {
         throw "classify kernel"
+    }
+    if ((Get-EditCheckProfile 'godbrain_core\cpp_kernel\json.hpp') -ne 'kernel-compile-v1') {
+        throw "classify kernel hpp"
     }
     if ((Get-EditCheckProfile 'godbrain_core\memory_store\store.go') -ne 'memory-store-go-v1') {
         throw "classify go"

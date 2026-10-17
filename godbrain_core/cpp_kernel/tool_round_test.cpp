@@ -8,6 +8,24 @@ static bool expect(bool condition, const char* message) {
 }
 
 int main() {
+    std::string context;
+    const std::string complete = "BEGIN_PROCEDURE " + std::string(8000, 's') +
+        "\xC3\xA5\xF0\x9F\x98\x80 END_PROCEDURE";
+    if (!expect(append_tool_context(context, std::string(6000, 'p')),
+                "earlier bounded result was rejected") ||
+        !expect(append_tool_context(context, complete) &&
+                    context.size() <= kToolContextBytes &&
+                    context.find(complete) != std::string::npos &&
+                    context.find("Earlier tool results omitted") != std::string::npos &&
+                    context.find(std::string(6000, 'p')) == std::string::npos,
+                "budgeting clipped a complete result instead of omitting earlier results") ||
+        !expect(!append_tool_context(context, std::string(kToolContextBytes + 1, 'x')) &&
+                    context.size() <= kToolContextBytes &&
+                    context.find("No partial output or procedure returned") != std::string::npos,
+                "oversized current result was silently clipped or accepted")) {
+        return 1;
+    }
+
     // Non-YOLO cap 3: hops 0 and 1 keep tools, hop 2 is speak-only.
     if (!expect(tools_schema_on_round(true, 0, 3), "round 0 tools on") ||
         !expect(tools_schema_on_round(true, 1, 3),

@@ -78,9 +78,14 @@ an intentional high-risk capability, not a sandbox. Surgery runs `pwsh` with a
 If Job Object setup fails it still terminates the `pwsh` it created. Chat advertises OpenAI `tools` to llama-server (`--jinja`). Gemma 4 native
 `tool_calls` / `tool_responses` are executed by the kernel. Copilot MCP is
 not a runtime on this desk; GodBrain replaces that client. Do not dual-run.
-Llama chat prepends `logs/where-we-are.md` (session pointer) and verified
-RAG hits so the mouth can RTFM Golden Records (4 KiB cap). That is the
-manual, not an internet majority vote. Coli/GLM stays at 160 bytes.
+All ordinary chat runners receive bounded current RAG/session evidence
+within the same 4 KiB budget, including when previous chat is sent as
+history. Complete untrusted-data framing survives clipping; UTF-8 and
+sanitizer escape sequences are never split, and clipping is marked.
+Llama's optional `logs/where-we-are.md` pointer is escaped inside that
+untrusted block only if evidence leaves room; it cannot displace facts.
+That is the manual, not an internet majority vote. Explicit Continue still
+resumes its prior turn/ledger without a new RAG lookup.
 `query_constellation` is an alias of `query_recent_thoughts`. There is no
 Node constellation viewer. `*** TOOL` text is a fallback.
 Allowlist: FS under `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
@@ -113,10 +118,20 @@ is verified-only and does not lock a sector unless the caller sends one; b-line
 on this host is still Windows SRE / OS-network, not tanks.
 `/verify` and `/reject` are the human door
 for playbooks and fights. `rejected` is terminal. Content never changes; only
-status does. When `os_pin` moves, verified `windows-sre` cards with a different
-pin become `stale` (not deleted).
+status does. Every valid `/observe` reconciles verified `windows-sre` cards with
+a different pin to `stale` (not deleted), even after a missing/unchanged disk
+checkpoint or a previous interrupted sweep. Already-stale mismatches remain
+available for projection repair.
 
-Host inventory (`/observe`) auto-verifies the live pin.
+Host inventory (`/observe`) auto-verifies the live pin only after successful
+Windows build reads. Missing EditionID/CurrentBuild/UBR cannot become a
+fabricated `unknown/0.0` pin; a successfully read UBR=0 remains valid. Failed
+reconciliation or checkpoint writes return errors rather than successful
+maintenance. The checkpoint is written after reconciliation, ingestion and
+the existing explicit judgment result.
+Ordinary chat reads its hostname independently; an unavailable build sensor
+still blocks observation/applicability, but not RAG-free advisory, file or edit
+requests merely constructing the Oracle prompt.
 `POST /api/truth` auto-verifies a `host_fact` when an allowlisted probe matches,
 or a `doc_fact` when a Learn/support quote is actually on the page. Playbooks
 stay candidate.
@@ -157,6 +172,118 @@ phone glance. The iPhone Shortcut should show the first line.
 Pending lists candidate Oracle turns, a candidate host card, and newest
 unverified Golden Records. It skips `kind=concept` and Heal-loop labels.
 
+## Task evidence and deliberate retention
+
+The tool loop keeps the existing `last-chain.json` status for compatibility,
+but `done` means an answer, successful executor flags and bounded current-result
+delivery, **not** a verified
+task outcome. `/chain` now shows `verify=not_run`. The ledger records separate
+`execution` and `verification` objects and never makes a chain skill-promotable.
+Ordinary tools cannot supply an independent task-outcome verdict by printing
+"verified" or returning exit code zero.
+No task-outcome verifier is registered yet: persisted `passed` or promotion
+claims are rejected, not accepted as trusted evidence from an editable file.
+
+Each native tool call or legacy TOOL batch records the returned result's byte
+count and Keccak-256 before bounded context selection.
+These are **metadata only**, not retained stdout or a reconstructable complete
+trace. The separate tool-context ledger is bounded to 12,000 bytes and saved
+intact for Continue. Whole earlier result groups are explicitly omitted when
+needed to retain complete current results. Individually oversized results or
+atomic legacy batches are replaced by an explicit omission, with delivery
+failure reflected in chain status, never a partial procedure. Serialized state
+must also fit the 128 KiB reader bound before replacing the previous ledger.
+Up to 128 result rows fit in the latest ledger; omitted counts and
+incomplete resumed history are explicit. A stable task ID connects the ledger,
+tool audit and bounded, rotating core-event journal; a distinct attempt ID
+identifies continuation attempts. Long goals use a full-content hash rather
+than the displayed 500-byte goal for identity. Corrupt/unreadable task state
+or failed task-evidence writes fail visibly; failed replacement keeps the
+previous ledger. Cancellation and saves share one process mutex.
+
+File-tool denials, missing/unreadable files, invalid operations and capped
+batches no longer leave `all_ok=true`. An empty readable file remains a
+successful read. These executor facts still do not prove the requested result.
+
+Normal Oracle replies stay in the bounded local `last_oracle.json` history,
+with `retention=local_only`, instead of automatically becoming Alexandria
+candidates. Complete local turns continue as explicitly untrusted session
+notes, including after restart; they are not verified RAG. `/last` and
+continuation remain local. `/verify last` and `/reject last` deliberately
+retain the selected complete turn before the existing authorized judgment.
+Explicit `/remember` and ingestion are unchanged. Failed explicit retention
+persists `retain_requested` and remains retryable; startup retries only that
+intent, never ordinary or incomplete replies. Legacy stored IDs and records
+remain intact; legacy unstored replies do not acquire retention intent.
+`/pending` lists retained candidates, not all unretained conversation.
+
+The three-entry process cache separates ordinary untrusted notes from
+RAG-required references. Boot hydration binds canonical node/stable IDs,
+node/schema versions, sector/kind and a Keccak-256 of the full content before
+UTF-8-safe snippet clipping. Prompt rendering and session recall copy state
+under the mutex, then perform at most three canonical `/v1/document` reads
+outside it. Each reference needs a still-verified, nonpersonal, unchanged
+origin. Windows SRE records carrying `os_pin=` require every full-content
+token to match one successful live sensor read for that batch. Sensor and
+origin failures produce omission reasons and permit retry, not cached truth.
+An authorized judgment converts a matching saved local note into an
+origin-required reference; its first matching read also binds the canonical
+version. This is point-in-time validation, not an atomic lease covering later
+generation, and it does not establish broader semantic freshness.
+
+Ordinary conversation/operator notes cannot acquire verified authority from
+a cached status string and remain usable without RAG. Actual sectors are
+preserved; personal notes can appear on their local shelf but never in the
+technical prompt. If all references are withheld and no ordinary notes remain,
+rendering returns truly empty context so the existing fail-closed gate holds.
+File/edit/`No tools` requests bypass session-origin I/O along with RAG search.
+`/recall` reports withheld origins without displaying their old snippets.
+
+This is the evidence/retention foundation, not an autonomous learning engine.
+Model TaskReview, an improvement backlog and gated self-editing are not
+implemented here. No extra inference pass or
+background model is started. Offline native coverage is in
+`scripts\Test-KernelReplies.ps1`, with the wider tool/edit rollback cases in
+`scripts\Test-JarvisLoop.ps1`.
+
+## Current skill routing
+
+The built-in `query_godbrain_skills` read tool uses the canonical loopback
+`POST /v1/skills` door, not Mongo shell access or another model. It is available
+on ordinary tool-enabled hops alongside file tools; `No tools` and speak-only
+hops still cannot dispatch it. Technical procedures are directed to this
+lookup before reinventing a playbook. The model chooses when to call it;
+there is no hidden pre-query or extra generation.
+
+C++ and Go qualify promoted rows again at lookup: the origin must still be
+verified, non-personal, content/hash/version-bound and linked to committed
+ingestion. The latest run for that skill/origin must pass under the promoted
+profile, and broad profiles still need two current distinct passing fixtures.
+Later failures withdraw a skill; later passing evidence under the same
+profile may keep it eligible. Apply-only, missing and unknown evidence
+cannot qualify. These are point-in-time checks, not an execution lease.
+
+Lookup considers at most 100 recent matching promotions, with at most eight
+distinct query terms plus the literal phrase. Bounded lexical name/content
+relevance ranks before recency; this is not semantic/vector skill search or
+an exhaustive catalogue scan. The model gets one full reference, explicitly
+untrusted. Procedure identity comes from the actual tool call, not text markers;
+quoted tool names cannot trigger repo-map/listing replacement. Whole-result
+budgeting preserves references across batches, later hops, persistence and
+Continue, or explicitly omits them; oversized context never presents a clipped
+procedure. Zero eligible matches is normal; service/protocol failures are
+explicit failed tool results. Neither a returned procedure nor a successful
+lookup verifies the current task, grants tools, edits production or promotes
+new knowledge. Existing stdin and HTTP envelope field names are unchanged.
+The kernel and canonical backend must be deployed together; an older running
+backend does not acquire these read-time checks from a kernel source change.
+
+Shared C++/Go ranking and eligibility fixtures are
+`godbrain_core\testdata\skill_lookup_parity.json`. The native
+`cpp_skill_lookup` test requires `MONGODB_TEST_URI` and uses only its own
+uniquely named test database; absent that opt-in it is reported skipped.
+Never point integration tests at the live vault.
+
 ## Local edits and CS2
 
 Galaxy This host shows `Edit: ok` / `Edit: fail` / `Edit: none` from
@@ -179,9 +306,23 @@ truncates; LF hunks match CRLF files. The second pass uses that same operator-hi
 git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
 enough to promote a skill. A path-selected bounded check
-(`powershell-parse-v1`, `kernel-file-v1`, `memory-store-go-v1`,
+(`powershell-parse-v1`, `kernel-compile-v1`, `memory-store-go-v1`,
 `galaxy-html-static-v1`, `librarian-self-test-v1`) may run after apply;
 `check_ok` is recorded separately and still cannot promote.
+The kernel profile compiles and links the actual production sources with the
+Windows subsystem and `mainCRTStartup` entry point,
+rather than accepting nonempty/NUL-free bytes alone. Edited extra translation
+units and headers are also compiled, so an unrelated successful build cannot
+hide an uncompiled changed file. The automatic path uses
+`Test-KernelReplies.ps1 -CompileOnly`: it never runs the model-modifiable
+native binaries. Behavioral fixtures remain an explicit CLI gate, not an
+implicit grant to execute model-written C++ with host authority.
+The explicit gate also links production without the reply fixture's entry
+point, and tests unavailable UBR using a copied telemetry source in an isolated
+native fixture, without modifying the registry or running the production kernel.
+This is scoped compile/link evidence, not proof of task correctness.
+A missing compiler, missing runner, compile/link error or the existing
+70-second check timeout fails closed and restores the original edit bytes.
 
 Librarian may extract `skills_extracted`; they land as candidate knowledge
 nodes (`kind=skill`). `PromoteSkill` requires a verified origin node, a

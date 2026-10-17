@@ -203,6 +203,8 @@ bool skill_profile_allowed(const std::string& profile);
 bool skill_profile_apply_only(const std::string& profile);
 bool skill_profile_suite_required(const std::string& profile);
 int current_passing_fixture_count(const std::vector<SkillRunLite>& runs);
+std::vector<std::string> skill_query_terms(const std::string& query);
+int skill_relevance(const std::string& query, const std::string& name, const std::string& content);
 
 int run_self_test();
 

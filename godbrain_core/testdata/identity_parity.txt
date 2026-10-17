@@ -1,5 +1,6 @@
 # kind, name, payload, expected bytes, and for decode the keccak256 of those bytes.
 # decode payload is a JSON string. span columns are source-hex, [start:end], ok|bad.
+# pin columns are JSON content, live pin, stale|current.
 decode	grin	"\uD83D\uDE00"	f09f9880	367c272ea502ac6e9f085c1baddc52d0ac0224f1b7d1e8621202620efa3ba084
 decode	lone-high	"\uD800"	efbfbd	395c830292afe91c21fe5a68e8bcded8ac367805c31fc216eed6147bf6213fdc
 decode	lone-low	"\uDFFF"	efbfbd	395c830292afe91c21fe5a68e8bcded8ac367805c31fc216eed6147bf6213fdc
@@ -13,3 +14,15 @@ span	whole-eacute	c3a9	[0:2]	ok
 span	ascii	61626364	[0:4]	ok
 span	past-end	61626364	[0:9]	bad
 span	empty-source		[0:1]	bad
+pin	unscoped	"Learn quote without a build pin"	fixture/123.45	current
+pin	exact-eof	"os_pin=fixture/123.45"	fixture/123.45	current
+pin	exact-crlf	"host card\r\nos_pin=fixture/123.45\r\n"	fixture/123.45	current
+pin	exact-tab	"os_pin=fixture/123.45\tprobe_ok=1"	fixture/123.45	current
+pin	exact-control-space	"os_pin=fixture/123.45\f\u000bprobe_ok=1"	fixture/123.45	current
+pin	longer-build	"os_pin=fixture/123.450\n"	fixture/123.45	stale
+pin	shorter-build	"os_pin=fixture/123.45\n"	fixture/123.450	stale
+pin	suffix	"os_pin=fixture/123.45-extra\n"	fixture/123.45	stale
+pin	repeated-match	"os_pin=fixture/123.45\nos_pin=fixture/123.45\n"	fixture/123.45	current
+pin	conflicting-later	"os_pin=fixture/123.45\nos_pin=fixture/old\n"	fixture/123.45	stale
+pin	conflicting-earlier	"os_pin=fixture/old\nos_pin=fixture/123.45\n"	fixture/123.45	stale
+pin	empty-value	"os_pin=\n"	fixture/123.45	stale

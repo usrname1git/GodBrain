@@ -7,6 +7,10 @@
   This quarter: C++ kernel / Alexandria and the gym. Experimental Go/Rust
   routers on `:8082` are parked (`godbrain_core/go_router`,
   `godbrain_core/rust_router`). Do not spend the quarter staffing them.
+- Current operator priority is high-quality, up-to-date evidence available to
+  RAG inference, with less routine manual crowning. Phone streaming and live
+  translation are parked brainstorms, not implementation work. See
+  [`docs/rag-priorities-and-phone-brainstorm.md`](docs/rag-priorities-and-phone-brainstorm.md).
 - Read the nearest README, manifest, and tests before editing a nested project.
   Keep changes scoped: the routers, Alexandria pipeline, market research tools,
   smart contracts, and vendored Colibri tree have different trust boundaries.
@@ -308,7 +312,7 @@ as `SECOND` in that plan file. Galaxy This host shows `Edit: ok` / `fail` /
 writes only root `.ps1` / `.cmd` / `.md`, `scripts\*.ps1`, `docs\*.md`,
 or `godbrain_core\` (not build / vendor / LLM / archive). After a successful
 apply, `scripts\Verify-LocalEdit.ps1` runs a **bounded** check by path
-(PowerShell parse, kernel file non-empty/NUL check, memory-store `go test -short`,
+(PowerShell parse, kernel compile/link without running edited binaries, memory-store `go test -short`,
 Galaxy HTML markers, or `librarian --self-test`). If that script is
 missing or the check never runs, originals are restored. Receipt stays
 `verification_profile=local-edit-apply-v1` and `skill_promote_eligible=false`.
@@ -381,8 +385,17 @@ Golden Records from the canonical loopback RAG service, talks to the desk
 mouth on `:8888` while `logs/mouth-pause.txt` is `on` (otherwise `:8000`),
 authenticates privileged `command_type` requests, and delegates
 recognized commands to `GodBrainKernel`. Chat fails closed when RAG is
-unavailable **and** this process has no session notes; non-empty session notes
-may still go to the mouth without a fresh Golden Record hit.
+unavailable **and** this process has no usable session notes. Ordinary local
+notes remain explicitly untrusted continuity. RAG-derived references require
+a current verified, nonpersonal canonical origin with matching identity,
+version and complete-content hash; pinned Windows SRE content must also match
+the live OS pin. Failed reads withhold only affected references with explicit
+reasons, never a nonempty empty-context wrapper. Personal notes stay off the
+technical prompt path. File/edit/`No tools` advisory requests remain RAG-free.
+Ordinary chat (including follow-ups with history) sends current evidence to
+every runner within one 4 KiB budget. Never slice a serialized context by
+raw byte count: preserve UTF-8, sanitizer escapes and complete untrusted
+framing. Mark clipping; the optional session pointer has lower priority.
 
 `kernel.cpp` is the command dispatcher. It requires a non-blank `reasoning`
 string for `execute_godbrain_script`,
@@ -484,7 +497,8 @@ Ordinary llama chat advertises OpenAI `tools` on `/v1/chat/completions`
 (`--jinja` is already on; `--no-cache-prompt` so a dead slot cannot
 unused49 the next chat; do not pass llama-server `--tools all`, do not
 add Copilot MCP or any MCP server into this repo). First hop is the
-**file jail only** (list/read/write/info/search/edit/mkdir) unless YOLO,
+**file jail plus read-only skill lookup** (list/read/write/info/search/edit/mkdir
+and `query_godbrain_skills`) unless YOLO,
 the ask is host inspect (SysInternals/reg/events/schtasks), or the message
 contains an `https://` / `http://` URL or `github.com/`. That URL hop also
 gets `fetch_url` (HTTPS page text, or GitHub README plus the top tree; a
@@ -629,10 +643,15 @@ handler and restores the previous Serve configuration, without a model restart.
 
 `/observe` persists stable host inventory including
 `os_pin=EditionID/CurrentBuild.UBR` and auto-verifies that sensor read.
-If the pin moved, verified `windows-sre` cards that carry a different
-`os_pin=` become `stale` (not deleted). Logon (`Start-GodBrain.ps1`)
-posts `/api/observe` once the kernel is listening; unchanged inventory
-is an idempotent no-op.
+Every valid observation reconciles verified `windows-sre` cards carrying a
+different `os_pin=` to `stale` (not deleted), including when the disk checkpoint
+is missing or unchanged. The checkpoint is history, never an applicability gate.
+Failed Windows build reads cannot manufacture `unknown/0.0` or an unread UBR=0;
+a successfully read zero revision is valid. Failed reconciliation or checkpoint
+writes fail the request and remain retryable. Logon (`Start-GodBrain.ps1`)
+posts `/api/observe` once the kernel is listening; unchanged inventory ingestion
+is idempotent, but applicability and projection repair still run.
+`host_observation_test.cpp` is part of the no-GPU Jarvis gate.
 
 WMI process start passes `GODBRAIN_API_TOKEN` in the child environment
 so Heal/Watch/logon boot a kernel that can authorize loopback writes.
@@ -641,8 +660,10 @@ An empty token fail-closes those writes. The token is never written to
 
 `POST /api/truth` writes host_fact / doc_fact / playbook claims: host
 probes and Learn quotes can promote; playbooks stay candidate. Kernel
-boot loads the newest Golden Records into the process session buffer so
-chat still knows the host after a restart. `/api/status` reports the
+boot seeds at most three verified, nonpersonal origin-bound Golden Records
+into the process session buffer, rechecked before prompt/recall use.
+Canonical I/O and live-pin reads run outside the session mutex; a local note's
+status cannot grant verified authority. `/api/status` reports the
 host card and Tailscale remember URL.
 
 The Tailscale shortcuts door binds when `GODBRAIN_API_TOKEN` is set and
@@ -910,6 +931,14 @@ not be treated as baseline validation.
   rewrite), and a passing latest `skill_verification_runs` row for that
   skill name. Apply-only `/edit` (`local-edit-apply-v1`) is not enough to
   promote.
+- Promoted-skill lookup rechecks current origin/hash/version, committed links
+  and latest passing profile/suite evidence. Personal/stale origins are not
+  technical procedures. `query_godbrain_skills` returns an untrusted reference,
+  never permission or proof that the current task passed. Tool-context budgeting
+  preserves whole procedures or explicitly omits them, including on Continue;
+  executor metadata is recorded before presentation selection. Compile-only
+  local-edit checks must link the production entry point, never execute native
+  fixtures. Hostname-only chat reads must not require a successful OS-pin probe.
 - A committed ingestion is acknowledged only after its active
   `rag_documents`/`rag_provenance` projection is confirmed. Projection failure
   leaves the run committed, returns an explicit failure, and is repaired by an

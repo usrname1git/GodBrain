@@ -1,4 +1,5 @@
 #include "telemetry.h"
+#include "host_observation.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -10,11 +11,14 @@
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
 #include <mutex>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -150,48 +154,48 @@ namespace telemetry {
         return utf8_from_wide(std::wstring(buffer, chars));
     }
 
-    DWORD reg_dword(HKEY root, const wchar_t* subkey, const wchar_t* value) {
+    std::optional<std::uint32_t> reg_dword(HKEY root, const wchar_t* subkey, const wchar_t* value) {
         DWORD data = 0;
         DWORD bytes = sizeof(data);
         DWORD type = 0;
         const LONG rc = RegGetValueW(
             root, subkey, value, RRF_RT_REG_DWORD, &type, &data, &bytes);
-        return rc == ERROR_SUCCESS ? data : 0;
+        if (rc != ERROR_SUCCESS || bytes != sizeof(data)) return std::nullopt;
+        return static_cast<std::uint32_t>(data);
     }
 
     json read_windows_pin() {
         const wchar_t* key = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
         std::string edition = reg_sz(HKEY_LOCAL_MACHINE, key, L"EditionID");
         std::string build = reg_sz(HKEY_LOCAL_MACHINE, key, L"CurrentBuild");
-        const DWORD ubr = reg_dword(HKEY_LOCAL_MACHINE, key, L"UBR");
-        if (edition.empty()) edition = "unknown";
-        if (build.empty()) build = "0";
-        char pin[96];
-        std::snprintf(
-            pin, sizeof(pin), "%s/%s.%lu", edition.c_str(), build.c_str(),
-            static_cast<unsigned long>(ubr));
+        const auto ubr = reg_dword(HKEY_LOCAL_MACHINE, key, L"UBR");
+        const std::string pin = godbrain_host::make_windows_pin(edition, build, ubr);
         return {
             {"edition_id", edition},
             {"product_name", reg_sz(HKEY_LOCAL_MACHINE, key, L"ProductName")},
             {"display_version",
              reg_sz(HKEY_LOCAL_MACHINE, key, L"DisplayVersion")},
             {"current_build", build},
-            {"ubr", static_cast<int>(ubr)},
-            {"os_pin", std::string(pin)},
+            {"ubr", *ubr},
+            {"os_pin", pin},
         };
     }
 
-    json get_host_inventory() {
+    std::string get_computer_name() {
         char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
         DWORD name_size = MAX_COMPUTERNAME_LENGTH + 1;
         if (GetComputerNameA(name, &name_size) == 0) {
-            name[0] = '?';
-            name[1] = '\0';
+            throw std::runtime_error("Host computer name could not be read");
         }
+        return std::string(name);
+    }
 
+    json get_host_inventory() {
         MEMORYSTATUSEX memory{};
         memory.dwLength = sizeof(memory);
-        GlobalMemoryStatusEx(&memory);
+        if (!GlobalMemoryStatusEx(&memory)) {
+            throw std::runtime_error("Host physical memory could not be read");
+        }
         const int total_ram_gb = static_cast<int>(
             memory.ullTotalPhys / (1024ull * 1024ull * 1024ull));
 
@@ -204,14 +208,14 @@ namespace telemetry {
 
         const json pin = read_windows_pin();
         return {
-            {"computer_name", std::string(name)},
+            {"computer_name", get_computer_name()},
             {"total_physical_ram_gb", total_ram_gb},
             {"logical_processors", static_cast<int>(system.dwNumberOfProcessors)},
             {"edition_id", pin.value("edition_id", "")},
             {"product_name", pin.value("product_name", "")},
             {"display_version", pin.value("display_version", "")},
             {"current_build", pin.value("current_build", "")},
-            {"ubr", pin.value("ubr", 0)},
+            {"ubr", pin.at("ubr")},
             {"os_pin", pin.value("os_pin", "")},
             {"volumes", volumes},
         };

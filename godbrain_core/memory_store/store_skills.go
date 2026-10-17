@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -237,6 +238,9 @@ func (s *Store) requirePassingSkillRun(ctx context.Context, originNodeID, skillN
 	if latest.Result != SkillRunPassed {
 		return nil, ErrSkillVerificationStale
 	}
+	if _, allowed := allowedSkillProfiles[latest.VerificationProfile]; !allowed || latest.RunID == "" {
+		return nil, ErrSkillVerificationStale
+	}
 	if _, applyOnly := applyOnlySkillProfiles[latest.VerificationProfile]; applyOnly {
 		return nil, ErrSkillApplyOnlyProfile
 	}
@@ -309,15 +313,16 @@ func (s *Store) QueryPromotedSkills(ctx context.Context, query string, limit int
 	filter := bson.M{}
 	query = strings.TrimSpace(query)
 	if query != "" {
-		pattern := regexpQuote(query)
-		filter = bson.M{
-			"$or": []bson.M{
-				{"name": bson.M{"$regex": pattern, "$options": "i"}},
-				{"content": bson.M{"$regex": pattern, "$options": "i"}},
-			},
+		terms := append(skillQueryTerms(query), query)
+		clauses := make([]bson.M, 0, len(terms)*2)
+		for _, term := range terms {
+			for _, field := range []string{"name", "content"} {
+				clauses = append(clauses, bson.M{field: bson.M{"$regex": regexpQuote(term), "$options": "i"}})
+			}
 		}
+		filter = bson.M{"$or": clauses}
 	}
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit))
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "name", Value: 1}}).SetLimit(100)
 	cursor, err := s.db.Collection("skills").Find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
@@ -327,10 +332,130 @@ func (s *Store) QueryPromotedSkills(ctx context.Context, query string, limit int
 	if err = cursor.All(ctx, &skills); err != nil {
 		return nil, err
 	}
-	if skills == nil {
-		skills = []Skill{}
+	sort.SliceStable(skills, func(i, j int) bool {
+		return skillRelevance(query, skills[i].Name, skills[i].Content) > skillRelevance(query, skills[j].Name, skills[j].Content)
+	})
+	current := make([]Skill, 0, limit)
+	for _, skill := range skills {
+		if query != "" && skillRelevance(query, skill.Name, skill.Content) == 0 {
+			continue
+		}
+		eligible, err := s.skillIsCurrent(ctx, skill)
+		if err != nil {
+			return nil, err
+		}
+		if eligible {
+			current = append(current, skill)
+		}
+		if len(current) >= limit {
+			break
+		}
 	}
-	return skills, nil
+	return current, nil
+}
+
+func asciiSkillLower(text string) string {
+	bytes := []byte(text)
+	for i, c := range bytes {
+		if c >= 'A' && c <= 'Z' {
+			bytes[i] = c + ('a' - 'A')
+		}
+	}
+	return string(bytes)
+}
+
+func skillQueryTerms(query string) []string {
+	const stops = "|a|an|and|are|can|could|for|from|help|how|in|is|it|of|on|please|the|this|to|using|what|with|"
+	terms := make([]string, 0, 8)
+	word := ""
+	add := func() {
+		if len(word) >= 2 && len(word) <= 64 && !strings.Contains(stops, "|"+word+"|") && len(terms) < 8 {
+			found := false
+			for _, prior := range terms {
+				found = found || prior == word
+			}
+			if !found {
+				terms = append(terms, word)
+			}
+		}
+		word = ""
+	}
+	for _, c := range []byte(asciiSkillLower(query)) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c >= 128 {
+			word += string([]byte{c})
+		} else {
+			add()
+		}
+	}
+	add()
+	return terms
+}
+
+func skillRelevance(query, name, content string) int {
+	n, text, q := asciiSkillLower(name), asciiSkillLower(content), asciiSkillLower(query)
+	score := 0
+	if q != "" && strings.Contains(n, q) {
+		score += 40
+	}
+	if q != "" && strings.Contains(text, q) {
+		score += 8
+	}
+	for _, term := range skillQueryTerms(query) {
+		if strings.Contains(n, term) {
+			score += 10
+		}
+		if strings.Contains(text, term) {
+			score += 2
+		}
+	}
+	return score
+}
+
+func (s *Store) skillIsCurrent(ctx context.Context, skill Skill) (bool, error) {
+	_, allowed := allowedSkillProfiles[skill.VerificationProfile]
+	_, applyOnly := applyOnlySkillProfiles[skill.VerificationProfile]
+	if skill.Name == "" || skill.Content == "" || len(skill.Content) > 8192 ||
+		skill.OriginNodeID == "" || skill.OriginVersion == "" || skill.VerificationRunID == "" || !allowed || applyOnly {
+		return false, nil
+	}
+	var node KnowledgeNode
+	err := s.db.Collection("knowledge_nodes").FindOne(ctx, knowledgeNodeFilter(skill.OriginNodeID)).Decode(&node)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write([]byte(node.Content))
+	if node.Status != "verified" || node.Sector == "personal" || node.Version != skill.OriginVersion ||
+		node.Content != skill.Content || hex.EncodeToString(hash.Sum(nil)) != skill.OriginHash {
+		return false, nil
+	}
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"node_id": node.ID}}},
+		{{Key: "$lookup", Value: bson.M{"from": "ingestion_runs", "localField": "run_id", "foreignField": "run_id", "as": "run"}}},
+		{{Key: "$match", Value: bson.M{"run.status": StatusCommitted}}},
+		{{Key: "$limit", Value: 1}},
+		{{Key: "$project", Value: bson.M{"_id": 1}}},
+	}
+	cursor, err := s.db.Collection("run_node_links").Aggregate(ctx, pipeline, options.Aggregate().SetMaxTime(time.Second))
+	if err != nil {
+		return false, err
+	}
+	defer cursor.Close(ctx)
+	if !cursor.Next(ctx) {
+		return false, cursor.Err()
+	}
+	latest, err := s.requirePassingSkillRun(ctx, skill.OriginNodeID, skill.Name)
+	if err != nil {
+		if errors.Is(err, ErrSkillVerificationRequired) || errors.Is(err, ErrSkillVerificationStale) ||
+			errors.Is(err, ErrSkillApplyOnlyProfile) || errors.Is(err, ErrSkillSuiteRequired) {
+			return false, nil
+		}
+		return false, err
+	}
+	return latest.VerificationProfile == skill.VerificationProfile, nil
 }
 
 func regexpQuote(value string) string {

@@ -5,6 +5,27 @@
 #include <string>
 #include <vector>
 
+constexpr size_t kToolContextBytes = 12000;
+
+inline bool append_tool_context(std::string& ledger, const std::string& result) {
+    static const std::string history_omitted =
+        "[Earlier tool results omitted to preserve complete current results.]\n";
+    static const std::string result_omitted =
+        "[Tool result omitted: exceeds the bounded context. No partial output "
+        "or procedure returned. Request smaller scoped output or query one skill alone.]\n";
+    const bool retained = result.size() <= kToolContextBytes - history_omitted.size();
+    const std::string& next = retained ? result : result_omitted;
+    if (ledger.empty()) {
+        ledger = next;
+    } else if (ledger.size() + 1 + next.size() <= kToolContextBytes) {
+        ledger += '\n';
+        ledger += next;
+    } else {
+        ledger = history_omitted + next;
+    }
+    return retained;
+}
+
 // Native tool rounds: advertise OpenAI tools on every hop except the last.
 // The ledger being non-empty does not drop the schema. CUDA IMA is avoided
 // by flatten + never sending role:tool, not by a one-shot tools flag.

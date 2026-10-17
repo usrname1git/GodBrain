@@ -76,6 +76,17 @@ func TestIdentityParityFixture(t *testing.T) {
 			if hex.EncodeToString(hash.Sum(nil)) != p[4] {
 				t.Fatalf("%s hash = %s", p[1], hex.EncodeToString(hash.Sum(nil)))
 			}
+		case "pin":
+			if len(p) != 5 || (p[4] != "stale" && p[4] != "current") {
+				t.Fatalf("pin fields: %q", line)
+			}
+			var content string
+			if err := json.Unmarshal([]byte(p[2]), &content); err != nil {
+				t.Fatalf("%s: %v", p[1], err)
+			}
+			if got := hasMismatchedOSPin(content, p[3]); got != (p[4] == "stale") {
+				t.Errorf("%s stale=%v, want %s", p[1], got, p[4])
+			}
 		case "span":
 			if len(p) != 5 {
 				t.Fatalf("span fields: %q", line)

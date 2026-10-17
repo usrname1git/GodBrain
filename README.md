@@ -95,8 +95,11 @@ Candidates and raw web text are not Oracle truth.
 
 Layer 3 is implemented. The production C++ kernel and the parked Go/Rust routers retrieve prompt context only through `http://127.0.0.1:8084/v1/search`.
 They validate the generation and `hybrid-v1` contract, preserve bounded citations and trust labels, and wrap retrieved text as explicitly untrusted reference data.
-If the service is unavailable, unready, malformed, oversized, or returns no usable context, **and** this kernel process has no session notes, chat fails closed before a model is started.
-Non-empty process session notes (hydrated from RAG at boot, or `/remember`) may still go to the mouth without a fresh Golden Record hit.
+If the service is unavailable, unready, malformed, oversized, or returns no usable context, **and** this kernel process has no usable session notes, chat fails closed before a model is started.
+Ordinary conversation and `/remember` notes remain explicitly untrusted local continuity, not verified knowledge. Personal notes never enter technical prompt context.
+RAG-derived references are rechecked through `/v1/document` before prompt or session-recall use: verified status, identity/version, complete-content hash and applicable live Windows pin must still match. Missing, retired, changed or unreadable origins are withheld with explicit reasons; unrelated local notes survive. At most three bounded origin reads run outside the session mutex.
+An authorized judgment makes a saved local note require its matching current origin; a local status string alone cannot make it verified. RAG-free file, edit and `No tools` advisory requests do not perform these reads.
+Every ordinary runner receives actual evidence within a shared 4 KiB budget, including follow-ups with prior chat history. Clipping preserves UTF-8, escaped values and the closing untrusted-data marker; the optional session pointer cannot crowd out evidence.
 They do not fall back to the old `nodes` collection. Galaxy graph and node lookup use the same service (`/v1/graph`, `/v1/document`) and the active `rag_documents` generation.
 
 Lexical/metadata retrieval remains the zero-configuration canonical fallback.

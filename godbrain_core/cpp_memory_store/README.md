@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 13)
+# C++ Alexandria Memory Store (cut 14)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -37,10 +37,19 @@ and gates as Go (`desk-v1` one fixture; `galaxy-html-v1` / `frontend-*-v1` two
 distinct passing fixtures; `local-edit-apply-v1` cannot promote). Origin must be
 verified, content-hash bound, linked to a committed run.
 
-Cut 8: stdin `stale_pins`. Kernel `/observe` uses this when `os_pin` moves:
+Cut 8: stdin `stale_pins`. Kernel `/observe` uses this on every valid observation,
+not only when a disk checkpoint says `os_pin` moved:
 verified `windows-sre` cards that carry a different `os_pin=` become `stale`
 (not deleted). Learn-class cards without `os_pin=` stay verified. Already-stale
 mismatches are counted so RAG projection can resync.
+Every ASCII-whitespace-delimited pin value must match exactly; a build-number
+prefix or a second conflicting pin cannot keep a card current. Sweeps stream
+the complete matching corpus in Mongo `_id` order and 100-document batches,
+rather than silently stopping after 500 cards. Cursor/projection errors fail
+the request; this does not introduce new automatic verification.
+Missing or unchanged kernel checkpoints cannot suppress reconciliation.
+Unconfirmed Windows build reads fail before reconciliation or inventory writes;
+this does not add source/document-version freshness or a new trust schema.
 
 Cut 9: search citations load bounded `sources` and emit `evidence` spans
 (`byte_valid` / `not_provided` / `invalid` / `partial`). Citation status is
@@ -64,6 +73,17 @@ Cut 13: offline snapshot self-test ports Go `http_test.go` searchConsistently
 cases (stable snapshot, partial interleave, retry-fresh, rebuild bound, hybrid
 identity). `search_before_gate` / `search_after_gate` are shared with
 `rag-service`.
+
+Cut 14: skill lookup rechecks current verified committed origin, exact
+content/hash/version and latest passing profile/suite evidence. Relevance
+within a bounded 100-promotion pool precedes recency. Stale, personal and
+apply-only origins/evidence do not route. `memory-store query_skills` and
+`rag-service /v1/skills` share the same read implementation; no read-time
+writes or schema migration. Go rollback uses the same parity fixtures.
+
+`cpp_skill_lookup` exercises actual joins in a uniquely named test database
+when `MONGODB_TEST_URI` points at a disposable MongoDB instance; otherwise
+CTest reports it skipped. Never use the live vault for integration tests.
 
 Start/Heal prefer this tree's Release exes, then Go.
 

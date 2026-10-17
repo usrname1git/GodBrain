@@ -1000,13 +1000,23 @@ func validOSPin(pin string) bool {
 	return true
 }
 
-// hasMismatchedOSPin is true when content carries os_pin= but not this live pin.
+// Every ASCII-whitespace-delimited os_pin= value must equal the live pin.
 // Cards with no os_pin= (Learn-class) are not pin-scoped.
 func hasMismatchedOSPin(content, pin string) bool {
-	if !strings.Contains(content, "os_pin=") {
-		return false
+	for {
+		position := strings.Index(content, "os_pin=")
+		if position < 0 {
+			return false
+		}
+		content = content[position+len("os_pin="):]
+		value := content
+		if end := strings.IndexAny(value, " \t\r\n\f\v"); end >= 0 {
+			value = value[:end]
+		}
+		if value != pin {
+			return true
+		}
 	}
-	return !strings.Contains(content, "os_pin="+pin)
 }
 
 // StaleMismatchedPins marks verified windows-sre nodes whose content has os_pin=
@@ -1024,7 +1034,7 @@ func (s *Store) StaleMismatchedPins(ctx context.Context, sector, pin, reasoning 
 		"sector":  sector,
 		"status":  bson.M{"$in": []string{StatusVerified, StatusStale}},
 		"content": bson.M{"$regex": "os_pin="},
-	}, options.Find().SetLimit(500))
+	}, options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}).SetBatchSize(100))
 	if err != nil {
 		return nil, err
 	}
