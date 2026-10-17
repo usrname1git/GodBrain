@@ -354,14 +354,20 @@ json next(const Database& db) {
     bson_oid_init(&token, nullptr);
     char hex[25];
     bson_oid_to_string(&token, hex);
-    const auto reply = db.command(
+    json claim =
         {{"findAndModify", "evidence_checks"},
          {"query", {{"next_check_ms", {{"$lte", now}}}, {"lease_until_ms", {{"$lte", now}}}}},
          {"sort", {{"next_check_ms", 1}, {"_id", 1}}},
          {"update",
           {{"$set", {{"lease_token", hex}, {"lease_until_ms", now + kEvidenceLeaseMs}}},
            {"$inc", {{"attempts", 1}}}}},
-         {"new", true}});
+         {"new", true}};
+    claim["query"]["profile"] = {{"$in", json::array({"host", "document"})}};
+    auto reply = db.command(claim);
+    if (!reply.contains("value") || reply["value"].is_null()) {
+        claim["query"].erase("profile");
+        reply = db.command(claim);
+    }
     if (!reply.contains("value") || reply["value"].is_null()) return {{"status", "idle"}};
     auto row = reply["value"];
     const auto sources =
