@@ -1,6 +1,7 @@
 #pragma once
 
 #include "json.hpp"
+#include <functional>
 #include <string>
 
 using json = nlohmann::json;
@@ -13,6 +14,9 @@ namespace memory {
     json promote_claim(const json& payload);
     json maintain_evidence();
     json evidence_status();
+    json research_tick(const std::function<std::string(const json&)>& infer,
+                       const std::string& model_id = "");
+    json research_status();
     json stale_mismatched_pins(const std::string& pin, const std::string& reasoning);
     json get_recent(int limit);
     json get_recent_personal(int limit);

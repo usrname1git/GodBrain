@@ -88,10 +88,19 @@ first authenticated maintenance tick, not by rewriting legacy judgments.
 Canonical retrieval/skill admission and cached session/Continue references
 respect the check. It is source-only and has not been deployed.
 
-The wider research goal remains unsolved: discover new relevant material,
-compare it against the manual, curate novelty and flag semantic conflicts
-using a qualified local model. These source-maintenance checks do not claim
-that capability or establish that the available 27B can do it reliably.
+The next source-only increment adds bounded primary-source discovery and
+local semantic selection in the same Heal/kernel loop, not another daemon.
+The existing EXL3 27B passed eleven protected curation cases after native
+compact reference labels replaced error-prone model copying of opaque hashes.
+The rejected pre-fix result is retained; the check was not relaxed. A complete
+current Learn component-store page also produced a natively checked exact
+quote in a read-only sample, with no live-vault writes.
+
+This is bounded qualification, not proof of general Internet research or
+semantic truth. Automatic authority still covers source quote presence only;
+conflicts/questions remain candidates, and comparisons cover a bounded current
+reference set rather than the entire corpus. AFK is discovery-only and never
+loads a model. No research runtime or source-maintenance policy is deployed.
 A failed observation is not proof that the existing corpus is current.
 Canonical origin rechecks also cannot detect unsupported interpretations or
 semantic drift that has not yet reached the verified record.

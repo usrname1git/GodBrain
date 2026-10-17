@@ -690,6 +690,22 @@ if ($after.kernel) {
         } catch {
             Write-Warning "heal evidence maintenance failed; durable leases remain retryable: $_"
         }
+        try {
+            $researchBody = @{ inference = (-not [bool]$Afk) } | ConvertTo-Json -Compress
+            $research = Invoke-RestMethod -Uri "http://127.0.0.1:8083/api/research" `
+                -Method POST -Headers $obsHeaders -Body $researchBody -TimeoutSec 450
+            [IO.File]::WriteAllText((Join-Path $logDir "last-research.json"),
+                ($research | ConvertTo-Json -Depth 16 -Compress), $utf8)
+            Write-Host ("heal research {0} queued={1}" -f $research.status, $research.summary.queued)
+            if ($research.error) {
+                Write-Warning ("Research deferred with bounded retry: {0}" -f $research.error)
+            }
+            if (@($research.summary.exceptions.PSObject.Properties).Count -gt 0) {
+                Write-Warning "Research exhausted bounded recovery; grouped incidents: http://127.0.0.1:8083/api/research"
+            }
+        } catch {
+            Write-Warning "heal research failed; the durable frontier remains retryable: $_"
+        }
     }
     # Refresh on-disk glances BEFORE the desk verifier so this tick is what it checks.
     foreach ($pair in @(

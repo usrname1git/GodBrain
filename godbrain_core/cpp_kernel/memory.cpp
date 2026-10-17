@@ -8,6 +8,7 @@
 #include "session_context.h"
 #include "truth_assertion.h"
 #include "evidence_maintenance.h"
+#include "research_curation.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -20,6 +21,7 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <ctime>
 #include <initializer_list>
 #include <cstdlib>
 #include <iostream>
@@ -795,6 +797,122 @@ json maintain_evidence() {
         results.push_back(run_memory_store(completion));
     }
     return {{"status", "ok"}, {"checks", results}, {"summary", evidence_status()}};
+}
+
+namespace {
+std::string research_path() {
+    const auto dir = exe_dir();
+    if (dir.empty()) throw std::runtime_error("cannot locate research frontier");
+    return dir + "\\research-frontier.json";
+}
+
+json read_research() {
+    const auto path = research_path();
+    const DWORD attributes = GetFileAttributesA(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND) return godbrain_research::initial_state();
+        windows_error("Research frontier attributes", error);
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot read research frontier");
+    std::string body;
+    std::array<char, 8192> buffer{};
+    while (in) {
+        in.read(buffer.data(), buffer.size());
+        body.append(buffer.data(), static_cast<size_t>(in.gcount()));
+        if (body.size() > godbrain_research::kMaxStateBytes)
+            throw std::runtime_error("research frontier exceeds size limit");
+    }
+    if (in.bad()) throw std::runtime_error("research frontier read failed");
+    auto state = godbrain_research::strict_json(body, godbrain_research::kMaxStateBytes);
+    godbrain_research::validate_state(state);
+    return state;
+}
+
+void write_research(const json& state) {
+    godbrain_research::validate_state(state);
+    const auto body = state.dump();
+    if (body.size() > godbrain_research::kMaxStateBytes)
+        throw std::runtime_error("research frontier exceeds size limit");
+    const auto path = research_path();
+    const auto temporary = path + ".tmp";
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        if (!out || !(out << body).flush())
+            throw std::runtime_error("research frontier write failed");
+    }
+    if (!MoveFileExA(temporary.c_str(), path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        windows_error("Research frontier atomic replacement");
+}
+
+json research_references(const std::string& query) {
+    if (!rag_projection_ready())
+        throw std::runtime_error("canonical research RAG is not ready");
+    godbrain_rag::Client client;
+    json found;
+    std::string error;
+    if (!client.search(query, 5, found, error)) {
+        if (error.find("no usable context") != std::string::npos && found.is_object() &&
+            found.contains("results") && found.at("results").is_array() &&
+            found.at("results").empty())
+            return json::array();
+        throw std::runtime_error(error);
+    }
+    json references = json::array();
+    for (const auto& hit : found.at("results")) {
+        if (hit.at("sector") != "windows-sre") continue;
+        json document;
+        if (!client.document(hit.at("node_id").get<std::string>(), document, error))
+            throw std::runtime_error(error);
+        if (document.at("status") != "verified" || document.at("sector") != "windows-sre" ||
+            document.at("stable_id") != hit.at("stable_id") ||
+            document.at("node_version") != hit.at("node_version"))
+            throw std::runtime_error("canonical research reference changed or lost authority");
+        godbrain_research::require_reference_pin(
+            document.at("content").get<std::string>(), telemetry::windows_pin);
+        references.push_back({{"id", document.at("stable_id")},
+                              {"content", document.at("content")}});
+    }
+    return references;
+}
+} // namespace
+
+json research_status() {
+    return godbrain_research::summary(read_research());
+}
+
+json research_tick(const std::function<std::string(const json&)>& infer,
+                   const std::string& model_id) {
+    static std::mutex research_mutex;
+    std::unique_lock<std::mutex> lock(research_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return {{"status", "busy"}};
+    auto state = read_research();
+    godbrain_research::Operations operations;
+    operations.persist = write_research;
+    operations.discover = [](const std::string& url) {
+        const auto document = fetch_ms_doc(url);
+        if (!document.complete || document.mime() != "application/json")
+            throw std::runtime_error("Learn discovery did not return complete JSON");
+        return godbrain_research::strict_json(document.body, godbrain_truth::kMaxDocumentBytes);
+    };
+    operations.fetch = fetch_ms_doc;
+    operations.references = research_references;
+    operations.infer = infer;
+    operations.publish = [&](const json& input, const godbrain_truth::Document& source,
+                             const json& result) {
+        return godbrain_research::publish_selection(
+            input, source, result, model_id,
+            [](const json& candidate) { return commit_candidate(candidate, false); },
+            [](const json& judgment) { return set_status_impl(judgment, false); });
+    };
+    const auto now = static_cast<int64_t>(std::time(nullptr));
+    auto receipt = godbrain_research::tick(state, now, operations);
+    receipt["summary"] = godbrain_research::summary(state);
+    if (receipt.contains("error"))
+        std::cerr << "[MEMORY] Research retry: " << receipt.dump() << '\n';
+    return receipt;
 }
 
 namespace {

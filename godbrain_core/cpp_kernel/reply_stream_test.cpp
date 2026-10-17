@@ -208,6 +208,25 @@ int main() {
             httplib::Response unconfigured_evidence;
             handle_evidence(request, unconfigured_evidence);
             check(unconfigured_evidence.status == 401, "Maintenance accepted an unconfigured bearer");
+            httplib::Response unconfigured_research;
+            handle_research(request, unconfigured_research);
+            check(unconfigured_research.status == 401, "Research accepted an unconfigured bearer");
+            g_api_token = "fixture-research-token";
+            httplib::Response missing_research_token;
+            handle_research(request, missing_research_token);
+            check(missing_research_token.status == 401, "Research accepted a missing bearer");
+            request.headers.emplace("Authorization", "Bearer fixture-research-token");
+            for (const auto* body : {
+                     R"({"url":"https://example.invalid","decision":"new"})",
+                     R"({"inference":"yes"})",
+                     R"({"inference":false,"inference":true})"}) {
+                request.body = body;
+                httplib::Response invalid_research;
+                handle_research(request, invalid_research);
+                check(invalid_research.status == 400,
+                      "Research accepted caller-selected sources/verdicts or invalid flags");
+            }
+            g_api_token.clear();
         }
         const std::string hostname = telemetry::get_computer_name();
         check(!hostname.empty() &&

@@ -12,6 +12,8 @@ inbox/failed/*
 godbrain_core/cpp_kernel/last_oracle.json
 godbrain_core/cpp_kernel/last_oracle.json.tmp
 godbrain_core/cpp_kernel/windows-pin.txt
+godbrain_core/cpp_kernel/research-frontier.json
+godbrain_core/cpp_kernel/research-frontier.json.tmp
 godbrain_core/rust_router/target/
 **/*.pdb
 **/*.rlib
