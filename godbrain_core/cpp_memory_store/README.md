@@ -112,7 +112,15 @@ Checks expire after 24 hours for documents and 15 minutes for host observations;
 successful checks schedule renewal halfway through that lifetime.
 
 Discovery scans 32 verified nonpersonal canonical nodes per pass with a durable
-wrapping cursor, joining committed provenance automatically. Supported sources
+wrapping cursor, joining committed provenance automatically. Reproducible sources
+are preferred before selecting the newest run; an unsupported transcript cannot
+mask an older reproducible source. Changed source bindings reconcile only while
+idle, clear old lease/proof pointers, and require a new check. Equivalent runs
+with the same usable source do not discard current proof.
+Superseded observations retain daily recovery; a returning exact successor is
+re-armed without being made fresh. Previously infinite retirement deadlines are
+repaired during discovery. Content-Type changes require quote rechecking even
+when the document body bytes are identical. Supported sources
 are existing truth observations, host inventory, and legacy exact-body
 Learn/Support sources. A byte change cannot renew the old version. If a
 supported observation can be established again, the kernel ingests and judges

@@ -1561,8 +1561,9 @@ static void handle_research(const httplib::Request& req, httplib::Response& res)
                         static std::string qualified_instance;
                         static ULONGLONG checked_at = 0;
                         static bool passed = false;
-                        if (qualified_instance != runner.identity() ||
-                            GetTickCount64() - checked_at >= 6 * 60 * 60 * 1000ULL) {
+                        if (!godbrain_research::qualification_current(
+                                passed, qualified_instance, runner.identity(), checked_at,
+                                GetTickCount64())) {
                             const auto proof = godbrain_research::qualify(
                                 [&](const json& fixture) { return runner.infer(fixture); });
                             qualified_instance = runner.identity();

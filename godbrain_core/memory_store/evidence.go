@@ -180,27 +180,49 @@ func (s *Store) evidenceSource(ctx context.Context, node primitive.ObjectID, run
 	if hash != "" {
 		runMatch["run.source_hash"] = hash
 	}
-	cursor, err := s.db.Collection("run_node_links").Aggregate(ctx, mongo.Pipeline{
+	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: match}},
 		{{Key: "$lookup", Value: bson.M{"from": "ingestion_runs", "localField": "run_id", "foreignField": "run_id", "as": "run"}}},
 		{{Key: "$unwind", Value: "$run"}},
 		{{Key: "$match", Value: runMatch}},
 		{{Key: "$sort", Value: bson.D{{Key: "run.created_at", Value: -1}, {Key: "run.run_id", Value: 1}}}},
-		{{Key: "$limit", Value: 1}},
-		{{Key: "$replaceRoot", Value: bson.M{"newRoot": "$run"}}},
-	}, options.Aggregate().SetMaxTime(3*time.Second))
+	}
+	discover := runID == "" && hash == ""
+	if discover {
+		pipeline = append(pipeline, bson.D{{Key: "$lookup", Value: bson.M{"from": "sources",
+			"localField": "run.source_hash", "foreignField": "source_hash", "as": "source"}}})
+	} else {
+		pipeline = append(pipeline, bson.D{{Key: "$limit", Value: 1}})
+	}
+	cursor, err := s.db.Collection("run_node_links").Aggregate(ctx, pipeline,
+		options.Aggregate().SetMaxTime(3*time.Second).SetBatchSize(1))
 	if err != nil {
 		return nil, err
 	}
 	defer cursor.Close(ctx)
-	if !cursor.Next(ctx) {
-		return nil, cursor.Err()
+	var fallback *IngestionRun
+	for cursor.Next(ctx) {
+		var candidate struct {
+			Run     IngestionRun `bson:"run"`
+			Sources []Source     `bson:"source"`
+		}
+		if err = cursor.Decode(&candidate); err != nil {
+			return nil, err
+		}
+		if fallback == nil {
+			run := candidate.Run
+			fallback = &run
+		}
+		if !discover {
+			return &candidate.Run, nil
+		}
+		if len(candidate.Sources) != 0 &&
+			evidenceHash(candidate.Sources[0].Content) == candidate.Run.SourceHash &&
+			evidenceProfile(candidate.Sources[0], evidenceRow{SourceURL: candidate.Run.ExternalSourceID}) != "unsupported" {
+			return &candidate.Run, nil
+		}
 	}
-	var run IngestionRun
-	if err = cursor.Decode(&run); err != nil {
-		return nil, err
-	}
-	return &run, nil
+	return fallback, cursor.Err()
 }
 
 func (s *Store) evidenceCanonical(ctx context.Context, row evidenceRow) (bool, error) {
@@ -258,6 +280,31 @@ func (s *Store) enrollEvidence(ctx context.Context, now int64) error {
 			State: "pending", Profile: "unsupported", NextCheckMS: now, Reason: "awaiting_check"}
 		if _, err = s.db.Collection("evidence_checks").UpdateOne(ctx, bson.M{"_id": id},
 			bson.M{"$setOnInsert": row}, options.Update().SetUpsert(true)); err != nil {
+			return err
+		}
+		var current evidenceRow
+		if err = s.db.Collection("evidence_checks").FindOne(ctx, bson.M{"_id": id}).Decode(&current); err != nil {
+			return err
+		}
+		canonical, err := s.evidenceCanonical(ctx, current)
+		if err != nil {
+			return err
+		}
+		idle := bson.M{"_id": id, "source_run": current.SourceRun, "source_hash": current.SourceHash,
+			"source_url": current.SourceURL, "lease_until_ms": bson.M{"$lte": now}}
+		if current.SourceHash != run.SourceHash || current.SourceURL != run.ExternalSourceID || !canonical {
+			_, err = s.db.Collection("evidence_checks").UpdateOne(ctx, idle,
+				bson.M{"$set": bson.M{"source_run": run.RunID, "source_hash": run.SourceHash,
+					"source_url": run.ExternalSourceID, "state": "pending", "profile": "unsupported",
+					"attempts": 0, "next_check_ms": now, "lease_until_ms": int64(0),
+					"checked_at_ms": int64(0), "expires_at_ms": int64(0), "reason": "provenance_changed"},
+					"$unset": bson.M{"lease_token": "", "last_token": "", "last_result": "", "maintenance_version": ""}})
+		} else if current.State == "changed" && current.NextCheckMS > now+DocumentTTLMS {
+			idle["next_check_ms"] = current.NextCheckMS
+			_, err = s.db.Collection("evidence_checks").UpdateOne(ctx, idle,
+				bson.M{"$set": bson.M{"next_check_ms": now}})
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -433,10 +480,16 @@ func (s *Store) EvidenceComplete(ctx context.Context, request EvidenceRequest) (
 	due = now + EvidenceBackoff(row.Attempts)
 	if fresh {
 		due, expires = now+ttl/2, now+ttl
-	} else if request.Successor != "" {
-		due = int64(^uint64(0)>>1) / 2
 	} else if request.Outcome == "changed" {
 		due = now + DocumentTTLMS
+	}
+	if request.Successor != "" {
+		if _, err = s.db.Collection("evidence_checks").UpdateMany(ctx,
+			bson.M{"stable_id": request.Successor, "sector": row.Sector, "source_hash": request.ObservedHash,
+				"state": bson.M{"$ne": "fresh"}, "lease_until_ms": bson.M{"$lte": time.Now().UTC().UnixMilli()}},
+			bson.M{"$min": bson.M{"next_check_ms": time.Now().UTC().UnixMilli()}}); err != nil {
+			return nil, err
+		}
 	}
 	update := bson.M{"$set": bson.M{"state": state, "reason": request.Reason, "checked_at_ms": now,
 		"expires_at_ms": expires, "next_check_ms": due, "lease_until_ms": int64(0), "attempts": attempts,

@@ -38,6 +38,20 @@ static json model_selection(const Fixture& fixture) {
     return result;
 }
 
+static json unicode_relation_fixture() {
+    const auto fixture = fixtures().at(3);
+    const std::string sentence =
+        "Windows\xC2\xA0" "component\xE2\x80\x83" "cleanup is disabled by default.";
+    const godbrain_truth::Document source{sentence, "text/plain; charset=utf-8", true};
+    const auto in = input(fixture.in.at("url"), fixture.in.at("title"), source,
+                          fixture.in.at("references"));
+    auto result = selection(fixture);
+    result["quote"] = sentence;
+    const auto observation = assertion(in, source, result);
+    return relation_candidate(in, source, result,
+                              observation.at("payload").at("provenance").at("source_hash"));
+}
+
 struct Loop {
     json state = initial_state();
     json persisted = state;
@@ -188,6 +202,10 @@ static void test_mouth_binding() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--relation-document") {
+            std::cout << unicode_relation_fixture().dump() << '\n';
+            return 0;
+        }
         if (argc == 4 && std::string(argv[1]) == "--sample") {
             const auto port = std::string(argv[2]);
             if (port != "8888" && port != "8000")
@@ -253,6 +271,37 @@ int main(int argc, char** argv) {
         test_mouth_binding();
         const auto cases = fixtures();
         {
+            const auto candidate = unicode_relation_fixture();
+            const auto content = candidate.at("payload").at("claims").at(0).at("content").get<std::string>();
+            const auto normalized = godbrain_truth::collapse_ws(content);
+            const auto marker = normalized.find("relation=");
+            check(marker != std::string::npos &&
+                      json::parse(normalized.substr(marker + 9)) ==
+                          json::parse(candidate.at("raw_transcript").get<std::string>()).at("relation") &&
+                      std::all_of(content.begin(), content.end(),
+                                  [](unsigned char ch) { return ch < 128; }) &&
+                      candidate.at("extractor_version") == kRelationExtractorVersion,
+                  "relation normalization changed its Unicode quote or reused the old extractor");
+        }
+        {
+            int reads = 0;
+            const auto unavailable = [&]() -> std::string {
+                ++reads;
+                throw std::runtime_error("fixture Windows pin unavailable");
+            };
+            require_reference_pin("An unpinned Windows document.", unavailable);
+            check(reads == 0, "unpinned research required a Windows pin");
+            const std::string pinned = "A host-specific finding. os_pin=fixture/123.45";
+            require_reference_pin(pinned, [] { return "fixture/123.45"; });
+            rejects([&] { require_reference_pin(pinned, unavailable); });
+            rejects([&] { require_reference_pin(pinned, [] { return ""; }); });
+            rejects([&] { require_reference_pin(pinned, [] { return "fixture/123.46"; }); });
+            rejects([&] {
+                require_reference_pin(pinned + " os_pin=fixture/123.46",
+                                      [] { return "fixture/123.45"; });
+            });
+        }
+        {
             const auto& fixture = cases.at(3);
             const godbrain_truth::Document source{fixture.in.at("source_text"),
                                                   "text/plain; charset=utf-8", true};
@@ -298,17 +347,38 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        const auto simulated = qualify([&](const json& request) {
+        const Infer synthetic = [&](const json& request) {
             for (const auto& fixture : cases) {
                 if (godbrain_research::request(fixture.in) == request)
                     return model_selection(fixture).dump();
             }
             throw std::runtime_error("unknown synthetic fixture");
-        });
+        };
+        const auto simulated = qualify(synthetic);
         check(simulated.at("pass") == true && simulated.at("count") == cases.size(),
               "protected fixture verifier rejected its exact synthetic answers");
         check(qualify([](const json&) { return "{}"; }).at("pass") == false,
               "invalid model output qualified");
+        {
+            const auto failed = qualify([](const json&) -> std::string {
+                throw std::runtime_error("fixture transient HTTP failure");
+            });
+            const std::string instance = "same-runner";
+            check(!qualification_current(failed.at("pass"), instance, instance, 1000, 1001),
+                  "transient qualification failure was cached");
+            int attempts = 0;
+            auto recovered = failed;
+            if (!qualification_current(failed.at("pass"), instance, instance, 1000, 1001)) {
+                ++attempts;
+                recovered = qualify(synthetic);
+            }
+            check(attempts == 1 && recovered.at("pass") == true &&
+                      qualification_current(true, instance, instance, 1000, 1001) &&
+                      !qualification_current(true, instance, "replaced-runner", 1000, 1001) &&
+                      !qualification_current(true, instance, instance, 1000, 1000 + 6 * 60 * 60 * 1000ULL) &&
+                      !qualification_current(true, instance, instance, 1000, 999),
+                  "qualification cache identity or lifetime gate failed");
+        }
         const auto in = cases.at(0).in;
         auto good = selection(cases.at(0));
         for (const auto* bad : {"unknown", "quote", "reference", "relation"}) {

@@ -2,6 +2,7 @@
 
 #include "rag_client.h"
 #include "truth_assertion.h"
+#include "../cpp_tools/os_pin.h"
 #include <chrono>
 #include <functional>
 #include <set>
@@ -14,10 +15,26 @@ using json = nlohmann::json;
 using Infer = std::function<std::string(const json&)>;
 constexpr const char* kProfile = "windows-sre-curation-v1";
 constexpr const char* kVersion = "1.0.0";
+constexpr const char* kRelationExtractorVersion = "1.0.1";
 constexpr size_t kMaxQueue = 64;
 constexpr size_t kMaxStateBytes = 512 * 1024;
 constexpr size_t kMaxTextBytes = 24000;
 constexpr int64_t kDay = 86400;
+
+inline bool qualification_current(bool passed, const std::string& qualified_instance,
+                                  const std::string& instance, uint64_t checked_at,
+                                  uint64_t now) {
+    return passed && qualified_instance == instance && now >= checked_at &&
+           now - checked_at < 6 * 60 * 60 * 1000ULL;
+}
+
+template <class Pin>
+void require_reference_pin(const std::string& content, Pin read_pin) {
+    if (content.find("os_pin=") == std::string::npos) return;
+    const auto pin = godbrain_truth::checked_pin(read_pin());
+    if (godbrain_pin::has_mismatched_os_pin(content, pin))
+        throw std::runtime_error("canonical research reference does not match the live Windows pin");
+}
 
 inline json strict_json(const std::string& text, size_t limit) {
     if (text.empty() || text.size() > limit) throw std::runtime_error("invalid JSON size");
@@ -343,10 +360,10 @@ inline json relation_candidate(const json& in, const godbrain_truth::Document& s
         "Unresolved research relation; interpretation is NOT verified.\ncuration_profile=" +
         std::string(kProfile) + "\nsource_url=" + in.at("url").get<std::string>() +
         "\nsource_keccak256=" + in.at("source_hash").get<std::string>() +
-        "\nrelation=" + relation.dump() + "\n";
+        "\nrelation=" + godbrain_truth::observation_text(relation) + "\n";
     return {
         {"extractor_id", "Kernel-Research-CPP"},
-        {"extractor_version", kVersion},
+        {"extractor_version", kRelationExtractorVersion},
         {"schema_version", "1.0"},
         {"degraded", false},
         {"raw_transcript", raw},

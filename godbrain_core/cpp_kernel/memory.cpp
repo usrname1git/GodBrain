@@ -870,6 +870,8 @@ json research_references(const std::string& query) {
             document.at("stable_id") != hit.at("stable_id") ||
             document.at("node_version") != hit.at("node_version"))
             throw std::runtime_error("canonical research reference changed or lost authority");
+        godbrain_research::require_reference_pin(
+            document.at("content").get<std::string>(), telemetry::windows_pin);
         references.push_back({{"id", document.at("stable_id")},
                               {"content", document.at("content")}});
     }

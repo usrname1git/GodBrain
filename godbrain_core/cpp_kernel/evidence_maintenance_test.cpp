@@ -61,6 +61,52 @@ int main() {
                 });
         };
         require(run().at("outcome") == "fresh" && published == 0, "unchanged document not renewed");
+        for (const auto& scenario : {
+                 json{{"body", "A specific <b>source-backed</b> observation of Windows servicing."},
+                      {"from", "text/html; charset=utf-8"}, {"to", "text/plain; charset=utf-8"},
+                      {"removed", true}},
+                 json{{"body", "<span title=\"" + quote + "\">Other text.</span>"},
+                      {"from", "text/plain; charset=utf-8"}, {"to", "text/html; charset=utf-8"},
+                      {"removed", true}},
+                 json{{"body", quote}, {"from", "text/plain; charset=utf-8"},
+                      {"to", "text/html; charset=utf-8"}, {"removed", false}}}) {
+            godbrain_truth::Document original{scenario.at("body"), scenario.at("from"), true};
+            const auto text = godbrain_truth::document_text(original);
+            auto assertion = observation;
+            assertion["document_keccak256"] = keccak256(original.body);
+            assertion["normalized_text_keccak256"] = keccak256(text);
+            assertion["normalized_offset"] = text.find(quote);
+            assertion["normalization"] = original.mime() == "text/plain"
+                                             ? "plain-text-ascii-ws-v1"
+                                             : "html-tags-as-spaces-ascii-ws-v1";
+            const auto saved = godbrain_truth::assertion_document(
+                assertion, {{"url", url}, {"body", original.body},
+                            {"content_type", original.content_type}}, "test", "doc_fact");
+            auto mime_job = job;
+            mime_job["raw_source"] = saved.at("raw_transcript");
+            mime_job["source_hash"] = saved.at("payload").at("provenance").at("source_hash");
+            mime_job["content_hash"] = keccak256(godbrain_truth::collapse_ws(
+                saved.at("payload").at("claims").at(0).at("content").get<std::string>()));
+            original.content_type = scenario.at("to");
+            int replacements = 0;
+            const auto changed = godbrain_evidence::check(
+                mime_job, [&](const std::string&) { return original; },
+                [](const godbrain_truth::Probe&) { return godbrain_truth::Observation{}; },
+                [] { return "fixture/123.45"; }, [] { return json::object(); },
+                [&](const json& replacement) {
+                    ++replacements;
+                    const auto bound = json::parse(replacement.at("raw_transcript").get<std::string>());
+                    require(bound.at("evidence").at("content_type") == scenario.at("to"),
+                            "replacement lost the current Content-Type");
+                    return json{{"trust", "verified"}, {"promoted", true},
+                                {"stable_id", std::string(64, 'd')}};
+                });
+            const bool removed = scenario.at("removed");
+            require(changed.at("outcome") == "changed" &&
+                        changed.at("reason") == (removed ? "quote_removed" : "new_observation_committed") &&
+                        replacements == (removed ? 0 : 1),
+                    "Content-Type change renewed an old interpretation");
+        }
         document.body += " New surrounding text.";
         require(run().at("outcome") == "changed" && published == 1,
                 "changed document incorrectly renewed the old version");

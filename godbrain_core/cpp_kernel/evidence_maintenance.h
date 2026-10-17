@@ -58,7 +58,7 @@ json check(const json& job, Fetch fetch, Probe probe, Pin pin, Inventory invento
                 throw std::runtime_error("invalid original document evidence");
             const auto document = fetch(url);
             const auto text = document_text(document);
-            if (document.body == before.body)
+            if (document.body == before.body && document.content_type == before.content_type)
                 return result(job, "fresh", "exact_source_unchanged", keccak256(raw));
             const auto offset = text.find(quote);
             if (offset == std::string::npos)

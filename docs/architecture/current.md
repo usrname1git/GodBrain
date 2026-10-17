@@ -253,7 +253,10 @@ AFK supplies `inference=false`: discovery only, no page curation or vault writes
 Before real curation, the current runner must pass eleven protected selection,
 paraphrase, extension, conflict, question, irrelevance and injection fixtures.
 Qualification binds the fixture/prompt hash and runner PID/start-time/model,
-expires after six hours, and is rechecked after replacement. Each completion
+expires after six hours, and is rechecked after replacement. Only a passing
+qualification is cached; failures retry on the existing bounded frontier path.
+Pinned Windows-SRE references must also match the live Windows pin before
+curation; unpinned documents do not require a pin probe. Each completion
 rechecks process and model identity. Compact per-request reference labels resolve
 only through the native canonical-ID table; the model cannot invent database IDs.
 
@@ -264,6 +267,13 @@ retain complete immutable source/reference evidence and a source-hash link to
 the planned observation. Their acknowledged commit precedes observation
 verification, so a partial publication cannot hide a lost conflict behind its
 own newly verified duplicate. Those candidates never receive automatic judgment.
+Their embedded relation text uses lossless ASCII JSON encoding before either
+store normalizes claim whitespace. Relation extractor version `1.0.1` separates
+that rendering from earlier ingestion runs without changing frontier schema.
+`TestResearchRelationEncodingParity` accepts `GODBRAIN_RESEARCH_RELATION_FIXTURE`
+from `research_curation_test --relation-document`, plus the disposable MongoDB
+and native/Go test executables. It reproduces old Unicode-ID divergence, then
+checks corrected identity, quote preservation, candidate status and retry reuse.
 
 The ignored `research-frontier.json` is atomically checkpointed before external
 work. Source and canonical-reference hashes invalidate cached decisions;
