@@ -550,7 +550,7 @@ $btnRun.Add_Click({
         if ($doNic) {
             try {
                 $plan = Invoke-Reclaim11NicTune -Root $here
-                Add-Log ("nic applied {0}" -f (@($plan.applied).Count))
+                Add-Log (Format-Reclaim11ActionReport -Plan $plan -Title "NIC/TCP")
                 Add-Log ("manifest {0}" -f $plan.manifest_path)
             } catch {
                 Add-Log ("NIC FAIL  {0}" -f $_.Exception.Message)
@@ -561,7 +561,7 @@ $btnRun.Add_Click({
             try {
                 $switchHp = Confirm-Reclaim11LatencyHighPerformance
                 $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
-                Add-Log ("latency bake applied {0}" -f (@($plan.applied).Count))
+                Add-Log (Format-Reclaim11ActionReport -Plan $plan -Title "Latency/NVIDIA")
                 Add-Log ("manifest {0}" -f $plan.manifest_path)
             } catch {
                 Add-Log ("LATENCY FAIL  {0}" -f $_.Exception.Message)
@@ -747,7 +747,7 @@ $btnNoobTest.Add_Click({
 $btnNoobFix.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "RUN ALL FIXES on THIS Windows: Hide Xbox, telemetry, NIC tune, latency bake (BCD + registry + power). restore.json first. Not Defender. Not Grim Reaper. Continue?",
+        "RUN ALL FIXES on THIS Windows: Hide Xbox, telemetry, NIC/TCP tune, latency bake (BCD + registry + mouse queue 200 + NVIDIA profile + power). restore.json first. Not Defender. Not Grim Reaper. Continue?",
         "Reclaim11 RUN ALL FIXES",
         "YesNo",
         "Warning")
@@ -765,11 +765,13 @@ $btnNoobFix.Add_Click({
         } catch { Add-NoobLog ("TELEMETRY FAIL  {0}" -f $_.Exception.Message) }
         try {
             $plan = Invoke-Reclaim11NicTune -Root $here
+            Add-NoobLog (Format-Reclaim11ActionReport -Plan $plan -Title "NIC/TCP")
             Add-NoobLog ("nic  {0}" -f $plan.manifest_path)
         } catch { Add-NoobLog ("NIC FAIL  {0}" -f $_.Exception.Message) }
         try {
             $switchHp = Confirm-Reclaim11LatencyHighPerformance
             $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
+            Add-NoobLog (Format-Reclaim11ActionReport -Plan $plan -Title "Latency/NVIDIA")
             Add-NoobLog ("latency  {0}" -f $plan.manifest_path)
         } catch { Add-NoobLog ("LATENCY FAIL  {0}" -f $_.Exception.Message) }
     } finally { $script:ProcessRunning = $false }
@@ -797,7 +799,7 @@ $btnNoobXbox.Add_Click({
 $btnNoobNic.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "Tune Ethernet NIC (offloads off, RSS on, Rx/Tx 256-512). restore.json first. Continue?",
+        "Tune Ethernet NIC (offloads off, RSS on, Rx/Tx 256-512) and set TcpAckFrequency/TCPNoDelay=1 on connected physical Ethernet interfaces. restore.json first. Continue?",
         "Reclaim11 TUNE NIC",
         "YesNo",
         "Warning")
@@ -805,6 +807,7 @@ $btnNoobNic.Add_Click({
     $script:ProcessRunning = $true
     try {
         $plan = Invoke-Reclaim11NicTune -Root $here
+        Add-NoobLog (Format-Reclaim11ActionReport -Plan $plan -Title "NIC/TCP")
         Add-NoobLog ("nic  {0}" -f $plan.manifest_path)
     } catch {
         Add-NoobLog ("NIC FAIL  {0}" -f $_.Exception.Message)
@@ -815,7 +818,7 @@ $btnNoobNic.Add_Click({
 $btnNoobLatency.Add_Click({
     if ($script:ProcessRunning) { return }
     $q = [System.Windows.MessageBox]::Show(
-        "Latency bake: BCD, timer/MMCSS, USB/ASPM power. restore.json first. Continue?",
+        "Latency bake: BCD, timer/MMCSS, mouse queue 200, NVIDIA DisableLinesetting=1 / PowerMizerEnable=0 / PerfLevelSrc=3322 decimal, USB/ASPM power. restore.json first. Continue?",
         "Reclaim11 LATENCY BAKE",
         "YesNo",
         "Warning")
@@ -824,6 +827,7 @@ $btnNoobLatency.Add_Click({
     try {
         $switchHp = Confirm-Reclaim11LatencyHighPerformance
         $plan = Invoke-Reclaim11LatencyBake -Root $here -SwitchHighPerformance:$switchHp
+        Add-NoobLog (Format-Reclaim11ActionReport -Plan $plan -Title "Latency/NVIDIA")
         Add-NoobLog ("latency  {0}" -f $plan.manifest_path)
     } catch {
         Add-NoobLog ("LATENCY FAIL  {0}" -f $_.Exception.Message)

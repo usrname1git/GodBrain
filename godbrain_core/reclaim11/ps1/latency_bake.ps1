@@ -1,4 +1,4 @@
-# Expert BCD + timer/MMCSS + USB/ASPM bake. restore.json first.
+# Expert BCD + timer/MMCSS + mouse queue + NVIDIA + USB/ASPM bake. restore.json first.
 # Not pack A. Not startnet. Not AGGRO/Ultimate (those kill C-states, +idle heat).
 # Not min-processor 100. USB/ASPM on active + High Performance if listed.
 # GUI asks before /setactive High Performance. CLI needs -SwitchHighPerformance.
@@ -47,6 +47,11 @@ $script:RegBake = @(
         Path = "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl"
         Name = "Win32PrioritySeparation"
         Wanted = 38
+    },
+    @{
+        Path = "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters"
+        Name = "MouseDataQueueSize"
+        Wanted = 200
     }
 )
 # Balanced vs HP delta that is not a C-state kill. AC only.
@@ -77,7 +82,7 @@ $script:PowerAcBake = @(
 )
 
 function Test-Reclaim11LatencyPeHost {
-    Test-Path -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Control\MiniNT"
+    Test-Reclaim11PeHost
 }
 
 function Invoke-Reclaim11BcdEdit {
@@ -117,25 +122,20 @@ function Get-Reclaim11BcdValue {
 
 function Get-Reclaim11RegDword {
     param([string]$Path, [string]$Name)
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $ip = Get-ItemProperty -LiteralPath $Path -ErrorAction SilentlyContinue
-    if (-not $ip) { return $null }
-    if (-not $ip.PSObject.Properties[$Name]) { return $null }
-    [int]$ip.$Name
+    $snapshot = Get-Reclaim11RegistrySnapshot -Path $Path -Name $Name
+    if (-not $snapshot.exists) { return $null }
+    if ($snapshot.kind -ne "DWord") { throw "Not a registry DWORD: $Path $Name" }
+    [int]$snapshot.value
 }
 
 function Set-Reclaim11RegDword {
-    param([string]$Path, [string]$Name, [int]$Value)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        New-Item -Path $Path -Force | Out-Null
-    }
-    New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType DWord -Force | Out-Null
+    param([string]$Path, [string]$Name, [int]$Value, [switch]$RequireKey)
+    Set-Reclaim11RegistryDword -Path $Path -Name $Name -Value $Value -RequireKey:$RequireKey
 }
 
 function Remove-Reclaim11RegDword {
     param([string]$Path, [string]$Name)
-    if (-not (Test-Path -LiteralPath $Path)) { return }
-    Remove-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction SilentlyContinue
+    Set-Reclaim11RegistrySnapshot -Path $Path -Name $Name -Snapshot ([pscustomobject]@{ exists = $false })
 }
 
 function Invoke-Reclaim11PowerCfg {
@@ -268,13 +268,19 @@ function Invoke-Reclaim11LatencyBake {
     }
     $regs = @()
     foreach ($row in $script:RegBake) {
-        $regs += [pscustomobject]@{
-            path   = [string]$row.Path
-            name   = [string]$row.Name
-            before = Get-Reclaim11RegDword -Path $row.Path -Name $row.Name
-            wanted = [int]$row.Wanted
+        $regs += New-Reclaim11RegistryWrite -Path $row.Path -Name $row.Name -Wanted $row.Wanted
+    }
+    $nvidia = @(Get-Reclaim11NvidiaRegistryTargets)
+    $skipped = @()
+    if ($nvidia.Count -eq 0) { $skipped += "NVIDIA registry: no present NVIDIA display device" }
+    foreach ($target in $nvidia) {
+        $binding = [pscustomobject]@{ kind = "nvidia"; instance_id = $target.instance_id }
+        $regs += New-Reclaim11RegistryWrite -Path $target.class_path -Name "DisableLinesetting" -Wanted 1 -Binding $binding
+        foreach ($spec in @(@{ name = "PowerMizerEnable"; value = 0 }, @{ name = "PerfLevelSrc"; value = 3322 })) {
+            $regs += New-Reclaim11RegistryWrite -Path $target.video_path -Name $spec.name -Wanted $spec.value -Binding $binding
         }
     }
+    $inspection = @(Get-Reclaim11GamingInspection)
 
     $activePower = Get-Reclaim11ActivePowerGuid
     $powerForbidden = Test-Reclaim11PowerForbiddenGuid $activePower
@@ -292,7 +298,7 @@ function Invoke-Reclaim11LatencyBake {
         }
     }
 
-    $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $stamp = New-Reclaim11BackupStamp
     $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + $stamp)
     $manPath = Join-Path $backupRoot "restore.json"
     $would = @()
@@ -302,6 +308,8 @@ function Invoke-Reclaim11LatencyBake {
     foreach ($x in $regs) {
         $would += ("reg {0} {1} {2}->{3}" -f $x.path, $x.name, $x.before, $x.wanted)
     }
+    foreach ($item in $inspection) { $would += Format-Reclaim11Inspection -Item $item }
+    foreach ($item in $skipped) { $would += "skip $item" }
     foreach ($x in $power) {
         if ($null -eq $x.before) {
             $would += ("skip missing {0} {1}" -f $x.scheme, $x.name)
@@ -342,12 +350,14 @@ function Invoke-Reclaim11LatencyBake {
         at           = [datetime]::UtcNow.ToString("o")
         bcd          = @($bcd)
         registry     = @($regs)
+        inspection   = @($inspection)
+        skipped      = @($skipped)
         power        = @($power)
         power_active = $activePower
         power_high_performance_listed = [bool]$hpOffer.listed
         power_switch_high_performance = [bool]$willSwitchHp
         backup_root  = $backupRoot
-        note         = "Restore with pwsh -File latency_bake.ps1 -Restore restore.json. Expert. nx AlwaysOff is DEP off. USB/ASPM on AC, not min-processor 100, not C-state kill. High Performance switch is opt-in."
+        note         = "Restore with pwsh -File latency_bake.ps1 -Restore restore.json. Expert. nx AlwaysOff is DEP off. USB/ASPM on AC, not min-processor 100, not C-state kill. High Performance switch is opt-in. NVIDIA profile is requested registry data, not a measured performance verdict; PerfLevelSrc=3322 decimal. Inspection is before apply."
     }
 
     if ($WhatIf) {
@@ -377,7 +387,8 @@ function Invoke-Reclaim11LatencyBake {
     }
     foreach ($x in $regs) {
         try {
-            Set-Reclaim11RegDword -Path $x.path -Name $x.name -Value ([int]$x.wanted)
+            Assert-Reclaim11RegistryBinding -Row $x
+            Set-Reclaim11RegDword -Path $x.path -Name $x.name -Value ([int]$x.wanted) -RequireKey:($null -ne $x.binding)
             $applied += ("reg:{0}:{1}" -f $x.path, $x.name)
         } catch {
             $failed += ("reg:{0}:{1}:{2}" -f $x.path, $x.name, $_.Exception.Message)
@@ -419,32 +430,32 @@ function Restore-Reclaim11LatencyBackup {
         throw "Refuse: WinPE (MiniNT). Latency restore is in-Windows on a VM, not the PE BCD."
     }
     $restored = @()
+    $failed = @()
     foreach ($x in @($m.bcd)) {
         $before = [string]$x.before
         if ([string]::IsNullOrWhiteSpace($before)) {
             try {
                 $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/deletevalue", [string]$x.store, [string]$x.name)
                 $restored += ("bcd-del:{0}:{1}" -f $x.store, $x.name)
-            } catch { }
+            } catch {
+                $failed += ("bcd-del:{0}:{1} {2}" -f $x.store, $x.name, $_.Exception.Message)
+            }
             continue
         }
         try {
             $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/set", [string]$x.store, [string]$x.name, $before)
             $restored += ("bcd:{0}:{1}" -f $x.store, $x.name)
-        } catch { }
+        } catch {
+            $failed += ("bcd:{0}:{1} {2}" -f $x.store, $x.name, $_.Exception.Message)
+        }
     }
     foreach ($x in @($m.registry)) {
-        if ($null -eq $x.before) {
-            try {
-                Remove-Reclaim11RegDword -Path ([string]$x.path) -Name ([string]$x.name)
-                $restored += ("reg-del:{0}:{1}" -f $x.path, $x.name)
-            } catch { }
-            continue
-        }
         try {
-            Set-Reclaim11RegDword -Path ([string]$x.path) -Name ([string]$x.name) -Value ([int]$x.before)
+            Restore-Reclaim11RegistryWrite -Row $x
             $restored += ("reg:{0}:{1}" -f $x.path, $x.name)
-        } catch { }
+        } catch {
+            $failed += ("reg:{0}:{1} {2}" -f $x.path, $x.name, $_.Exception.Message)
+        }
     }
     foreach ($x in @($m.power)) {
         if ($null -eq $x) { continue }
@@ -452,21 +463,27 @@ function Restore-Reclaim11LatencyBackup {
         try {
             Set-Reclaim11PowerAcIndex -Scheme ([string]$x.scheme) -Sub ([string]$x.sub) -Setting ([string]$x.setting) -Value ([int]$x.before)
             $restored += ("power:{0}:{1}" -f $x.scheme, $x.name)
-        } catch { }
+        } catch {
+            $failed += ("power:{0}:{1} {2}" -f $x.scheme, $x.name, $_.Exception.Message)
+        }
     }
     $active = [string]$m.power_active
     if (-not [string]::IsNullOrWhiteSpace($active) -and -not (Test-Reclaim11PowerForbiddenGuid $active)) {
         try {
             $null = Invoke-Reclaim11PowerCfg -PowerArgs @("/setactive", $active)
             $restored += ("power-active:{0}" -f $active)
-        } catch { }
+        } catch {
+            $failed += ("power-active:{0} {1}" -f $active, $_.Exception.Message)
+        }
     }
-    [pscustomobject]@{ manifest = $Manifest; restored = @($restored) }
+    [pscustomobject]@{ manifest = $Manifest; restored = @($restored); failed = @($failed) }
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
     if (-not [string]::IsNullOrWhiteSpace($Restore)) {
-        Restore-Reclaim11LatencyBackup -Manifest $Restore | ConvertTo-Json -Depth 6
+        $result = Restore-Reclaim11LatencyBackup -Manifest $Restore
+        $result | ConvertTo-Json -Depth 6
+        if (@($result.failed).Count -gt 0) { exit 1 }
     } else {
         $plan = Invoke-Reclaim11LatencyBake -WhatIf:$WhatIf -SwitchHighPerformance:$SwitchHighPerformance
         if ($WhatIf) {
@@ -476,5 +493,6 @@ if ($MyInvocation.InvocationName -ne ".") {
         if ((-not $WhatIf) -and $plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
             Write-Host ("restore.json {0}" -f $plan.manifest_path)
         }
+        if (-not $WhatIf -and @($plan.failed).Count -gt 0) { exit 1 }
     }
 }

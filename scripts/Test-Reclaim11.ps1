@@ -1334,6 +1334,15 @@ if (-not (@($rtlPlan | Where-Object { $_.keyword -eq "GreenEthernet" -and $_.wan
 $dryNic = Invoke-Reclaim11NicTune -Root $root -WhatIf
 if (-not [bool]$dryNic.what_if) { throw "Test-Reclaim11: nic -T must set what_if" }
 if ([bool]$dryNic.mutate) { throw "Test-Reclaim11: nic -T must not mutate" }
+if (-not $dryNic.PSObject.Properties["registry"]) {
+    throw "Test-Reclaim11: NIC TEST must expose backed-up TCP registry rows"
+}
+foreach ($row in @($dryNic.registry)) {
+    if ($row.name -notin @("TcpAckFrequency", "TCPNoDelay") -or $row.wanted -ne 1 -or
+        -not $row.PSObject.Properties["before_snapshot"]) {
+        throw "Test-Reclaim11: invalid TCP tuning row or missing typed backup"
+    }
+}
 if ([string]$dryNic.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: nic -T must not refuse IoTEnterpriseS" }
 $nicSrc = Get-Content -LiteralPath (Join-Path $ps1 "nic_tune.ps1") -Raw -Encoding UTF8
 if ($nicSrc -match "BFE|mpssvc") {
@@ -1369,6 +1378,11 @@ if (-not $sr -or [int]$sr.Wanted -ne 10) {
 $wps = @($script:RegBake | Where-Object { $_.Name -eq "Win32PrioritySeparation" } | Select-Object -First 1)
 if (-not $wps -or [int]$wps.Wanted -ne 38) {
     throw "Test-Reclaim11: latency bake must set Win32PrioritySeparation=38"
+}
+$mouseQueue = @($script:RegBake | Where-Object { $_.Name -eq "MouseDataQueueSize" })
+if ($mouseQueue.Count -ne 1 -or [int]$mouseQueue[0].Wanted -ne 200 -or
+    [string]$mouseQueue[0].Path -ne "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters") {
+    throw "Test-Reclaim11: latency bake must back up MouseDataQueueSize and set it to 200"
 }
 $latSrc = Get-Content -LiteralPath (Join-Path $ps1 "latency_bake.ps1") -Raw -Encoding UTF8
 if ($latSrc -match "duplicatescheme|IDLEDISABLE|PROCTHROTTLEMIN") {
@@ -1459,12 +1473,25 @@ if ($afterRefuse -notmatch '(?s)if \(\$willSwitchHp\).{0,200}/setactive') {
 $dryLat = Invoke-Reclaim11LatencyBake -Root $root -WhatIf
 if (-not [bool]$dryLat.what_if) { throw "Test-Reclaim11: latency -T must set what_if" }
 if ([bool]$dryLat.mutate) { throw "Test-Reclaim11: latency -T must not mutate" }
+if (@($dryLat.inspection).Count -ne 7) {
+    throw "Test-Reclaim11: latency TEST must include all supplied Games/input inspections"
+}
+foreach ($row in @($dryLat.registry | Where-Object { $null -ne $_.binding })) {
+    $expected = @{ DisableLinesetting = 1; PowerMizerEnable = 0; PerfLevelSrc = 3322 }
+    if (-not $expected.ContainsKey([string]$row.name) -or $row.wanted -ne $expected[[string]$row.name] -or
+        -not $row.PSObject.Properties["before_snapshot"]) {
+        throw "Test-Reclaim11: invalid NVIDIA tuning row or missing typed backup"
+    }
+}
 if ([string]$dryLat.would_refuse -match "IoTEnterpriseS") { throw "Test-Reclaim11: latency -T must not refuse IoTEnterpriseS" }
 if (-not (@($dryLat.would) | Where-Object { $_ -match "bcd \{current\} nx .+AlwaysOff" })) {
     throw "Test-Reclaim11: latency -T must list nx AlwaysOff"
 }
 if (-not (@($dryLat.would) | Where-Object { $_ -match "GlobalTimerResolutionRequests" })) {
     throw "Test-Reclaim11: latency -T must list GlobalTimerResolutionRequests"
+}
+if (-not (@($dryLat.would) | Where-Object { $_ -match "MouseDataQueueSize .*->200$" })) {
+    throw "Test-Reclaim11: latency -T must list MouseDataQueueSize=200"
 }
 if (-not (@($dryLat.would) | Where-Object { $_ -match "usb_selective_suspend" })) {
     throw "Test-Reclaim11: latency -T must list USB selective suspend"
