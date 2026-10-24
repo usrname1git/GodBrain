@@ -91,8 +91,10 @@ function Invoke-Reclaim11BcdEdit {
     $old = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $out = & $exe @BcdArgs 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) {
+        $out = & $exe @BcdArgs 2>&1
+        $succeeded = $?
+        $out = $out | Out-String
+        if (-not $succeeded -or $LASTEXITCODE -ne 0) {
             throw ("bcdedit {0} exit {1}`n{2}" -f ($BcdArgs -join " "), $LASTEXITCODE, $out)
         }
         $out
@@ -103,15 +105,7 @@ function Invoke-Reclaim11BcdEdit {
 
 function Get-Reclaim11BcdValue {
     param([string]$Store, [string]$Name)
-    $old = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $out = & (Join-Path $env:SystemRoot "System32\bcdedit.exe") /enum $Store 2>&1 | Out-String
-    } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $old
-    }
+    $out = Invoke-Reclaim11BcdEdit -BcdArgs @("/enum", $Store)
     foreach ($line in ($out -split "`r?`n")) {
         if ($line -match ('^\s*' + [regex]::Escape($Name) + '\s+(.+)$')) {
             return $Matches[1].Trim()
@@ -435,7 +429,10 @@ function Restore-Reclaim11LatencyBackup {
         $before = [string]$x.before
         if ([string]::IsNullOrWhiteSpace($before)) {
             try {
-                $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/deletevalue", [string]$x.store, [string]$x.name)
+                $current = Get-Reclaim11BcdValue -Store ([string]$x.store) -Name ([string]$x.name)
+                if (-not [string]::IsNullOrWhiteSpace($current)) {
+                    $null = Invoke-Reclaim11BcdEdit -BcdArgs @("/deletevalue", [string]$x.store, [string]$x.name)
+                }
                 $restored += ("bcd-del:{0}:{1}" -f $x.store, $x.name)
             } catch {
                 $failed += ("bcd-del:{0}:{1} {2}" -f $x.store, $x.name, $_.Exception.Message)

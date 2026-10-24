@@ -118,6 +118,9 @@ permission, write/readback and restore errors are reported as failures.
 The GUI logs applied/failed counts and inspection results; restore
 failures also reach the aggregate restore result. These actions refuse
 live apply/restore in WinPE.
+Repeated BCD restore treats an originally absent element as restored only
+after a successful enumeration confirms it is absent. BCD enumeration and
+delete failures remain explicit failures, not assumed absence or success.
 CLI apply/restore returns a nonzero exit code when its receipt contains
 failures. Use the updated workers to restore new receipts; the older
 installed kit does not understand the new typed/device-bound fields.

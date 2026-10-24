@@ -14,6 +14,7 @@ foreach ($name in @("nic_tune.ps1", "latency_bake.ps1", "restore.ps1")) {
     . (Join-Path $ps1 $name)
 }
 $script:ReadRestoreManifests = ${function:Get-Reclaim11RestoreManifests}
+$script:NativeBcdEdit = ${function:Invoke-Reclaim11BcdEdit}
 $script:Cases = [System.Collections.Generic.List[string]]::new()
 $script:Temp = Join-Path ([IO.Path]::GetTempPath()) ("reclaim11-offline-" + [guid]::NewGuid().ToString("N"))
 $null = [IO.Directory]::CreateDirectory($script:Temp)
@@ -94,6 +95,8 @@ function Reset-Fixture {
         NoDisplayClass = $false; NoAdapterObjects = $false
         Admin = $true; Pe = $false; Active = "381b4222-f694-41f0-9685-ff5bb260df2e"
         PowerMissing = $false; HpPresent = $true; RestoreItems = @()
+        Bcd = @{ "{current}" = @{}; "{bootmgr}" = @{} }
+        FailBcdRead = $false; FailBcdDelete = $false; BcdQueries = 0
         Adapters = @(
             [pscustomobject]@{ Name = "Ethernet"; InterfaceDescription = "Physical Ethernet"; PhysicalMediaType = "802.3"; Status = "Up"; HardwareInterface = $true; Virtual = $false; InterfaceGuid = $script:TcpGuid },
             [pscustomobject]@{ Name = "Ethernet down"; InterfaceDescription = "Physical Ethernet"; PhysicalMediaType = "802.3"; Status = "Disconnected"; HardwareInterface = $true; Virtual = $false; InterfaceGuid = "{33333333-3333-4333-8333-333333333333}" },
@@ -101,6 +104,8 @@ function Reset-Fixture {
             [pscustomobject]@{ Name = "Wi-Fi"; InterfaceDescription = "Wireless"; PhysicalMediaType = "802.11"; Status = "Up"; HardwareInterface = $true; Virtual = $false; InterfaceGuid = "{55555555-5555-4555-8555-555555555555}" }
         )
     }
+    foreach ($row in $script:BcdCurrent) { $script:F.Bcd["{current}"][$row.Name] = "old" }
+    foreach ($row in $script:BcdBootmgr) { $script:F.Bcd["{bootmgr}"][$row.Name] = "old" }
     foreach ($row in $script:RegBake) { Add-FixtureValue $row.Path $row.Name "DWord" 100 }
     Add-FixtureValue $script:TcpPath "TcpAckFrequency" "String" "original-ack"
     Add-FixtureGpu $script:Device $script:Driver "{22222222-2222-4222-8222-222222222222}"
@@ -176,11 +181,24 @@ function Get-PnpDeviceProperty {
 }
 function Test-Reclaim11Admin { $script:F.Admin }
 function Test-Reclaim11PeHost { $script:F.Pe }
-function Get-Reclaim11BcdValue { param($Store, $Name) "old" }
 function Invoke-Reclaim11BcdEdit {
     param($BcdArgs)
+    if ($BcdArgs[0] -eq "/enum") {
+        $script:F.BcdQueries++
+        if ($script:F.FailBcdRead) { throw "Synthetic BCD enumeration failure" }
+        return @($script:F.Bcd[$BcdArgs[1]].GetEnumerator() | ForEach-Object { "$($_.Key) $($_.Value)" }) -join "`n"
+    }
     if ($script:F.Backups -eq 0) { throw "BCD mutation preceded backup" }
     $script:F.Events.Add("bcd:" + ($BcdArgs -join " "))
+    switch ($BcdArgs[0]) {
+        "/set" { $script:F.Bcd[$BcdArgs[1]][$BcdArgs[2]] = $BcdArgs[3] }
+        "/deletevalue" {
+            if ($script:F.FailBcdDelete) { throw "Synthetic BCD access denied" }
+            if (-not $script:F.Bcd[$BcdArgs[1]].ContainsKey($BcdArgs[2])) { throw "Element not found" }
+            $script:F.Bcd[$BcdArgs[1]].Remove($BcdArgs[2])
+        }
+        default { throw "Unapproved BCD operation: $($BcdArgs -join ' ')" }
+    }
 }
 function Invoke-Reclaim11PowerCfg {
     param([string[]]$PowerArgs, [switch]$AllowFail)
@@ -263,6 +281,58 @@ try {
         $restore = Restore-Reclaim11LatencyBackup -Manifest $script:Manifest
         Assert-True ($restore.failed.Count -eq 0 -and -not $script:F.Registry[$script:ClassPath].ContainsKey("DisableLinesetting")) "Absent NVIDIA value not restored"
         Assert-True ($script:F.Registry[$script:VideoPath].PerfLevelSrc.kind -eq "String" -and $script:F.Registry[$script:VideoPath].PerfLevelSrc.value -eq "original-mode") "NVIDIA original type/data lost"
+    }
+    Invoke-FixtureCase "Repeated direct and aggregate restores preserve originally absent BCD elements" {
+        $script:F.Bcd["{current}"].Remove("useplatformclock")
+        $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot
+        Save-FixtureRestore $plan
+        foreach ($attempt in 1..2) {
+            $result = Restore-Reclaim11LatencyBackup -Manifest $script:Manifest
+            Assert-True ($result.failed.Count -eq 0 -and -not $script:F.Bcd["{current}"].ContainsKey("useplatformclock")) "Repeated BCD restore failed on attempt $attempt"
+        }
+        $script:F.RestoreItems = @([pscustomobject]@{ kind = "latency"; path = $script:Manifest; id = $plan.id })
+        $result = Restore-Reclaim11Selected -Kinds @("latency") -Root $RepoRoot
+        Assert-True ($result.failed.Count -eq 0) "Aggregate replay reported an already restored BCD element as failed"
+        Assert-True (@($script:F.Events | Where-Object { $_ -eq "bcd:/deletevalue {current} useplatformclock" }).Count -eq 1) "Already absent BCD element was deleted again"
+        Assert-True ($script:F.BcdQueries -gt 0) "BCD absence was not confirmed through the production reader"
+    }
+    Invoke-FixtureCase "BCD delete refusal remains an aggregate restore failure" {
+        $script:F.Bcd["{current}"].Remove("useplatformclock")
+        $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot
+        Save-FixtureRestore $plan
+        $script:F.FailBcdDelete = $true
+        $script:F.RestoreItems = @([pscustomobject]@{ kind = "latency"; path = $script:Manifest; id = $plan.id })
+        $result = Restore-Reclaim11Selected -Kinds @("latency") -Root $RepoRoot
+        Assert-True ($result.failed.Count -eq 1 -and $result.failed[0] -match "BCD access denied") "Genuine BCD delete failure was hidden"
+        Assert-True ($script:F.Bcd["{current}"].useplatformclock -eq "No") "Failed BCD deletion mutated the element"
+    }
+    Invoke-FixtureCase "Failed BCD enumeration cannot confirm restore absence" {
+        $script:F.Bcd["{current}"].Remove("useplatformclock")
+        $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot
+        Save-FixtureRestore $plan
+        $script:F.FailBcdRead = $true
+        $result = Restore-Reclaim11LatencyBackup -Manifest $script:Manifest
+        Assert-True ($result.failed.Count -eq 1 -and $result.failed[0] -match "BCD enumeration failure") "Failed BCD read was mistaken for absence"
+        Assert-True (@($script:F.Events | Where-Object { $_ -like "bcd:/deletevalue*" }).Count -eq 0) "Deletion followed an unsuccessful BCD read"
+    }
+    Invoke-FixtureCase "BCD backup read failure prevents tuning mutations" {
+        $script:F.FailBcdRead = $true
+        $errorText = ""
+        try { Invoke-Reclaim11LatencyBake -Root $RepoRoot | Out-Null } catch { $errorText = $_.Exception.Message }
+        Assert-True ($errorText -match "BCD enumeration failure" -and $script:F.Backups -eq 0 -and $script:F.Events.Count -eq 0) "Unread BCD state became an absent-before backup"
+    }
+    Invoke-FixtureCase "Unavailable BCD executable fails despite a stale successful exit code" {
+        $oldRoot = $env:SystemRoot
+        $oldPreference = $ErrorActionPreference
+        $errorText = ""
+        try {
+            $env:SystemRoot = $script:Temp
+            $global:LASTEXITCODE = 0
+            try { & $script:NativeBcdEdit -BcdArgs @("/enum", "{current}") | Out-Null } catch { $errorText = $_.Exception.Message }
+        } finally {
+            $env:SystemRoot = $oldRoot
+        }
+        Assert-True (-not [string]::IsNullOrWhiteSpace($errorText) -and $ErrorActionPreference -eq $oldPreference) "Failed invocation became a successful empty BCD read or changed error handling"
     }
     Invoke-FixtureCase "Snapshots round-trip all supported registry kinds through JSON" {
         $script:F.RequireBackup = $false
