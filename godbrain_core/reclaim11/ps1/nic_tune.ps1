@@ -81,8 +81,7 @@ function Test-Reclaim11NicSkipAdapter {
 
 function Get-Reclaim11NicTargets {
     $out = @()
-    $nics = @()
-    try { $nics = @(Get-NetAdapter -ErrorAction Stop) } catch { return $out }
+    $nics = @(Get-Reclaim11NetAdapters)
     foreach ($a in $nics) {
         if (Test-Reclaim11NicSkipAdapter -Adapter $a) { continue }
         $media = [string]$a.PhysicalMediaType
@@ -232,6 +231,8 @@ function Invoke-Reclaim11NicTune {
     if ([string]::IsNullOrWhiteSpace($Root)) {
         $Root = $script:Reclaim11Here
     }
+    $pe = Test-Reclaim11PeHost
+    if ($pe -and -not $WhatIf) { throw "Refuse: WinPE (MiniNT). NIC tuning is in-Windows." }
     $admin = $false
     if (Get-Command Test-Reclaim11Admin -ErrorAction SilentlyContinue) {
         $admin = Test-Reclaim11Admin
@@ -240,8 +241,7 @@ function Invoke-Reclaim11NicTune {
     $targets = @(Get-Reclaim11NicTargets)
     $actions = @()
     $skipped = @()
-    $nics = @()
-    try { $nics = @(Get-NetAdapter -ErrorAction Stop) } catch { }
+    $nics = @(Get-Reclaim11NetAdapters)
     foreach ($a in $nics) {
         if (Test-Reclaim11NicSkipAdapter -Adapter $a) {
             $skipped += ("{0} ({1})" -f $a.Name, $a.InterfaceDescription)
@@ -252,8 +252,18 @@ function Invoke-Reclaim11NicTune {
         $props = @(Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue)
         $actions += @(Resolve-Reclaim11NicPlan -AdapterName $a.Name -Props $props)
     }
+    $registry = @()
+    $tcpTargets = @(Get-Reclaim11TcpInterfaceTargets -Adapters $targets)
+    foreach ($target in $tcpTargets) {
+        foreach ($name in @("TcpAckFrequency", "TCPNoDelay")) {
+            $registry += New-Reclaim11RegistryWrite -Path $target.path -Name $name -Wanted 1 -Binding (
+                [pscustomobject]@{ kind = "tcp"; guid = $target.guid }
+            )
+        }
+    }
+    if ($tcpTargets.Count -eq 0) { $skipped += "TCP registry: no connected physical Ethernet interface" }
 
-    $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssZ")
+    $stamp = New-Reclaim11BackupStamp
     $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + $stamp)
     $manPath = Join-Path $backupRoot "restore.json"
     $manifest = [pscustomobject]@{
@@ -262,6 +272,7 @@ function Invoke-Reclaim11NicTune {
         adapters     = @($targets | ForEach-Object { [pscustomobject]@{ name = $_.Name; desc = $_.InterfaceDescription } })
         skipped      = @($skipped)
         actions      = @($actions)
+        registry     = @($registry)
         backup_root  = $backupRoot
         note         = "Restore with pwsh -File nic_tune.ps1 -Restore restore.json. Ethernet only. Never BFE."
     }
@@ -274,14 +285,19 @@ function Invoke-Reclaim11NicTune {
             $would += ("set {0} {1} {2}->{3}" -f $x.adapter, $x.keyword, $x.before, $x.wanted)
         }
     }
+    foreach ($x in $registry) {
+        $would += ("reg {0} {1} {2}->{3} (DWORD; readback)" -f $x.path, $x.name, $x.before, $x.wanted)
+    }
     foreach ($s in $skipped) { $would += ("skip {0}" -f $s) }
 
     $checks = @(
         (New-Reclaim11Check -Name "admin" -Ok $admin -Detail "Set-NetAdapterAdvancedProperty needs admin"),
+        (New-Reclaim11Check -Name "winpe" -Ok (-not $pe) -Detail "NIC/TCP tuning is in-Windows"),
         (New-Reclaim11Check -Name "ethernet" -Ok ($targets.Count -gt 0) -Detail ("targets={0}" -f $targets.Count))
     )
     $refuse = ""
-    if (-not $admin) { $refuse = "needs elevation" }
+    if ($pe) { $refuse = "WinPE (MiniNT)" }
+    elseif (-not $admin) { $refuse = "needs elevation" }
     elseif ($targets.Count -lt 1) { $refuse = "no physical Ethernet" }
 
     if ($WhatIf) {
@@ -294,6 +310,7 @@ function Invoke-Reclaim11NicTune {
         return $manifest
     }
 
+    if ($refuse) { throw ("Refuse: {0}" -f $refuse) }
     Write-Reclaim11NicManifest -Manifest $manifest -Path $manPath
     $applied = @()
     $failed = @()
@@ -309,6 +326,15 @@ function Invoke-Reclaim11NicTune {
             } catch {
                 $failed += ("{0}:{1} {2}" -f $x.adapter, $x.keyword, $_.Exception.Message)
             }
+        }
+    }
+    foreach ($x in $registry) {
+        try {
+            Assert-Reclaim11RegistryBinding -Row $x
+            Set-Reclaim11RegistryDword -Path $x.path -Name $x.name -Value $x.wanted -RequireKey
+            $applied += ("reg:{0}:{1}={2}" -f $x.path, $x.name, $x.wanted)
+        } catch {
+            $failed += ("reg:{0}:{1} {2}" -f $x.path, $x.name, $_.Exception.Message)
         }
     }
     $manifest | Add-Member -NotePropertyName applied -NotePropertyValue $applied
@@ -330,7 +356,9 @@ function Restore-Reclaim11NicBackup {
     if ([string]$m.id -notlike "reclaim11-nic*") {
         throw "Restore-Reclaim11NicBackup: not a NIC manifest"
     }
+    if (Test-Reclaim11PeHost) { throw "Refuse: WinPE (MiniNT). NIC restore is in-Windows." }
     $restored = @()
+    $failed = @()
     foreach ($x in @($m.actions)) {
         $kw = [string]$x.keyword
         $ad = [string]$x.adapter
@@ -343,15 +371,29 @@ function Restore-Reclaim11NicBackup {
             try {
                 Set-NetAdapterAdvancedProperty -Name $ad -RegistryKeyword $kw -RegistryValue $before -ErrorAction Stop
                 $restored += ("{0}:{1}" -f $ad, $kw)
-            } catch { }
+            } catch {
+                $failed += ("{0}:{1} {2}" -f $ad, $kw, $_.Exception.Message)
+            }
         }
     }
-    [pscustomobject]@{ manifest = $Manifest; restored = @($restored) }
+    if ($m.PSObject.Properties["registry"]) {
+        foreach ($row in @($m.registry)) {
+            try {
+                Restore-Reclaim11RegistryWrite -Row $row
+                $restored += ("reg:{0}:{1}" -f $row.path, $row.name)
+            } catch {
+                $failed += ("reg:{0}:{1} {2}" -f $row.path, $row.name, $_.Exception.Message)
+            }
+        }
+    }
+    [pscustomobject]@{ manifest = $Manifest; restored = @($restored); failed = @($failed) }
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
     if (-not [string]::IsNullOrWhiteSpace($Restore)) {
-        Restore-Reclaim11NicBackup -Manifest $Restore | ConvertTo-Json -Depth 6
+        $result = Restore-Reclaim11NicBackup -Manifest $Restore
+        $result | ConvertTo-Json -Depth 6
+        if (@($result.failed).Count -gt 0) { exit 1 }
     } else {
         $plan = Invoke-Reclaim11NicTune -WhatIf:$WhatIf
         if ($WhatIf) {
@@ -361,5 +403,6 @@ if ($MyInvocation.InvocationName -ne ".") {
         if ((-not $WhatIf) -and $plan.PSObject.Properties["manifest_path"] -and $plan.manifest_path) {
             Write-Host ("restore.json {0}" -f $plan.manifest_path)
         }
+        if (-not $WhatIf -and @($plan.failed).Count -gt 0) { exit 1 }
     }
 }

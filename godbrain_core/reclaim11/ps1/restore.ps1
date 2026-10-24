@@ -1,5 +1,5 @@
 # Find and apply reclaim11 restore.json. In-Windows only. Not Heal. Not WinPE.
-# Newest stamp first so repeated applies walk back to the original before.
+# Newest receipt first so repeated applies walk back to the original before.
 
 [CmdletBinding()]
 param(
@@ -43,15 +43,23 @@ function Get-Reclaim11RestoreManifests {
             $m = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
         } catch { continue }
         $id = [string]$m.id
+        $rawAt = if ($m.at -is [datetime] -or $m.at -is [datetimeoffset]) {
+            $m.at.ToString("o", [Globalization.CultureInfo]::InvariantCulture)
+        } else { [string]$m.at }
+        $at = [datetimeoffset]::MinValue
+        if (-not [datetimeoffset]::TryParse($rawAt, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$at)) {
+            throw "Invalid restore timestamp: $p"
+        }
         $out += [pscustomobject]@{
             path  = $p
             id    = $id
             kind  = Get-Reclaim11RestoreKind $id
-            at    = [string]$m.at
+            at    = $at.ToUniversalTime().ToString("o", [Globalization.CultureInfo]::InvariantCulture)
             stamp = [string]$dir.Name
         }
     }
-    @($out | Sort-Object stamp -Descending)
+    @($out | Sort-Object at, stamp -Descending)
 }
 
 function Restore-Reclaim11ByKind {
@@ -98,7 +106,13 @@ function Restore-Reclaim11Selected {
     $failed = @()
     foreach ($item in $items) {
         try {
-            $results += Restore-Reclaim11ByKind -Item $item -Root $Root -WhatIf:$WhatIf
+            $result = Restore-Reclaim11ByKind -Item $item -Root $Root -WhatIf:$WhatIf
+            $results += $result
+            if ($result.PSObject.Properties["failed"]) {
+                foreach ($failure in @($result.failed)) {
+                    $failed += ("{0} {1} {2}" -f $item.kind, $item.path, $failure)
+                }
+            }
         } catch {
             $failed += ("{0} {1} {2}" -f $item.kind, $item.path, $_.Exception.Message)
         }
@@ -117,4 +131,5 @@ if ($MyInvocation.InvocationName -ne ".") {
     $kinds = @("xbox", "telemetry", "nic", "latency", "safe")
     $plan = Restore-Reclaim11Selected -Kinds $kinds -WhatIf:$WhatIf
     $plan | ConvertTo-Json -Depth 6
+    if (@($plan.failed).Count -gt 0) { exit 1 }
 }

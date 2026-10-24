@@ -70,12 +70,113 @@ These are the Expert/noob actions that do not need a WinPE receipt.
   `{bootmgr}` `bootmenupolicy Legacy`.
 - **HKLM:** `GlobalTimerResolutionRequests=1`,
   `SystemResponsiveness=10` (0–9 clamp to 20),
-  `Win32PrioritySeparation=38`.
+  `Win32PrioritySeparation=38`, `MouseDataQueueSize=200` under
+  `SYSTEM\CurrentControlSet\Services\mouclass\Parameters`.
+  The mouse value is a requested profile value, not a measured latency
+  improvement. TEST lists its before/after values; restore reinstates the
+  original DWORD or removes the value if it was originally absent.
 - **Power (AC, active plan + High Performance if listed):** USB selective
   suspend Off, USB 3 link power Off, PCIe ASPM Off. GUI **asks** before
   `/setactive` High Performance. CLI needs `-SwitchHighPerformance`.
   Not min processor 100%. Not C-state kill. AGGRO (`61329e62`) and
   Ultimate (`e9a42b02`) refused.
+
+### Added TCP, input and NVIDIA profile
+
+The supplied `reclaim11_adds.txt` contains both writes and read-only
+queries. The explicit writes below are implemented in the indicated
+actions, including RUN ALL FIXES. TEST reports them without applying
+them. The query-only entries are pre-apply inspections in the latency
+report and receipt; no replacement values are invented.
+
+| Entry | Requested value | Disposition |
+| --- | --- | --- |
+| `TcpAckFrequency`, `TCPNoDelay` | DWORD `1` each | NIC tuning. Map connected physical Ethernet adapters' `InterfaceGuid` values to `Services\Tcpip\Parameters\Interfaces\{GUID}`. Do not sweep stale/VPN/virtual interfaces. Each requested registry write is read back before being reported as applied. |
+| MMCSS `Tasks\Games`: `GPU Priority`, `Priority`, `Scheduling Category`, `SFIO Priority` | Query only; no replacement values supplied | Report the current values, kinds and absence. Microsoft documents `GPU Priority` as not yet used and `SFIO Priority` as unused; the inspection does not change either value. |
+| `mouclass\Parameters\MouseDataQueueSize` | DWORD `200` | Implemented in latency bake, including TEST and the existing backup/restore path. No automatic keyboard counterpart. |
+| `kbdclass\Parameters\KeyboardDataQueueSize` | Query only; no replacement supplied | Report the current value or absence; no write. |
+| Enumerate `mouclass\Parameters` properties | Query only | Report property names without changing them. |
+| USB selective suspend / USB 3 link power | AC `0` | Already in latency bake. Stable subgroup/setting IDs; DC remains untouched. |
+| NVIDIA `DisableLinesetting` | DWORD `1` | Latency bake. Resolve each present NVIDIA display device to its actual display-class instance; never assume `0000` is NVIDIA. |
+| NVIDIA `PowerMizerEnable`, `PerfLevelSrc` | DWORD `0`, DWORD decimal `3322` | Latency bake. Read the present device's `Device Parameters\VideoID`, validate its driver/vendor mapping, then target that `Control\Video\{VideoID}\0000` only. The before-values cover the supplied read-only probes. Decimal `3322` is `0x0CFA`, not `0x3322` (decimal `13090`). |
+
+Registry write verification proves the requested value/type was stored,
+**not** a frametime improvement, driver consumption, P2 change or maximum
+VRAM clock. This implements the requested profile without turning its
+performance rationale into an automatic verified claim. MMCSS reference:
+[Microsoft's task registry settings](https://learn.microsoft.com/windows/win32/procthread/multimedia-class-scheduler-service#registry-settings).
+
+Backups preserve the original registry value kind/data and absence. New
+NIC and latency backups have unique stamp directories, so consecutive
+actions cannot overwrite one another's `restore.json`. Existing older
+restore files remain supported. Restore order uses full UTC receipt times,
+not mixed old/new directory names; invalid timestamps fail explicitly.
+Device-bound apply/restore rechecks
+identity and refuses changed/missing mappings rather than writing a new
+adapter's key. No matching hardware is a reported skip; discovery,
+permission, write/readback and restore errors are reported as failures.
+The GUI logs applied/failed counts and inspection results; restore
+failures also reach the aggregate restore result. These actions refuse
+live apply/restore in WinPE.
+Repeated BCD restore treats an originally absent element as restored only
+after a successful enumeration confirms it is absent. BCD enumeration and
+delete failures remain explicit failures, not assumed absence or success.
+CLI apply/restore returns a nonzero exit code when its receipt contains
+failures. Use the updated workers to restore new receipts; the older
+installed kit does not understand the new typed/device-bound fields.
+
+### Finding the power plan and USB setting
+
+Built-in IDs are **not unique per Windows installation**. High Performance
+is `8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c`, alias `SCHEME_MIN`
+(minimum power savings). Custom/imported/duplicated plans may use other
+GUIDs. Friendly names can be localized or renamed; do not match the
+English words "High performance". The `*` from `/list` marks whichever
+plan is active, not necessarily High Performance.
+
+Read-only discovery:
+
+```powershell
+powercfg /list
+powercfg /getactivescheme
+powercfg /aliases
+# Enumerate subgroups and settings, including hidden settings.
+powercfg /qh SCHEME_CURRENT
+# Query the USB subgroup of the active plan.
+powercfg /query SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3
+```
+
+The failing example used subgroup
+`2a737441-1bc3-410e-a775-8a3d423a73a6`. The USB subgroup is
+**`2a737441-1930-4402-8d77-b2bebba308a3`**. USB selective suspend is
+`48e6b7a6-50f5-4782-a5d4-53bb8f07e226`; USB 3 link power is
+`d4e98f31-5ffe-4ce1-be31-1b38b384c009`. The third setting-GUID filter
+also succeeded with `/query` and `/qh` on the investigated Windows host;
+the incorrect subgroup, not that extra argument, caused its failure.
+
+**Current implementation:** discover active/listed GUIDs, tune the active
+allowed plan and listed standard High Performance, skip settings whose
+before-values cannot be read, and switch only after GUI consent or
+`-SwitchHighPerformance`. If High Performance is absent, report that and
+tune the active allowed plan only. There is no automatic plan restoration.
+
+**Recommended recovery follow-up, not implemented:** use the PowrProf APIs
+to enumerate GUIDs/read AC indexes without parsing localized labels.
+If the standard plan is absent, check and attempt
+`PowerRestoreIndividualDefaultPowerScheme` for that GUID only, inspect its
+Win32 result, then re-enumerate and verify before offering activation.
+The API uses the default-user restoration data; absent/inaccessible data
+or an unsupported plan is a reported failure, not permission to reset all
+plans. Preserve the prior plan/settings first, keep activation opt-in,
+and read back every requested setting. Prefer `powercfg /setacvalueindex`
+or the corresponding power API over constructing/writing raw power
+registry paths.
+
+Do **not** automatically run `powercfg /restoredefaultschemes`: it
+deletes/replaces existing schemes and settings, including custom plans.
+References: [powercfg](https://learn.microsoft.com/windows-hardware/design/device-experiences/powercfg-command-line-options),
+[individual restore](https://learn.microsoft.com/windows/win32/api/powrprof/nf-powrprof-powerrestoreindividualdefaultpowerscheme),
+[full restore](https://learn.microsoft.com/windows/win32/api/powrprof/nf-powrprof-powerrestoredefaultpowerschemes).
 
 ### Two PE profiles
 
@@ -159,10 +260,14 @@ start=disabled. Restore:
 **Tune NIC** (Ethernet only): EEE/interrupt moderation/flow/WoL off,
 checksum/LSO/VLAN-priority off, RSS on, Rx/Tx **256–512**. Does not
 force Speed/Duplex. Skips VMware host VMnet / Tailscale / Wi-Fi.
+Also sets `TcpAckFrequency=1` and `TCPNoDelay=1` on connected physical
+Ethernet interfaces, with typed backup, binding checks and readback.
 `pwsh -File nic_tune.ps1 -T`.
 
 **Latency bake** (Expert, in-Windows): flags are under
-**In-Windows without PE** above. WinPE MiniNT refused (that would be
+**In-Windows without PE** and **Added TCP, input and NVIDIA profile**
+above. Includes the requested NVIDIA registry profile when a matching
+present device exists, and read-only Games/input inspection. WinPE MiniNT refused (that would be
 the PE BCD). `pwsh -File latency_bake.ps1 -T`. Restore:
 `pwsh -File latency_bake.ps1 -Restore restore.json`.
 
@@ -181,6 +286,8 @@ SYSTEM and skips that hop.
 ### From this repo
 
 Run `Test-Reclaim11.ps1` on a VM. Not physical hardware.
+`scripts\Test-Reclaim11Optimizations.ps1` is a separate mocked/offline
+registry/device regression suite; it never invokes real tuning.
 
 ```text
 godbrain_core\reclaim11\Reclaim11.cmd

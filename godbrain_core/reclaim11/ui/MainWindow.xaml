@@ -181,8 +181,8 @@
       <Button x:Name="BtnNoobFix" Content="RUN ALL FIXES" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobXbox" Content="HIDE XBOX + BLOAT" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobTel" Content="DISABLE TELEMETRY" MinHeight="44" Margin="0,0,0,8"/>
-      <Button x:Name="BtnNoobNic" Content="TUNE NIC" MinHeight="44" Margin="0,0,0,8"/>
-      <Button x:Name="BtnNoobLatency" Content="LATENCY BAKE  (BCD + registry + power)" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobNic" Content="TUNE NIC + TCP" MinHeight="44" Margin="0,0,0,8"/>
+      <Button x:Name="BtnNoobLatency" Content="LATENCY BAKE  (BCD + mouse + NVIDIA + power)" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobRustDesk" Content="INSTALL RUSTDESK TO GET REMOTE SUPPORT" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobSafe" Content="SAFE CLEANSE  (needs WinPE receipt)" MinHeight="44" IsEnabled="False"/>
     </StackPanel>
@@ -274,7 +274,7 @@
               <ToggleButton x:Name="BtnNic" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
               <StackPanel Margin="0,0,10,0">
                 <TextBlock Text="Tune NIC" FontWeight="SemiBold"/>
-                <TextBlock Text="Offloads off, RSS on" Foreground="#7A93A8" FontSize="11"/>
+                <TextBlock Text="Offloads off, RSS on, TCP ACK/Nagle values" Foreground="#7A93A8" FontSize="11" TextWrapping="Wrap"/>
               </StackPanel>
             </DockPanel>
           </Border>
@@ -283,7 +283,7 @@
               <ToggleButton x:Name="BtnLatency" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center"/>
               <StackPanel Margin="0,0,10,0">
                 <TextBlock Text="Latency bake" FontWeight="SemiBold"/>
-                <TextBlock Text="BCD + timer + USB/ASPM" Foreground="#7A93A8" FontSize="11"/>
+                <TextBlock Text="BCD + mouse 200 + NVIDIA + USB/ASPM" Foreground="#7A93A8" FontSize="11" TextWrapping="Wrap"/>
               </StackPanel>
             </DockPanel>
           </Border>
