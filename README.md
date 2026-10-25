@@ -238,6 +238,9 @@ Its scope grows with its owner's ambitions: research, creation, repairs,
 optimization and everyday life. Models can change; the accumulated
 experience and loyalty to its owner carry forward.
 
+That includes autonomous CVE ingestion and auto-patching across Devuan,
+macOS and Windows; the supporting infrastructure remains to be built.
+
 ## Capability (evidence, not folder names)
 
 | Item | Source | Offline gate | Daily-driver on this desk |
@@ -255,7 +258,7 @@ experience and loyalty to its owner carry forward.
 | Durable task ledger / chain continue | yes | `/chain` `/cancel` `/continue` | yes (one file, not `tasks/todo.md`) |
 | Frontend University | learner/tutor + degree graph + browser examiner | `npm test --prefix .\godbrain_core\skill_lab` | opt-in `scripts\Invoke-FrontendGym.ps1 -Continuous`; scoped local evidence, not host authority |
 | Mouth ships web-dev class UI work | destination | — | no |
-| Autonomous CVE / cross-fleet / self-DISM | **no** (standing nos) | — | no |
+| Autonomous CVE ingestion / cross-platform auto-patching | planned; infrastructure incomplete | — | not yet |
 
 ## Credits
 
