@@ -13,6 +13,22 @@ Colibri is a possible interchangeable alternative, due to it not relying on GPU 
 
 No commercial `-cli` wrappers and no MCP-servers. Models inherit the same Golden Records, and the custom kernel adds tools a stock server will not give you.
 
+## Your PC in your pocket - even when RustDesk is stopped
+
+**Away from your PC? Tap "Start RustDesk service" on your phone, then open
+RustDesk and carry on using the full Windows desktop.** Reply to a conversation,
+use the control panel or work in your existing desktop apps from iPhone or Android.
+
+The shortcut uses authenticated SSH over Tailscale to run
+[`scripts\Start-RustDesk.ps1`](scripts/Start-RustDesk.ps1), verifies the actual
+remote-desktop backend, and reports success before you connect. RustDesk does
+not have to be running beforehand; neither does the GodBrain kernel or a model.
+This is full desktop access, not just the read-only Phone Desk dashboard.
+
+The PC must be awake with Tailscale/SSH reachable, RustDesk installed, and an
+authorized administrative SSH account; the existing CS2 pause is respected.
+**[Set up the phone shortcut and remote desktop](docs/phone-control.md#rustdesk-one-command-then-open-the-client)**.
+
 ## TLDR
 
 The GodBrain turns local models into a shared, sovereign cognitive system. The core idea:
@@ -62,7 +78,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [C++ Memory Store](godbrain_core/cpp_memory_store/README.md) | daily-driver | `:8084` Golden Records; Start/Heal prefer `build/cpp_memory_store/Release` |
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
-| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v12) | Windows repair ISO/zip; not the Jarvis loop |
+| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v13) | Standalone Windows optimization/repair kit; explicit operator actions |
 | Desk panel (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
 | Lyrics loop (`scripts/lyrics_loop.py`) | daily-driver | CPU Whisper. Audio and `state.json` stay in `C:\nvme\stt\lyrics`. Door: `scripts\Invoke-LyricsLoop.ps1` |
 | [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder + React God + visual God (seeded canvas, anti-generic) | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; C++ Carmack is a later GO |

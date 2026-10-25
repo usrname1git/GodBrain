@@ -1,5 +1,7 @@
 # Reclaim11
 
+**Current standalone kit: Reclaim11 v13.**
+
 **Recommended:** run it on a VM like VMware first, or at least run TEST
 mode and see the result.
 
@@ -9,10 +11,25 @@ telemetry, NIC, Start junk, BCD timer, USB/ASPM, power registry).
 Killing blows and Grim Reaper stay locked until a WinPE receipt. Exact
 flags are under Advanced.
 
+## New in v13
+
+- NIC tuning includes hardware-targeted `TcpAckFrequency` / `TCPNoDelay`
+  writes; latency bake includes the mouse queue and NVIDIA registry profile.
+  The [profile table](#added-tcp-input-and-nvidia-profile) lists exact values
+  and separates actual writes from read-only Games/input inspections.
+- Typed, device-bound backups preserve original values, types and absence.
+  Repeated BCD rollback is checked and idempotent; restore failures are reported.
+- The [GUID reference](#finding-the-power-plan-and-usb-setting) distinguishes
+  power schemes, subgroups, individual settings and device-specific identifiers.
+  Missing settings are skipped; High Performance activation remains opt-in.
+- The standalone ZIP includes the current UI screenshots and v13 media-builder
+  defaults. Shipped PowerShell scripts use explicit UTF-8 encoding for
+  Windows PowerShell 5.1 / WinPE readers. It does not include a prebuilt WinPE ISO.
+
 ## What to do
 
-1. Get `Reclaim11-kit-v12.zip` from
-   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v12)
+1. Get `Reclaim11-kit-v13.zip` from
+   [GitHub Releases](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v13)
    and unzip it. Check the `.sha256` next to the zip.
 2. Double-click `Reclaim11.cmd`. You do not type `pwsh`. The `.cmd` hops
    to a hidden host so Windows Terminal does not stay as an empty black
@@ -49,7 +66,7 @@ Recommended. Photos, Calculator, Store, Notepad stay. Game Mode stays.
 The Xbox controller driver (`xboxgip`) stays.
 
 VMware CD/DVD browses the **host**. Copy
-`C:\Reclaim11\Reclaim11-WinPE-v12.iso` out of the VM, then attach that
+`C:\Reclaim11\Reclaim11-WinPE-v13.iso` out of the VM, then attach that
 host path. USB EFI is the same WinPE.
 
 ### Rails
@@ -127,12 +144,39 @@ installed kit does not understand the new typed/device-bound fields.
 
 ### Finding the power plan and USB setting
 
+Power configuration has three separate identifiers:
+
+```text
+scheme GUID -> subgroup GUID -> setting GUID -> AC or DC value index
+```
+
+The scheme chooses the plan. The subgroup groups settings within that plan;
+the setting selects one option. Neither a subgroup nor a setting GUID is a
+replacement for the scheme GUID. The AC/DC index is a numeric value, not
+another GUID. Reclaim11 writes the three settings below to **AC only**.
+
+| Kind | Identifier | Use |
+| --- | --- | --- |
+| Standard High Performance scheme | `8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c` | `SCHEME_MIN`; tune it only when listed, activate only after consent. |
+| USB subgroup | `2a737441-1930-4402-8d77-b2bebba308a3` | Parent of both USB settings below. |
+| USB selective suspend setting | `48e6b7a6-50f5-4782-a5d4-53bb8f07e226` | Requested AC index `0`. |
+| USB 3 link power setting | `d4e98f31-5ffe-4ce1-be31-1b38b384c009` | Requested AC index `0`. |
+| PCI Express subgroup | `501a4d13-42af-4429-9fd1-a8218c268e20` | Parent of ASPM. |
+| PCIe ASPM setting | `ee12f906-d277-404b-b6da-e5fa1a576df5` | Requested AC index `0`. |
+
 Built-in IDs are **not unique per Windows installation**. High Performance
 is `8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c`, alias `SCHEME_MIN`
 (minimum power savings). Custom/imported/duplicated plans may use other
 GUIDs. Friendly names can be localized or renamed; do not match the
 English words "High performance". The `*` from `/list` marks whichever
 plan is active, not necessarily High Performance.
+
+Other registry GUIDs need different handling. The display-class GUID
+`{4d36e968-e325-11ce-bfc1-08002be10318}` identifies a standard device class;
+its `0000` / `0007` instance suffix does not identify a vendor. NIC
+`InterfaceGuid` and NVIDIA `VideoID` are discovered from the current devices,
+not copied from another machine. Apply and restore recheck those bindings.
+Sharing a GUID-shaped spelling does not make these power-plan identifiers.
 
 Read-only discovery:
 
@@ -159,6 +203,14 @@ allowed plan and listed standard High Performance, skip settings whose
 before-values cannot be read, and switch only after GUI consent or
 `-SwitchHighPerformance`. If High Performance is absent, report that and
 tune the active allowed plan only. There is no automatic plan restoration.
+
+Scheme discovery extracts GUIDs rather than matching localized friendly names.
+However, the current before-value parser still expects the English
+`Current AC Power Setting Index` line from `powercfg /qh`. An unavailable or
+unparseable value, including a localized label, is reported as skipped; v13
+does not yet provide locale-independent power-index reads. Power writes use
+`powercfg` exit status; the registry readback guarantee described above does
+not imply a separate power-index readback or a measured performance gain.
 
 **Recommended recovery follow-up, not implemented:** use the PowrProf APIs
 to enumerate GUIDs/read AC indexes without parsing localized labels.
@@ -197,13 +249,13 @@ The kit zip ships `winpe\reclaim11-stub.exe` (MZ). PREP does not need Visual Stu
 pwsh -NoProfile -File .\scripts\New-Reclaim11WinPeIso.ps1
 ```
 
-Output: `C:\Reclaim11\Reclaim11-WinPE-v12.iso`.
+Output: `C:\Reclaim11\Reclaim11-WinPE-v13.iso`.
 v1/v2 copied EXE over `.sys` and bootloop; do not attach those.
 
 ### Boot the ISO in VMware
 
 The VM CD/DVD picker browses the **host**, not the guest. Copy
-`C:\Reclaim11\Reclaim11-WinPE-v12.iso` out of the VM (shared folder or
+`C:\Reclaim11\Reclaim11-WinPE-v13.iso` out of the VM (shared folder or
 drag-drop), then VM Settings → CD/DVD → Use ISO image file → that host
 path. EFI firmware. Boot the CD (firmware menu). USB EFI passthrough of
 the PREP stick is the same WinPE; VMware USB is slow, not a kit hang.
@@ -213,7 +265,12 @@ Delete the ISO and click PREP MEDIA again after a kit update — an
 existing ISO skips the rebuild, and both ISO and USB bake scripts into
 `boot.wim`.
 
-Snapshot, attach **v12**. PE **deletes** catalog
+PREP prefers the v13 filename but retains older ISO discovery for compatibility.
+If only an older ISO exists, it can be reused instead of rebuilt. Remove the
+outdated ISO before preparing v13; renaming an old ISO does not update its
+embedded scripts.
+
+Snapshot, attach **v13**. PE **deletes** catalog
 `drivers\WdBoot.sys` / `WdFilter.sys` / `WdNisDrv.sys` / `WdDevFlt.sys`
 (exact names, never a `Wd*.sys` glob), stubs catalog usermode EXEs,
 `reg delete` pack-A keys then Start=4 fallback, IFEO +
