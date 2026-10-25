@@ -229,20 +229,16 @@ recovery channel; neither a web page nor a domain name creates one.
 
 ## The end goal
 
-Wanted on this product (still gated):
+GodBrain's end goal is Jarvis: a loyal digital companion that understands
+its owner, anticipates needs and gets things done. Think of the devotion
+of a well-trained guide dog, combined with the intelligence and reach of
+a digital assistant that keeps learning.
 
-- A mouth that ships real UI with automated browser evidence; important host work still follows the kernel allowlist and operator judgment. Copilot/gemini-cli are not part of that loop.
-- Own the generate engine if the stock llama-server door is sunset or gimped. Fork later; do not vendor Copilot MCP to get there.
-- Models that inherit each other's tested experience. The frontend gym already shares scoped, machine-tested examples across learner models and supports serial tutor feedback. Global host knowledge still uses `/recall <query>` through `:8084` and drops `sector=personal`; its judgment gates are unchanged. The Rainman shelf remains `/hylla` (write) and `/rainman` (list/search).
+Its scope grows with its owner's ambitions: research, creation, repairs,
+optimization and everyday life. Models can change; the accumulated
+experience and loyalty to its owner carry forward.
 
-Not this host — several are standing nos. See [`docs/architecture/future.md`](docs/architecture/future.md):
-
-- Candidate-vs-verified conflict queue — later, and only if `/pending` is actually overloaded. `/verify` / `/reject` is enough now.
-- Autonomous CVE ingest and auto-patch across Devuan / macOS / Windows.
-- Self-directed DISM or registry repair. Named GO, one tool, never a standing allow.
-- Unattended host repair beyond Heal's existing allowlist. Heal already does detect → allowlist → verify; anything past `flushdns` stays GO-gated. This restriction is not a demand for human review of routine frontend gym attempts.
-
-### Capability (evidence, not folder names)
+## Capability (evidence, not folder names)
 
 | Item | Source | Offline gate | Daily-driver on this desk |
 |---|---|---|---|
