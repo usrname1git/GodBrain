@@ -1,7 +1,9 @@
 # Future planned implementations
 
-Long-horizon items. They still correlate as rails. They are **not** the
-Jarvis backlog. The old next-phase b-line **shipped** ([`next.md`](next.md)
+Long-horizon product goals and later design decisions. GodBrain's ambition
+is an owner-loyal Jarvis whose capabilities grow with its owner. Infrastructure
+and current deployment status are tracked separately from that ambition.
+The old next-phase b-line **shipped** ([`next.md`](next.md)
 pointer, snapshot [`b-line.md`](b-line.md)). Live desk:
 [`current.md`](current.md). Index:
 [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
@@ -59,24 +61,30 @@ The only graph with a named signal later is still the **conflict queue**:
 two nodes (candidate vs verified), human on the merge. If deleting a node
 leaves the same result, delete it.
 
-## README wants vs standing nos
+## Product goals and infrastructure gaps
 
-The public README names one **wanted** kernel-path item still open:
-mouth-as-web-dev (`/edit` allowlist grows on purpose, never mouth `git push`).
-Richer teaching query already ships (`/recall <query>` through rag-service,
-never `mongosh` or a MongoDB IDE/MCP against the live vault). Do not add
-`.vscode` Mongo MCP to make an agent task easier. The conflict queue is
-**not** the next build.
+The README describes the destination: a broadly capable, owner-loyal Jarvis.
+Autonomous CVE ingestion and auto-patching across Devuan, macOS and Windows
+are explicit product goals. The gap is the infrastructure needed to make
+them work reliably.
 
-These remain **not this host**; several are standing nos:
-
-| README item | This host |
+| Product goal | Current state / work needed |
 |---|---|
-| Candidate-vs-verified conflict queue | Smallest honest extra node, **later** |
-| Autonomous CVE ingestion | Not b-line |
-| Cross-fleet patch (Devuan / macOS / Windows) | Not this machine |
-| Self-directed DISM/registry repair | **No.** Named GO only; never a standing allow |
-| Closed-loop detect → reason → patch → verify with zero hand-holding | Heal already does detect → allowlist → verify. Patch beyond flushdns stays GO-gated |
+| Autonomous CVE ingestion and triage | Build reliable source ingestion, affected-version inventory, applicability matching and checkable evidence. |
+| Autonomous patching across Devuan / macOS / Windows | Build platform-specific patch execution, target access, rollback/recovery and post-patch verification. |
+| End-to-end autonomous maintenance | Extend today's Heal detect → allowlist → verify loop as the supporting infrastructure matures. |
+| Mouth ships real UI work | Continue the frontend gym and kernel tool path with automated browser evidence. |
+| Candidate-vs-verified conflict queue | Later, if the verifier becomes overloaded. |
+
+### Current deployment
+
+Today's Windows deployment uses the existing kernel authorization and Heal
+allowlist, with explicit operator GO for repair tools that require it.
+See [`current.md`](current.md) and [`AGENTS.md`](../../AGENTS.md) for the
+implemented behavior. These describe the present deployment rather than a
+permanent ceiling on the product's ambition.
+
+Richer teaching query already ships through `/recall <query>` and rag-service.
 
 ## Experimental trees in the repo
 
