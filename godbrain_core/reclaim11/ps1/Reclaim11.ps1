@@ -994,8 +994,8 @@ function Get-Reclaim11PrepScript([string]$Name) {
 
 function Get-Reclaim11PrepIsoPath {
     $isoDir = "C:\Reclaim11"
-    $want = Join-Path $isoDir "Reclaim11-WinPE-v12.iso"
-    foreach ($n in @("Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v11.iso", "Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
+    $want = Join-Path $isoDir "Reclaim11-WinPE-v13.iso"
+    foreach ($n in @("Reclaim11-WinPE-v13.iso", "Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v11.iso", "Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
         $p = Join-Path $isoDir $n
         if (Test-Path -LiteralPath $p) {
             return [pscustomobject]@{ want = $want; iso = $p; have = $true }

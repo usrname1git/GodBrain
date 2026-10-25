@@ -490,6 +490,41 @@ try {
         Assert-True ($latency.manifest_path -ne $nic.manifest_path -and $script:F.Saved.Count -eq 2) "Backups collided"
     }
 
+    Invoke-FixtureCase "Documented power identifiers match the implemented scheme, subgroups and settings" {
+        $readme = Get-Content -LiteralPath (Join-Path $RepoRoot "godbrain_core\reclaim11\README.md") -Raw
+        foreach ($id in @($script:PowerHighPerfGuid) + @($script:PowerAcBake | ForEach-Object { $_.Sub; $_.Setting })) {
+            Assert-True ($readme.Contains($id)) "README omits implemented power identifier $id"
+        }
+        Assert-True ($readme.Contains("Current AC Power Setting Index")) "README must identify the current locale-dependent parser"
+    }
+    Invoke-FixtureCase "PREP prefers v13 and preserves explicit legacy ISO discovery" {
+        $tokens = $null
+        $errors = $null
+        $source = Get-Content -LiteralPath (Join-Path $ps1 "Reclaim11.ps1") -Raw -Encoding UTF8
+        $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+        Assert-True ($errors.Count -eq 0) "Launcher parse failed"
+        $helper = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-Reclaim11PrepIsoPath"
+        }, $true)
+        Assert-True ($null -ne $helper) "Missing ISO discovery helper"
+        & {
+            function Test-Path {
+                param([string]$LiteralPath)
+                $isoFiles -contains (Split-Path -Leaf $LiteralPath)
+            }
+            . ([scriptblock]::Create($helper.Extent.Text))
+            $isoFiles = @("Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v13.iso")
+            $info = Get-Reclaim11PrepIsoPath
+            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v13.iso") "v13 was not preferred"
+            $isoFiles = @("Reclaim11-WinPE-v12.iso")
+            $info = Get-Reclaim11PrepIsoPath
+            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v12.iso") "Legacy ISO discovery changed"
+            $isoFiles = @()
+            $info = Get-Reclaim11PrepIsoPath
+            Assert-True (-not $info.have -and $info.want -eq "C:\Reclaim11\Reclaim11-WinPE-v13.iso") "Missing ISO did not request a v13 build"
+        }
+    }
     Invoke-FixtureCase "Restore order uses exact receipt times across same-second legacy/new stamps" {
         $specs = @(
             @{ stamp = "20261024T120000Z"; at = "2026-10-24T12:00:00.9000000Z" },

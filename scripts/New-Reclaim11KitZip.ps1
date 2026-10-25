@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $PSScriptRoot,
-    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v12.zip"
+    [string]$OutZip = "C:\nvme\reclaim11\Reclaim11-kit-v13.zip"
 )
 
 Set-StrictMode -Version Latest
@@ -59,11 +59,10 @@ Copy-Item -LiteralPath (Join-Path $kit "README.md") -Destination (Join-Path $sta
 Get-ChildItem -LiteralPath (Join-Path $kit "ps1") -Filter *.ps1 | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage "ps1\$($_.Name)") -Force
 }
-foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "ExpertPanel.jpg", "NoobPanel.jpg")) {
+foreach ($n in @("MainWindow.xaml", "DoorChooser.jpg", "Power_User_UI.jpg", "Beginner_UI.jpg", "Power_User_UI_Maximized.jpg")) {
     $s = Join-Path $kit "ui\$n"
-    if (Test-Path -LiteralPath $s) {
-        Copy-Item -LiteralPath $s -Destination (Join-Path $stage "ui\$n") -Force
-    }
+    if (-not (Test-Path -LiteralPath $s)) { throw "New-Reclaim11KitZip: missing $s" }
+    Copy-Item -LiteralPath $s -Destination (Join-Path $stage "ui\$n") -Force
 }
 foreach ($n in @("offline.ps1", "Apply-Reclaim11Offline.ps1", "Start-Reclaim11Pe.ps1", "Skip-Reclaim11WinRe.ps1", "startnet.cmd", "stub.c", "reclaim11-stub.exe")) {
     $s = Join-Path $kit "winpe\$n"
@@ -90,6 +89,12 @@ if (Test-Path -LiteralPath $brave) {
     Get-ChildItem -LiteralPath $brave -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $stage "brave-policy\$($_.Name)") -Force
     }
+}
+
+$scriptEncoding = New-Object System.Text.UTF8Encoding $true
+Get-ChildItem -LiteralPath $stage -Recurse -File -Filter *.ps1 | ForEach-Object {
+    $text = [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText($_.FullName, $text, $scriptEncoding)
 }
 
 $outParent = Split-Path -Parent $OutZip

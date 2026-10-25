@@ -5,6 +5,24 @@ through three existing doors: a private read-only web overview, SSH commands,
 and RustDesk's interactive desktop. Tailscale gives the phone private
 reachability without public SSH, router port-forwarding or an exit node.
 
+## From a stopped RustDesk service to your full PC desktop
+
+**Remote desktop does not have to be left running just so you can start it
+later.** After the one-time setup:
+
+1. Tap **Start RustDesk service** in your iPhone SSH Shortcut, or run the saved
+   SSH command from Android.
+2. Wait for **RustDesk remote-desktop service ready.**
+3. Open the mobile RustDesk client and connect to the PC. Continue a conversation,
+   use GodBrain's control panel or work in your normal Windows desktop apps.
+
+The SSH start does not need the GodBrain kernel, model or tray panel running.
+It verifies the service and its SYSTEM-owned backend, not just a GUI process.
+The PC must already be awake and reachable over Tailscale/SSH, RustDesk must be
+installed, and the SSH account must have administrative rights. CS2 must be
+stopped. This is separate from the deliberately read-only Phone Desk page.
+See the [copyable command and Shortcut flow](#rustdesk-one-command-then-open-the-client).
+
 ## What you can do
 
 | Capability | Phone workflow | Limits |
