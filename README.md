@@ -238,8 +238,8 @@ Its scope grows with its owner's ambitions: research, creation, repairs,
 optimization and everyday life. Models can change; the accumulated
 experience and loyalty to its owner carry forward.
 
-That includes autonomous CVE ingestion and auto-patching across Devuan,
-macOS and Windows; the supporting infrastructure remains to be built.
+That includes autonomous CVE ingestion and auto-patching across Windows,
+Linux and macOS; the supporting infrastructure remains to be built.
 
 ## Capability (evidence, not folder names)
 
