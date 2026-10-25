@@ -64,17 +64,23 @@ leaves the same result, delete it.
 ## Product goals and infrastructure gaps
 
 The README describes the destination: a broadly capable, owner-loyal Jarvis.
-Autonomous CVE ingestion and auto-patching across Devuan, macOS and Windows
+Autonomous CVE ingestion and auto-patching across Windows, Linux and macOS
 are explicit product goals. The gap is the infrastructure needed to make
 them work reliably.
 
 | Product goal | Current state / work needed |
 |---|---|
 | Autonomous CVE ingestion and triage | Build reliable source ingestion, affected-version inventory, applicability matching and checkable evidence. |
-| Autonomous patching across Devuan / macOS / Windows | Build platform-specific patch execution, target access, rollback/recovery and post-patch verification. |
+| Autonomous patching across Windows / Linux / macOS | Build platform-specific patch execution, target access, rollback/recovery and post-patch verification. |
 | End-to-end autonomous maintenance | Extend today's Heal detect → allowlist → verify loop as the supporting infrastructure matures. |
 | Mouth ships real UI work | Continue the frontend gym and kernel tool path with automated browser evidence. |
 | Candidate-vs-verified conflict queue | Later, if the verifier becomes overloaded. |
+
+Determine CVE applicability from affected components, installed versions/builds
+and vendor advisories, including distribution backports. A shared Linux kernel
+or other component can carry the same CVE across distributions; Windows CVEs
+can likewise span editions and releases. Platform labels alone do not establish
+whether a particular installation is affected.
 
 ### Current deployment
 
