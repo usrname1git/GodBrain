@@ -862,6 +862,10 @@ bool classify_and_parse(const std::string& json_text, Route* route, std::string*
             return false;
         }
     }
+    if (command == "shelf") {
+        route->kind = CommandKind::Shelf;
+        return parse_shelf_request(root, &route->shelf, err);
+    }
     if (command == "evidence") {
         static const char* const keys[] = {"command", "action", "id", "lease_token", "outcome",
                                           "reason", "observed_hash", "successor", nullptr};

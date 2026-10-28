@@ -226,25 +226,39 @@ function Get-TailscaleExe {
     return $null
 }
 
-# Disconnect only. Never logout, --reset, or stop the Windows service.
-# Native stderr ("Tailscale was already stopped.") must not abort Start-CS2
-# ($ErrorActionPreference Stop): 2>$null is not enough in Windows PowerShell.
-function Invoke-TailscaleCs2([string]$Exe, [string[]]$TsArgs) {
-    $old = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
+# Never logout, --reset, or stop the Windows service.
+function Invoke-TailscaleCs2([string]$Exe, [string[]]$TsArgs, [int]$TimeoutMilliseconds = 10000) {
+    $info = [Diagnostics.ProcessStartInfo]::new($Exe)
+    foreach ($argument in $TsArgs) { $info.ArgumentList.Add($argument) }
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $info
     try {
-        $out = & $Exe @TsArgs 2>&1
-        $code = $LASTEXITCODE
-        $text = (($out | ForEach-Object { "$_" }) -join " ").Trim()
+        if (-not $process.Start()) { throw "Tailscale: could not start the CLI." }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            $process.Kill()
+            $null = $process.WaitForExit(3000)
+            throw "Tailscale: $($TsArgs -join ' ') timed out."
+        }
+        if (-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)) {
+            throw "Tailscale: CLI output timed out."
+        }
+        $code = $process.ExitCode
+        $text = ($stdout.GetAwaiter().GetResult() + " " + $stderr.GetAwaiter().GetResult()).Trim()
         if ($code -eq 0) { return }
-        if ($text -match 'already stopped') {
-            Write-Host "cs2: tailscale already down"
+        if ($TsArgs[0] -eq "down" -and $text -match 'already stopped') {
+            Write-Host "Tailscale: already down"
             return
         }
-        if ($text -match 'already running') { return }
-        throw ("cs2: tailscale {0} exit={1} {2}" -f ($TsArgs -join " "), $code, $text)
+        if ($TsArgs[0] -eq "up" -and $text -match 'already running') { return }
+        throw ("Tailscale: {0} exit={1} {2}" -f ($TsArgs -join " "), $code, $text)
     } finally {
-        $ErrorActionPreference = $old
+        $process.Dispose()
     }
 }
 
@@ -252,8 +266,10 @@ function Set-TailscaleForCs2([bool]$Up) {
     $exe = Get-TailscaleExe
     if (-not $exe) { return }
     if ($Up) {
-        Write-Host "cs2: tailscale up (existing node, no reset)"
-        Invoke-TailscaleCs2 $exe @("up", "--unattended")
+        Write-Host "Tailscale: reconnect existing node (preserve settings)"
+        Invoke-TailscaleCs2 $exe @("set", "--unattended")
+        # Even --timeout disables bare up's settings-preserving mode; bound the process instead.
+        Invoke-TailscaleCs2 $exe @("up")
     } else {
         $service = Get-Service -Name "Tailscale" -ErrorAction SilentlyContinue
         if ($service -and $service.Status -eq "Stopped") {

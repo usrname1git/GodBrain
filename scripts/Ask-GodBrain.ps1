@@ -48,7 +48,7 @@ $invoke = @{
     Body = $body
     TimeoutSec = $timeout
 }
-if ((Test-GodBrainWriteSlash $message) -and -not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
+if (-not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
     $invoke.Headers = @{ Authorization = "Bearer " + $env:GODBRAIN_API_TOKEN }
 }
 try {

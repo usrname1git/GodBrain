@@ -15,7 +15,7 @@ verify, then repeat or stop. The bottleneck is the verifier, not the model.
 
 | Listener | Process | Job |
 |---|---|---|
-| `:27017` | Windows service `MongoDB` | Vault. Immutable sources + Golden Records. |
+| `:27017` | Windows service `MongoDB` | Vault. Immutable sources + Golden Records; separate untrusted discussion/research shelves. |
 | `:8084` | `rag-service.exe` | Committed Golden Record search / graph / document. Start/Heal prefer `build/cpp_memory_store/Release`, then Go `memory_store`. |
 | `:8888` | EXL3 `serve_openai.py` | Desk mouth. Qwen 3.8 27B 3.5bpw. One GPU slot. |
 | `:8000` | `llama-server` or `coli serve` | Paused. Gemma GGUF stays off while EXL3 holds the card. |
@@ -40,6 +40,14 @@ Galaxy chat tools are kernel-native (OpenAI `tool_calls`, no MCP). Golden
 Records are the manual the mouth RTFMs. Open product work is still
 **mouth-as-web-dev** (exact `*** APPLY` bytes). Later / not-this-host is
 [`docs/architecture/future.md`](docs/architecture/future.md).
+
+Integrated Desk/PowerShell clients also share untrusted working continuity
+through native index/context/shelf APIs. An explicit `index` records a bounded
+target-host capability snapshot; fresh requests retrieve at most 4 KiB of
+context. Shelves do not enter verified RAG, grant permissions or prove current
+readiness. Research enforces request-scoped read-only tools independently of
+YOLO. See [current behavior](docs/architecture/current.md#shared-working-memory)
+and the [Desk guide](docs/desk-menu.md#shared-working-memory-and-index).
 
 A second node is allowed only when a named signal pays for it (distinct
 specialty, real parallelism that does not share the GPU slot, a different

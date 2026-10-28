@@ -264,6 +264,20 @@ try {
         Assert ($request.chat_template_kwargs.enable_thinking -and $request.tool_choice -eq "none") "Review thinking/tool policy changed."
     }
     Assert ($script:sourceReads -eq 2 -and $receipt.source_sha256.Length -eq 64) "Source hash was not checked again."
+    & {
+        function Get-GodBrainSharedContext { param($Query, $ThreadId); return @{ context = "SHARED_REVIEW_FIXTURE"; index_id = "fixture-index" } }
+        function Save-GodBrainWorkingTurn {
+            param($Prompt, $Response, $ThreadId, $Sources)
+            Assert ($Prompt -ceq "Research review" -and $ThreadId -ceq "desk") "Review handoff changed the original request."
+            Assert ($Sources[0] -like "*sha256=*") "Review handoff lost source binding."
+            return @{ record = @{ _id = "fixture-record" } }
+        }
+        $script:plannerRequests = @(); $script:reviewRequests = @()
+        [void](Invoke-DeskCodeReview "fixture.cpp" "Research review" "research")
+        Assert ($script:plannerRequests[0].task -like "*SHARED_REVIEW_FIXTURE*Operator request:*Research review") "Review memory was not supplied before token planning."
+        $sharedReceipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+        Assert ($sharedReceipt.shared_saved -and $sharedReceipt.task -ceq "Research review") "Review handoff was not confirmed."
+    }
     $script:reviewModel = "qwen3.8-flash-next-exl3-3.05bpw"
     [void](Invoke-DeskCodeReview "fixture.cpp" "QFN review")
     Assert ($script:plannerRequests[-1].tokenizer -like "*Qwen3.8-Flash-Next-EXL3-3.05bpw\tokenizer.json") "QFN used another checkpoint's tokenizer."

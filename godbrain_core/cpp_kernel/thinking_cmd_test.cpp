@@ -43,7 +43,8 @@ int main() {
     }
     using json = nlohmann::json;
     const json models = {{"data", json::array({{
-        {"id", "fixture"}, {"supported_reasoning_efforts", {"low", "medium", "xhigh"}}
+        {"id", "fixture"}, {"max_model_len", 32768},
+        {"supported_reasoning_efforts", {"low", "medium", "xhigh"}}
     }})}};
     for (const std::string value : {"on", "true", "1", "off", "false", "0", "low", "medium", "xhigh", " XHIGH\r\n"}) {
         const auto preference = parse_thinking_preference(value);
@@ -78,6 +79,36 @@ int main() {
         std::string error;
         if (!expect(!configure_thinking_request(body, parse_thinking_preference("xhigh"), false, capabilities, error),
                     "unadvertised model effort accepted")) return 1;
+    }
+    for (const int context : {1280, 4096, 10240, 32768, 49152, 262144}) {
+        json capabilities = models;
+        capabilities["data"][0]["max_model_len"] = context;
+        json body = {{"model", "fixture"}, {"max_tokens", 1024}};
+        std::string error;
+        const int expected = context - 1024 < 16384 ? context - 1024 : 16384;
+        if (!expect(configure_exl3_thinking_budget(body, capabilities, error) &&
+                    body["max_tokens"] == expected, "EXL3 reasoning budget is not context bounded")) return 1;
+    }
+    for (const json context : {json(), json("49152"), json(true), json(4096.5),
+                               json(-1), json(0), json(255), json(256), json(1024), json(262145),
+                               json(18446744073709551615ULL)}) {
+        json capabilities = models;
+        capabilities["data"][0]["max_model_len"] = context;
+        json body = {{"model", "fixture"}, {"max_tokens", 1024}};
+        std::string error;
+        if (!expect(!configure_exl3_thinking_budget(body, capabilities, error) &&
+                    !error.empty() && body["max_tokens"] == 1024,
+                    "Invalid EXL3 context changed the output budget")) return 1;
+    }
+    for (const json capabilities : {json(), json{{"data", "invalid"}},
+            json{{"data", json::array({{{"id", "fixture"}}})}},
+            json{{"data", json::array({{{"id", "different"}, {"max_model_len", 49152}}})}},
+            json{{"data", json::array({models["data"][0], models["data"][0]})}}}) {
+        json body = {{"model", "fixture"}, {"max_tokens", 1024}};
+        std::string error;
+        if (!expect(!configure_exl3_thinking_budget(body, capabilities, error) &&
+                    !error.empty() && body["max_tokens"] == 1024,
+                    "Missing or ambiguous EXL3 context accepted")) return 1;
     }
     const auto temporary = std::filesystem::temp_directory_path() /
         ("godbrain-thinking-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");

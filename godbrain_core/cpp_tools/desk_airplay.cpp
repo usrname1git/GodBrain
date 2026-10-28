@@ -1,9 +1,15 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <objbase.h>
 #include <UIAutomation.h>
 #include <wrl/client.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Media.Control.h>
 #include "../cpp_kernel/json.hpp"
 #include <array>
 #include <cstdint>
@@ -145,12 +151,90 @@ static ComPtr<IUIAutomationCondition> property_condition(IUIAutomation* automati
     return condition;
 }
 
+struct ReceiverTransport {
+    bool listening = false;
+    bool connected = false;
+};
+
+template<typename Table> static ReceiverTransport transport_rows(const Table& table, DWORD pid) {
+    ReceiverTransport result;
+    for (DWORD i = 0; i < table.dwNumEntries; ++i) {
+        const auto& listener = table.table[i];
+        if (listener.dwOwningPid != pid || listener.dwState != MIB_TCP_STATE_LISTEN) continue;
+        result.listening = true;
+        for (DWORD j = 0; j < table.dwNumEntries; ++j) {
+            const auto& peer = table.table[j];
+            if (peer.dwOwningPid == pid && peer.dwState == MIB_TCP_STATE_ESTAB &&
+                peer.dwLocalPort == listener.dwLocalPort) result.connected = true;
+        }
+    }
+    return result;
+}
+
+template<typename Table> static ReceiverTransport receiver_transport(DWORD pid, ULONG family) {
+    DWORD bytes = 0;
+    if (GetExtendedTcpTable(nullptr, &bytes, FALSE, family, TCP_TABLE_OWNER_PID_ALL, 0) != ERROR_INSUFFICIENT_BUFFER ||
+        bytes > 16 * 1024 * 1024) throw std::runtime_error("Receiver TCP table size is unavailable");
+    std::vector<BYTE> storage(bytes);
+    if (GetExtendedTcpTable(storage.data(), &bytes, FALSE, family, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR)
+        throw std::runtime_error("Receiver TCP table is unavailable");
+    return transport_rows(*reinterpret_cast<const Table*>(storage.data()), pid);
+}
+
+static std::string hidden_state(bool listening, bool connected, const std::vector<int>& playback) {
+    if (!listening) throw std::runtime_error("Receiver listener disappeared during hidden inspection");
+    if (!connected) return "listening";
+    if (playback.size() > 1) throw std::runtime_error("Receiver Windows media session is ambiguous");
+    if (playback.empty()) return "connected";
+    using Status = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus;
+    if (playback.front() == static_cast<int>(Status::Playing)) return "playing";
+    if (playback.front() == static_cast<int>(Status::Paused)) return "paused";
+    return "connected";
+}
+
+static std::string read_hidden_receiver(DWORD pid) {
+    const auto ipv4 = receiver_transport<MIB_TCPTABLE_OWNER_PID>(pid, AF_INET);
+    const auto ipv6 = receiver_transport<MIB_TCP6TABLE_OWNER_PID>(pid, AF_INET6);
+    const bool listening = ipv4.listening || ipv6.listening;
+    const bool connected = ipv4.connected || ipv6.connected;
+    std::vector<int> playback;
+    if (connected) {
+        using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+        auto request = Manager::RequestAsync();
+        if (request.wait_for(std::chrono::milliseconds(1500)) != winrt::Windows::Foundation::AsyncStatus::Completed)
+            throw std::runtime_error("Receiver Windows media-session query timed out");
+        const auto sessions = request.GetResults().GetSessions();
+        if (sessions.Size() > 128) throw std::runtime_error("Windows media-session count is unsupported");
+        for (const auto& session : sessions) {
+            if (session.SourceAppUserModelId() == L"Airplay.Shairport.1.0")
+                playback.push_back(static_cast<int>(session.GetPlaybackInfo().PlaybackStatus()));
+        }
+    }
+    const auto after4 = receiver_transport<MIB_TCPTABLE_OWNER_PID>(pid, AF_INET);
+    const auto after6 = receiver_transport<MIB_TCP6TABLE_OWNER_PID>(pid, AF_INET6);
+    if (listening != (after4.listening || after6.listening) ||
+        connected != (after4.connected || after6.connected))
+        throw std::runtime_error("Receiver transport changed during hidden inspection");
+    return hidden_state(listening, connected, playback);
+}
+
 static json read_receiver(DWORD pid, std::uint64_t created) {
     auto process = open_receiver(pid, created);
     WindowQuery query{pid, {}};
     if (!EnumWindows(find_window, reinterpret_cast<LPARAM>(&query)) || query.matches.size() != 1)
         throw std::runtime_error("Receiver main window is missing or ambiguous");
     const HWND window = query.matches.front();
+    if (!IsWindowVisible(window)) {
+        const auto observed_state = read_hidden_receiver(pid);
+        DWORD observed_pid = 0;
+        if (!IsWindow(window) || IsWindowVisible(window) ||
+            !GetWindowThreadProcessId(window, &observed_pid) || observed_pid != pid ||
+            WaitForSingleObject(process.get(), 0) != WAIT_TIMEOUT)
+            throw std::runtime_error("Receiver identity or visibility changed during hidden inspection");
+        return {{"schema_version", 1}, {"ok", true}, {"pid", pid},
+            {"created", std::to_string(created)}, {"source", "shairportqt-windows-media"},
+            {"state", observed_state}, {"audio_output_verified", false}};
+    }
     ComPtr<IUIAutomation> automation;
     check(CoCreateInstance(__uuidof(CUIAutomation8), nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&automation)), "Windows UI Automation");
@@ -232,6 +316,33 @@ static void self_test() {
     rejects([] { state(L"Translated receiver status", {}); });
     rejects([] { state(L"Connected to fixture", {{L"Play", true}, {L"Pause", true}}); });
     rejects([] { state(L"Connected to fixture", {{L"Unexpected", true}}); });
+    require(hidden_state(true, false, {4}) == "listening");
+    require(hidden_state(true, true, {4}) == "playing");
+    require(hidden_state(true, true, {5}) == "paused");
+    require(hidden_state(true, true, {}) == "connected");
+    require(hidden_state(true, true, {3}) == "connected");
+    rejects([] { hidden_state(false, true, {4}); });
+    rejects([] { hidden_state(true, true, {4, 5}); });
+    struct TransportFixture {
+        DWORD dwNumEntries = 4;
+        MIB_TCPROW_OWNER_PID table[4]{};
+    } transport;
+    transport.table[0].dwOwningPid = 7;
+    transport.table[0].dwState = MIB_TCP_STATE_LISTEN;
+    transport.table[0].dwLocalPort = 5000;
+    transport.table[1].dwOwningPid = 99;
+    transport.table[1].dwState = MIB_TCP_STATE_ESTAB;
+    transport.table[1].dwLocalPort = 5000;
+    transport.table[2].dwOwningPid = 7;
+    transport.table[2].dwState = MIB_TCP_STATE_ESTAB;
+    transport.table[2].dwLocalPort = 54000;
+    require(transport_rows(transport, 7).listening);
+    require(!transport_rows(transport, 7).connected);
+    require(!transport_rows(transport, 99).listening);
+    transport.table[3].dwOwningPid = 7;
+    transport.table[3].dwState = MIB_TCP_STATE_ESTAB;
+    transport.table[3].dwLocalPort = 5000;
+    require(transport_rows(transport, 7).connected);
     require(number(L"18446744073709551615") == std::numeric_limits<std::uint64_t>::max());
     for (const auto* invalid : {L"", L"-1", L"+1", L"12x", L" 12", L"18446744073709551616"})
         rejects([&] { number(invalid); });
@@ -251,15 +362,15 @@ int wmain(int argc, wchar_t* argv[]) {
         const auto created = number(argv[4]);
         if (pid == 0 || pid > std::numeric_limits<DWORD>::max() || created == 0)
             throw std::runtime_error("Invalid receiver process identity");
-        check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM initialization");
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
         com_initialized = true;
         const auto result = read_receiver(static_cast<DWORD>(pid), created);
-        CoUninitialize();
+        winrt::uninit_apartment();
         com_initialized = false;
         std::cout << result.dump() << '\n';
         return 0;
     } catch (const std::exception& error) {
-        if (com_initialized) CoUninitialize();
+        if (com_initialized) winrt::uninit_apartment();
         std::cout << json({{"schema_version", 1}, {"ok", false}, {"error", error.what()}}).dump() << '\n';
         return 1;
     }

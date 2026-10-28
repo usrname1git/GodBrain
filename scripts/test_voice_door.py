@@ -208,7 +208,8 @@ class VoiceSettingsTests(unittest.TestCase):
         factory = Mock(return_value=reader)
         with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=factory)}):
             self.assertEqual(voice.ocr_cpu(image, ".png"), "fixture text")
-            factory.assert_called_once_with(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
+            factory.assert_called_once_with(["en", "sv"], gpu=False, verbose=False,
+                                            download_enabled=False, quantize=False)
             factory.side_effect = FileNotFoundError("Missing local OCR weights; downloads disabled")
             with self.assertRaisesRegex(FileNotFoundError, "Missing local OCR weights"):
                 voice.ocr_cpu(image, ".png")
@@ -232,6 +233,30 @@ class VoiceSettingsTests(unittest.TestCase):
         with patch.dict(sys.modules, {"easyocr": SimpleNamespace(Reader=Mock(return_value=reader))}):
             self.assertEqual(voice.ocr_cpu(output.getvalue(), ".png"), "rotated text")
         self.assertEqual(reader.readtext.call_args.args[0].shape, (2, 3, 3))
+
+    def test_one_shot_ocr_is_hash_bound_and_never_uses_tower_or_preferences(self):
+        import hashlib
+        image = b"fixture image bytes"
+        with patch.object(voice, "ocr_cpu", return_value="ME Disabled\nCode 632") as cpu, \
+                patch.object(voice, "prefer_tower") as preference, \
+                patch.object(voice, "ocr_tower") as tower, \
+                patch.object(voice, "serve") as server:
+            result = voice.ocr_stdin(io.BytesIO(image))
+        cpu.assert_called_once_with(image, ".bin")
+        preference.assert_not_called()
+        tower.assert_not_called()
+        server.assert_not_called()
+        self.assertEqual(result, {"version": 1, "engine": "cpu", "text": "ME Disabled\nCode 632",
+                                  "source_sha256": hashlib.sha256(image).hexdigest()})
+
+    def test_one_shot_ocr_rejects_empty_oversized_and_empty_extraction(self):
+        with patch.object(voice, "ocr_cpu", return_value=" \n") as cpu:
+            for data in (b"", b"x" * (10 * 1024 * 1024 + 1)):
+                with self.assertRaisesRegex(ValueError, "between"):
+                    voice.ocr_stdin(io.BytesIO(data))
+            cpu.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "found no text"):
+                voice.ocr_stdin(io.BytesIO(b"image"))
 
     def test_component_health_is_passive_and_preserves_runtime_failure(self):
         with patch.object(voice.importlib.util, "find_spec", return_value=object()), \

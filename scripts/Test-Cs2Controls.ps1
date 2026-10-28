@@ -416,6 +416,44 @@ function Resume-GodBrainAfterCs2 { throw "Automatic resume is forbidden." }
         $script:tailState = "Running"
         Set-TailscaleForCs2 $false
         Assert-Equal ($script:tailArgs[0] -join ",") "down"
+        $script:tailArgs = @()
+        Set-TailscaleForCs2 $true
+        Assert-Equal $script:tailArgs.Count 2
+        Assert-Equal ($script:tailArgs[0] -join ",") "set,--unattended"
+        Assert-Equal ($script:tailArgs[1] -join ",") "up"
+        function Invoke-TailscaleCs2 {
+            param($Exe, $TsArgs)
+            $script:tailArgs += ,$TsArgs
+            throw "fixture Tailscale failure"
+        }
+        $script:tailArgs = @()
+        Assert-Throws { Set-TailscaleForCs2 $true } "*fixture Tailscale failure*"
+        Assert-Equal $script:tailArgs.Count 1
+        Assert-Equal ($script:tailArgs[0] -join ",") "set,--unattended"
+        function Invoke-TailscaleCs2 {
+            param($Exe, $TsArgs)
+            $script:tailArgs += ,$TsArgs
+            if ($TsArgs[0] -eq "up") { throw "fixture Tailscale reconnect failure" }
+        }
+        $script:tailArgs = @()
+        Assert-Throws { Set-TailscaleForCs2 $true } "*fixture Tailscale reconnect failure*"
+        Assert-Equal $script:tailArgs.Count 2
+    }
+    & {
+        . $helper
+        Invoke-TailscaleCs2 "C:\pwsh\pwsh.exe" @("-NoProfile", "-Command", "exit 0")
+        Assert-Throws {
+            Invoke-TailscaleCs2 "C:\pwsh\pwsh.exe" @("-NoProfile", "-Command", "[Console]::Error.WriteLine('fixture rejection'); exit 7")
+        } "Tailscale:*exit=7*fixture rejection*"
+        $timeoutPid = Join-Path $fixture "tailscale-timeout.pid"
+        Assert-Throws {
+            Invoke-TailscaleCs2 "C:\pwsh\pwsh.exe" @("-NoProfile", "-Command",
+                "[IO.File]::WriteAllText('$timeoutPid', [string]`$PID); Start-Sleep -Seconds 60") -TimeoutMilliseconds 2000
+        } "Tailscale:*timed out*"
+        $timedOutId = [int](Get-Content -LiteralPath $timeoutPid -Raw)
+        if (Get-Process -Id $timedOutId -ErrorAction SilentlyContinue) {
+            throw "Timed-out Tailscale fixture was not reaped."
+        }
     }
     $tail = $desk.Find({
         param($node)

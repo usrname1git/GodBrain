@@ -2,6 +2,7 @@
 
 #include "json.hpp"
 #include <string>
+#include <vector>
 
 using json = nlohmann::json;
 
@@ -9,6 +10,8 @@ namespace telemetry {
     json get_current_state();
     std::string get_computer_name();
     json get_host_inventory();
+    json get_host_profile();
+    json parse_smbios_memory(const std::vector<unsigned char>& bytes);
     json get_tailscale();
     // True when 127.0.0.1:port accepts TCP within timeout_ms. Does not speak a protocol.
     bool tcp_loopback_open(int port, int timeout_ms);

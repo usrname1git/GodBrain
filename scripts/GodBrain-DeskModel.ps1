@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot "GodBrain-SharedMemory.ps1")
+
 function Read-DeskReasoningPreference([string]$Path) {
     $value = if (Test-Path -LiteralPath $Path) {
         if ((Get-Item -LiteralPath $Path).Length -gt 64) { throw "Reasoning preference exceeds 64 bytes: $Path" }
@@ -220,7 +222,7 @@ function Invoke-DeskReviewPlanner($Request) {
 }
 
 function Invoke-DeskReviewCompletion($Messages, [string]$Model, [int]$Output, [int]$Context = 0,
-    [int]$PlannedPrompt = 0, [bool]$Thinking = $true, [string]$Effort = "") {
+    [int]$PlannedPrompt = 0, [bool]$Thinking = $true, [string]$Effort = "", [hashtable]$Diagnostics = $null) {
     $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
     if ($health.backend -ne "exl3" -or $health.busy) { throw "EXL3 is unavailable or busy. Review was not queued." }
     if ($health.model -cne $Model -or ($Context -and $health.context_length -ne $Context)) {
@@ -237,16 +239,30 @@ function Invoke-DeskReviewCompletion($Messages, [string]$Model, [int]$Output, [i
         -Body ($body | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json; charset=utf-8" -TimeoutSec 600
     if ($response.error) { throw "Review failed: $($response.error | ConvertTo-Json -Compress)" }
     $choice = $response.choices[0]
-    if ($choice.finish_reason -ne "stop") {
-        throw "Review was incomplete (finish_reason='$($choice.finish_reason)', output limit $Output tokens including reasoning). Narrow the task or disable thinking explicitly; no complete verdict was recorded."
-    }
-    if ([string]::IsNullOrWhiteSpace($choice.message.content) -or $choice.message.tool_calls) {
-        throw "Review returned no spoken report or attempted tools; no complete verdict was recorded."
+    if ($null -ne $Diagnostics) {
+        $Diagnostics.finish_reason = $choice.finish_reason
+        $Diagnostics.prompt_tokens = $response.usage.prompt_tokens
+        $Diagnostics.completion_tokens = $response.usage.completion_tokens
+        $Diagnostics.visible_bytes = [Text.Encoding]::UTF8.GetByteCount([string]$choice.message.content)
+        $Diagnostics.reasoning_bytes = [Text.Encoding]::UTF8.GetByteCount([string]$choice.message.reasoning_content)
     }
     if (-not $response.usage.prompt_tokens) { throw "Review returned no prompt-token receipt." }
     if ($PlannedPrompt -and ($response.usage.prompt_tokens -lt $PlannedPrompt -or
         $response.usage.prompt_tokens -gt $PlannedPrompt + 1024)) {
         throw "Actual prompt usage disagrees with the local tokenizer budget. No complete verdict was recorded."
+    }
+    if ($choice.finish_reason -ne "stop") {
+        $failure = [InvalidOperationException]::new(
+            "Review was incomplete (finish_reason='$($choice.finish_reason)', output limit $Output tokens including reasoning). No complete verdict was recorded.")
+        if ($choice.finish_reason -ceq "length" -and -not $choice.message.tool_calls) {
+            $failure.Data["DeskAnswerRecovery"] = "output_limit"
+        }
+        throw $failure
+    }
+    if ([string]::IsNullOrWhiteSpace($choice.message.content) -or $choice.message.tool_calls) {
+        $failure = [InvalidOperationException]::new("Review returned no spoken report or attempted tools; no complete verdict was recorded.")
+        if (-not $choice.message.tool_calls) { $failure.Data["DeskAnswerRecovery"] = "empty_completion" }
+        throw $failure
     }
     return $response
 }
@@ -269,24 +285,21 @@ function Test-DeskReviewBusy {
     }
 }
 
-function Invoke-DeskCodeReview([string]$Path, [string]$Task) {
+function Invoke-DeskCodeReview([string]$Path, [string]$Task, [string]$Mode = "answer") {
     $mutex = [Threading.Mutex]::new($false, (Get-DeskReviewMutexName))
     $owned = $false
     try {
         try { $owned = $mutex.WaitOne(0) }
         catch [Threading.AbandonedMutexException] { $owned = $true }
         if (-not $owned) { throw "Another complete-file review is running. Review was not queued." }
-        return (Invoke-DeskCodeReviewCore $Path $Task)
+        return (Invoke-DeskCodeReviewCore $Path $Task $Mode)
     } finally {
         if ($owned) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
     }
 }
 
-function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
-    if (-not $Path) { throw "Review complete file requires a granted file path." }
-    $bytes = Read-DeskGrantedBytes $Path 1MB "Review"
-    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes).TrimStart([char]0xfeff)
+function Get-DeskReviewRuntime {
     $health = Invoke-RestMethod "http://127.0.0.1:8888/health" -TimeoutSec 3
     if ($health.backend -ne "exl3" -or $health.busy) { throw "Review requires an idle EXL3 model." }
     $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
@@ -299,13 +312,31 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
         '^qwen3\.8-flash-next-exl3-3\.05bpw$' { Join-Path (Split-Path $Kit -Parent) "Qwen3.8-Flash-Next-EXL3-3.05bpw\tokenizer.json"; break }
         default { throw "No trusted local tokenizer mapping for the running model '$model'." }
     }
-    $output = [Math]::Min(8192, [int]$health.context_length / 4)
+    $output = [Math]::Min(16384, ([int]$health.context_length - 4096) / 2)
     $preference = Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")
     $thinking = [bool]$preference.Enabled
     $effort = [string]$preference.Effort
     Assert-DeskReasoningCapability $models $model $effort
+    return @{ Model = $model; Tokenizer = $tokenizer; Context = [int]$health.context_length
+        Output = [int]$output; Thinking = $thinking; Effort = $effort }
+}
+
+function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task,
+    [ValidateSet("answer", "research", "fix")][string]$Mode = "answer") {
+    if (-not $Path) { throw "Review complete file requires a granted file path." }
+    $bytes = Read-DeskGrantedBytes $Path 1MB "Review"
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes).TrimStart([char]0xfeff)
+    $operatorTask = $Task
+    $memory = $null
+    if ($Mode -ne "answer" -and $Task -notmatch '^\s*(?i)no tools\b') {
+        $memory = Get-GodBrainSharedContext -Query $Task -ThreadId "desk"
+        $Task = Add-GodBrainSharedContext $Task $memory
+    }
+    $runtime = Get-DeskReviewRuntime
+    $model = $runtime.Model; $tokenizer = $runtime.Tokenizer; $output = $runtime.Output
+    $thinking = $runtime.Thinking; $effort = $runtime.Effort
     $request = @{ op = "plan"; tokenizer = $tokenizer; name = $Path; task = $Task; text = $text
-        context = [int]$health.context_length; output = [int]$output; thinking = $thinking; reasoning_effort = $effort }
+        context = $runtime.Context; output = [int]$output; thinking = $thinking; reasoning_effort = $effort }
     $plan = Invoke-DeskReviewPlanner $request
     $receiptPath = Join-Path $Repo "logs\last-code-review.json"
     [void][IO.Directory]::CreateDirectory((Split-Path $receiptPath -Parent))
@@ -345,9 +376,17 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
             throw "Source changed during review; the report does not cover the current file."
         }
         $receipt.status = "done"
-        $receipt.task = $Task
+        $receipt.task = $operatorTask
         $receipt.report = $answer
         $receipt.part_reports = @($reports.ToArray())
+        if ($null -ne $memory) {
+            $receipt.shared_saved = $false
+            $saved = Save-GodBrainWorkingTurn -Prompt $operatorTask -Response $answer -ThreadId "desk" `
+                -Sources @("$Path [sha256=$($receipt.source_sha256)]")
+            $receipt.shared_saved = $true
+            $receipt.shared_record_id = $saved.record._id
+            $receipt.context_index_id = $memory.index_id
+        }
         $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8
         return "Candidate review; $($plan.lines) lines covered in $($reports.Count) part(s). No edits applied.`r`n`r`n$answer"
     } catch {
@@ -355,5 +394,227 @@ function Invoke-DeskCodeReviewCore([string]$Path, [string]$Task) {
         $receipt.error = $_.Exception.Message
         $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8
         throw
+    }
+}
+
+function ConvertFrom-DeskAttachmentBytes([byte[]]$Bytes) {
+    $offset = 0
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $name = "utf-8"
+    if ($Bytes.Length -ge 4 -and (
+        ($Bytes[0] -eq 255 -and $Bytes[1] -eq 254 -and $Bytes[2] -eq 0 -and $Bytes[3] -eq 0) -or
+        ($Bytes[0] -eq 0 -and $Bytes[1] -eq 0 -and $Bytes[2] -eq 254 -and $Bytes[3] -eq 255))) {
+        throw "UTF-32 attachments are not supported. Save the text as UTF-8 or UTF-16."
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 255 -and $Bytes[1] -eq 254) {
+        $encoding = [Text.UnicodeEncoding]::new($false, $true, $true); $offset = 2; $name = "utf-16le"
+    } elseif ($Bytes.Length -ge 2 -and $Bytes[0] -eq 254 -and $Bytes[1] -eq 255) {
+        $encoding = [Text.UnicodeEncoding]::new($true, $true, $true); $offset = 2; $name = "utf-16be"
+    } elseif ($Bytes.Length -ge 3 -and $Bytes[0] -eq 239 -and $Bytes[1] -eq 187 -and $Bytes[2] -eq 191) {
+        $offset = 3
+    }
+    $text = $encoding.GetString($Bytes, $offset, $Bytes.Length - $offset)
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -match '[\x00-\x08\x0b\x0c\x0e-\x1f]') {
+        throw "Attachment is empty, binary or has an unsupported encoding. Use UTF-8 or UTF-16 with a BOM."
+    }
+    return @{ Text = $text; Encoding = $name }
+}
+
+function Invoke-DeskCpuOcr([byte[]]$Bytes) {
+    $python = (Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $python) { throw "CPU OCR requires the existing Python/EasyOCR environment." }
+    $info = [Diagnostics.ProcessStartInfo]::new($python)
+    $info.ArgumentList.Add("-X")
+    $info.ArgumentList.Add("faulthandler")
+    $info.ArgumentList.Add((Join-Path $PSScriptRoot "voice_door.py"))
+    $info.ArgumentList.Add("--ocr-stdin")
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    Set-DeskReviewPlannerEncoding $info
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $info
+    $started = $false
+    try {
+        $started = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.BaseStream.Write($Bytes, 0, $Bytes.Length)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(180000)) {
+            $process.Kill($true)
+            $process.WaitForExit()
+            throw "CPU OCR timed out; no model was started."
+        }
+        if ($process.ExitCode) { throw "CPU OCR failed (exit $($process.ExitCode)): $($stderr.GetAwaiter().GetResult())" }
+        $result = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+        if ($result.version -ne 1 -or $result.engine -cne "cpu" -or
+            $result.source_sha256 -cne $hash -or [string]::IsNullOrWhiteSpace($result.text)) {
+            throw "CPU OCR returned an invalid or empty source receipt."
+        }
+        return [string]$result.text
+    } finally {
+        try {
+            if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+        } finally { $process.Dispose() }
+    }
+}
+
+function Write-DeskAttachmentReceipt($Receipt) {
+    $path = Join-Path $Repo "logs\last-attachment-analysis.json"
+    [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
+    $temporary = $path + "." + [guid]::NewGuid().ToString("N") + ".tmp"
+    try {
+        [IO.File]::WriteAllText($temporary, ($Receipt | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary, $path, $true)
+    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
+}
+
+function Invoke-DeskAttachmentCompletion($Messages, $Runtime, [int]$Output, [int]$PlannedPrompt,
+    [hashtable]$Receipt, [string]$Stage = "part") {
+    for ($index = 0; $index -lt 2; $index++) {
+        $thinking = $Runtime.Thinking
+        $effort = $Runtime.Effort
+        $messagesToSend = @($Messages)
+        $outputToSend = $Output
+        if ($Receipt.answer_retry) {
+            $thinking = $false; $effort = ""
+            $outputToSend = [Math]::Min($Output, 4096)
+            $messagesToSend += @{ role = "user"; content =
+                "An earlier attempt in this analysis was discarded. Give a concise final answer from the supplied evidence. " +
+                "Distinguish observations from hypotheses and missing evidence. If a requested mapping or method is not established, say so. " +
+                "Do not call tools, repeat reads or claim verification." }
+            $plan = Invoke-DeskReviewPlanner @{ op = "completion"; messages = $messagesToSend
+                tokenizer = $Runtime.Tokenizer; context = $Runtime.Context; output = $outputToSend; thinking = $false }
+            $PlannedPrompt = $plan.prompt_tokens
+        }
+        $attempt = @{ stage = $Stage; status = "running"; thinking_enabled = $thinking
+            reasoning_effort = $effort; answer_retry = [bool]$Receipt.answer_retry
+            requested_max_tokens = $outputToSend; planned_prompt_tokens = $PlannedPrompt }
+        $Receipt.completion_attempts += $attempt
+        Write-DeskAttachmentReceipt $Receipt
+        try {
+            $response = Invoke-DeskReviewCompletion $messagesToSend $Runtime.Model $outputToSend `
+                $Runtime.Context $PlannedPrompt $thinking $effort $attempt
+            $attempt.status = "done"
+            return $response
+        } catch {
+            $attempt.status = "failed"; $attempt.error = $_.Exception.GetBaseException().Message
+            $reason = $_.Exception.GetBaseException().Data["DeskAnswerRecovery"]
+            if (-not $reason -or $Receipt.answer_retry) { throw }
+            $Receipt.answer_retry = $true
+            $Receipt.answer_retry_reason = [string]$reason
+        } finally { Write-DeskAttachmentReceipt $Receipt }
+    }
+    throw "Attachment answer recovery did not produce a complete answer."
+}
+
+function Invoke-DeskAttachmentAnalysis([string[]]$Paths, [string]$Task,
+    [ValidateSet("answer", "research")][string]$Mode = "answer") {
+    $mutex = [Threading.Mutex]::new($false, (Get-DeskReviewMutexName))
+    $owned = $false
+    $receipt = @{ version = 1; status = "running"; trust_tier = "candidate"; task = $Task
+        at = [datetime]::UtcNow.ToString("o"); sources = @(); parts = @(); paths = @($Paths)
+        answer_retry = $false; completion_attempts = @() }
+    try {
+        try { $owned = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw "Another file analysis/review is running. Nothing was queued." }
+        Write-DeskAttachmentReceipt $receipt
+        try {
+            $memory = $null
+            if ($Mode -ne "answer" -and $Task -notmatch '^\s*(?i)no tools\b') {
+                $memory = Get-GodBrainSharedContext -Query $Task -ThreadId "desk"
+                $Task = Add-GodBrainSharedContext $Task $memory
+            }
+            $runtime = Get-DeskReviewRuntime
+            $sources = @()
+            foreach ($path in $Paths) {
+                $image = Test-DeskVisionImage $path
+                $maximum = if ($image) { 10MB } else { 1MB }
+                $bytes = Read-DeskGrantedBytes $path $maximum "Attachment"
+                $decoded = if ($image) { @{ Text = (Invoke-DeskCpuOcr $bytes); Encoding = "cpu-ocr" } }
+                    else { ConvertFrom-DeskAttachmentBytes $bytes }
+                if ([Text.Encoding]::UTF8.GetByteCount($decoded.Text) -gt 1MB) { throw "Extracted attachment text exceeds 1 MiB." }
+                $sources += @{ name = $path; text = $decoded.Text; encoding = $decoded.Encoding
+                    kind = $(if ($image) { "cpu-ocr" } else { "text" })
+                    sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant() }
+            }
+            $request = @{ op = "attachments"; sources = $sources; task = $Task; tokenizer = $runtime.Tokenizer
+                context = $runtime.Context; output = $runtime.Output; thinking = $runtime.Thinking
+                reasoning_effort = $runtime.Effort }
+            $plan = Invoke-DeskReviewPlanner $request
+            $receipt.sources = @($plan.documents)
+            $receipt.model = $runtime.Model; $receipt.context = $runtime.Context
+            $receipt.thinking_enabled = $runtime.Thinking; $receipt.reasoning_effort = $runtime.Effort
+            Write-DeskAttachmentReceipt $receipt
+            $reports = [Collections.Generic.List[string]]::new()
+            $partOutput = if (@($plan.chunks).Count -gt 1) {
+                [Math]::Min($runtime.Output, [int](($runtime.Context - 4096 - $runtime.Output) / (@($plan.chunks).Count * 2)))
+            } else { $runtime.Output }
+            if ($partOutput -lt 256) { throw "Context is too small for attachment synthesis; increase context or narrow the inputs." }
+            foreach ($chunk in $plan.chunks) {
+                $response = Invoke-DeskAttachmentCompletion $chunk.messages $runtime $partOutput `
+                    $chunk.prompt_tokens $receipt
+                $coverage = ($chunk.coverage | ForEach-Object { "$($_.id):$($_.start)-$($_.end)" }) -join ", "
+                $reports.Add("Supplied ranges: $coverage`n$($response.choices[0].message.content)")
+                $receipt.parts += @{ coverage = @($chunk.coverage); prompt_tokens = $response.usage.prompt_tokens
+                    completion_tokens = $response.usage.completion_tokens }
+                Write-DeskAttachmentReceipt $receipt
+            }
+            $answer = [string]$reports[0]
+            if ($reports.Count -gt 1) {
+                $request.op = "attachment-synthesis"
+                $request.Remove("sources")
+                $request.documents = @($plan.documents)
+                $request.reports = @($reports.ToArray())
+                if ($receipt.answer_retry) {
+                    $request.thinking = $false; $request.reasoning_effort = ""
+                    $request.output = [Math]::Min($runtime.Output, 4096)
+                }
+                $synthesis = Invoke-DeskReviewPlanner $request
+                $final = Invoke-DeskAttachmentCompletion $synthesis.messages $runtime $runtime.Output `
+                    $synthesis.prompt_tokens $receipt "synthesis"
+                $answer = [string]$final.choices[0].message.content
+                $receipt.synthesis_prompt_tokens = $final.usage.prompt_tokens
+            }
+            foreach ($source in $sources) {
+                $maximum = if ($source.kind -eq "cpu-ocr") { 10MB } else { 1MB }
+                $current = Read-DeskGrantedBytes $source.name $maximum "Attachment"
+                if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($current)).ToLowerInvariant() -cne $source.sha256) {
+                    throw "Attachment changed during analysis: $($source.name). No complete answer was recorded."
+                }
+            }
+            $receipt.status = "done"; $receipt.report = $answer; $receipt.part_reports = @($reports.ToArray())
+            if ($null -ne $memory) {
+                $receipt.shared_saved = $false
+                $references = @($sources | ForEach-Object { "$($_.name) [sha256=$($_.sha256)]" })
+                $saved = Save-GodBrainWorkingTurn -Prompt $receipt.task -Response $answer -ThreadId "desk" -Sources $references
+                $receipt.shared_saved = $true
+                $receipt.shared_record_id = $saved.record._id
+                $receipt.context_index_id = $memory.index_id
+            }
+            Write-DeskAttachmentReceipt $receipt
+            $labels = @($plan.documents | Where-Object kind -ne "derived-diff" | ForEach-Object {
+                "$($_.id): $($_.name) [$($_.encoding); $($_.lines) lines]"
+            }) -join "`r`n"
+            $note = if (@($sources | Where-Object kind -eq "cpu-ocr").Count) {
+                "`r`nScreenshots supplied as CPU OCR text only; visual layout and OCR accuracy are not verified."
+            } else { "" }
+            if ($receipt.answer_retry) {
+                $note += "`r`nAnswer recovery: thinking off for recovery and remaining parts; saved preference unchanged."
+            }
+            return "Candidate analysis; $($sources.Count) attachments supplied completely across $($reports.Count) part(s). No tools or edits.`r`n$labels$note`r`n`r`n$answer"
+        } catch {
+            $receipt.status = "failed"; $receipt.error = $_.Exception.Message
+            Write-DeskAttachmentReceipt $receipt
+            throw
+        }
+    } finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
     }
 }

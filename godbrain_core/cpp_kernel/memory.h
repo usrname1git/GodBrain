@@ -9,6 +9,17 @@ using json = nlohmann::json;
 namespace godbrain_rag { class Client; }
 
 namespace memory {
+    json working_shelf(const json& payload);
+    json save_working_turn(const std::string& prompt, const std::string& answer);
+    json refresh_context_index(const json& capabilities);
+    json shared_working_context(const std::string& query,
+                                const std::string& thread = "",
+                                const std::string& scope = "technical");
+    json shared_context(const std::string& query, const std::string& thread = "",
+                        const std::string& scope = "technical");
+    json shared_context(const std::string& query, const std::string& thread,
+                        const std::string& scope, const godbrain_rag::Client& client);
+    json research_document(const std::string& value, bool search);
     json save_thought(const json& payload);
     json observe_host();
     json promote_claim(const json& payload);

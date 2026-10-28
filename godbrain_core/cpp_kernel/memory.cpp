@@ -9,6 +9,7 @@
 #include "truth_assertion.h"
 #include "evidence_maintenance.h"
 #include "research_curation.h"
+#include "shared_context.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -18,6 +19,8 @@
 #pragma comment(lib, "advapi32.lib")
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <array>
 #include <cctype>
 #include <cstring>
@@ -285,6 +288,78 @@ godbrain_truth::Document fetch_ms_doc(const std::string& requested_url) {
         return chunk;
     }, expected);
     return {raw, wide_to_utf8(contentType), true};
+}
+
+json research_document_impl(const std::string& value, bool search) {
+    std::string url = value;
+    if (search) {
+        godbrain_truth::bounded(value, 256, "documentation query");
+        url = "https://learn.microsoft.com/api/search?locale=en-us&%24top=5&search=";
+        static const char hex[] = "0123456789ABCDEF";
+        for (unsigned char ch : value) {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+                url.push_back(static_cast<char>(ch));
+            } else {
+                url.push_back('%');
+                url.push_back(hex[ch >> 4]);
+                url.push_back(hex[ch & 15]);
+            }
+        }
+    }
+    url = godbrain_truth::document_url(url);
+    const auto document = fetch_ms_doc(url);
+    json result = {{"url", url}, {"trust", "untrusted_reference"},
+                   {"verified", false}, {"source_bytes", document.body.size()},
+                   {"document_keccak256", keccak256(document.body)}};
+    const auto clip = [](const std::string& text, size_t maximum) {
+        size_t end = (std::min)(text.size(), maximum);
+        while (end < text.size() &&
+               (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80) --end;
+        return text.substr(0, end);
+    };
+    if (search) {
+        if (document.mime() != "application/json") {
+            throw std::runtime_error("Documentation search did not return JSON");
+        }
+        const auto body = json::parse(document.body);
+        if (!body.contains("results") || !body["results"].is_array()) {
+            throw std::runtime_error("Documentation search returned invalid results");
+        }
+        result["results"] = json::array();
+        for (const auto& row : body["results"]) {
+            if (result["results"].size() == 5) break;
+            result["results"].push_back({
+                {"url", godbrain_truth::document_url(row.at("url").get<std::string>())},
+                {"title", clip(row.at("title").get<std::string>(), 256)},
+                {"description", clip(row.at("description").get<std::string>(), 1024)}
+            });
+            if (result.dump().size() > 9000) {
+                result["results"].erase(result["results"].end() - 1);
+                result["clipped"] = true;
+                break;
+            }
+        }
+    } else {
+        auto presented = document;
+        const auto main = document.body.find("<main");
+        if (main != std::string::npos) {
+            const auto begin = document.body.find('>', main);
+            const auto end = document.body.find("</main>", begin);
+            if (begin != std::string::npos && end != std::string::npos) {
+                presented.body = document.body.substr(begin + 1, end - begin - 1);
+            }
+        }
+        const std::string text = godbrain_truth::document_text(presented);
+        result["text"] = clip(text, 6000);
+        result["clipped"] = result["text"].get_ref<const std::string&>().size() < text.size();
+        while (result.dump().size() > 9000) {
+            const auto& current = result["text"].get_ref<const std::string&>();
+            result["text"] = clip(current, current.size() - (std::min)(current.size(), size_t{512}));
+            result["clipped"] = true;
+        }
+    }
+    return result;
 }
 
 bool path_under_allowlist(const std::string& path) {
@@ -685,6 +760,10 @@ json commit_candidate(const json& document, bool repair_projection = true) {
 
 }  // namespace
 
+json research_document(const std::string& value, bool search) {
+    return research_document_impl(value, search);
+}
+
 json save_thought(const json& payload) {
     const std::string content = trim_copy(payload.value("content", ""));
     if (content.empty() || content.size() > kMaxThoughtBytes ||
@@ -1043,6 +1122,232 @@ json search_verified(const std::string& query, int limit, const std::string& sec
     }
     found["thoughts"] = std::move(kept);
     return found;
+}
+
+json working_shelf(const json& input) {
+    if (!input.is_object()) throw std::invalid_argument("Working shelf request must be an object");
+    json payload = input;
+    payload["command"] = "shelf";
+    payload["host_id"] = telemetry::get_computer_name();
+    if (payload.value("action", "") == "post") {
+        const std::string text = payload.value("text", "");
+        if (looks_like_secret(text)) throw std::invalid_argument("Working memory rejected secret-like source text");
+        const auto token = read_env("GODBRAIN_API_TOKEN");
+        if (!token.empty() && payload.dump().find(token) != std::string::npos)
+            throw std::invalid_argument("Working memory rejected the configured bearer token in source data");
+        if (!payload.contains("thread_id")) payload["thread_id"] = "general";
+        if (!payload.contains("request_id")) {
+            static std::atomic<uint64_t> sequence{0};
+            FILETIME now{};
+            GetSystemTimeAsFileTime(&now);
+            payload["request_id"] = keccak256(
+                std::to_string(now.dwHighDateTime) + ":" + std::to_string(now.dwLowDateTime) +
+                ":" + std::to_string(GetCurrentProcessId()) + ":" + std::to_string(++sequence));
+        }
+    }
+    const auto receipt = run_memory_store(payload);
+    if (receipt.value("schema_version", "") != "working-shelf-v1" ||
+        receipt.value("trust", "") != "untrusted" || receipt.value("promoted", true) ||
+        receipt.value("shelf", "") != payload.value("shelf", "")) {
+        throw std::runtime_error("Working shelves require the current native C++ memory store");
+    }
+    return receipt;
+}
+
+json save_working_turn(const std::string& prompt, const std::string& answer) {
+    const auto excerpt = [](const std::string& text, size_t maximum_bytes) {
+        if (text.size() <= maximum_bytes) return text;
+        return godbrain_rag::utf8_prefix(text, maximum_bytes) +
+            "\n[excerpt truncated; complete_utf8_bytes=" + std::to_string(text.size()) +
+            "; complete_keccak256=" + keccak256(text) + "]";
+    };
+    return working_shelf({
+        {"action", "post"}, {"shelf", "discussion"}, {"thread_id", "desk"},
+        {"speaker", "desk-turn"}, {"title", godbrain_rag::utf8_prefix(prompt, 160)},
+        {"text", "Operator:\n" + excerpt(prompt, 12000) +
+                 "\n\nAssistant:\n" + excerpt(answer, 16000)},
+    });
+}
+
+static std::mutex g_context_index_mutex;
+
+static std::string context_index_path() {
+    const auto dir = exe_dir();
+    if (dir.empty()) throw std::runtime_error("Cannot resolve the native context index path");
+    return dir + "\\..\\..\\logs\\shared-context-index.json";
+}
+
+static void write_context_cache(const json& value) {
+    const auto path = context_index_path();
+    const auto directory = path.substr(0, path.find_last_of('\\'));
+    if (!CreateDirectoryA(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+        windows_error("Create context index directory");
+    FILETIME stamp{};
+    GetSystemTimeAsFileTime(&stamp);
+    const auto temporary = path + "." + std::to_string(GetCurrentProcessId()) + "." +
+                           std::to_string(stamp.dwHighDateTime) + "." + std::to_string(stamp.dwLowDateTime) + ".tmp";
+    HANDLE file = CreateFileA(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) windows_error("Create context index temporary");
+    const std::string bytes = value.dump(2) + "\n";
+    DWORD written = 0;
+    const bool saved = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) &&
+                       written == bytes.size() && FlushFileBuffers(file);
+    const DWORD issue = GetLastError();
+    CloseHandle(file);
+    if (!saved) {
+        DeleteFileA(temporary.c_str());
+        windows_error("Flush context index", issue);
+    }
+    if (!MoveFileExA(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD move_error = GetLastError();
+        DeleteFileA(temporary.c_str());
+        windows_error("Publish context index cache", move_error);
+    }
+}
+
+json refresh_context_index(const json& capabilities) {
+    std::lock_guard<std::mutex> guard(g_context_index_mutex);
+    const json profile = telemetry::get_host_profile();
+    const auto now = std::chrono::system_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    json index = {
+        {"schema_version", "context-index-v1"}, {"host_id", profile.at("computer_name")},
+        {"captured_unix_ms", ms}, {"host_profile", profile}, {"capabilities", capabilities},
+        {"limits", "Timestamped observations and bridge descriptions, not permission or current readiness. "
+                   "Client device and inference hardware are not inferred from the target host. "
+                   "Manual index does not rebuild RAG or grant verified status."},
+    };
+    index["index_id"] = keccak256(index.dump());
+    const auto stored = working_shelf({
+        {"action", "post"}, {"shelf", "research"}, {"thread_id", "environment-index"},
+        {"request_id", index.at("index_id")}, {"speaker", "kernel-index"},
+        {"title", "Native environment and capability index"}, {"text", index.dump()},
+        {"sources", json::array({"native Windows registry, DXGI and SMBIOS sensors",
+                                "current native kernel bridge definitions"})},
+    });
+    const auto& record = stored.at("record");
+    const json cache = {{"index", index}, {"record_id", record.at("_id")},
+                        {"source_hash", record.at("source_hash")}};
+    write_context_cache(cache);
+    return {{"state", "indexed"}, {"persisted", true}, {"promoted", false},
+            {"index", index}, {"record_id", record.at("_id")},
+            {"source_hash", record.at("source_hash")}};
+}
+
+static json load_context_index() {
+    std::lock_guard<std::mutex> guard(g_context_index_mutex);
+    const auto path = context_index_path();
+    if (GetFileAttributesA(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        const auto issue = GetLastError();
+        if (issue == ERROR_FILE_NOT_FOUND || issue == ERROR_PATH_NOT_FOUND) return nullptr;
+        windows_error("Read context index attributes", issue);
+    }
+    std::ifstream input(path, std::ios::binary);
+    std::string bytes(65537, '\0');
+    input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    bytes.resize(static_cast<size_t>(input.gcount()));
+    if (input.bad() || bytes.empty() || bytes.size() > 65536)
+        throw std::runtime_error("Context index cache is unreadable or oversized; refresh index");
+    const auto cache = godbrain_research::strict_json(bytes, 65536);
+    json index = cache.at("index");
+    if (index.at("schema_version") != "context-index-v1" ||
+        index.at("host_id") != telemetry::get_computer_name() ||
+        index.at("host_profile").at("computer_name") != index.at("host_id") ||
+        cache.at("source_hash") != keccak256(index.dump()))
+        throw std::runtime_error("Context index cache has invalid identity/content; refresh index");
+    const auto id = index.at("index_id");
+    index.erase("index_id");
+    if (id != keccak256(index.dump())) throw std::runtime_error("Context index hash mismatch; refresh index");
+    return cache;
+}
+
+json shared_working_context(const std::string& query, const std::string& thread,
+                            const std::string& scope) {
+    if (scope != "technical" && scope != "personal") throw std::invalid_argument("Invalid memory scope");
+    const auto cache = load_context_index();
+    if (cache.is_null()) return {{"state", "not_indexed"}, {"context", ""}};
+    const auto& index = cache.at("index");
+    const auto& p = index.at("host_profile");
+    const std::string current_pin = telemetry::windows_pin();
+    json gpus = json::array();
+    for (const auto& gpu : p.at("gpus"))
+        gpus.push_back({{"name", gpu.at("name")},
+                       {"VRAM_MiB", gpu.at("dedicated_vram_bytes").get<uint64_t>() / (1024 * 1024)}});
+    json dimms = nullptr;
+    if (p.at("memory_devices").is_array()) {
+        dimms = json::array();
+        for (const auto& dimm : p.at("memory_devices"))
+            dimms.push_back({{"part", dimm.at("part_number")},
+                             {"bytes", dimm.at("capacity_bytes")},
+                             {"rated_MT_s", dimm.at("rated_speed_mt_s")},
+                             {"configured_MT_s", dimm.at("configured_speed_mt_s")}});
+    }
+    std::ostringstream profile;
+    profile << "Target host: " << index.at("host_id").get<std::string>()
+            << "; snapshot_unix_ms=" << index.at("captured_unix_ms")
+            << "; current_os_pin=" << current_pin
+            << "; snapshot_os_pin=" << p.at("os_pin").get<std::string>()
+            << "\nBridges: /api/context recall; /api/shelf provisional post/read; /api/index refresh. "
+               "Client/inference hardware unknown. Snapshot grants no permission or readiness."
+            << "\nCPU=" << p.at("cpu").dump()
+            << "; usable_RAM_floor_GiB=" << p.at("total_physical_ram_gb")
+            << "; board=" << p.at("baseboard").at("product").dump()
+            << "; BIOS=" << p.at("bios").at("version").dump()
+            << "; GPUs=" << gpus.dump()
+            << "; DIMMs=" << dimms.dump()
+            << "\nDIMM speeds are firmware reports, not live clocks. Timings/voltages unknown."
+            << "\nProbe errors=" << p.at("probe_errors").dump();
+    const auto notes = working_shelf({
+        {"action", "read"}, {"shelf", "research"}, {"scope", scope},
+        {"query", godbrain_rag::utf8_prefix(query, 512)}, {"limit", 3},
+        {"exclude_thread_id", "environment-index"},
+    });
+    json discussion = {{"records", json::array()}};
+    if (!thread.empty()) {
+        discussion = working_shelf({{"action", "read"}, {"shelf", "discussion"},
+                                    {"scope", scope}, {"thread_id", thread}, {"limit", 2}});
+    }
+    auto text = godbrain_shared::section("host_index", profile.str(),
+        "cached native observation, not verified RAG; refresh after changes", 1200);
+    text = godbrain_shared::merge(text, godbrain_shared::records(notes.at("records"), "research", 1600));
+    text = godbrain_shared::merge(text, godbrain_shared::records(discussion.at("records"), "discussion", 700));
+    return {{"state", "ready"}, {"context", text}, {"index_id", index.at("index_id")},
+            {"index_record_id", cache.at("record_id")}, {"host_id", index.at("host_id")},
+            {"scope", scope}, {"query_truncated", query.size() > 512},
+            {"current_os_pin", current_pin}, {"snapshot_os_pin", p.at("os_pin")},
+            {"research", notes}, {"discussion", discussion}, {"host_profile", p},
+            {"capabilities", index.at("capabilities")}};
+}
+
+json shared_context(const std::string& query, const std::string& thread, const std::string& scope) {
+    return shared_context(query, thread, scope, godbrain_rag::Client{});
+}
+
+json shared_context(const std::string& query, const std::string& thread,
+                    const std::string& scope, const godbrain_rag::Client& client) {
+    json result = shared_working_context(query, thread, scope);
+    if (result.at("state") != "ready") return result;
+    std::string verified, error;
+    if (scope == "technical" && !query.empty()) {
+        json response;
+        const auto bounded_query = godbrain_rag::utf8_prefix(query, 1024);
+        if (client.search(bounded_query, 2, response, error)) {
+            if (!godbrain_rag::render_coli_notes(response, verified, error)) throw std::runtime_error(error);
+            result["verified_manual"] = "matched";
+        } else if (error == "canonical RAG returned no usable context") {
+            result["verified_manual"] = "no_matches";
+        } else {
+            throw std::runtime_error(error);
+        }
+    } else result["verified_manual"] = scope == "personal" ? "not_consulted_personal_scope" : "not_queried";
+    result["context"] = godbrain_shared::merge(
+        godbrain_shared::bounded(verified, 1000),
+        godbrain_shared::bounded(result.at("context").get<std::string>(), 3200));
+    result["schema_version"] = "shared-context-v1";
+    result["trust"] = "untrusted_reference";
+    result["request_tools"] = json::array();
+    return result;
 }
 
 json get_recent(int limit) {

@@ -96,6 +96,34 @@ if (-not $global:AfkTest.retried) { $global:AfkTest.retried=$true; exit 1 }
     "off" | Set-Content -LiteralPath (Join-Path $fixture "logs\afk-pause.txt")
 
     $heal = Read-Ast (Join-Path $repo "Heal-GodBrain.ps1")
+    $reconnect = $heal.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.StartsWith('if ($Afk)') -and
+        $node.Extent.Text.Contains('$tailReconnect =')
+    }, $true)
+    if (-not $reconnect) { throw "AFK Tailscale reconnect path is missing." }
+    & {
+        $Afk = $true; $coliSleep = $false
+        $after = @{ tailscale_service = $true; tailscale = $false }
+        $acted = @(); $script:tailCalls = @(); $script:tailFails = $false
+        function Test-DeskPause($FileName) { return $false }
+        function Get-TailscaleExe { return "fixture-tailscale.exe" }
+        function Set-TailscaleForCs2($Up) {
+            $script:tailCalls += $Up
+            if ($script:tailFails) { throw "fixture reconnect failure" }
+        }
+        function Invoke-TailscaleCs2 { throw "AFK must reuse the settings-preserving reconnect." }
+        function Get-Probe { return @{ tailscale_service = $true; tailscale = $true } }
+        . ([scriptblock]::Create($reconnect.Extent.Text))
+        Assert-Equal $tailReconnect "ok"
+        Assert-Equal ($script:tailCalls -join ",") "True"
+        Assert-Equal ($acted -join ",") "tailscale:reconnect"
+        $after.tailscale = $false; $acted = @(); $script:tailFails = $true
+        . ([scriptblock]::Create($reconnect.Extent.Text))
+        Assert-Equal $tailReconnect "failed"
+        Assert-Equal $acted.Count 0
+    }
     & {
         foreach ($name in @("Start-AllowlistedService", "Test-ServiceUp")) {
             $definition = $heal.Find({ param($node)

@@ -20,6 +20,16 @@ calling shell; Status and Ask use non-overlapping background runspaces.
 Qwen-Image progress/receipts and disposable workers avoid freezing the GUI
 or retaining native model memory after completion.
 
+Ask defaults to **Research (read-only)**, with explicit Answer/Research/Fix
+modes. Research checks normalized tool names and arguments even during YOLO,
+retains bounded observations, and can inspect native ACLs and first-party
+Microsoft documentation without a paid search API. Incomplete answers have
+one bounded recovery; receipts describe attempts, not verified conclusions.
+Mixed text/screenshot attachments use strict decoding, CPU OCR and serial
+source-window analysis without model tools or file edits. Hashes and coverage
+are recorded as candidate evidence, not proof of semantic correctness.
+See the [Desk guide](../desk-menu.md) for limits and recovery behavior.
+
 ## Phone Desk and explicit mobile actions
 
 One static mobile page and a separate read-only listener inside the C++
@@ -102,6 +112,35 @@ the same loopback API.
 
 `GET /api/status` `host_record` is the Windows host inventory card (`os_pin=`
 present, not a Playbook).
+
+## Shared working memory
+
+The native Memory Store has separate immutable `discussion_messages` and
+`research_notes` collections. These are **untrusted continuity**, not Golden
+Records, and never write the canonical ingestion or RAG projection collections.
+Host, shelf, scope and request identity bind idempotent posts; a retry with
+different content fails. Personal and technical retrieval stay separate.
+This C++-only extension leaves the existing shared C++/Go ingestion wire
+contract unchanged.
+
+Bearer-authenticated `/api/index` accepts exactly `{}` and records a bounded,
+timestamped target-host hardware/capability snapshot in the research shelf,
+with an atomic local cache. It does not start a model, rebuild RAG or grant
+capabilities. `/api/context` composes at most 4 KiB of UTF-8 with complete
+untrusted framing from that snapshot and relevant working/verified references.
+Missing or corrupt required context fails explicitly instead of pretending
+to recall. Stored capability text is not a live authorization or readiness probe.
+`/api/shelf` and `/api/shelf/schema` expose bounded records and their contract;
+none of these routes is exposed by Phone Desk.
+
+Authenticated ordinary kernel chat and Desk Research paths retrieve this
+shared context after an explicit index. Attachment/file/vision research saves
+bounded handoffs with source references, not original attachment archives.
+The standalone `scripts\Invoke-LocalLLM.ps1` client uses the same context and
+saves its plain-text turn; it never starts a model or executes an answer.
+`-NoSharedMemory` and leading `No tools` retain a stateless path. Failed saves
+are explicit. Private client histories are not imported automatically, and
+remembering a result does not verify it or resume a long-running task.
 
 ## Alexandria (`:8084` + Mongo)
 

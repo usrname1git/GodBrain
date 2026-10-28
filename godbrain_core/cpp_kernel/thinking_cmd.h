@@ -72,6 +72,36 @@ inline bool configure_thinking_request(
     return true;
 }
 
+inline bool configure_exl3_thinking_budget(
+    nlohmann::json& body, const nlohmann::json& models, std::string& error) {
+    const nlohmann::json* selected = nullptr;
+    if (models.is_object() && models.contains("data") && models["data"].is_array()) {
+        for (const auto& model : models["data"]) {
+            if (!model.is_object() || !model.contains("id") || model["id"] != body["model"]) continue;
+            if (selected) {
+                error = "EXL3 advertised duplicate model contexts. No reasoning generation was sent.";
+                return false;
+            }
+            selected = &model;
+        }
+    }
+    if (!selected || !selected->contains("max_model_len") ||
+        !(*selected)["max_model_len"].is_number_integer() ||
+        (*selected)["max_model_len"] < 256 || (*selected)["max_model_len"] > 262144) {
+        error = "EXL3 did not advertise a valid model context. No reasoning generation was sent.";
+        return false;
+    }
+    // This is a ceiling. EXL3 bounds it again after formatting the actual
+    // messages/tools, reserving runtime and speculative overhead.
+    const int budget = (*selected)["max_model_len"].get<int>() - 1024;
+    if (budget < 256) {
+        error = "EXL3 context cannot hold an answer and runtime reserve.";
+        return false;
+    }
+    body["max_tokens"] = budget < 16384 ? budget : 16384;
+    return true;
+}
+
 // Whole-message desk command. Typing this in Galaxy must not reach the mouth.
 inline std::string thinking_cmd_compact(const std::string& msg) {
     size_t a = 0;

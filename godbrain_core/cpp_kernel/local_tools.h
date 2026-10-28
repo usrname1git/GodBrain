@@ -10,6 +10,11 @@ namespace godbrain_rag { class Client; }
 
 namespace local_tools {
 
+enum class ToolMode { Legacy, Answer, Research, Fix };
+const char* tool_mode_name(ToolMode mode);
+bool parse_tool_mode(const nlohmann::json& payload, const std::string& message,
+                     ToolMode& mode, std::string& error);
+
 struct Call {
     std::string name;
     std::string path;
@@ -21,6 +26,13 @@ struct Call {
     std::string dest;
 };
 
+struct RequestScope {
+    ToolMode mode = ToolMode::Legacy;
+    std::string operator_text;
+    std::unordered_set<std::string> document_urls;
+};
+
+bool research_call_allowed(const Call& call);
 std::vector<std::string> default_roots();
 bool path_is_granted(const std::string& path, std::string* err = nullptr);
 bool yolo_active();
@@ -32,13 +44,16 @@ std::string execute_calls(
     const std::vector<Call>& calls, bool* all_ok = nullptr,
     const std::unordered_set<std::string>* allowed = nullptr,
     const std::string& task_id = "",
-    const godbrain_rag::Client* skill_client = nullptr);
+    const godbrain_rag::Client* skill_client = nullptr,
+    RequestScope* scope = nullptr);
 std::string run_tools_from_text(const std::string& model_text);
 std::string tool_system_addendum();
-std::string tool_system_addendum_for(const std::string& user_msg);
+std::string tool_system_addendum_for(
+    const std::string& user_msg, ToolMode mode = ToolMode::Legacy);
 nlohmann::json openai_tool_defs();
 nlohmann::json openai_tool_defs(bool full);
-nlohmann::json openai_tool_defs_for(const std::string& user_msg);
+nlohmann::json openai_tool_defs_for(
+    const std::string& user_msg, ToolMode mode = ToolMode::Legacy);
 bool looks_like_local_fs_ask(const std::string& msg);
 // True for list/ls/dir/r/w/jail. False for "what's wrong in this repo".
 bool looks_like_list_only_ask(const std::string& msg);

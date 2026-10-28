@@ -93,6 +93,20 @@ foreach ($file in 'GodBrain-AirPlay.ps1', 'Show-DeskMenu.ps1', 'Build-DeskAirPla
         $script:airReceiverState = $state
         Assert-Equal (Get-GodBrainAirPlayLine) "$state :5000 (ShairportQt)"
     }
+    $script:airReceiptPatch = @{ source = 'shairportqt-windows-media' }
+    foreach ($state in @('playing', 'paused')) {
+        $script:airReceiverState = $state
+        Assert-Equal (Get-GodBrainAirPlayLine) "$state :5000 (ShairportQt; Windows media session)"
+    }
+    $script:airReceiverState = 'listening'
+    Assert-Equal (Get-GodBrainAirPlayLine) 'listening :5000 (ShairportQt; tray)'
+    $script:airReceiverState = 'connected'
+    Assert-Equal (Get-GodBrainAirPlayLine) 'connected :5000 (ShairportQt; playback state unavailable; tray)'
+    $script:airReceiverState = 'ready'
+    Assert-Throws { Get-GodBrainAirPlayReceiverState $fixture } '*Invalid AirPlay receiver state or process identity*'
+    $script:airReceiptPatch = @{ state = 'listening' }
+    Assert-Throws { Get-GodBrainAirPlayReceiverState $fixture } '*Invalid AirPlay receiver state or process identity*'
+    $script:airReceiptPatch = @{}
     $script:airReceiverState = 'connected'
     Assert-Equal (Get-GodBrainAirPlayLine) 'connected :5000 (ShairportQt; playback state unavailable)'
     $script:airProbeFails = $true

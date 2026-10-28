@@ -2,6 +2,7 @@
 param([switch]$UiSmoke, [switch]$AirPlayLive, [string]$ModelScreenshot, [string]$StatusScreenshot)
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "GodBrain-SharedMemory.ps1")
 if ($AirPlayLive -and -not $UiSmoke) { throw '-AirPlayLive requires -UiSmoke.' }
 if ($ModelScreenshot -and -not $UiSmoke) { throw '-ModelScreenshot requires -UiSmoke.' }
 if ($StatusScreenshot -and -not $UiSmoke) { throw '-StatusScreenshot requires -UiSmoke.' }
@@ -27,6 +28,7 @@ function Invoke-RestMethod {
     param([string]$Uri, [int]$TimeoutSec, [string]$Method, [string]$Body, [string]$ContentType, [hashtable]$Headers)
     if ($script:httpFails) { throw "Fixture HTTP failure" }
     $script:lastUri = $Uri
+    $script:lastTimeoutSec = $TimeoutSec
     $script:lastBody = $Body
     $script:lastAuthorization = $null
     if ($Headers -and $Headers.Contains("Authorization")) {
@@ -63,13 +65,18 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
 }
 
 & {
-    foreach ($name in @("Stop-MouthHold", "Set-WatchTask")) {
+    foreach ($name in @("Show-MouthHoldInfo", "Stop-MouthHold", "Set-WatchTask")) {
         $definition = $ast.Find({ param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
         }, $true)
-        . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Write-Output')))
+        . ([scriptblock]::Create($definition.Extent.Text.Replace('[System.Windows.Forms.MessageBox]::Show', 'Show-ControlFixtureMessage')))
     }
     $Repo = "fixture"; $script:controlCalls = @()
+    function Show-ControlFixtureMessage([string[]]$Values) {
+        Assert-Equal $Values.Count 2
+        $script:controlMessage = $Values[0]
+        $script:controlCaption = $Values[1]
+    }
     function Update-Status {}
     function Confirm-Stop { param($Message, $Title); return $true }
     function Set-DeskPause { param($Name); $script:controlCalls += "hold:on" }
@@ -91,6 +98,13 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
         $script:controlCalls += ($ArgumentList -join " ")
         return @{ ExitCode = 0 }
     }
+    Show-MouthHoldInfo
+    Assert-Equal $script:controlCaption "Legacy llama :8000"
+    foreach ($phrase in @("Status > Model > Start", ":8888", "Qwen-Image (:8871) is image-only",
+            "legacy llama-server :8000 startup hold", "Info starts nothing", "Hold does not stop")) {
+        if (-not $script:controlMessage.Contains($phrase)) { throw "Legacy llama explanation is missing: $phrase" }
+    }
+    Assert-Equal $script:controlCalls.Count 0
     Stop-MouthHold
     Assert-Equal ($script:controlCalls -join ",") "hold:on,stop:10,stop:13"
     $script:controlCalls = @()
@@ -99,6 +113,79 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
     $script:controlCalls = @()
     Set-WatchTask "DISABLE"
     Assert-Equal ($script:controlCalls -join ",") "/Change /TN GodBrainWatch /DISABLE,hold:on"
+}
+
+& {
+    $definition = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Stop-OwnedListener"
+    }, $true)
+    if (-not $definition) { throw "Missing listener stop guard." }
+    . ([scriptblock]::Create($definition.Extent.Text.Replace(
+        '[System.Windows.Forms.MessageBox]::Show', 'Show-ListenerFixtureMessage')))
+    $Repo = "C:\fixture\GodBrain"
+    $script:listenerActions = @()
+    $script:listenerMessage = ""
+    $script:listenerImage = "$Repo\godbrain_core\cpp_kernel\godbrain-kernel.exe"
+    $script:listenerPresent = $true
+    $script:listenerOpenFails = $false
+    $script:listenerStopFails = $false
+    function Get-NetTCPConnection {
+        param($LocalPort, $State, $ErrorAction)
+        if ($script:listenerPresent) { return @{ OwningProcess = 73 } }
+    }
+    function Get-CimInstance { throw "Stop must not depend on elevated-process CIM metadata." }
+    function Show-ListenerFixtureMessage([string]$Message) { $script:listenerMessage = $Message; return "OK" }
+    function Open-DeskListenerProcess {
+        param($ProcessId)
+        Assert-Equal $ProcessId 73
+        if ($script:listenerOpenFails) { throw [ComponentModel.Win32Exception]::new(5) }
+        $handle = [pscustomobject]@{ ExecutablePath = $script:listenerImage }
+        $handle | Add-Member ScriptMethod WaitForExit {
+            param($Milliseconds)
+            Assert-Equal $Milliseconds 3000
+            $script:listenerActions += "wait"
+            return $true
+        }
+        $handle | Add-Member ScriptMethod Dispose { $script:listenerActions += "dispose" }
+        return $handle
+    }
+    function Set-DeskPause { param($Name); $script:listenerActions += "hold:$Name" }
+    function Stop-Process {
+        param($Id, [switch]$Force, $ErrorAction)
+        Assert-Equal $Id 73
+        Assert-Equal $Force $true
+        Assert-Equal $ErrorAction "Stop"
+        if ($script:listenerStopFails) { throw [ComponentModel.Win32Exception]::new(5) }
+        $script:listenerActions += "stop:$Id"
+    }
+    Assert-Equal (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") $true
+    Assert-Equal ($script:listenerActions -join ",") "hold:kernel,stop:73,wait,dispose"
+    foreach ($image in @("C:\elsewhere\godbrain-kernel.exe",
+                          "C:\fixture\GodBrain-other\godbrain-kernel.exe",
+                          "$Repo\godbrain_core\cpp_kernel\not-godbrain-kernel.exe")) {
+        $script:listenerImage = $image
+        $script:listenerActions = @()
+        Assert-Equal (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") $false
+        Assert-Equal ($script:listenerActions -join ",") "dispose"
+        if ($script:listenerMessage -notlike "*not the GodBrain process*") { throw "Wrong-owner refusal was lost." }
+    }
+    $script:listenerImage = "$Repo\godbrain_core\cpp_kernel\godbrain-kernel.exe"
+    $script:listenerOpenFails = $true
+    $script:listenerActions = @()
+    Assert-Equal (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") $false
+    Assert-Equal ($script:listenerActions -join ",") ""
+    if ($script:listenerMessage -notlike "*Windows denied process access*" -or
+        $script:listenerMessage -like "*not the GodBrain process*") { throw "An unreadable identity was misreported as a wrong owner." }
+    $script:listenerOpenFails = $false
+    $script:listenerStopFails = $true
+    Assert-Equal (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") $false
+    Assert-Equal ($script:listenerActions -join ",") "hold:kernel,dispose"
+    if ($script:listenerMessage -notlike "*matching privilege*") { throw "Elevation-boundary stop failure was hidden." }
+    $script:listenerPresent = $false
+    $script:listenerActions = @()
+    Assert-Equal (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") $false
+    Assert-Equal ($script:listenerActions -join ",") ""
+    if ($script:listenerMessage -notlike "*already down*") { throw "Missing listener was not reported." }
 }
 
 & {
@@ -189,8 +276,8 @@ Assert-Equal $script:tokSample $null
 if ($ast.Extent.Text -notmatch '\$rowTok = Add-Row \$pageStatus "Rate"') {
     throw "Image diffusion speed still has a misleading Tok/s label."
 }
-if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "STT/TTS"') {
-    throw "STT/TTS is missing its Start and Stop buttons."
+if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "Speech/OCR" \d+ \{ Start-VoiceDoor \} \{ Stop-VoiceDoor \}') {
+    throw "Speech/OCR is missing its shared Start and Stop actions."
 }
 if ($ast.Extent.Text -notmatch 'Add-Pair \$pageStatus "AirPlay"' -or
     $ast.Extent.Text -notmatch 'AirPlay = Get-GodBrainAirPlayLine' -or
@@ -603,8 +690,39 @@ $script:ports = @(8888)
 $request.ImageModel = $false
 Assert-Equal (Invoke-DeskAsk $request) "text fixture"
 Assert-Equal $script:lastUri "http://127.0.0.1:8083/api/chat"
-if (($script:lastBody | ConvertFrom-Json).message -notlike "No tools.*") { throw "Text Ask lost its no-tools routing." }
-if ($script:lastAuthorization) { throw "Ordinary Ask sent a bearer." }
+Assert-Equal $script:lastTimeoutSec 600
+Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "research"
+if (($script:lastBody | ConvertFrom-Json).message -like "No tools.*") { throw "Research silently disabled its tools." }
+Assert-Equal $script:lastAuthorization $(if ($env:GODBRAIN_API_TOKEN) { "Bearer " + $env:GODBRAIN_API_TOKEN })
+$request | Add-Member -NotePropertyName Mode -NotePropertyValue "answer"
+Invoke-DeskAsk $request | Out-Null
+Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "answer"
+$request.Path = "C:\Temp\GitHub"
+$request.Message = "No tools. Explain the supplied path."
+$request.Mode = "research"
+Invoke-DeskAsk $request | Out-Null
+Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "answer"
+$request.Mode = "fix"
+$request.Message = "Read this path."
+Invoke-DeskAsk $request | Out-Null
+Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "fix"
+$request.Mode = "invalid"
+Assert-Throws { Invoke-DeskAsk $request } "*Select Answer, Research or Fix*"
+$request.Mode = "research"
+$request.Message = "fixture question"
+$request.Path = ""
+$script:askResponses["http://127.0.0.1:8083/api/chat"].request_receipt = @{
+    tool_mode = "research"; answer_retry = $true
+    tool_attempts = @(@{requested_calls=2;requested_tool_names=@("run_host", "search_microsoft_docs");executor_ok=$false})
+}
+$receiptAnswer = Invoke-DeskAsk $request
+if ($receiptAnswer -notlike "*Mode: research; model tool attempts: 2*" -or
+    $receiptAnswer -notlike "*run_host*" -or
+    $receiptAnswer -notlike "*1 failed attempt(s), evidence incomplete*" -or
+    $receiptAnswer -notlike "*answer retry: thinking off (saved preference unchanged)*") {
+    throw "Ask lost its actual-call/recovery receipt."
+}
+$script:askResponses["http://127.0.0.1:8083/api/chat"].Remove("request_receipt")
 Assert-Equal (Test-DeskWriteSlash "/yolo") $false
 Assert-Equal (Test-DeskWriteSlash "/yolo status") $false
 Assert-Equal (Test-DeskWriteSlash "/yolo ?") $false
@@ -622,7 +740,7 @@ try {
     $request.Message = "/yolo"
     Invoke-DeskAsk $request | Out-Null
     if (($script:lastBody | ConvertFrom-Json).message -like "No tools.*") { throw "Read /yolo was rewritten." }
-    if ($script:lastAuthorization) { throw "Status /yolo sent a bearer." }
+    Assert-Equal $script:lastAuthorization ("Bearer " + $env:GODBRAIN_API_TOKEN)
     $request.Path = "C:\Temp\GitHub"
     $request.ReviewFile = $true
     $request.Message = "/verify last the probe matched"
@@ -641,7 +759,7 @@ try {
     if (($script:lastBody | ConvertFrom-Json).message -notmatch '(?s)^Path: .+what is in here$') {
         throw "Ordinary Ask with a path lost its path prefix."
     }
-    if ($script:lastAuthorization) { throw "Ordinary path Ask sent a bearer." }
+    Assert-Equal $script:lastAuthorization ("Bearer " + $env:GODBRAIN_API_TOKEN)
     $request.Path = ""
     $script:fixtureBusy = $true
     $request.Message = "/yolo off"
@@ -713,8 +831,9 @@ try {
     $script:askResponses["http://127.0.0.1:8888/health"] = @{ vision = $true; busy = $false }
     $script:askResponses["http://127.0.0.1:8888/v1/models"] = @{ data = @(@{ id = "qwen-vision-fixture" }) }
     $script:askResponses["http://127.0.0.1:8888/v1/chat/completions"] = @{
-        choices = @(@{ message = @{ content = "tank fixture" } })
+        choices = @(@{ finish_reason = "stop"; message = @{ content = "tank fixture" } })
     }
+    $request.Mode = "answer"
     Assert-Equal (Invoke-DeskAsk $request) "tank fixture"
     Assert-Equal $script:completeReview ""
     if ($script:lastBody -notmatch '"messages":\[') { throw "Vision Ask unwrapped the messages array." }
@@ -722,10 +841,37 @@ try {
     Assert-Equal $posted.model "qwen-vision-fixture"
     Assert-Equal $posted.max_tokens 2048
     Assert-Equal $posted.temperature 0
+    Assert-Equal $posted.tool_choice "none"
     Assert-Equal ([bool]$posted.chat_template_kwargs.enable_thinking) $false
     Assert-Equal $posted.messages[0].content[0].text "OCR"
     if ($posted.messages[0].content[1].image_url.url -notlike "data:image/jpeg;base64,*") {
         throw "Vision Ask did not send the picture."
+    }
+    & {
+        function Get-GodBrainSharedContext { param($Query, $ThreadId); return @{ context = "SHARED_VISION_FIXTURE" } }
+        function Save-GodBrainWorkingTurn {
+            param($Prompt, $Response, $ThreadId, $Sources)
+            Assert-Equal $Prompt "OCR"
+            Assert-Equal $Response "tank fixture"
+            Assert-Equal $ThreadId "desk"
+            if ($Sources[0] -notlike "*vision_payload_sha256=*") { throw "Vision handoff lost source binding." }
+            $script:visionSaved = $true
+        }
+        $request.Mode = "research"; $script:visionSaved = $false
+        Assert-Equal (Invoke-DeskAsk $request) "tank fixture"
+        $posted = $script:lastBody | ConvertFrom-Json
+        if ($posted.messages[0].content[0].text -notlike "*SHARED_VISION_FIXTURE*Operator request:*OCR" -or
+            -not $script:visionSaved) { throw "Research vision lost shared memory or its handoff." }
+        $script:askResponses["http://127.0.0.1:8888/v1/chat/completions"].choices[0].finish_reason = "length"
+        $script:visionSaved = $false
+        Assert-Throws { Invoke-DeskAsk $request } "*one complete answer*"
+        if ($script:visionSaved) { throw "Truncated vision answer was shared." }
+        $script:askResponses["http://127.0.0.1:8888/v1/chat/completions"].choices[0].finish_reason = "stop"
+        $script:askResponses["http://127.0.0.1:8888/v1/chat/completions"].choices[0].message = @{
+            reasoning_content = "PRIVATE_REASONING"
+        }
+        Assert-Throws { Invoke-DeskAsk $request } "*no plain-text answer*"
+        if ($script:visionSaved) { throw "Private vision reasoning was shared." }
     }
     $request.Path = ""
     $request.Message = $savedMessage
@@ -964,6 +1110,20 @@ if ($UiSmoke) {
         $statusLabelBounds = @{}
         foreach ($entry in $script:statusRows.GetEnumerator()) { $statusLabelBounds[$entry.Key] = $entry.Value.Bounds }
         $statusButtons = @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] })
+        $legacyLabel = @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Label] -and $_.Text -eq 'Llama :8000' })
+        Assert-Equal $legacyLabel.Count 1
+        $speechLabel = @($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Label] -and $_.Text -eq 'Speech/OCR' })
+        Assert-Equal $speechLabel.Count 1
+        if ([Windows.Forms.TextRenderer]::MeasureText($speechLabel[0].Text, $speechLabel[0].Font).Width -gt $speechLabel[0].Width) {
+            throw 'Shared Speech/OCR label is clipped.'
+        }
+        if ([Windows.Forms.TextRenderer]::MeasureText($legacyLabel[0].Text, $legacyLabel[0].Font).Width -gt $legacyLabel[0].Width) {
+            throw 'Legacy llama label is clipped.'
+        }
+        $legacyButtons = @($statusButtons | Where-Object { $_.Top -eq ($rowMouth.Top - 2) } | Sort-Object Left)
+        Assert-Equal (($legacyButtons | ForEach-Object { $_.Text }) -join ',') 'Info,Hold'
+        $modelStatusButtons = @($statusButtons | Where-Object { $_.Top -eq ($rowModel.Top - 2) } | Sort-Object Left)
+        Assert-Equal (($modelStatusButtons | ForEach-Object { $_.Text }) -join ',') 'Start,Stop'
         $statusButtonBounds = @($statusButtons | ForEach-Object { $_.Bounds })
         $statusAfkBounds = $afkGym.Bounds
         $statusShareBounds = $script:clipShareStatus.Bounds
@@ -1163,9 +1323,81 @@ if ($UiSmoke) {
         $askSize = $pageAsk.Size
         $formSize = $f.ClientSize
         Assert-Equal (@($pageAsk.Controls | Where-Object { $_.Text -in @("Grok folder", "Open Grok") })).Count 0
-        Assert-Equal (@($pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.TextBox] })).Count 3
+        Assert-Equal $prompt.Parent $askSplit.Panel1
+        Assert-Equal $reply.Parent $askSplit.Panel2
+        Assert-Equal $askSplit.IsSplitterFixed $false
+        Assert-Equal $askSplit.Orientation ([Windows.Forms.Orientation]::Horizontal)
         Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
-        Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
+        Assert-Equal $askMode.SelectedIndex 1
+        Assert-Equal $askMode.SelectedItem "Research (read-only)"
+        Assert-Equal $askAttachments.AllowDrop $true
+        Assert-Equal $script:askAttachmentButtons.Count 3
+        if ($askAttachments.Bottom -ge $askMode.Top -or $askAttachments.Top -le $script:askAttachmentButtons[0].Bottom) {
+            throw "Attachments overlap the mode selector or attachment buttons."
+        }
+        $attachmentFixture = Join-Path $env:TEMP ("desk-ui-attachments-" + [guid]::NewGuid().ToString("N"))
+        [void][IO.Directory]::CreateDirectory($attachmentFixture)
+        try {
+            $one = Join-Path $attachmentFixture "one.txt"; $two = Join-Path $attachmentFixture "two.ps1"
+            [IO.File]::WriteAllText($one, "one"); [IO.File]::WriteAllText($two, "two")
+            Add-DeskAskAttachments @($one,$two,$one)
+            Assert-Equal $askAttachments.Items.Count 2
+            Assert-Equal $askAttachments.Items[0].Path $one
+            $askAttachments.SetSelected(0, $true)
+            Remove-DeskAskAttachments
+            Assert-Equal $askAttachments.Items.Count 1
+            Assert-Equal (Test-Path -LiteralPath $one) $true
+            Add-DeskAskAttachments @($one)
+            $actualWorker = $script:askWorker
+            $fakeWorker = [pscustomobject]@{
+                Commands = [Collections.Generic.List[string]]::new()
+                Streams = [pscustomobject]@{ Error = [Collections.Generic.List[string]]::new() }
+                Request = $null
+                Failure = $false
+            }
+            $fakeWorker | Add-Member ScriptMethod AddCommand { param($Path); return $this }
+            $fakeWorker | Add-Member ScriptMethod AddParameter { param($Name,$Value); $this.Request=$Value; return $this }
+            $fakeWorker | Add-Member ScriptMethod BeginInvoke { return [pscustomobject]@{IsCompleted=$true} }
+            $fakeWorker | Add-Member ScriptMethod EndInvoke {
+                param($Job)
+                if ($this.Failure) { throw [InvalidOperationException]::new("Fixture recovery exhausted") }
+                return "Attachment UI fixture"
+            }
+            try {
+                $script:askWorker = $fakeWorker
+                $send.PerformClick()
+                Assert-Equal $fakeWorker.Request.Attachments.Count 2
+                Assert-Equal $fakeWorker.Request.Attachments[0] $two
+                Assert-Equal $fakeWorker.Request.Attachments[1] $one
+                Assert-Equal $fakeWorker.Request.Mode "research"
+                Assert-Equal $askAttachments.Enabled $false
+                Update-Ask
+                Assert-Equal $reply.Text "Attachment UI fixture"
+                Assert-Equal $askAttachments.Enabled $true
+                $fakeWorker.Failure = $true
+                $send.PerformClick()
+                Update-Ask
+                Assert-Equal $reply.Text "Error: Fixture recovery exhausted"
+                Assert-Equal $askAttachments.Enabled $true
+            } finally { $script:askWorker = $actualWorker; $script:askJob = $null }
+            $askAttachments.Items.Clear()
+        } finally { Remove-Item -LiteralPath $attachmentFixture -Recurse -Force }
+        if ($askMode.Bottom -ge $askSplit.Top -or $askMode.Top -le $askPath.Bottom) {
+            throw "Ask tool-mode selector overlaps Path or prompt."
+        }
+        Assert-Equal ($pageAsk.ClientSize.Height - $askSplit.Bottom) 20
+        $splitDistance = $askSplit.SplitterDistance
+        $promptHeight = $prompt.Height
+        $reviewTop = $reviewFile.Top
+        $askSplit.SplitterDistance += 120
+        $askSplit.PerformLayout()
+        Assert-Equal $prompt.Height ($promptHeight + 120)
+        Assert-Equal $reviewFile.Top ($reviewTop + 120)
+        Assert-Equal $reply.Height ($replyBounds.Height - 120)
+        Assert-Equal $prompt.Bottom ($reviewFile.Top - 4)
+        $askSplit.SplitterDistance = $splitDistance
+        $askSplit.PerformLayout()
+        Assert-Equal $reply.Bounds $replyBounds
         foreach ($size in @([Drawing.Size]::new(1200, 900), [Drawing.Size]::new(900, 760), $formSize)) {
             $f.ClientSize = $size
             $f.PerformLayout()
@@ -1178,13 +1410,14 @@ if ($UiSmoke) {
             Assert-Equal $reply.Height ($replyBounds.Height + $dy)
             Assert-Equal $reply.Location $replyBounds.Location
             Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
-            Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
-            foreach ($control in @($askPath, $prompt, $send, $reviewFile, $reply)) {
-                if ($control.Right -gt $pageAsk.ClientSize.Width - 20 -or $control.Bottom -gt $pageAsk.ClientSize.Height) {
+            Assert-Equal ($pageAsk.ClientSize.Height - $askSplit.Bottom) 20
+            foreach ($control in @($askPath, $askAttachments, $askMode, $prompt, $send, $reviewFile, $reply)) {
+                if ($control.Right -gt $control.Parent.ClientSize.Width -or $control.Bottom -gt $control.Parent.ClientSize.Height) {
                     throw "Ask control escaped the resized page: $($control.GetType().Name)"
                 }
             }
-            if ($reviewFile.Bottom -gt $reply.Top -or $prompt.Right -ge $send.Left) {
+            if ($reviewFile.Bottom -gt $askSplit.Panel1.ClientSize.Height -or $prompt.Bottom -gt $reviewFile.Top -or
+                $prompt.Right -ge $send.Left -or $askSplit.Panel2.Height -lt $askSplit.Panel2MinSize) {
                 throw "Ask controls overlap after resizing."
             }
         }
@@ -1196,7 +1429,7 @@ if ($UiSmoke) {
             throw "Maximizing did not expand the reply area."
         }
         Assert-Equal $pageAsk.Bottom $f.ClientSize.Height
-        Assert-Equal ($f.ClientSize.Height - $pageAsk.Top - $reply.Bottom) 20
+        Assert-Equal ($pageAsk.ClientSize.Height - $askSplit.Bottom) 20
         $f.WindowState = "Normal"
         [Windows.Forms.Application]::DoEvents()
         Assert-Equal $f.ClientSize $formSize

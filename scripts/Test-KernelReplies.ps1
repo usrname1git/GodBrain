@@ -55,6 +55,10 @@ try {
         & (Join-Path $unitDir 'coli-sse-test.exe')
         if ($LASTEXITCODE -ne 0) { throw 'SSE parser regressions failed.' }
 
+        Invoke-ReplyTestBuild $unitDir 'thinking-cmd-test.exe' @('thinking_cmd_test.cpp')
+        & (Join-Path $unitDir 'thinking-cmd-test.exe')
+        if ($LASTEXITCODE -ne 0) { throw 'Thinking preference and output-budget regressions failed.' }
+
         $nativeSources = @('reply_stream_test.cpp') + $implementationSources
         Invoke-ReplyTestBuild $nativeDir 'reply-stream-test.exe' $nativeSources (' /link' + $libraries)
         Invoke-ReplyTestBuild $unitDir 'kernel-main.obj' @('main.cpp') -ObjectOnly
@@ -64,7 +68,7 @@ try {
             }
         )
         Invoke-ReplyTestBuild $nativeDir 'godbrain-kernel.exe' $productionObjects $productionLink
-        $compiled = @('main.cpp', 'coli_sse_test.cpp') + $nativeSources
+        $compiled = @('main.cpp', 'coli_sse_test.cpp', 'thinking_cmd_test.cpp') + $nativeSources
     }
     $sourceRoot = [IO.Path]::GetFullPath($source).TrimEnd('\') + '\'
     $index = 0

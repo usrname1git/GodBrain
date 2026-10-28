@@ -1,4 +1,4 @@
-# C++ Alexandria Memory Store (cut 15)
+# C++ Alexandria Memory Store (cut 16)
 
 Same stdin JSON door as Go `memory-store.exe`. Go under `godbrain_core/memory_store/`
 stays as rollback. Start/Heal prefer `build/cpp_memory_store/Release`
@@ -145,6 +145,47 @@ This cut is source maintenance, not continuous open-web discovery or proof of
 semantic correctness. Local-model research/novelty curation remains the next
 separate increment; the available 27B has not been qualified for it here.
 No running deployment is implied by these source changes.
+
+## Working shelves (native extension)
+
+Cut 16: native-only `command="shelf"`, `action="post"|"read"` adds separate
+`discussion_messages` and `research_notes` collections. Existing C++/Go
+ingestion contracts remain unchanged; Go rollback does not implement this
+extension. Working posts are immutable, journal-acknowledged, hash-bound
+`trust="untrusted"` records, never Golden Records or automatic RAG projection.
+Repeated host/shelf/scope/request identity is idempotent only for identical
+content; conflicting retries fail explicitly.
+
+Both operations require `shelf` (`discussion|research`) and `host_id`.
+`scope` defaults to `technical`; `personal` is isolated. Posts require
+`thread_id`, `request_id`, `text`, and a research `title`; `speaker` defaults
+to `operator`. Optional `sources` hold provenance references, not verification.
+Text is capped at 32,768 UTF-8 bytes, title/query at 512, and sources at
+16 references of 2,048 bytes each. Reads accept a lexical `query`, a
+`thread_id` or `exclude_thread_id` filter, and `limit` 1-20 (default 8).
+Search uses the complete collection's text index, not just recent messages.
+Unknown/authority fields, malformed UTF-8/JSON and conflicting filters fail.
+The existing one-document stdin and one-JSON stdout contract still applies.
+
+The kernel's bearer-authenticated `POST /api/shelf` supplies the actual
+target host and can generate a request ID. `GET /api/shelf/schema` describes
+the public write/read contract. `POST /api/index` accepts only `{}` and stores
+a timestamped native hardware/capability snapshot in reserved research thread
+`environment-index`, then atomically publishes its hash-bound local cache.
+It never starts a model, rebuilds RAG, expands grants or verifies research.
+Authenticated GET/POST `/api/context` returns that snapshot, current granted
+roots, relevant provisional research, optional discussion continuity and
+separately labeled canonical verified retrieval in a 4 KiB model context.
+Missing/corrupt indexes and unavailable/invalid canonical retrieval are
+explicit errors; personal context never queries technical RAG.
+These routes are not exposed by the read-only Phone Desk listener.
+
+`cpp_working_shelves` covers strict protocol validation and, when
+`MONGODB_TEST_URI` is supplied, storage/search/isolation in
+`godbrain_cpp_store_test`. The test removes only its unique host's working
+records and checks that canonical collection counts remain unchanged.
+
+## Build and validate
 
 Start/Heal prefer this tree's Release exes, then Go.
 

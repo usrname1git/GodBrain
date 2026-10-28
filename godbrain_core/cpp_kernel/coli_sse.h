@@ -70,6 +70,13 @@ inline void handle_sse_event(
         if (payload == "[DONE]") return;
         try {
             const nlohmann::json parsed = nlohmann::json::parse(payload);
+            if (parsed.contains("error")) {
+                const auto& error = parsed.at("error");
+                const std::string text = error.is_string() ? error.get<std::string>() :
+                    error.value("message", "Backend generation failed.");
+                if (on_finish) on_finish("error:" + text);
+                continue;
+            }
             if (!parsed.contains("choices") || !parsed["choices"].is_array() ||
                 parsed["choices"].empty()) {
                 continue;

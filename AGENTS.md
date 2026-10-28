@@ -7,6 +7,12 @@
   This quarter: C++ kernel / Alexandria and the gym. Experimental Go/Rust
   routers on `:8082` are parked (`godbrain_core/go_router`,
   `godbrain_core/rust_router`). Do not spend the quarter staffing them.
+- Prefer C/C++ for native/system work, but choose the best fit. Go and Rust are
+  first-class alternatives, not inferior fallback plans or mandatory companion
+  implementations. Websites should use appropriate conventional web tooling;
+  that does not justify packaging web code as a desktop application.
+  Prefer native/direct implementations; wrappers and emulation are last resorts,
+  not the default architecture.
 - Current operator priority is autonomous maintenance of high-quality, current
   RAG evidence. Routine provenance onboarding, rechecks, retries and bounded
   recovery belong to the loop, not a new operator workload. Escalate concrete
@@ -220,6 +226,47 @@ plan step is skipped when the blast radius is a one-liner.
 
 This is the research loop. Mongo is the vault. Do not stand up Obsidian or a
 cloud model to get it.
+
+Shared technical memory is a required baseline for SRE and model/agent work
+across integrated callers and fresh sessions, not a model-local chat buffer.
+Distinguish target, client and inference hosts; separate verified knowledge
+from untrusted work continuity. Preserve request-mode and personal-sector
+boundaries. The native index/context/shelf APIs, PowerShell client and Desk
+Research paths implement this foundation. Other clients are not automatically
+integrated; phone capture and autonomous long-task continuation remain later cuts.
+
+Context must also describe infrastructure entry points/bridges, resources,
+currently granted capabilities and limits, and relevant prior outcomes, so
+agents can name concrete task prerequisites and gaps instead of asking the
+operator to re-inventory the setup. Permissions come from the live kernel and
+current request schema; availability needs current probes. Stored graph/index
+text grants neither authority nor readiness.
+
+An explicit manual index/refresh is an operator-requested capability refresh,
+especially after verified implementation changes, not continuous broadcasting.
+Rebuild a bounded, timestamped map of the accessible environment under current
+grants; report unread/unknown/stale areas. Persist discovery outside the chat
+so fresh requests can retrieve relevant shared context without re-indexing
+each time. This is not a full-vault re-ingest/rebuild and never expands
+permissions. The integrated completion path must publish a bounded research/
+work handoff through the native working-shelf contract with provenance and
+trust labels;
+indexing alone cannot expose private client history or make research verified.
+
+Librarian owns the write contract: explain the accepted schema to callers or
+normalize supported raw/JSON inputs before canonical validation. Known-schema
+formatting should be deterministic, not another GPU round. Preserve original
+sources and report unsupported formats or missing provenance explicitly.
+Normalization never grants verified status or bypasses authorization,
+candidate-only ingestion, freshness or promotion gates.
+
+OCR is a capture-to-memory intake step, not merely text returned to a phone.
+The "send anything" target is to preserve the original source, extract useful
+content and persist source-bound memory for recall across clients/sessions.
+Receipts must distinguish saved sources from processed/searchable records and
+surface extraction failures. Keep personal and technical recall isolated;
+stored/candidate does not mean verified. This intake integration is a target,
+not a claim that every input type is already wired.
 
 - **Raw is immutable.** Sources (transcripts, observe blobs, session files)
   are never edited after ingest. Librarian and chat must not rewrite the
@@ -628,7 +675,8 @@ and `logs/last-vram.json` (no GPU). `/brief` and Galaxy show live
 `inbox=N`. Normal Heal does not `tailscale up`. Operator-enabled AFK Watch
 calls Heal `-Afk`: start installed Tailscale/RustDesk services (or the known
 RustDesk app when no service exists), reconnect the existing Tailscale node
-with `up --unattended --timeout=10s`, then probe again. No install/logout/reset.
+with `set --unattended` then bare `up`, preserving existing node preferences.
+Each CLI process has a ten-second bound; then probe again. No install/logout/reset.
 Tailscale/RustDesk/Mongo Stop in the desk persists a hold respected by recovery.
 AFK Heal starts only RAG/kernel listener scopes, not models, and skips GPU
 inbox extraction. Optional gym maintenance requires the explicit opt-in.
@@ -979,9 +1027,11 @@ not be treated as baseline validation.
   pointer. Live commits dual-write to an in-progress generation. Only a fully
   reconciled generation may become active; cleanup may delete derivative
   generations but never source, node, run, link, observation, or skill records.
-- Changes to the C++/Go protocol require coordinated updates to both sides and
-  tests for field names, framing, size limits, receipt/error shape, hashing, and
-  exit-code behavior.
+- Preserve existing shared C++/Go contracts: field names, framing, size limits,
+  receipt/error shape, hashing and exit codes. New features may be C++-only;
+  Go/Rust are first-class alternatives, not mandatory duplicate implementations
+  or parity gates when C/C++ is the best fit. Coordinate both sides only when
+  intentionally changing a contract they already share.
 
 ## Secrets and local data
 
