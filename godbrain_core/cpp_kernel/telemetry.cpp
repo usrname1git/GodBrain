@@ -221,8 +221,157 @@ namespace telemetry {
         };
     }
 
+    json parse_smbios_memory(const std::vector<unsigned char>& bytes) {
+        if (bytes.size() < 8) throw std::runtime_error("SMBIOS header is missing");
+        uint32_t length = 0;
+        std::memcpy(&length, bytes.data() + 4, sizeof(length));
+        if (length > bytes.size() - 8) throw std::runtime_error("SMBIOS table is truncated");
+        const size_t end = 8 + static_cast<size_t>(length);
+        json devices = json::array();
+        size_t at = 8, structures = 0;
+        while (at + 4 <= end && ++structures <= 2048) {
+            const auto type = bytes[at];
+            const size_t size = bytes[at + 1];
+            if (size < 4 || size > end - at) throw std::runtime_error("SMBIOS structure is truncated");
+            size_t strings_end = at + size;
+            while (strings_end + 1 < end &&
+                   (bytes[strings_end] != 0 || bytes[strings_end + 1] != 0)) ++strings_end;
+            if (strings_end + 1 >= end) throw std::runtime_error("SMBIOS strings are unterminated");
+            const auto string_at = [&](size_t field) -> json {
+                if (field >= size || bytes[at + field] == 0) return nullptr;
+                const unsigned int wanted = bytes[at + field];
+                size_t start = at + size;
+                for (unsigned int n = 1; start < strings_end && n <= wanted; ++n) {
+                    size_t stop = start;
+                    while (stop < strings_end && bytes[stop]) ++stop;
+                    if (n == wanted) {
+                        const std::string value(
+                            reinterpret_cast<const char*>(bytes.data() + start), stop - start);
+                        try {
+                            (void)json(value).dump();
+                        } catch (const json::exception&) {
+                            throw std::runtime_error("SMBIOS string is not valid UTF-8");
+                        }
+                        return value;
+                    }
+                    start = stop + 1;
+                }
+                throw std::runtime_error("SMBIOS string index is invalid");
+            };
+            const auto word_at = [&](size_t field) -> uint16_t {
+                uint16_t value = 0;
+                std::memcpy(&value, bytes.data() + at + field, sizeof(value));
+                return value;
+            };
+            if (type == 17 && size >= 21 && word_at(12) != 0) {
+                const uint16_t raw_size = word_at(12);
+                json capacity = nullptr;
+                if (raw_size == 0x7fff) {
+                    if (size < 32) throw std::runtime_error("SMBIOS extended memory size is missing");
+                    uint32_t mb = 0;
+                    std::memcpy(&mb, bytes.data() + at + 28, sizeof(mb));
+                    capacity = static_cast<uint64_t>(mb & 0x7fffffff) * 1024 * 1024;
+                } else if (raw_size != 0xffff) {
+                    capacity = static_cast<uint64_t>(raw_size & 0x7fff) *
+                               ((raw_size & 0x8000) ? 1024ull : 1024ull * 1024ull);
+                }
+                const auto speed = [&](size_t field) -> json {
+                    if (size < field + 2) return nullptr;
+                    const auto value = word_at(field);
+                    return value == 0 || value == 0xffff ? json(nullptr) : json(value);
+                };
+                devices.push_back({
+                    {"device", string_at(16)}, {"bank", string_at(17)},
+                    {"manufacturer", string_at(23)}, {"part_number", string_at(26)},
+                    {"capacity_bytes", capacity}, {"rated_speed_mt_s", speed(21)},
+                    {"configured_speed_mt_s", speed(32)},
+                });
+            }
+            at = strings_end + 2;
+            if (type == 127) return devices;
+        }
+        if (at != end || structures > 2048) throw std::runtime_error("SMBIOS table has invalid framing");
+        return devices;
+    }
+
+    json get_host_profile() {
+        json profile = get_host_inventory();
+        profile["probe_errors"] = json::array();
+        const auto registry = [&](const wchar_t* key, const wchar_t* name, const char* label) -> json {
+            const auto value = reg_sz(HKEY_LOCAL_MACHINE, key, name);
+            if (!value.empty()) return value;
+            profile["probe_errors"].push_back(std::string(label) + " is unavailable");
+            return nullptr;
+        };
+        const wchar_t* bios = L"HARDWARE\\DESCRIPTION\\System\\BIOS";
+        profile["cpu"] = registry(L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                                  L"ProcessorNameString", "CPU model");
+        profile["baseboard"] = {
+            {"manufacturer", registry(bios, L"BaseBoardManufacturer", "Board manufacturer")},
+            {"product", registry(bios, L"BaseBoardProduct", "Board product")},
+            {"version", registry(bios, L"BaseBoardVersion", "Board version")},
+        };
+        profile["bios"] = {
+            {"vendor", registry(bios, L"BIOSVendor", "BIOS vendor")},
+            {"version", registry(bios, L"BIOSVersion", "BIOS version")},
+            {"release_date", registry(bios, L"BIOSReleaseDate", "BIOS date")},
+        };
+        profile["gpus"] = json::array();
+        IDXGIFactory1* factory = nullptr;
+        const HRESULT factory_result = CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                                          reinterpret_cast<void**>(&factory));
+        if (FAILED(factory_result)) {
+            profile["probe_errors"].push_back("DXGI adapter enumeration failed: " + std::to_string(factory_result));
+        } else {
+            for (UINT n = 0; n < 16; ++n) {
+                IDXGIAdapter1* adapter = nullptr;
+                const HRESULT enumerated = factory->EnumAdapters1(n, &adapter);
+                if (enumerated == DXGI_ERROR_NOT_FOUND) break;
+                if (FAILED(enumerated)) {
+                    profile["probe_errors"].push_back("DXGI adapter read failed: " + std::to_string(enumerated));
+                    break;
+                }
+                DXGI_ADAPTER_DESC1 desc{};
+                const HRESULT described = adapter->GetDesc1(&desc);
+                adapter->Release();
+                if (FAILED(described)) {
+                    profile["probe_errors"].push_back("DXGI adapter description failed");
+                    continue;
+                }
+                if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+                profile["gpus"].push_back({
+                    {"name", utf8_from_wide(desc.Description)},
+                    {"dedicated_vram_bytes", static_cast<uint64_t>(desc.DedicatedVideoMemory)},
+                    {"vendor_id", desc.VendorId}, {"device_id", desc.DeviceId},
+                });
+            }
+            factory->Release();
+        }
+        const UINT bytes = GetSystemFirmwareTable(0x52534D42, 0, nullptr, 0);
+        if (bytes < 8 || bytes > 1024 * 1024) {
+            profile["memory_devices"] = nullptr;
+            profile["probe_errors"].push_back("SMBIOS memory table is unavailable or oversized");
+        } else {
+            std::vector<unsigned char> table(bytes);
+            if (GetSystemFirmwareTable(0x52534D42, 0, table.data(), bytes) != bytes) {
+                profile["memory_devices"] = nullptr;
+                profile["probe_errors"].push_back("SMBIOS memory table could not be read completely");
+            } else {
+                try {
+                    profile["memory_devices"] = parse_smbios_memory(table);
+                } catch (const std::runtime_error& error) {
+                    profile["memory_devices"] = nullptr;
+                    profile["probe_errors"].push_back(error.what());
+                }
+            }
+        }
+        profile["complete"] = profile["probe_errors"].empty();
+        profile["limits"] = "Firmware-reported DIMM speeds are not live clocks. Timings, voltages and BIOS settings are not inferred.";
+        return profile;
+    }
+
     std::string windows_pin() {
-        return get_host_inventory().value("os_pin", "");
+        return read_windows_pin().value("os_pin", "");
     }
 
     json get_tailscale() {

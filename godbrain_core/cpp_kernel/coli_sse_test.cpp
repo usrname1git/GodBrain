@@ -41,6 +41,15 @@ int main() {
     if (!expect(finish == "length", "finish_reason length")) {
         return 1;
     }
+    for (const auto* error : {
+             R"(data: {"error":"Insufficient context headroom"})",
+             R"(data: {"error":{"message":"Insufficient context headroom"}})"}) {
+        godbrain_coli::handle_sse_event(
+            error, assembled, on_token, on_ping,
+            [&](const std::string& reason) { finish = reason; });
+        if (!expect(finish == "error:Insufficient context headroom" && assembled == "Hi",
+                    "backend headroom errors remain explicit, not empty replies")) return 1;
+    }
 
     godbrain_coli::handle_sse_event("data: [DONE]", assembled, on_token, on_ping);
     if (!expect(assembled == "Hi" && pings == 1, "[DONE] is a no-op")) {

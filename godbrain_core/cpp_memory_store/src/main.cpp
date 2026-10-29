@@ -46,7 +46,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     int rc = 1;
-    if (route.kind == godbrain::memory::CommandKind::Evidence) {
+    if (route.kind == godbrain::memory::CommandKind::Shelf) {
+        std::string receipt;
+        if (godbrain::memory::store_shelf(store, route.shelf, &receipt, &err)) {
+            std::cout << receipt;
+            rc = 0;
+        } else {
+            std::cout << godbrain::memory::error_envelope_json("Working shelf failed", err);
+        }
+    } else if (route.kind == godbrain::memory::CommandKind::Evidence) {
         std::string receipt;
         if (godbrain::memory::store_evidence(store, route.evidence, &receipt, &err)) {
             std::cout << receipt;

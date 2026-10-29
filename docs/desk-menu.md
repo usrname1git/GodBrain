@@ -6,6 +6,14 @@ the power glyph quits. Status and Ask use serialized asynchronous workers
 instead of blocking the UI. Image status checks port 8871 and identifies
 Qwen-Image-2.1 independently of the text/vision service on port 8888.
 
+Status's **Llama :8000** row is the legacy llama-server startup hold, not a
+separate Qwen service. **Info** explains the distinction and starts nothing.
+**Hold** persists the legacy pause and stops only an identified llama-server
+on port 8000; Qwen on 8888 and Qwen-Image on 8871 are unaffected. Its
+`hold on` / `hold off` readout describes the startup hold, not listener health.
+For text answers, select a text Qwen profile on the Model page, then use
+**Status > Model > Start**. Qwen-Image generates images, not text answers.
+
 For a Windows desktop or Start-menu shortcut, target PowerShell 7 explicitly
 instead of relying on the `.ps1` file association:
 
@@ -29,6 +37,9 @@ Ask has no Grok folder/launcher controls. Its reply area extends to a 20-pixel
 bottom margin, including when maximized, and preserves response line breaks,
 so longer answers can be captured in a screenshot without the old unused footer.
 Replies that exceed the available screen space still scroll.
+Drag the horizontal divider below the complete-file review checkbox to resize
+the prompt and answer panes. The prompt grows with that divider; both panes
+retain a usable minimum size when resizing or maximizing the window.
 
 ## Model profiles
 
@@ -171,13 +182,195 @@ final-answer `content`. Desk/Galaxy streams show answer tokens and progress
 pings while thinking runs, not the reasoning scratchpad. Only answer text
 enters continuation history or saved replies; private reasoning still passes
 through the existing loop guards. If a completion produces reasoning without
-a final answer, the kernel returns an explicit error (including an output-limit
-explanation when reported by the server), without automatically replaying it.
-This does not change the generation budget, reasoning preference or model
-behavior. Text that the server itself labels as final `content` is not
+a final answer at the output limit, EXL3 gets **one** fresh thinking-off
+answer attempt, capped at 4,096 tokens, with no tools or private reasoning
+replayed. Other empty completions and failed recovery return explicit errors.
+The receipt reports recovery; the saved preference is unchanged.
+Recovery text is buffered until a complete `stop` response is accepted.
+A truncated retry fails explicitly and never starts another continuation.
+Thinking-enabled EXL3 chat requests allow up to **16,384 output tokens**
+for reasoning plus the answer. The installed server then clamps each request
+against the **actual fully formatted input**, leaving at least 1,024 tokens
+for runtime/speculative overhead. This clamp belongs to the separately
+installed, updated EXL3 kit; its backend changes are not bundled in this
+repository. Insufficient headroom fails explicitly.
+`/health.last_generation` records prompt tokens, requested/effective output,
+reserve and context. Missing, invalid or ambiguous model context fails before
+reasoning generation. Thinking-off, tool and `/edit` turns keep their existing
+ceilings. Ask allows up to ten minutes for the bounded request.
+The preallocated cache is unchanged. Text that the server labels as final `content` is not
 semantically reclassified or trimmed as supposed reasoning.
 
+### Ask text modes
+
+The visible selector defaults to **Research (read-only)**. **Answer** disables
+model tools even with a Path; an explicit leading `No tools` also wins over
+the selector. **Research** advertises only reads and enforces read-only
+arguments after alias normalization, even when YOLO is active. It cannot
+apply `/edit`, write files/registry/ACLs, elevate or change services.
+**Fix** retains existing scoped tools, jail, bearer and sovereignty checks;
+it does not grant YOLO or elevation. Explicit authenticated operator
+`/yolo`, `/verify` and `/reject` commands retain their separate gates.
+Images and complete-source review retain their dedicated read-only/generated-image routes.
+
+Research can query service configuration (`run_host`, `exe=sc`, `args=qc SERVICE`)
+and inspect a registry key or granted file/folder using `read_local_acl`.
+Host reads use the same executable-prefix normalization as the native executor.
+Registry reads accept either `args=query "KEY" ...` or `path=KEY` (quoted by
+the kernel). Explicit arguments take precedence; a path never converts a
+mutating verb into a read. The model schema includes native `reg query`
+search examples, and denied read invocations include the accepted syntax.
+The native reader returns owner, complete SDDL and ordered DACL entries from
+the opened object. It requests only `READ_CONTROL`, checks the resolved target,
+rejects remote/SAM/SECURITY targets, and never reads values/content or changes
+permissions. Missing/denied objects fail explicitly. ACL metadata is not an
+effective-token access check or proof of a writer. Research allows up to seven
+tool rounds plus one final-answer round; independent reads can share a round.
+A Path used for research is not replaced with a repository-map conclusion.
+Desk sends the current Ask text and optional Path, not Copilot's conversation:
+private client history is not automatically imported. After an explicit
+`index`, authenticated ordinary requests retrieve relevant shared working
+research and the target-host snapshot automatically. Published working
+context is not verified knowledge.
+Research retains up to 32 KiB of complete, distinct observations, including
+on Continue. It does not evict earlier facts to fit later reads. Repeated
+identical results are deduplicated; a round with no new evidence ends tool
+collection. Capacity exhaustion preserves earlier observations and explicitly
+marks omitted new evidence before the final answer. Service observations
+include the exact invocation so a failed query is not attributed to another service.
+`read_local_file` decodes BOM-marked UTF-16LE/BE and UTF-8 before line slicing.
+The source-read and decoded-text bounds remain 256 KiB; clipped text is marked,
+malformed UTF-16 fails explicitly, and binary files remain rejected.
+Research can also
+search Microsoft Learn and read an exact documentation URL supplied by the
+operator or that request's search. Search terms must come from the operator
+question or a fixed public Windows access-control vocabulary, not private
+tool output; unsupported terms are omitted with a count and the actual query
+in the source receipt. First-party fetches reuse the bounded
+HTTPS/allowlisted-host/HTTP-200/no-redirect transport. Text remains an
+**untrusted reference**, never an automatically verified claim or proof of
+the actual writer on this host. Documentation tools require no paid API.
+Large/earlier research results are explicitly omitted rather than cut through
+a reference. Ask shows the effective mode, actual model tool attempts and any
+answer retry; failed attempts are explicitly marked as incomplete evidence.
+Empty, truncated or repetitive native Research drafts get one fresh, tools-off
+answer attempt, never a replay of the discarded draft. Failed recovery is an
+explicit error rather than an apparently finished partial table.
+The same bounded recovery applies when the final streamed reasoning/answer
+loops or returns no visible answer. Research emits answer text only after a complete answer is accepted;
+progress pings continue while generating, and discarded drafts never stream
+into the displayed answer. The saved thinking preference is unchanged.
+Failed model requests finalize an existing task as failed rather than leaving it
+running. Saved task diagnostics include HTTP status, finish reason and
+visible/reasoning byte counts, never private reasoning text.
+Receipts are execution metadata, not task verification.
+The API field is `tool_mode: "answer"|"research"|"fix"`; omitted mode preserves
+legacy clients. A running read-only chain retains its restrictions on Continue.
+
+## Shared working memory and index
+
+Send exactly `index` (or `/index`) after infrastructure changes. It refreshes
+the native target-host hardware/capability snapshot without starting a model.
+This is not a full-vault RAG rebuild, continuous broadcast, permission grant
+or verification. The configured `GODBRAIN_API_TOKEN` is required; ordinary
+Desk and Ask-GodBrain requests send it when configured.
+Ask-GodBrain accepts only `http://127.0.0.1:8083` (or its `localhost`
+alias), always targets that canonical loopback kernel and never follows redirects.
+
+Verified technical RAG remains the manual. Separate Mongo discussion and
+research shelves hold untrusted continuity and provisional findings; personal
+scope is separate from technical retrieval. The authenticated kernel exposes
+`/api/context`, `/api/shelf`, `/api/shelf/schema` and `/api/index`. Discovery is
+persisted outside chat, so a fresh integrated client can recall published
+research without repeating the history. Unpublished Copilot history is not
+magically available.
+PowerShell shared-context reads and discussion saves use the same `desk` thread
+by default; the shared-memory helper functions still accept an explicit `-ThreadId`.
+
+Prompt excerpts share a bounded budget. Long references cannot crowd out every
+later research finding; omitted excerpts/references are labeled, with complete
+records still available through the shelf API. A tight discussion budget keeps
+the newest turn rather than an older one. Recall is not factual verification:
+model interpretations remain untrusted, including after being remembered.
+
+Research-mode file reviews, attachments and vision requests include shared
+context before any token planning, then save a bounded untrusted discussion
+handoff with source hashes/references. Original attachments are not archived
+by that handoff. Oversized prompt/report excerpts are labeled and retain
+complete-text SHA-256 references. Failed persistence is explicit, never a
+claim that the work was saved or verified. Answer and leading `No tools`
+remain memory-free; image diffusion retains its separate path.
+
+`scripts\Invoke-LocalLLM.ps1` provides the same context/continuity to a fresh
+PowerShell invocation while keeping the existing custom system prompt,
+thinking-off plain-text completion and `tool_choice=none`. It requires an
+already-running idle EXL3 model and never starts one. `-NoSharedMemory` keeps
+the original stateless behavior; `-Scope personal` uses only the personal
+working shelf, not technical RAG. `Invoke-LocalLLM index` needs no model.
+This foundation is not an autonomous long-task runner or model-to-model loop.
+
+From the repository root:
+
+```powershell
+.\scripts\Invoke-LocalLLM.ps1 index
+.\scripts\Invoke-LocalLLM.ps1 'Explain: Get-Process | Where-Object { $_.CPU -gt 10 }'
+.\scripts\Invoke-LocalLLM.ps1 'Explain this command' -NoSharedMemory
+```
+
+Single-quoted prompts preserve literal `$` variables rather than expanding
+them in the calling shell. If an existing profile already defines the
+`Invoke-LocalLLM` helper, its short alias is
+`Set-Alias -Name aai -Value Invoke-LocalLLM`; reload that profile with
+`. $PROFILE` in an existing terminal. These scripts do not install or modify
+profiles. Neither the helper nor the alias executes the returned commands.
+Shared memory improves continuity, not model accuracy: a stored response is
+still untrusted, and a running model is not a qualification result.
+
+Ordinary kernel chat also saves bounded prompt/answer excerpts rather than
+overrunning the shelf's 32 KiB limit. Clipped excerpts carry the complete
+UTF-8 byte count and Keccak-256 hash; they are not full transcript archives.
+
 ## Complete-file review and images
+
+For comparisons, **Add files...** in Ask selects multiple attachments. Files can
+also be dropped onto the attachment list; **Paste image** (or Ctrl+V in the list)
+adds a clipboard screenshot. Remove detaches selected entries without deleting
+the files. Clipboard originals remain under ignored `logs\desk-attachments`.
+The optional Path field stays separate: a file there joins the attachments;
+a folder is not used or read during attachment analysis.
+
+Attachments use the running text model, with no tools or edits, in Answer or
+Research mode. Fix, slash commands and Qwen-Image generation reject attachments
+explicitly. Text is read directly as strict UTF-8 or BOM-marked UTF-16.
+Screenshots are transcribed by the existing CPU EasyOCR implementation in a
+bounded one-shot Python child, without starting the speech listener, using
+the vision tower or changing the saved model settings. No downloads occur.
+The 180-second OCR deadline includes stdin delivery and output draining;
+oversized output fails explicitly and only that child is terminated on failure.
+OCR is derived text, not verified visual evidence; non-text pictures still
+need the separate vision path described below.
+
+Up to eight files are accepted (1 MiB per text file/extracted text, 10 MiB per
+image). Sources receive stable IDs, byte hashes and original/extracted line
+numbers. Two bounded text inputs also get a deterministic unified diff. Derived
+diffs above one million line pairs or 262144 combined UTF-8 bytes are explicitly
+omitted in source metadata; original source coverage is never dropped. The local
+tokenizer budgets all sources together; larger inputs use serial source
+windows (at most 16 parts) and an explicitly unverified synthesis, not silent truncation.
+Every supplied line is covered across parts, which is not a guarantee of
+exhaustive semantic comparison. Missing/binary inputs, incomplete generations,
+changed sources/model/context and context limits fail explicitly.
+`logs\last-attachment-analysis.json` records coverage and a **candidate** report;
+attachments and answers are not automatically ingested as Golden Records.
+Research-mode bounded handoffs go only to the separate untrusted working shelf.
+An output-limit or empty-answer failure gets one fresh, concise thinking-off
+recovery; discarded drafts and private reasoning are never replayed. Recovery
+and any remaining parts/synthesis use freshly counted thinking-off prompts,
+at most 4096 output tokens each, without changing the saved preference.
+The answer labels recovery explicitly. The receipt retains attempt finish
+reasons, token usage and visible/reasoning byte counts, never private reasoning.
+A failed recovery, attempted tools, bad token receipts or changed sources still
+fail closed; no truncated report is presented as complete.
 
 Ask accepts granted file/folder paths, source files and images. Image bytes
 and review bytes are bounded and checked against their final handle target,
@@ -202,7 +395,7 @@ bearer authorization; read-only slash commands do not start a generation.
 
 ## CPU speech helper
 
-The STT/TTS row starts/stops the optional `scripts\voice_door.py` helper
+The Speech/OCR row starts/stops the optional `scripts\voice_door.py` helper
 on port 8001. It uses the existing local faster-whisper weights and Piper
 voices on CPU; EasyOCR is the CPU image-text fallback. These dependencies
 and weights must already be installed. Starting the panel does not download
@@ -235,6 +428,12 @@ loads weights or generates. Phone Desk shows these passive states and errors.
 Public backend errors are sanitized; detailed errors stay in the authenticated
 POST response. STT checks the local tokenizer/model/config before initialization
 and does not fetch missing assets.
+
+Tailscale Start enables unattended mode with `tailscale set --unattended`,
+then reconnects with bare `tailscale up`, preserving existing node preferences
+including exit-node LAN access. The shared Desk/AFK helper bounds each CLI
+process to ten seconds without passing flags to `up`. Its errors
+are labeled Tailscale, not CS2; no Steam or game process is required.
 
 The Status page also has a separate **Serve** row. Tailscale Start preserves
 an existing private HTTPS mapping to Phone Desk on `127.0.0.1:8085`; with no
@@ -302,11 +501,19 @@ connection label and Play/Pause button name. These describe receiver state,
 not speaker output: **Pause** means ShairportQt reports playing; **Play** means
 it reports paused. A connected receiver without an enabled playback control
 shows **connected; playback state unavailable**. Unsupported/localized labels,
-hidden/inaccessible controls, identity changes and timeouts explicitly show
+inaccessible controls, identity changes and timeouts explicitly show
 **receiver state unavailable**, retaining the listener result rather than
 guessing. The probe never clicks controls, reads password fields or collects
 sender/track metadata. Each inspection is a bounded child process in the
 existing asynchronous status worker; a timeout terminates only that probe.
+When Qt hides its window to the tray, the helper uses the receiver's PID-owned
+IPv4/IPv6 listener and accepted TCP connections instead of its absent UIA tree.
+Without a connection it shows **listening; tray**, not a guessed ready/playing
+state or a cached Windows media session. With an accepted connection, the unique
+`Airplay.Shairport.1.0` Windows media session can report **playing/paused**,
+explicitly labelled **Windows media session**. No matching media session shows
+**connected; playback state unavailable**; ambiguous sessions fail explicitly.
+Status never restores the window or changes playback to obtain a reading.
 Build it once with `scripts\Build-DeskAirPlay.ps1` (Visual Studio x64 C++ tools).
 
 End-to-end audio verification still requires a real AirPlay sender streaming known
@@ -339,6 +546,11 @@ serial CPU FFmpeg imports. Start returns without parking PowerShell. Closing
 Desk leaves it running; Stop signals only its verified instances and their owned
 child Jobs. Desk does not install a Windows service, logon task, firewall/router
 rule, Tailscale Serve change or GPU worker.
+Copyparty runtime salts/sessions and SFX extraction use that instance's private
+`local\copyparty` and `local\copyparty-cache`, avoiding administrator-created
+shared AppData/cache files on normal-user startup. No global directory ACLs or
+environment settings are changed. A native-ingress credential failure is still
+reported separately and is not disguised as successful public readiness.
 
 Drop local video/audio files into Inbox. Originals remain untouched. Published
 H.264/AAC MP4 or MP3 files get seven-day read-only share links; the source library

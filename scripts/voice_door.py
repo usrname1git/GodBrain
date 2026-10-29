@@ -269,9 +269,25 @@ def ocr_cpu(image: bytes, suffix: str) -> str:
             pixels = np.asarray(decoded)[:, :, ::-1].copy()
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise ValueError("image is not a decodable image") from exc
-    reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False, download_enabled=False)
+    # Windows dynamic INT8 LSTM kernels can fault with an illegal instruction.
+    reader = easyocr.Reader(["en", "sv"], gpu=False, verbose=False,
+                            download_enabled=False, quantize=False)
     lines = reader.readtext(pixels, detail=0)
     return "\n".join(str(line) for line in lines).strip()
+
+
+def ocr_stdin(stream):
+    """One bounded CPU request; no listener, saved tower preference or downloads."""
+    import contextlib
+    image = stream.read(10 * 1024 * 1024 + 1)
+    if not image or len(image) > 10 * 1024 * 1024:
+        raise ValueError("OCR input must be between 1 byte and 10 MiB")
+    with contextlib.redirect_stdout(sys.stderr):
+        text = ocr_cpu(image, ".bin")
+    if not text.strip():
+        raise ValueError("CPU OCR found no text; use vision for non-text images")
+    return {"version": 1, "engine": "cpu", "text": text,
+            "source_sha256": hashlib.sha256(image).hexdigest()}
 
 
 def ocr_tower(image: bytes, mime: str) -> str:
@@ -537,7 +553,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--ocr-stdin", action="store_true")
     args = parser.parse_args()
+    if args.ocr_stdin:
+        json.dump(ocr_stdin(sys.stdin.buffer), sys.stdout, ensure_ascii=True)
+        return
     serve(args.repo, args.port)
 
 

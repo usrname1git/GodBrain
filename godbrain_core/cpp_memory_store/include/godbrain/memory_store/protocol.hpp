@@ -32,6 +32,7 @@ enum class CommandKind {
     PromoteSkill,
     QuerySkills,
     Evidence,
+    Shelf,
 };
 
 struct Provenance {
@@ -177,6 +178,26 @@ struct EvidenceRequest {
     std::string successor;
 };
 
+struct ShelfRequest {
+    std::string action;
+    std::string shelf;
+    std::string host_id;
+    std::string scope = "technical";
+    std::string thread_id;
+    std::string exclude_thread_id;
+    std::string request_id;
+    std::string speaker = "operator";
+    std::string title;
+    std::string text;
+    std::vector<std::string> sources;
+    std::string query;
+    int limit = 8;
+};
+
+struct Json;
+bool parse_shelf_request(const Json& root, ShelfRequest* request, std::string* err);
+bool validate_shelf_request(const ShelfRequest& request, std::string* err);
+
 bool validate_evidence_request(const EvidenceRequest& request, std::string* err);
 
 struct SkillRunLite {
@@ -193,6 +214,7 @@ struct Route {
     PromoteSkillRequest promote;
     QuerySkillsRequest query_skills;
     EvidenceRequest evidence;
+    ShelfRequest shelf;
 };
 
 std::string keccak256_hex(const std::string& bytes);

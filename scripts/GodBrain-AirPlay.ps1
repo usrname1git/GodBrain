@@ -82,7 +82,7 @@ function Invoke-GodBrainAirPlayProbe {
     } finally { $probe.Dispose() }
 }
 
-function Get-GodBrainAirPlayReceiverState($Process) {
+function Get-GodBrainAirPlayReceiverState($Process, [ref]$Source) {
     $exe = Join-Path (Split-Path $PSScriptRoot -Parent) 'godbrain_core\cpp_tools\desk-airplay.exe'
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw 'AirPlay state helper is missing; run scripts\Build-DeskAirPlay.ps1 once.'
@@ -99,12 +99,15 @@ function Get-GodBrainAirPlayReceiverState($Process) {
         $result = Invoke-GodBrainAirPlayProbe $info
         if (($result.pid -isnot [long] -and $result.pid -isnot [int]) -or
             $result.pid -ne $Process.ProcessId -or $result.created -isnot [string] -or
-            $result.created -cne $created -or $result.source -cne 'shairportqt-uia' -or
-            $result.state -cnotin @('ready', 'connected', 'playing', 'paused') -or
+            $result.created -cne $created -or $result.source -cnotin @('shairportqt-uia', 'shairportqt-windows-media') -or
+            $result.state -cnotin @('ready', 'connected', 'playing', 'paused', 'listening') -or
+            ($result.source -ceq 'shairportqt-windows-media' -and $result.state -ceq 'ready') -or
+            ($result.source -ceq 'shairportqt-uia' -and $result.state -ceq 'listening') -or
             $result.audio_output_verified -isnot [bool] -or $result.audio_output_verified) {
             throw 'Invalid AirPlay receiver state or process identity.'
         }
         if ($handle.WaitForExit(0)) { throw 'AirPlay receiver exited during inspection.' }
+        if ($Source) { $Source.Value = $result.source }
         return $result.state
     } finally { $handle.Dispose() }
 }
@@ -121,8 +124,12 @@ function Get-GodBrainAirPlayLine {
             Select-Object -ExpandProperty LocalPort -Unique | Sort-Object)
         if ($ports.Count) {
             try {
-                $state = Get-GodBrainAirPlayReceiverState $process
+                $source = $null
+                $state = Get-GodBrainAirPlayReceiverState $process ([ref]$source)
                 $detail = if ($state -eq 'connected') { '; playback state unavailable' } else { '' }
+                if ($source -ceq 'shairportqt-windows-media') {
+                    $detail += if ($state -in @('playing', 'paused')) { '; Windows media session' } else { '; tray' }
+                }
                 return "$state :$($ports -join ', :') (ShairportQt$detail)"
             } catch { return "listening :$($ports -join ', :') (receiver state unavailable: $($_.Exception.Message))" }
         }

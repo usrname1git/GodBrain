@@ -16,7 +16,7 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
     if (-not (Test-Path -LiteralPath $vcvars)) { throw "Missing compiler environment: $vcvars" }
 }
-$compile = "cl /nologo /std:c++17 /EHsc /W4 /WX /O2 /Fe:`"$exe`" /Fo:`"$objects\desk_airplay.obj`" `"$source`" /link user32.lib ole32.lib oleaut32.lib uiautomationcore.lib"
+$compile = "cl /nologo /std:c++17 /EHsc /W4 /WX /O2 /Fe:`"$exe`" /Fo:`"$objects\desk_airplay.obj`" `"$source`" /link user32.lib ole32.lib oleaut32.lib uiautomationcore.lib windowsapp.lib iphlpapi.lib"
 if ($vcvars) {
     $installer = Split-Path $vswhere -Parent
     & cmd.exe /d /c "set `"PATH=$installer;%PATH%`" && call `"$vcvars`" >nul && $compile"

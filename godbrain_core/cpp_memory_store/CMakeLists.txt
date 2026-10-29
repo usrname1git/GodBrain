@@ -20,6 +20,7 @@ find_package(mongoc-1.0 CONFIG QUIET)
 add_library(cpp_memory_store_core
     src/json.cpp
     src/protocol.cpp
+    src/shelf.cpp
     src/state_machine.cpp
     src/store.cpp
     src/evidence.cpp
@@ -102,6 +103,16 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(cpp_shelf_tests tests/shelf_tests.cpp)
+    target_link_libraries(cpp_shelf_tests PRIVATE cpp_memory_store_core)
+    target_compile_definitions(cpp_shelf_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(mongoc-1.0_FOUND)
+        target_compile_definitions(cpp_shelf_tests PRIVATE GODBRAIN_HAVE_MONGOC)
+    endif()
+    if(MSVC)
+        target_compile_options(cpp_shelf_tests PRIVATE /W4 /WX /permissive- /EHsc)
+    endif()
+    add_test(NAME cpp_working_shelves COMMAND cpp_shelf_tests)
     add_executable(cpp_evidence_policy_tests tests/evidence_policy_tests.cpp)
     target_link_libraries(cpp_evidence_policy_tests PRIVATE cpp_memory_store_core)
     if(MSVC)

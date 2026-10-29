@@ -13,6 +13,10 @@ Colibri is a possible interchangeable alternative, due to it not relying on GPU 
 
 No commercial `-cli` wrappers and no MCP-servers. Models inherit the same Golden Records, and the custom kernel adds tools a stock server will not give you.
 
+Model availability is not answer qualification. Working notes and model reports
+stay untrusted; memory preserves continuity, not proof that a command works or
+an autonomous task finished.
+
 ## Your PC in your pocket - even when RustDesk is stopped
 
 **Away from your PC? Tap "Start RustDesk service" on your phone, then open
@@ -37,6 +41,11 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 - Not an arbitrary chat API. No model is special; they inherit the same teachings.
 
 - **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
+
+- **Shared working memory** — Integrated Desk and PowerShell clients recall the
+  same bounded host index, discussion and research shelves across fresh sessions.
+  These untrusted shelves are separate from verified RAG. Refresh with `index`;
+  see [shared memory and the local client](docs/desk-menu.md#shared-working-memory-and-index).
 
 - **🛠️ Tools the kernel runs** — All tools are built into the C++ kernel, so you don't need 40 different MCP servers.
 - Galaxy GUI chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
@@ -190,6 +199,9 @@ Shipped on this desk, not slideware:
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
 - **Desk panel** — `scripts\Show-DeskMenu.ps1` returns the caller's shell and opens its own hidden STA GUI host. Status and Ask run asynchronously without overlapping requests. The panel resizes/maximizes, keeps reply line breaks and expands the Ask area. Picture Ask uses thinking off, temperature zero and a 2,048-token response ceiling. Pick text/vision on `:8888` or Qwen-Image-2.1 on `:8871`; image editing uses a bounded, final-handle-jail-checked input file. Progress shows real diffusion steps and saved request-specific receipts. Disposable image workers exit before completion so Windows releases native RAM/VRAM. Saved context/KV/MTP/vision profiles apply only on explicit Start; complete-file review stays read-only and candidate. Native Dell S2522HG controls and global F9 replace DDM; Dark Stabilizer cycles without claiming a current level. The separate Serve row reports the private background Phone Desk mapping; explicit Tailscale Start preserves it or creates it only when entirely unconfigured. Existing file/folder Ask stays available. X hides; the power glyph quits. See [Desk guide](docs/desk-menu.md) and the [DDM command map](docs/ddm-monitor-command-map.md).
+- **Read-only research** — Ask defaults to Research, with visible Answer/Research/Fix modes. Research retains bounded tool evidence, supports native ACL and Microsoft documentation reads, and cannot widen permissions through YOLO or Continue. Incomplete answers get one bounded recovery, not a silently accepted partial report.
+- **Mixed attachments** — Compare multiple text files and screenshots with strict decoding, CPU OCR, complete source-window coverage and hash-bound candidate receipts. No tools or edits run during analysis; original attachments are not archived by a shared-memory handoff.
+- **Shared continuity** — Native working shelves keep discussion/research separate from verified Golden Records and isolate personal scope. Authenticated `index` refreshes the target-host map without a model; Desk and `scripts\Invoke-LocalLLM.ps1` retrieve bounded context before inference and report failed saves explicitly. `-NoSharedMemory` keeps the PowerShell client stateless. This is not yet a durable autonomous long-task runner.
 - **Phone Desk** — A small read-only iPhone/Android overview: model/profile, global VRAM, RustDesk, Tailscale, SSH, core listeners and passive STT/TTS/CPU OCR health. One static page and a separate `127.0.0.1:8085` listener inside the C++ kernel, privately proxied by Tailscale Serve. Speech cards distinguish available local assets, successful requests and backend errors. Refresh never loads weights, generates, starts or repairs anything; stale/error data cannot look ready. No Node production backend, phone app build, browser token or public Funnel.
 - **RustDesk phone button** — `scripts\Start-RustDesk.ps1` explicitly restores a missing installed service entry (LocalSystem, Manual), starts it and verifies the enabled SYSTEM `--server` child. Existing startup settings are preserved. It avoids the native installer's logon shortcut and image-name kills. iOS Shortcuts or an Android SSH client can invoke it; open RustDesk only after the success receipt, then select the PC.
 - **Manual CS2 / AFK policy** — CS2 releases the identified model slot, pauses gym/automation, disconnects Tailscale, launches Steam and returns; no automatic post-game resume. AFK Watch is operator-enabled, host-only by default, with optional Qwen/gym recovery behind the same loop and crash/CUDA latches. Explicit Stop holds are preserved; no new service ACLs or task elevation.

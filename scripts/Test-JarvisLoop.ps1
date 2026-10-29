@@ -132,6 +132,7 @@ Invoke-CompiledTest "evidence_maintenance_test" @("evidence_maintenance_test.cpp
 Invoke-CompiledTest "research_curation_test" @("research_curation_test.cpp")
 Invoke-CompiledTest "session_context_test" @("session_context_test.cpp")
 Invoke-CompiledTest "tool_round_test" @("tool_round_test.cpp")
+Invoke-CompiledTest "tool_evidence_test" @("tool_evidence_test.cpp")
 Invoke-CompiledTest "local_edit_test" @("local_edit_test.cpp", "local_edit.cpp")
 Invoke-CompiledTest "browser_evidence_test" @("browser_evidence_test.cpp")
 Invoke-CompiledTest "unused49_test" @("unused49_test.cpp")

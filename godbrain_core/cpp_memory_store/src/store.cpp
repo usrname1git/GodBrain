@@ -1,6 +1,7 @@
 #include "godbrain/memory_store/store.hpp"
 #include "godbrain/memory_store/state_machine.hpp"
 #include "godbrain/memory_store/evidence.hpp"
+#include "godbrain/memory_store/shelf.hpp"
 
 #include <cctype>
 #include <algorithm>
@@ -155,6 +156,10 @@ std::string query_skills_receipt_json(const QuerySkillsReceiptOut& r) {
 
 bool store_available() { return false; }
 struct StoreHandle {};
+bool store_shelf(StoreHandle*, const ShelfRequest&, std::string*, std::string* err) {
+    if (err) *err = "mongo-c-driver not linked";
+    return false;
+}
 bool store_evidence(StoreHandle*, const EvidenceRequest&, std::string*, std::string* err) {
     if (err) *err = "mongo-c-driver not linked";
     return false;
@@ -209,6 +214,15 @@ struct StoreHandle {
     mongoc_database_t* db = nullptr;
     std::string db_name;
 };
+
+bool store_shelf(StoreHandle* h, const ShelfRequest& request,
+                 std::string* output, std::string* error) {
+    if (!h) {
+        if (error) *error = "memory store is not open";
+        return false;
+    }
+    return shelf_command(h->client, h->db_name, request, output, error);
+}
 
 bool store_evidence(StoreHandle* h, const EvidenceRequest& request,
                     std::string* output, std::string* error) {

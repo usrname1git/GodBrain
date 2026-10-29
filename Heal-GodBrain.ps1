@@ -436,7 +436,7 @@ if ($Afk) {
             Write-Host "heal afk: Tailscale CLI missing; cannot reconnect."
         } else {
             try {
-                Invoke-TailscaleCs2 $tailExe @("up", "--unattended", "--timeout=10s")
+                Set-TailscaleForCs2 $true
                 $after = Get-Probe
                 if ($after.tailscale) {
                     $tailReconnect = "ok"

@@ -85,6 +85,9 @@ struct StoreHandle;
 StoreHandle* store_open(std::string* err);
 void store_close(StoreHandle* h);
 
+bool store_shelf(StoreHandle* h, const ShelfRequest& request,
+                 std::string* json_out, std::string* err);
+
 bool store_ingest(
     StoreHandle* h, const DistillationPayload& payload, StoreReceipt* receipt, std::string* err);
 bool store_set_status(

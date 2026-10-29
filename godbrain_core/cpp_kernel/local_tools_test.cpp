@@ -1,9 +1,11 @@
 #include "local_tools.h"
+#include "memory.h"
 #include "rag_client.h"
 
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 
@@ -12,6 +14,12 @@
 #ifndef LOAD_LIBRARY_SEARCH_SYSTEM32
 #define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
 #endif
+
+namespace memory {
+json research_document(const std::string&, bool) {
+    throw std::runtime_error("Live documentation lookup is disabled in offline local tool tests.");
+}
+}
 
 static bool expect(bool ok, const char* msg) {
     if (!ok) std::cerr << "FAIL " << msg << std::endl;
@@ -624,6 +632,11 @@ int main() {
                        "file jail advertises roots");
         pass &= expect(jail.count("run_pwsh") == 0, "file jail omits pwsh");
         pass &= expect(jail.count("query_godbrain_skills") == 1, "bounded hop advertises read-only skill lookup");
+        pass &= expect(jail.count("read_local_acl") == 1,
+                       "bounded hop advertises read-only ACL metadata");
+        pass &= expect(jail.count("search_microsoft_docs") == 1 &&
+                           jail.count("read_microsoft_doc") == 1,
+                       "bounded hop advertises read-only documentation references");
         local_tools::Call skill_lookup;
         skill_lookup.name = "query_godbrain_skills";
         skill_lookup.args = std::string(513, 'x');
@@ -913,7 +926,8 @@ int main() {
     pass &= expect(!local_tools::looks_like_host_inspect(rw), "rw path not host inspect");
     pass &= expect(!local_tools::use_full_tool_defs(rw), "rw path files-only");
     const auto files = local_tools::openai_tool_defs_for(rw);
-    pass &= expect(files.is_array() && files.size() == 12, "bounded hop 11 file tools plus one skill lookup");
+    pass &= expect(files.is_array() && files.size() == 15,
+                   "bounded hop includes file tools, ACL metadata, skills and documentation");
     bool files_has_sysint = false;
     bool files_has_info = false;
     bool files_has_roots = false;

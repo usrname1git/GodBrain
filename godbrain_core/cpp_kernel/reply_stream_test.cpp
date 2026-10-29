@@ -4,10 +4,15 @@
 
 #include <filesystem>
 #include <stdexcept>
+#include <aclapi.h>
+#include <sddl.h>
+#include "shared_context_test.h"
 
 struct MockCompletion {
     std::vector<json> deltas;
     std::string finish = "stop";
+    int required_tokens = 0;
+    int status = 200;
 };
 
 struct ReplyResult {
@@ -15,6 +20,7 @@ struct ReplyResult {
     std::string spoken;
     std::string tokens;
     std::vector<json> requests;
+    json receipt;
     int pings = 0;
     int recoveries = 0;
 };
@@ -31,6 +37,7 @@ int main() {
                      "in its isolated fixture root." << std::endl;
         return 1;
     }
+    if (read_env("GODBRAIN_REPLY_TEST_STORE") == "1") return shared_fixture_store();
     const auto logs = root / "logs";
     std::filesystem::create_directories(logs);
     std::ofstream(logs / "mouth.txt") << "fixture\n";
@@ -42,7 +49,7 @@ int main() {
     std::vector<json> requests;
     server.Get("/v1/models", [](const httplib::Request&, httplib::Response& response) {
         response.set_content(
-            R"({"data":[{"id":"fixture","supported_reasoning_efforts":["low","medium","xhigh"]}]})",
+            R"({"data":[{"id":"fixture","max_model_len":32768,"supported_reasoning_efforts":["low","medium","xhigh"]}]})",
             "application/json");
     });
     server.Post("/v1/chat/completions",
@@ -59,6 +66,15 @@ int main() {
                 return;
             }
             reply = completions[index];
+        }
+        if (body.at("max_tokens").get<int>() < reply.required_tokens) {
+            reply.deltas = {{{"reasoning_content", "PRIVATE_REASONING: harmless fixture budget exhausted."}}};
+            reply.finish = "length";
+        }
+        if (reply.status != 200) {
+            response.status = reply.status;
+            response.set_content("Fixture upstream error.", "text/plain");
+            return;
         }
         if (body.value("stream", false)) {
             std::string data;
@@ -119,7 +135,8 @@ int main() {
                          bool llama = false,
                          const std::string& evidence_context = {},
                          bool with_history = false,
-                         const godbrain_rag::Client* skill_client = nullptr) {
+                         const godbrain_rag::Client* skill_client = nullptr,
+                         local_tools::ToolMode mode = local_tools::ToolMode::Legacy) {
         ++case_index;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -141,16 +158,20 @@ int main() {
                 check(force, "fixture unexpectedly requested ordinary mouth recovery");
                 ++result.recoveries;
                 return false;
-            }, skill_client);
+            }, skill_client, mode, &result.receipt);
         {
             std::lock_guard<std::mutex> lock(mutex);
             result.requests = requests;
         }
-        for (const auto& body : result.requests) {
+        for (size_t i = 0; i < result.requests.size(); ++i) {
+            const auto& body = result.requests[i];
             check(body.dump().find("PRIVATE_REASONING") == std::string::npos,
                   "private reasoning entered a subsequent request");
-            check(body.at("max_tokens") == ((exl3 || llama) ? kLlamaChunkTokens : kColiChunkTokens),
-                  "output budget changed");
+            const bool exl3_thinking = exl3 && body["chat_template_kwargs"]["enable_thinking"] == true;
+            check(body.at("max_tokens") ==
+                      (result.receipt["output_requests"][i]["answer_retry"] == true ? 4096 :
+                       (exl3_thinking ? 16384 : ((exl3 || llama) ? kLlamaChunkTokens : kColiChunkTokens))),
+                  "output budget does not match the runner and thinking mode");
         }
         check(result.answer.find("PRIVATE_REASONING") == std::string::npos &&
                   result.spoken.find("PRIVATE_REASONING") == std::string::npos &&
@@ -161,6 +182,7 @@ int main() {
     const std::string private_text = "PRIVATE_REASONING: inspect the harmless fixture first.";
     int result = 0;
     try {
+        run_shared_context_fixtures(root);
         {
             httplib::Request request;
             request.body = R"({"class":"doc_fact","text":"unrelated caller prose","learn_url":"https://example.invalid/","quote":"An unrelated documentation quote."})";
@@ -267,21 +289,468 @@ int main() {
         check(no_outparam.answer == "Four." && no_outparam.tokens == "Four.",
               "caller without spoken outparam received reasoning");
 
+        auto needs_reasoning_room = completion(private_text, "The result is four.");
+        needs_reasoning_room.required_tokens = 12288;
+        const auto budgeted = run({needs_reasoning_room});
+        check(budgeted.answer == "The result is four." && budgeted.requests.size() == 1,
+              "EXL3 exhausted the legacy output cap before its final answer");
+        const auto unchanged_off = run({needs_reasoning_room}, "off");
+        check(unchanged_off.answer.find("output limit") != std::string::npos &&
+                  unchanged_off.requests.size() == 1,
+              "Thinking-off budget or no-retry protection changed");
+
         for (const std::string finish : {"length", "stop"}) {
-            const auto reply = run({completion(private_text, "", finish)});
+            const auto reply = run({completion(private_text, "", finish),
+                                    completion(private_text, "", finish)});
             check(reply.answer.compare(0, 6, "Error:") == 0 &&
                       reply.spoken == reply.answer && reply.tokens.empty() &&
-                      reply.requests.size() == 1,
-                  "reasoning-only output was returned or automatically continued");
+                      reply.requests.size() == (finish == "length" ? 2 : 1),
+                  "reasoning-only output escaped or exceeded the one-retry bound");
             check((reply.answer.find("output limit") != std::string::npos) == (finish == "length"),
                   "reasoning-only finish reason was lost");
         }
-        const auto blank = run({completion(private_text, " \n", "length")});
-        check(blank.answer.compare(0, 6, "Error:") == 0 && blank.requests.size() == 1,
-              "whitespace answer triggered continuation");
+        const auto recovered = run({completion(private_text, "", "length"),
+                                    completion("", "An honest bounded answer.")});
+        check(recovered.answer == "An honest bounded answer." &&
+                  recovered.tokens == recovered.answer &&
+                  recovered.receipt["answer_retry"] == true &&
+                  recovered.requests.size() == 2 &&
+                  recovered.requests[1]["chat_template_kwargs"]["enable_thinking"] == false &&
+                  recovered.requests[1]["tool_choice"] == "none" &&
+                  load_thinking_preference().enabled,
+              "Thinking-off answer recovery was hidden, unbounded, or changed the preference");
+        for (const auto mode : {local_tools::ToolMode::Legacy, local_tools::ToolMode::Answer}) {
+            for (const char* partial : {"Discarded partial answer.", "Discarded unfinished answer"}) {
+                const auto truncated = run({
+                    completion(private_text, "", "length"),
+                    completion("", partial, "length"),
+                    completion("", "An extra completion must not run.")
+                }, "on", "No tools. Fixture question.", "Fixture system.",
+                   true, true, false, {}, false, nullptr, mode);
+                check(truncated.answer.compare(0, 6, "Error:") == 0 &&
+                          truncated.receipt["answer_error_reason"] == "length" &&
+                          truncated.requests.size() == 2 && truncated.tokens.empty() &&
+                          truncated.spoken == truncated.answer,
+                      "Truncated Answer recovery succeeded, streamed a discarded draft or continued again");
+            }
+        }
+        const auto blank = run({completion(private_text, " \n", "length"),
+                                completion(private_text, "", "length")});
+        check(blank.answer.compare(0, 6, "Error:") == 0 && blank.requests.size() == 2,
+              "whitespace answer escaped the bounded recovery");
         const auto empty = run({completion("", "")});
         check(empty.answer.compare(0, 6, "Error:") == 0 && empty.spoken == empty.answer,
               "empty completion silently succeeded");
+        {
+            local_tools::ToolMode mode;
+            std::string error;
+            check(local_tools::parse_tool_mode(json::object(), "ordinary", mode, error) &&
+                      mode == local_tools::ToolMode::Legacy,
+                  "omitted mode changed legacy clients");
+            check(local_tools::parse_tool_mode({{"tool_mode", "answer"}},
+                      "Path: C:\\Temp\\GitHub", mode, error) &&
+                      mode == local_tools::ToolMode::Answer,
+                  "a Path overrode Answer mode");
+            check(local_tools::parse_tool_mode({{"tool_mode", "fix"}},
+                      "No tools. Explain.", mode, error) &&
+                      mode == local_tools::ToolMode::Answer,
+                  "explicit No tools lost its precedence");
+            for (const auto& invalid : {json(nullptr), json(1), json("legacy"), json("unknown")}) {
+                check(!local_tools::parse_tool_mode({{"tool_mode", invalid}},
+                          "ordinary", mode, error), "invalid mode was accepted");
+            }
+            const auto definitions = local_tools::openai_tool_defs_for(
+                "Research Windows services", local_tools::ToolMode::Research);
+            std::unordered_set<std::string> names;
+            for (const auto& definition : definitions) {
+                names.insert(definition.at("function").at("name").get<std::string>());
+            }
+            check(names.count("run_host") && names.count("run_reg") &&
+                      names.count("read_local_acl") &&
+                      names.count("search_microsoft_docs") && names.count("read_microsoft_doc") &&
+                      !names.count("write_local_file") && !names.count("edit_local_file") &&
+                      !names.count("run_pwsh") && !names.count("run_elevate") &&
+                      !names.count("acl_takeover") && !names.count("run_sysint"),
+                  "Research schema omitted reads or advertised writes");
+            local_tools::RequestScope scope;
+            scope.mode = local_tools::ToolMode::Research;
+            scope.operator_text = "Research Windows services";
+            local_tools::set_yolo_minutes(1);
+            for (const auto& spec : std::vector<std::pair<std::string, std::string>>{
+                     {"reg", "delete HKCU\\Software\\NeverRun /f"},
+                     {"wevtutil", "im nonexistent.xml"},
+                     {"schtasks", "/Delete /TN NeverRun /F"}, {"logman", "start NeverRun"},
+                     {"ipconfig", "/release"}, {"sc", "start NeverRun"}, {"fltmc", "detach NeverRun"},
+                     {"run_pwsh", "throw 'Must not execute'"},
+                     {"execute_command", "throw 'Alias must not execute'"},
+                     {"acl_takeover", ""}, {"write_file", ""}, {"edit_block", ""}}) {
+                local_tools::Call call;
+                call.name = spec.first;
+                call.args = spec.second;
+                bool ok = true;
+                const auto denied = local_tools::execute_calls({call}, &ok, nullptr, "", nullptr, &scope);
+                check(!ok && denied.find("request mode forbids") != std::string::npos,
+                      "Research mutation or alias bypassed the guard with YOLO active");
+            }
+            local_tools::Call query;
+            query.name = "run_host";
+            query.exe = "sc";
+            query.args = "qc fixture";
+            check(local_tools::research_call_allowed(query), "Research blocked service-account inspection");
+            for (const auto& arguments : {"sc qc fixture", "sc.exe qc fixture", "  SC.EXE  query fixture"}) {
+                query.args = arguments;
+                check(local_tools::research_call_allowed(query),
+                      "Research rejected a host invocation that its executor normalizes");
+            }
+            query.exe.clear();
+            query.args = "sc qc fixture";
+            check(local_tools::research_call_allowed(query),
+                  "Research rejected the executor's command-in-args fallback");
+            query.exe = "sc";
+            for (const auto& arguments : {"sc start NeverRun", "sc.exe stop NeverRun",
+                                          "  SC.EXE config NeverRun start=auto"}) {
+                query.args = arguments;
+                bool mutation_ok = true;
+                const auto blocked = local_tools::execute_calls(
+                    {query}, &mutation_ok, nullptr, "", nullptr, &scope);
+                check(!mutation_ok && blocked.find("request mode forbids") != std::string::npos,
+                      "normalized host command enabled a Research mutation with YOLO active");
+            }
+            query.name = "run_reg";
+            query.exe.clear();
+            query.args.clear();
+            query.path = "HKCU\\Software\\Research Fixture With Spaces";
+            check(local_tools::research_call_allowed(query),
+                  "Research rejected a path-only registry query supported by its executor");
+            query.args = "delete HKCU\\Software\\NeverRun /f";
+            check(!local_tools::research_call_allowed(query),
+                  "a registry path overrode explicit mutating arguments");
+            query.name = "search_microsoft_docs";
+            query.path.clear();
+            query.args = "private_host_result_not_in_the_question";
+            bool ok = true;
+            check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
+                      "not private tool results") != std::string::npos && !ok,
+                  "Research could send private tool output into a public search");
+            query.name = "read_microsoft_doc";
+            query.path = "https://learn.microsoft.com/en-us/private-tool-result";
+            ok = true;
+            check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
+                      "exact URL") != std::string::npos && !ok,
+                  "Research fetched an unapproved model-generated URL");
+            scope.mode = local_tools::ToolMode::Answer;
+            query.name = "list_granted_roots";
+            ok = true;
+            check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
+                      "request mode forbids") != std::string::npos && !ok,
+                  "Answer mode executed a fallback read");
+            local_tools::set_yolo_minutes(0);
+            const auto answered = run({completion("", "No tools were used.")}, "off",
+                "Explain Path: C:\\Temp\\GitHub", "Fixture system.", true, true, false, "",
+                false, nullptr, local_tools::ToolMode::Answer);
+            check(!answered.requests[0].contains("tools") &&
+                      answered.receipt["tool_mode"] == "answer" &&
+                      answered.receipt["tool_attempts"].empty(),
+                  "Answer mode with Path advertised tools or misreported its calls");
+        }
+        {
+            const auto path = root / "read-text-fixture.txt";
+            const auto utf16 = [](const std::u16string& text, bool little = true) {
+                std::string bytes = little ? "\xff\xfe" : "\xfe\xff";
+                for (const char16_t unit : text) {
+                    bytes.push_back(static_cast<char>(little ? unit & 255 : unit >> 8));
+                    bytes.push_back(static_cast<char>(little ? unit >> 8 : unit & 255));
+                }
+                return bytes;
+            };
+            local_tools::RequestScope scope;
+            scope.mode = local_tools::ToolMode::Research;
+            const std::unordered_set<std::string> advertised{"read_local_file"};
+            const auto inspect = [&](const std::string& bytes, const std::string& args,
+                                     bool expected_ok = true) {
+                std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+                out.close();
+                check(static_cast<bool>(out), "cannot create isolated text fixture");
+                local_tools::Call call;
+                call.name = "read_local_file";
+                call.path = path.string();
+                call.args = args;
+                bool ok = !expected_ok;
+                const std::string text = local_tools::execute_calls(
+                    {call}, &ok, &advertised, "text-read-fixture", nullptr, &scope);
+                check(ok == expected_ok, "text decoder reported incorrect executor success");
+                std::ifstream unchanged(path, std::ios::binary);
+                const std::string original((std::istreambuf_iterator<char>(unchanged)), {});
+                check(original == bytes, "text read changed source bytes");
+                return text;
+            };
+            const std::u16string text = u"first\r\n0x0\r\n\u00e5 \U0001f642\r\nlast\r\n";
+            for (const bool little : {true, false}) {
+                const auto observed = inspect(utf16(text, little), "offset=1 limit=2");
+                check(observed.find(little ? "encoding=UTF-16LE" : "encoding=UTF-16BE") !=
+                          std::string::npos &&
+                          observed.find("0x0\n\xc3\xa5 \xf0\x9f\x99\x82\n") != std::string::npos &&
+                          observed.find("\nfirst") == std::string::npos &&
+                          observed.find("\nlast") == std::string::npos,
+                      "BOM-aware text read lost Unicode, short status or line slicing");
+                check(inspect(utf16(text, little), "offset=-1 limit=1").find("\nlast\n") !=
+                          std::string::npos, "decoded text tail slicing changed");
+            }
+            check(inspect("first\n0x0\nlast\n", "offset=1 limit=1").find("\n0x0\n") !=
+                      std::string::npos, "ordinary UTF8 line reads changed");
+            check(inspect(std::string("\xef\xbb\xbf") + "0x6", "").find(
+                      "encoding=UTF-8 utf8_bytes=3\n0x6\n") != std::string::npos,
+                  "UTF8 BOM was exposed as file content");
+            for (const auto& bad : {std::string("\xff\xfe\x61", 3),
+                                    utf16(std::u16string(1, static_cast<char16_t>(0xd800))),
+                                    utf16(std::u16string(1, static_cast<char16_t>(0xdc00)), false)}) {
+                check(inspect(bad, "", false).find("invalid UTF-16") != std::string::npos,
+                      "malformed UTF16 was silently replaced or accepted");
+            }
+            const auto binary = inspect(std::string("MZ\0binary", 9), "", false);
+            check(binary.find("binary") != std::string::npos &&
+                      binary.find("run_python") == std::string::npos,
+                  "binary read was admitted or suggested a forbidden Research runner");
+            const auto expansion = inspect(utf16(u"head\n" + std::u16string(100000, u'\u754c')),
+                                           "limit=1");
+            check(expansion.find("utf8_bytes=262142 [truncated 256KiB]") != std::string::npos &&
+                      expansion.find("\nhead\n") != std::string::npos,
+                  "decoded output exceeded its UTF8 bound or split a code point");
+            const auto surrogate_cut = inspect(
+                utf16(u"head\n" + std::u16string(131065, u'a') + u"\U0001f642Z"), "limit=1");
+            check(surrogate_cut.find("utf8_bytes=131070 [truncated 256KiB]") != std::string::npos,
+                  "bounded UTF16 read rejected or emitted a split surrogate pair");
+            std::filesystem::remove(path);
+        }
+        {
+            struct AclFixture {
+                HKEY key = nullptr;
+                std::string subkey;
+                std::filesystem::path file;
+                std::vector<std::filesystem::path> extra_files;
+                ~AclFixture() {
+                    if (key) {
+                        RegCloseKey(key);
+                        RegDeleteKeyA(HKEY_CURRENT_USER, subkey.c_str());
+                    }
+                    if (!file.empty()) std::filesystem::remove(file);
+                    for (const auto& extra : extra_files) std::filesystem::remove(extra);
+                }
+            } fixture;
+            HANDLE token = nullptr;
+            check(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) != FALSE,
+                  "cannot open fixture identity");
+            DWORD size = 0;
+            GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+            std::vector<unsigned char> user(size);
+            const BOOL have_user = GetTokenInformation(token, TokenUser, user.data(), size, &size);
+            CloseHandle(token);
+            check(have_user != FALSE, "cannot read fixture identity");
+            LPSTR sid_text = nullptr;
+            check(ConvertSidToStringSidA(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,
+                      &sid_text) != FALSE, "cannot encode fixture identity");
+            const std::string sid(sid_text);
+            LocalFree(sid_text);
+            const std::string sddl = "O:" + sid + "D:P(D;;0x2;;;SY)(A;;KA;;;" + sid + ")";
+            PSECURITY_DESCRIPTOR descriptor = nullptr;
+            check(ConvertStringSecurityDescriptorToSecurityDescriptorA(sddl.c_str(),
+                      SDDL_REVISION_1, &descriptor, nullptr) != FALSE,
+                  "cannot construct isolated fixture descriptor");
+            SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
+            fixture.subkey = "Software\\GodBrain ACL Read Test-" + std::to_string(GetCurrentProcessId());
+            const LSTATUS created = RegCreateKeyExA(HKEY_CURRENT_USER, fixture.subkey.c_str(),
+                0, nullptr, 0, KEY_READ | KEY_SET_VALUE | DELETE, &attributes, &fixture.key, nullptr);
+            LocalFree(descriptor);
+            check(created == ERROR_SUCCESS, "cannot create disposable registry fixture");
+            const std::string secret = "FIXTURE_VALUE_MUST_NOT_ENTER_ACL_EVIDENCE";
+            check(RegSetValueExA(fixture.key, "Sentinel", 0, REG_SZ,
+                      reinterpret_cast<const BYTE*>(secret.c_str()),
+                      static_cast<DWORD>(secret.size() + 1)) == ERROR_SUCCESS,
+                  "cannot write isolated fixture sentinel");
+            const auto key_security = [&]() {
+                DWORD count = 0;
+                const auto requested = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                                       DACL_SECURITY_INFORMATION;
+                check(RegGetKeySecurity(fixture.key, requested, nullptr, &count) == ERROR_INSUFFICIENT_BUFFER,
+                      "cannot size fixture descriptor");
+                std::vector<unsigned char> bytes(count);
+                check(RegGetKeySecurity(fixture.key, requested, bytes.data(), &count) == ERROR_SUCCESS,
+                      "cannot snapshot fixture descriptor");
+                bytes.resize(count);
+                return bytes;
+            };
+            const auto before = key_security();
+            local_tools::RequestScope scope;
+            scope.mode = local_tools::ToolMode::Research;
+            local_tools::Call call;
+            call.name = "read_local_acl";
+            call.path = "HKCU\\" + fixture.subkey;
+            const std::unordered_set<std::string> advertised{"read_local_acl"};
+            const auto inspect = [&](const local_tools::Call& target, bool expected_ok) {
+                bool ok = !expected_ok;
+                const auto text = local_tools::execute_calls(
+                    {target}, &ok, &advertised, "acl-fixture", nullptr, &scope);
+                check(ok == expected_ok, "ACL inspection success/failure receipt is incorrect");
+                check(text.find(secret) == std::string::npos, "ACL reader leaked registry values or file content");
+                check(key_security() == before, "ACL reader mutated the fixture security descriptor");
+                if (!expected_ok) {
+                    check(text.find("failed:") != std::string::npos, "ACL failure was silent");
+                    return json();
+                }
+                return json::parse(text.substr(text.find('\n') + 1));
+            };
+            const auto observed = inspect(call, true);
+            local_tools::Call registry_query;
+            registry_query.name = "run_reg";
+            registry_query.path = "HKCU\\" + fixture.subkey;
+            bool registry_ok = false;
+            const std::unordered_set<std::string> registry_tools{"run_reg"};
+            const auto registry_result = local_tools::execute_calls(
+                {registry_query}, &registry_ok, &registry_tools, "registry-read-fixture", nullptr, &scope);
+            check(registry_ok && registry_result.find(secret) != std::string::npos &&
+                      key_security() == before,
+                  "path-only Research registry query failed or changed the fixture descriptor");
+            registry_query.args = "query \"" + registry_query.path +
+                "\" /s /f /t REG_SZ /d \"fixture\"";
+            registry_ok = true;
+            const auto malformed_result = local_tools::execute_calls(
+                {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope);
+            check(!registry_ok &&
+                      malformed_result.find("run_reg " + registry_query.args + "\n") != std::string::npos &&
+                      malformed_result.find("request mode forbids") == std::string::npos &&
+                      key_security() == before,
+                  "malformed registry syntax was hidden, rewritten or confused with a policy denial");
+            registry_query.args.clear();
+            registry_query.path += "\nquery HKLM\\SOFTWARE";
+            registry_ok = true;
+            check(local_tools::execute_calls(
+                      {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope).find(
+                          "args must be one line") != std::string::npos && !registry_ok,
+                  "path-only registry query bypassed one-line validation");
+            local_tools::Call host_query;
+            host_query.name = "run_host";
+            host_query.exe = "hostname";
+            host_query.args = "hostname.exe";
+            bool host_ok = false;
+            const std::unordered_set<std::string> host_tools{"run_host"};
+            const auto host_result = local_tools::execute_calls(
+                {host_query}, &host_ok, &host_tools, "normalized-read-fixture", nullptr, &scope);
+            check(host_ok && host_result.find("run_host hostname \nexit=0") != std::string::npos,
+                  "normalized Research host arguments differed from actual process arguments");
+            check(observed["owner_sid"] == sid && observed["inheritance_disabled"] == true &&
+                      observed["dacl_present"] == true && observed["null_dacl"] == false &&
+                      observed["aces"][0]["type"] == "deny" &&
+                      observed["aces"][0]["sid"] == "S-1-5-18" &&
+                      observed["aces"][0]["identity"] == "SYSTEM" &&
+                      observed["aces"][0]["rights"] == json::array({"SetValue"}) &&
+                      observed["aces"][1]["rights"] == json::array({"FullControl"}),
+                  "ACL reader changed owner, inheritance, ACE order or mask meaning");
+            call.path = "Registry::HKEY_CURRENT_USER:\\" + fixture.subkey;
+            check(inspect(call, true)["sddl"] == observed["sddl"], "registry aliases resolved differently");
+            for (const auto& path : {"HKLM\\SAM", "HKLM\\SECURITY", "\\\\remote\\HKLM\\SOFTWARE",
+                                    "C:\\Windows\\win.ini"}) {
+                call.path = path;
+                inspect(call, false);
+            }
+            call.path = "HKCU\\" + fixture.subkey + "-Missing";
+            inspect(call, false);
+            call.path = "HKCU\\" + fixture.subkey;
+            call.args = "deny SYSTEM";
+            inspect(call, false);
+            call.args.clear();
+            fixture.file = root / "acl-read-fixture.txt";
+            std::ofstream(fixture.file, std::ios::binary) << secret;
+            call.path = fixture.file.string();
+            const auto file_before = inspect(call, true);
+            check(inspect(call, true) == file_before, "file ACL read was not stable/read-only");
+            std::ifstream file(fixture.file, std::ios::binary);
+            const std::string unchanged((std::istreambuf_iterator<char>(file)),
+                                        std::istreambuf_iterator<char>());
+            file.close();
+            check(unchanged == secret, "ACL reader mutated fixture file content");
+            MockCompletion acl_reply;
+            acl_reply.finish = "tool_calls";
+            acl_reply.deltas.push_back({{"tool_calls", json::array({{
+                {"id", "acl_read"}, {"type", "function"},
+                {"function", {{"name", "read_local_acl"},
+                    {"arguments", json({{"path", call.path}}).dump()}}}
+            }})}});
+            std::vector<MockCompletion> rounds(2, acl_reply);
+            rounds.push_back(completion("", "Inspected fixture metadata; actual writer remains unproved."));
+            const std::string question = "Inspect the ACL of " + call.path + ".";
+            const auto researched = run(rounds, "off", question, "Fixture system.", true, true,
+                false, "OPERATOR_TASK_CONTEXT: read only; no values.", false, nullptr,
+                local_tools::ToolMode::Research);
+            check(researched.requests.size() == 3 &&
+                      !researched.requests.back().contains("tools") &&
+                      researched.receipt["tool_attempts"].size() == 2 &&
+                      load_chain()["ledger"].get<std::string>().find("owner_sid") != std::string::npos,
+                  "Research repeated unchanged reads instead of concluding from retained evidence");
+            for (const auto& body : researched.requests) {
+                const auto text = body["messages"].dump();
+                check(text.find("OPERATOR_TASK_CONTEXT") != std::string::npos &&
+                          text.find("Kernel repo map") == std::string::npos &&
+                          text.find("technical note") == std::string::npos,
+                      "Research lost task context or replaced ACL inspection with repo analysis");
+            }
+            check(researched.requests[1]["messages"].dump().find("owner_sid") != std::string::npos,
+                  "native ACL evidence did not reach the next model round");
+            rounds.clear();
+            for (int i = 0; i < 7; ++i) {
+                const auto extra = root / ("research-evidence-" + std::to_string(i) + ".txt");
+                fixture.extra_files.push_back(extra);
+                std::ofstream(extra, std::ios::binary)
+                    << "COMPLETE_OBSERVATION_" << i << ":" << std::string(2100, 'x');
+                auto read = acl_reply;
+                read.deltas[0]["tool_calls"][0]["function"] = {
+                    {"name", "read_local_file"}, {"arguments", json({{"path", extra.string()}}).dump()}};
+                rounds.push_back(read);
+            }
+            rounds.push_back(completion("", "All seven complete observations retained."));
+            const auto cumulative = run(rounds, "off", question, "Fixture system.", true, true,
+                false, "", false, nullptr, local_tools::ToolMode::Research);
+            const auto saved = load_chain();
+            const auto retained = saved["ledger"].get<std::string>();
+            check(cumulative.requests.size() == 8 &&
+                      !cumulative.requests.back().contains("tools") &&
+                      cumulative.receipt["tool_attempts"].size() == 7 &&
+                      retained.size() > kToolContextBytes && retained.size() <= kResearchToolContextBytes &&
+                      retained.find("omitted") == std::string::npos,
+                  "Research lost earlier evidence or exceeded its mode-specific context bound");
+            const auto resumed = resume_chain_prompt(
+                revalidate_chain_references(saved, godbrain_rag::Client{}), "Continue read-only.");
+            for (int i = 0; i < 7; ++i) {
+                const auto marker = "COMPLETE_OBSERVATION_" + std::to_string(i) + ":";
+                check(cumulative.requests.back()["messages"].dump().find(marker) != std::string::npos &&
+                          resumed.find(marker) != std::string::npos,
+                      "Research or Continue dropped a complete earlier observation");
+            }
+            rounds.pop_back();
+            rounds.resize(6);
+            for (int i = 0; i < 6; ++i) {
+                std::ofstream(fixture.extra_files[i], std::ios::binary)
+                    << "CAPACITY_OBSERVATION_" << i << ":" << std::string(6000, 'x');
+            }
+            rounds.push_back(completion("", "Capacity reached; later evidence was omitted."));
+            const auto saturated = run(rounds, "off", question, "Fixture system.", true, true,
+                false, "", false, nullptr, local_tools::ToolMode::Research);
+            const auto bounded = load_chain()["ledger"].get<std::string>();
+            check(saturated.requests.size() == 7 &&
+                      !saturated.requests.back().contains("tools") &&
+                      bounded.size() <= kResearchToolContextBytes &&
+                      bounded.find("Research capacity reached") != std::string::npos &&
+                      bounded.find("CAPACITY_OBSERVATION_0:") != std::string::npos &&
+                      bounded.find("CAPACITY_OBSERVATION_4:") != std::string::npos &&
+                      bounded.find("CAPACITY_OBSERVATION_5:") == std::string::npos &&
+                      load_chain()["hop_ok"] == false,
+                  "Research capacity exhaustion evicted earlier evidence or silently claimed delivery");
+            bool ok = true;
+            const std::unordered_set<std::string> no_advertised_tools;
+            const auto denied = local_tools::execute_calls({call}, &ok, &no_advertised_tools, "", nullptr, &scope);
+            check(!ok && denied.find("not advertised") != std::string::npos,
+                  "native ACL reader bypassed advertised-schema authorization");
+        }
 
         const auto continued = run({
             completion(private_text, "A blue-", "length"),
@@ -296,11 +765,12 @@ int main() {
               "continuation history is not answer-only");
         const auto failed_continuation = run({
             completion(private_text, "A blue-", "length"),
+            completion(private_text, "", "length"),
             completion(private_text, "", "length")
         });
         check(failed_continuation.answer.compare(0, 6, "Error:") == 0 &&
                   failed_continuation.spoken == failed_continuation.answer &&
-                  failed_continuation.requests.size() == 2,
+                  failed_continuation.requests.size() == 3,
               "reasoning-only continuation silently returned a partial answer");
 
         const auto native_empty = run({completion(private_text, "", "length")}, "on",
@@ -352,6 +822,55 @@ int main() {
             }})}});
             return reply;
         };
+        const auto forbidden_file = root / "research-must-not-write.txt";
+        const auto recovered_research = run({
+            completion("", "An incomplete table", "length"),
+            completion("", "The exact target and observed writer are still missing.")
+        }, "on", "Research Windows services.", "Fixture system.", true, true, false, "",
+           false, nullptr, local_tools::ToolMode::Research);
+        check(recovered_research.requests.size() == 2 &&
+                  recovered_research.receipt["answer_retry"] == true &&
+                  recovered_research.requests[1]["tool_choice"] == "none" &&
+                  recovered_research.requests[1]["messages"].dump().find("An incomplete table") ==
+                      std::string::npos &&
+                  recovered_research.answer == "The exact target and observed writer are still missing.",
+              "Research presented a truncated tool-round draft or replayed it into recovery");
+        const auto failed_research = run({
+            completion("", "An incomplete table", "length"),
+            completion("", "Another incomplete table", "length")
+        }, "on", "Research Windows services.", "Fixture system.", true, true, false, "",
+           false, nullptr, local_tools::ToolMode::Research);
+        check(failed_research.requests.size() == 2 &&
+                  failed_research.answer.compare(0, 6, "Error:") == 0,
+              "Research returned a truncated recovery as a completed answer");
+        const auto research = run({
+            native_call("write_local_file", {{"path", forbidden_file.string()}, {"content", "never"}}),
+            native_call("list_granted_roots", json::object()),
+            completion("", "Read-only inspection; no changes made.")
+        }, "off", "Research Windows services.", "Fixture system.", true, true, false, "",
+           false, nullptr, local_tools::ToolMode::Research);
+        check(!std::filesystem::exists(forbidden_file) &&
+                  research.receipt["tool_mode"] == "research" &&
+                  research.receipt["tool_attempts"].size() == 2 &&
+                  research.receipt["tool_attempts"][0]["executor_ok"] == false &&
+                  research.receipt["tool_attempts"][1]["executor_ok"] == true &&
+                  load_chain()["tool_mode"] == "research",
+              "native Research bypassed its schema, misreported calls or lost its persisted policy");
+        ChainEvidence readonly;
+        readonly.task_id = mint_chain_id();
+        readonly.attempt_id = mint_chain_id();
+        readonly.tool_mode = "research";
+        save_chain("Research Windows services.", "Previous read-only evidence.", "", 1,
+                   "after", true, &readonly);
+        const auto readonly_resumed = run({
+            native_call("write_local_file", {{"path", forbidden_file.string()}, {"content", "never"}}),
+            completion("", "The resumed request stayed read-only.")
+        }, "off", "/continue", "Fixture system.", true, true, false, "",
+           false, nullptr, local_tools::ToolMode::Fix);
+        check(!std::filesystem::exists(forbidden_file) &&
+                  readonly_resumed.receipt["tool_mode"] == "research" &&
+                  readonly_resumed.receipt["tool_attempts"][0]["executor_ok"] == false,
+              "Continue escalated a read-only chain through a later Fix selection");
         const auto artifact = root / "wrong-outcome.txt";
         const auto execute_fixture = [&](const std::string& name, const json& args,
                                          bool expected_ok) {
@@ -733,6 +1252,98 @@ int main() {
                   loop_reply.answer.find("output limit") == std::string::npos &&
                   loop_reply.requests.size() == 1,
               "private reasoning loop guard no longer aborts");
+        const auto research_loop = run({
+            native_call("list_granted_roots", json::object()),
+            native_call("list_granted_roots", json::object()),
+            completion(loop, "Discarded research draft.", "length"),
+            completion("", "A concise conclusion from retained observations.")
+        }, "on", "Research the available granted roots.", "Fixture system.", true,
+           true, false, "", false, nullptr, local_tools::ToolMode::Research);
+        check(research_loop.requests.size() == 4 &&
+                  research_loop.receipt["answer_retry_reason"] == "generation_loop" &&
+                  research_loop.requests.back()["chat_template_kwargs"]["enable_thinking"] == false &&
+                  research_loop.requests.back()["tool_choice"] == "none" &&
+                  research_loop.answer == "A concise conclusion from retained observations." &&
+                  research_loop.tokens == research_loop.answer &&
+                  research_loop.spoken == research_loop.answer &&
+                  research_loop.requests.back()["messages"].dump().find("Discarded research draft") ==
+                      std::string::npos &&
+                  research_loop.requests.back()["messages"].dump().find("list_granted_roots") !=
+                      std::string::npos,
+              "Research loop recovery lost evidence, leaked a draft or was not bounded/tools-off");
+        const auto research_loop_failed = run({
+            native_call("list_granted_roots", json::object()),
+            native_call("list_granted_roots", json::object()),
+            completion(loop, "", "length"),
+            completion(loop, "Discarded repeated recovery.", "length")
+        }, "on", "Research the available granted roots.", "Fixture system.", true,
+           true, false, "", false, nullptr, local_tools::ToolMode::Research);
+        check(research_loop_failed.requests.size() == 4 &&
+                  research_loop_failed.answer.compare(0, 6, "Error:") == 0 &&
+                  research_loop_failed.tokens.empty(),
+              "Research retried a repeated recovery or streamed its discarded answer");
+        for (const auto& finish : {"stop", "length"}) {
+            const auto recovered_empty = run({
+                native_call("list_granted_roots", json::object()),
+                completion(private_text, "", finish),
+                completion("", "Retained observations received; missing evidence remains unknown.")
+            }, "on", "Research an empty native completion.", "Fixture system.", true,
+               true, false, "", false, nullptr, local_tools::ToolMode::Research);
+            check(recovered_empty.requests.size() == 3 &&
+                      recovered_empty.receipt["answer_retry"] == true &&
+                      recovered_empty.requests.back()["tool_choice"] == "none" &&
+                      !recovered_empty.requests.back().contains("tools") &&
+                      recovered_empty.requests.back()["chat_template_kwargs"]["enable_thinking"] == false &&
+                      recovered_empty.requests.back()["messages"].dump().find("list_granted_roots") !=
+                          std::string::npos &&
+                      recovered_empty.answer == recovered_empty.tokens &&
+                      recovered_empty.answer == recovered_empty.spoken &&
+                      load_chain()["phase"] == "final" &&
+                      load_chain()["status"] == "done" &&
+                      load_chain()["model_requests"][1]["finish_reason"] == finish &&
+                      load_chain()["model_requests"][1]["content_bytes"] == 0 &&
+                      load_chain()["model_requests"][1]["reasoning_bytes"] == private_text.size() &&
+                      load_chain().dump().find("PRIVATE_REASONING") == std::string::npos,
+                  "native empty-answer recovery lost evidence, diagnostics, privacy or terminal state");
+        }
+        const auto twice_empty = run({
+            native_call("list_granted_roots", json::object()),
+            completion("", ""),
+            completion(private_text, "", "stop")
+        }, "off", "Research two empty completions.", "Fixture system.", true,
+           true, false, "", false, nullptr, local_tools::ToolMode::Research);
+        check(twice_empty.requests.size() == 3 && twice_empty.tokens.empty() &&
+                  twice_empty.answer.compare(0, 6, "Error:") == 0 &&
+                  load_chain()["status"] == "failed" && load_chain()["phase"] == "final" &&
+                  load_chain()["execution"]["outcome"] == "failed" &&
+                  load_chain()["verification"]["status"] == "not_run" &&
+                  load_chain()["model_requests"].size() == 3 &&
+                  !load_chain()["ledger"].get<std::string>().empty(),
+              "failed recovery left a running/successful chain or lost the retained evidence");
+        const auto streamed_empty = run({
+            native_call("list_granted_roots", json::object()),
+            native_call("list_granted_roots", json::object()),
+            completion("", ""),
+            completion("", "Final after an empty streamed completion.")
+        }, "off", "Research an empty speak-only stream.", "Fixture system.", true,
+           true, false, "", false, nullptr, local_tools::ToolMode::Research);
+        check(streamed_empty.requests.size() == 4 &&
+                  streamed_empty.requests[2]["stream"] == true &&
+                  streamed_empty.receipt["answer_retry_reason"] == "empty_completion" &&
+                  streamed_empty.answer == "Final after an empty streamed completion." &&
+                  streamed_empty.tokens == streamed_empty.answer,
+              "empty speak-only stream bypassed the single bounded answer recovery");
+        auto upstream_error = completion("", "");
+        upstream_error.status = 503;
+        const auto failed_upstream = run({
+            native_call("list_granted_roots", json::object()), upstream_error
+        }, "off", "Research an upstream failure.", "Fixture system.", true,
+           true, false, "", false, nullptr, local_tools::ToolMode::Research);
+        check(failed_upstream.requests.size() == 2 &&
+                  failed_upstream.answer == "Error: EXL3 HTTP 503" &&
+                  load_chain()["status"] == "failed" &&
+                  load_chain()["model_requests"].back()["http_status"] == 503,
+              "upstream failure left a running chain or hid its HTTP diagnosis");
         const auto unused = run({
             completion("PRIVATE_REASONING <unused49>", "Fixture partial", "length")
         });

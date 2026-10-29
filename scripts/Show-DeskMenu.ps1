@@ -6,7 +6,7 @@
 # Clips page runs the deadtime scan. Lyrics starts capture, waits for loopback,
 # waits the preroll, then Shift+P into the running ncspot.
 # Stop holds kernel and RAG against Watch (logs/*-pause.txt) until Start.
-# Tailscale Start reconnects the existing node. Mouth Start does not launch Gemma.
+# Tailscale Start reconnects the existing node. Legacy llama hold does not control Qwen.
 [CmdletBinding()]
 param(
     [switch]$Status,
@@ -443,21 +443,45 @@ function Get-PortListener([int]$Port) {
     return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f [int]$conn.OwningProcess) -ErrorAction SilentlyContinue
 }
 
+function Open-DeskListenerProcess([uint32]$ProcessId) {
+    Initialize-GodBrainAirPlayWindow
+    return [GodBrain.AirPlayProcessHandle]::Open($ProcessId)
+}
+
 function Stop-OwnedListener([int]$Port, [string]$Needle, [string]$Label) {
-    $proc = Get-PortListener $Port
-    if (-not $proc) {
-        [System.Windows.Forms.MessageBox]::Show("$Label is already down.")
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $conn) {
+        $null = [System.Windows.Forms.MessageBox]::Show("$Label is already down.")
         return $false
     }
-    $blob = "{0} {1}" -f $proc.ExecutablePath, $proc.CommandLine
-    $underRepo = $blob -like ("*{0}*" -f $Repo)
-    if ($blob -notlike ("*{0}*" -f $Needle) -or -not $underRepo) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "$Label on :$Port is not the GodBrain process. Leaving it alone.`n$($proc.ExecutablePath)")
+    $handle = $null
+    try {
+        $handle = Open-DeskListenerProcess ([uint32]$conn.OwningProcess)
+        $image = [IO.Path]::GetFullPath($handle.ExecutablePath)
+        $root = [IO.Path]::GetFullPath($Repo).TrimEnd('\') + '\'
+        if ([IO.Path]::GetFileName($image) -ine $Needle -or
+            -not $image.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+            $null = [System.Windows.Forms.MessageBox]::Show(
+                "$Label on :$Port is not the GodBrain process. Leaving it alone.`n$image")
+            return $false
+        }
+        Set-DeskPause ($Label.ToLowerInvariant())
+        Stop-Process -Id ([int]$conn.OwningProcess) -Force -ErrorAction Stop
+        if (-not $handle.WaitForExit(3000)) { throw "$Label did not exit within three seconds." }
+        return $true
+    } catch {
+        $failure = $_.Exception.GetBaseException()
+        $detail = $failure.Message
+        if ($failure -is [ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5) {
+            $detail = "Windows denied process access. The listener may be elevated; use a Desk at matching privilege to stop it."
+        }
+        $null = [System.Windows.Forms.MessageBox]::Show(
+            "$Label stop failed for PID $($conn.OwningProcess) on :${Port}: $detail`nNo other process was targeted.")
         return $false
+    } finally {
+        if ($handle) { $handle.Dispose() }
     }
-    Stop-Process -Id $proc.ProcessId -Force
-    return $true
 }
 
 function Stop-GymDashboard {
@@ -524,9 +548,9 @@ function Get-LyricsStatePath {
 }
 
 function Get-DeskStatus {
-    $mouth = "mouth pause unread"
+    $mouth = "legacy llama :8000 hold unread"
     $mf = Join-Path $Repo "logs\mouth-pause.txt"
-    if (Test-Path $mf) { $mouth = "mouth pause $((Get-Content $mf -Raw).Trim())" }
+    if (Test-Path $mf) { $mouth = "legacy llama :8000 hold $((Get-Content $mf -Raw).Trim())" }
     $cs2 = "CS2 $(Get-Cs2DeskLine)"
     $gym = if (Test-Port 4177) { "gym :4177 up" } else { "gym :4177 down" }
     $kernel = if (Test-Port 8083) { "kernel :8083 up" } else { "kernel :8083 down" }
@@ -552,7 +576,7 @@ function Get-DeskStatus {
 
 function Get-DeskSnapshot {
     $mouth = if (Get-Command Test-GodBrainMouthPaused -ErrorAction SilentlyContinue) {
-        if (Test-GodBrainMouthPaused $Repo) { "paused" } else { "open" }
+        if (Test-GodBrainMouthPaused $Repo) { "hold on" } else { "hold off" }
     } else { "unread" }
     $rows = [ordered]@{
         Model = Get-ModelLine
@@ -717,7 +741,22 @@ function Test-DeskVisionImage([string]$Path) {
     return $Path -match '\.(?i:jpg|jpeg|png|webp|gif|bmp)$'
 }
 
-function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
+function Get-DeskAttachmentPaths([object[]]$Paths) {
+    $result = [Collections.Generic.List[string]]::new()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($value in $Paths) {
+        if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) { throw "Each attachment needs a file path." }
+        $path = ConvertTo-DeskAskPath $value
+        if (-not (Test-DeskGrantedPath $path)) { throw "Attachment is outside the kernel file jail: $path" }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Attachment is not a readable file: $path" }
+        if ($seen.Add($path)) { $result.Add($path) }
+    }
+    if ($result.Count -gt 8) { throw "Attach at most eight files per analysis." }
+    return ,$result.ToArray()
+}
+
+function Invoke-DeskVisionAsk([string]$Path, [string]$Text,
+    [ValidateSet("answer", "research", "fix")][string]$Mode = "answer") {
     if (-not (Test-Port 8888)) {
         throw "The vision tower is down. On the model page, check Vision tower for the 27B, then press Status Start."
     }
@@ -729,6 +768,12 @@ function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
     $models = Invoke-RestMethod "http://127.0.0.1:8888/v1/models" -TimeoutSec 3
     $model = [string]$models.data[0].id
     if ([string]::IsNullOrWhiteSpace($Text)) { $Text = "Describe this image." }
+    $operatorText = $Text
+    $memory = $null
+    if ($Mode -ne "answer" -and $Text -notmatch '^\s*(?i)no tools\b') {
+        $memory = Get-GodBrainSharedContext -Query $Text -ThreadId "desk"
+        $Text = Add-GodBrainSharedContext $Text $memory
+    }
     $mime = switch ([IO.Path]::GetExtension($Path).ToLowerInvariant()) {
         ".png" { "image/png" }
         ".webp" { "image/webp" }
@@ -740,6 +785,7 @@ function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
         model = $model
         temperature = 0
         max_tokens = 2048
+        tool_choice = "none"
         chat_template_kwargs = @{ enable_thinking = $false }
         messages = @(@{
             role = "user"
@@ -751,20 +797,53 @@ function Invoke-DeskVisionAsk([string]$Path, [string]$Text) {
     } | ConvertTo-Json -Depth 8 -Compress
     $res = Invoke-RestMethod "http://127.0.0.1:8888/v1/chat/completions" -Method Post `
         -Body $body -ContentType "application/json; charset=utf-8" -TimeoutSec 180
+    if ($res.error -or @($res.choices).Count -ne 1 -or $res.choices[0].finish_reason -cne "stop") {
+        throw "The vision tower did not return one complete answer."
+    }
     $choice = $res.choices[0].message
-    $answer = [string]$choice.content
-    if ([string]::IsNullOrWhiteSpace($answer)) { $answer = [string]$choice.reasoning_content }
-    if ([string]::IsNullOrWhiteSpace($answer)) { throw "The vision tower returned no text." }
+    $answer = $choice.content
+    if ($choice.tool_calls -or $answer -isnot [string] -or [string]::IsNullOrWhiteSpace($answer)) {
+        throw "The vision tower returned no plain-text answer."
+    }
+    if ($null -ne $memory) {
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Convert]::FromBase64String($encoded))).ToLowerInvariant()
+        $null = Save-GodBrainWorkingTurn -Prompt $operatorText -Response $answer -ThreadId "desk" `
+            -Sources @("$Path [vision_payload_sha256=$hash; source bytes not archived]")
+    }
     return $answer.Trim()
 }
 
 function Invoke-DeskAsk($Request) {
     $text = [string]$Request.Message
+    $mode = "research"
+    if ($Request.PSObject.Properties["Mode"]) { $mode = ([string]$Request.Mode).ToLowerInvariant() }
+    if ($mode -notin @("answer", "research", "fix")) { throw "Select Answer, Research or Fix mode." }
+    if ($text -match '^\s*(?i)no tools\b') { $mode = "answer" }
+    if ($text.Trim() -match '^(?i)/?index$' -and -not $Request.Path -and -not $Request.Attachments) {
+        return (Update-GodBrainContextIndex).response
+    }
     $yoloOrJudge = $text.Trim() -match '^(?i)/(?:yolo|verify|reject)\b'
     $path = ConvertTo-DeskAskPath ([string]$Request.Path)
     if ($path -and -not (Test-DeskGrantedPath $path)) { throw "That path is outside the kernel file jail ($path)." }
+    if ($Request.Attachments) {
+        if ($Request.Attachments -isnot [array]) { throw "Attachments must be a list of file paths." }
+        if ($yoloOrJudge -or $text.Trim().StartsWith("/")) { throw "Remove attachments before sending a slash command." }
+        if ($mode -eq "fix") { throw "Attachment analysis is read-only. Select Answer or Research; remove attachments for Fix." }
+        if ($Request.ImageModel -or (Test-Port 8871)) { throw "Attachment analysis requires a text model, not Qwen-Image generation." }
+        $paths = @($Request.Attachments)
+        if ($path) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) { $paths = @($path) + $paths }
+            elseif (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "The optional scope path does not exist: $path" }
+        }
+        $paths = Get-DeskAttachmentPaths $paths
+        $busy = Test-GenerateBusy
+        if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
+        if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
+        return (Invoke-DeskAttachmentAnalysis $paths $text $mode)
+    }
     if (-not $yoloOrJudge -and $path -and -not $Request.ImageModel -and -not (Test-Port 8871) -and (Test-DeskVisionImage $path)) {
-        return (Invoke-DeskVisionAsk $path $text)
+        return (Invoke-DeskVisionAsk $path $text $mode)
     }
     $completeReview = -not $yoloOrJudge -and -not $Request.ImageModel -and (
         [bool]$Request.ReviewFile -or (Test-DeskNeedsCompleteReview $path $text))
@@ -807,29 +886,41 @@ function Invoke-DeskAsk($Request) {
         if ($null -eq $busy) { throw "Kernel status is down, so Ask cannot tell if the GPU slot is free." }
         if ($busy) { throw "A generate is already running (one GPU slot). Wait." }
     }
-    if ($completeReview) { return (Invoke-DeskCodeReview $path $text) }
+    if ($completeReview) { return (Invoke-DeskCodeReview $path $text $mode) }
     $writeSlash = Test-DeskWriteSlash $text
     if ($yoloOrJudge) {
         $text = $text.Trim()
     } elseif ($path) {
         if ([string]::IsNullOrWhiteSpace($text)) { $text = "Read this path and say what the file or folder is." }
         $text = "Path: $path`n`n$text"
-    } elseif (-not (Test-DeskPathToken $text)) {
-        if ($text -notmatch '^(?i)no tools\b') { $text = "No tools. `n" + $text }
     }
-    $body = @{ message = $text } | ConvertTo-Json -Compress
+    $body = @{ message = $text; tool_mode = $mode } | ConvertTo-Json -Compress
     $chat = @{
         Uri = "http://127.0.0.1:8083/api/chat"
         Method = "Post"
         Body = $body
         ContentType = "application/json; charset=utf-8"
-        TimeoutSec = 180
+        TimeoutSec = 600
     }
-    if ($writeSlash -and -not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
         $chat.Headers = @{ Authorization = "Bearer " + $env:GODBRAIN_API_TOKEN }
     }
     $res = Invoke-RestMethod @chat
-    if ($res.response) { return [string]$res.response }
+    if ($res.response) {
+        if ($res.request_receipt) {
+            $receipt = $res.request_receipt
+            $attempts = @($receipt.tool_attempts)
+            $callCount = [int](($attempts | Measure-Object -Property requested_calls -Sum).Sum)
+            $failedCount = @($attempts | Where-Object { $_.executor_ok -eq $false }).Count
+            $names = @($attempts | ForEach-Object { $_.requested_tool_names } | Sort-Object -Unique)
+            $notice = "Mode: $($receipt.tool_mode); model tool attempts: $callCount"
+            if ($names.Count) { $notice += " ($($names -join ', '))" }
+            if ($failedCount) { $notice += "; $failedCount failed attempt(s), evidence incomplete" }
+            if ($receipt.answer_retry) { $notice += "; answer retry: thinking off (saved preference unchanged)" }
+            return "[$notice]`r`n`r`n$($res.response)"
+        }
+        return [string]$res.response
+    }
     if ($res.error) { throw ([string]$res.error) }
     throw "Kernel returned no chat response."
 }
@@ -1331,7 +1422,7 @@ function Stop-Cs2Desk {
 }
 
 function Stop-MouthHold {
-    if (-not (Confirm-Stop "Pause the mouth? Gemma stays off. The model on :8888 keeps running." "Mouth")) { return }
+    if (-not (Confirm-Stop "Hold legacy llama-server startup and stop its :8000 process? Qwen (:8888) and Qwen-Image (:8871) are unchanged." "Legacy llama :8000")) { return }
     if (Get-Command Set-GodBrainMouthPaused -ErrorAction SilentlyContinue) {
         Set-GodBrainMouthPaused -RepoRoot $Repo -On $true
     } else {
@@ -1346,10 +1437,10 @@ function Stop-MouthHold {
     Update-Status
 }
 
-function Start-MouthHold {
+function Show-MouthHoldInfo {
     [System.Windows.Forms.MessageBox]::Show(
-        "The desk mouth is the model on :8888. Gemma stays off on this machine, so this does not start llama-server. Use Model start for the selected model.",
-        "Mouth")
+        "Choose a text Qwen profile on the Model page, then use Status > Model > Start for AI answers on :8888. Qwen-Image (:8871) is image-only.`r`n`r`nThis row is only the legacy llama-server :8000 startup hold. Info starts nothing. Hold does not stop the selected desk model.",
+        "Legacy llama :8000")
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -1729,7 +1820,7 @@ function Add-Row([System.Windows.Forms.Control]$parent, [string]$name, [int]$y) 
     return $v
 }
 
-function Add-Pair([System.Windows.Forms.Control]$parent, [string]$name, [int]$y, [scriptblock]$start, [scriptblock]$stop) {
+function Add-Pair([System.Windows.Forms.Control]$parent, [string]$name, [int]$y, [scriptblock]$start, [scriptblock]$stop, [string]$startText = "Start", [string]$stopText = "Stop") {
     $l = New-Object System.Windows.Forms.Label
     $l.Text = $name
     $l.ForeColor = $mute
@@ -1749,8 +1840,8 @@ function Add-Pair([System.Windows.Forms.Control]$parent, [string]$name, [int]$y,
     $parent.Controls.Add($v)
     $small = New-Object System.Drawing.Font("Segoe UI", 8)
     foreach ($pair in @(
-            @{ Text = "Start"; X = 432; Primary = $true; Click = $start },
-            @{ Text = "Stop"; X = 510; Primary = $false; Click = $stop }
+            @{ Text = $startText; X = 432; Primary = $true; Click = $start },
+            @{ Text = $stopText; X = 510; Primary = $false; Click = $stop }
         )) {
         $b = New-Object System.Windows.Forms.Button
         $b.Text = $pair.Text
@@ -1798,14 +1889,12 @@ $rowTok = Add-Row $pageStatus "Rate" 112
 $rowKernel = Add-Pair $pageStatus "Kernel" 144 { Start-DeskListener "kernel" } {
     if (-not (Confirm-Stop "Stop the kernel on :8083 so the exe can be rebuilt? Watch leaves it down until you press Start." "Kernel")) { return }
     if (Stop-OwnedListener 8083 "godbrain-kernel.exe" "Kernel") {
-        Set-DeskPause "kernel"
         Update-Status
     }
 }
 $rowRag = Add-Pair $pageStatus "RAG" 176 { Start-DeskListener "rag" } {
     if (-not (Confirm-Stop "Stop rag-service on :8084 so the exe can be rebuilt? Watch leaves it down until you press Start." "RAG")) { return }
     if (Stop-OwnedListener 8084 "rag-service.exe" "RAG") {
-        Set-DeskPause "rag"
         Update-Status
     }
 }
@@ -1818,7 +1907,7 @@ $rowGym = Add-Pair $pageStatus "Gym" 240 { Start-GymDashboard } {
     Stop-GymDashboard
 }
 $rowCs2 = Add-Pair $pageStatus "CS2" 272 { Start-Cs2Desk } { Stop-Cs2Desk }
-$rowMouth = Add-Pair $pageStatus "Mouth" 304 { Start-MouthHold } { Stop-MouthHold }
+$rowMouth = Add-Pair $pageStatus "Llama :8000" 304 { Show-MouthHoldInfo } { Stop-MouthHold } -startText "Info" -stopText "Hold"
 $rowRust = Add-Pair $pageStatus "RustDesk" 336 { Set-HostService "RustDesk" "start" } {
     if (-not (Confirm-Stop "Stop RustDesk (service or installed app)? Remote desktop will drop; AFK recovery leaves it paused until Start." "RustDesk")) { return }
     Set-HostService "RustDesk" "stop"
@@ -1837,7 +1926,7 @@ $rowWatch = Add-Pair $pageStatus "AFK Watch" 464 { Set-WatchTask "ENABLE" } {
     Set-WatchTask "DISABLE"
 }
 $rowWeb = Add-Pair $pageStatus "Web" 496 { Start-WebDoor } { Stop-WebDoor }
-$rowWhisper = Add-Pair $pageStatus "STT/TTS" 528 { Start-VoiceDoor } { Stop-VoiceDoor }
+$rowWhisper = Add-Pair $pageStatus "Speech/OCR" 528 { Start-VoiceDoor } { Stop-VoiceDoor }
 $script:airPlayWorker = [PowerShell]::Create()
 $script:airPlayJob = $null
 $script:airPlayButtons = [ordered]@{}
@@ -2212,7 +2301,7 @@ Show-DeskReasoningPreference
 
 Add-Head $pageAsk "Ask" 16
 $fileLabel = New-Object System.Windows.Forms.Label
-$fileLabel.Text = "Path (file/folder, review source, or image input)"
+$fileLabel.Text = "Optional scope / single file / image edit input"
 $fileLabel.ForeColor = $mute
 $fileLabel.Location = New-Object System.Drawing.Point(20, 44)
 $fileLabel.AutoSize = $true
@@ -2222,18 +2311,127 @@ $askPath.Location = New-Object System.Drawing.Point(20, 66)
 $askPath.Size = New-Object System.Drawing.Size(($script:pageW - 40), 26)
 Style-Box $askPath
 $pageAsk.Controls.Add($askPath)
+$attachmentLabel = [Windows.Forms.Label]::new()
+$attachmentLabel.Text = "Attachments: read-only files / text screenshots (CPU OCR), up to 8"
+$attachmentLabel.ForeColor = $mute
+$attachmentLabel.Location = [Drawing.Point]::new(20, 102)
+$attachmentLabel.AutoSize = $true
+$pageAsk.Controls.Add($attachmentLabel)
+$askAttachments = [Windows.Forms.ListBox]::new()
+$askAttachments.Location = [Drawing.Point]::new(20, 160)
+$askAttachments.Size = [Drawing.Size]::new(($script:pageW - 40), 54)
+$askAttachments.IntegralHeight = $false
+$askAttachments.HorizontalScrollbar = $true
+$askAttachments.SelectionMode = "MultiExtended"
+$askAttachments.DisplayMember = "Display"
+$askAttachments.BackColor = $fieldBg
+$askAttachments.ForeColor = $ink
+$askAttachments.Anchor = "Top, Left, Right"
+$askAttachments.AccessibleName = "Ask attachments"
+$askAttachments.AllowDrop = $true
+$pageAsk.Controls.Add($askAttachments)
+function Add-DeskAskAttachments([string[]]$Paths) {
+    if ($script:askJob) { throw "Wait for the current Ask before changing attachments." }
+    $paths = Get-DeskAttachmentPaths (@($askAttachments.Items | ForEach-Object Path) + @($Paths))
+    $askAttachments.Items.Clear()
+    foreach ($path in $paths) {
+        [void]$askAttachments.Items.Add([pscustomobject]@{ Path = $path; Display = "$(Split-Path -Leaf $path) - $path" })
+    }
+}
+function Remove-DeskAskAttachments {
+    if ($script:askJob) { return }
+    foreach ($item in @($askAttachments.SelectedItems)) { $askAttachments.Items.Remove($item) }
+}
+function Paste-DeskAskImage {
+    if ($script:askJob) { return }
+    if ($askAttachments.Items.Count -ge 8) { throw "Attach at most eight files per analysis." }
+    if (-not [Windows.Forms.Clipboard]::ContainsImage()) { throw "The clipboard does not contain an image." }
+    $image = [Windows.Forms.Clipboard]::GetImage()
+    $folder = Join-Path $Repo "logs\desk-attachments"
+    [void][IO.Directory]::CreateDirectory($folder)
+    $path = Join-Path $folder ("clipboard-" + [guid]::NewGuid().ToString("N") + ".png")
+    try {
+        $image.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+        if ((Get-Item -LiteralPath $path).Length -gt 10MB) { throw "Clipboard image exceeds 10 MiB." }
+        Add-DeskAskAttachments @($path)
+    } catch {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        throw
+    } finally { $image.Dispose() }
+}
+Add-Button $pageAsk "Add files..." 20 122 124 {
+    $dialog = [Windows.Forms.OpenFileDialog]::new()
+    $dialog.Multiselect = $true
+    $dialog.Title = "Attach files to analyse together"
+    $dialog.Filter = "Text, scripts, logs and images|*.txt;*.log;*.ps1;*.cmd;*.bat;*.md;*.json;*.csv;*.xml;*.ini;*.cpp;*.h;*.py;*.go;*.rs;*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp|All files|*.*"
+    try {
+        if ($dialog.ShowDialog($f) -eq "OK") { Add-DeskAskAttachments $dialog.FileNames }
+    } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+    finally { $dialog.Dispose() }
+} $false
+Add-Button $pageAsk "Remove" 152 122 104 { Remove-DeskAskAttachments } $false
+Add-Button $pageAsk "Paste image" 264 122 136 {
+    try { Paste-DeskAskImage } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+} $false
+$script:askAttachmentButtons = @($pageAsk.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Top -eq 122 })
+$askAttachments.Add_DragEnter({
+    param($sender, $event)
+    if (-not $script:askJob -and $event.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)) {
+        $event.Effect = [Windows.Forms.DragDropEffects]::Copy
+    }
+})
+$askAttachments.Add_DragDrop({
+    param($sender, $event)
+    try { Add-DeskAskAttachments ($event.Data.GetData([Windows.Forms.DataFormats]::FileDrop)) }
+    catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+})
+$askAttachments.Add_KeyDown({
+    param($sender, $event)
+    if ($event.KeyCode -eq "Delete") { Remove-DeskAskAttachments; $event.SuppressKeyPress = $true }
+    if ($event.Control -and $event.KeyCode -eq "V") {
+        try { Paste-DeskAskImage } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message) }
+        $event.SuppressKeyPress = $true
+    }
+})
+$askModeLabel = [Windows.Forms.Label]::new()
+$askModeLabel.Text = "Text mode"
+$askModeLabel.ForeColor = $mute
+$askModeLabel.Location = [Drawing.Point]::new(20, 230)
+$askModeLabel.AutoSize = $true
+$pageAsk.Controls.Add($askModeLabel)
+$askMode = [Windows.Forms.ComboBox]::new()
+$askMode.DropDownStyle = "DropDownList"
+$askMode.Location = [Drawing.Point]::new(126, 226)
+$askMode.Size = [Drawing.Size]::new(($script:pageW - 146), 28)
+[void]$askMode.Items.AddRange(@("Answer (no model tools)", "Research (read-only)", "Fix (scoped tools)"))
+$askMode.SelectedIndex = 1
+$askMode.AccessibleName = "Ask text tool mode"
+$askMode.Anchor = "Top, Left, Right"
+$pageAsk.Controls.Add($askMode)
+$askSplit = [System.Windows.Forms.SplitContainer]::new()
+$askSplit.Orientation = "Horizontal"
+$askSplit.Location = [Drawing.Point]::new(20, 260)
+$askSplit.Size = [Drawing.Size]::new(($script:pageW - 40), ($pageAsk.ClientSize.Height - 280))
+$askSplit.SplitterWidth = 8
+$askSplit.SplitterDistance = 80
+$askSplit.Panel1MinSize = 80
+$askSplit.Panel2MinSize = 96
+$askSplit.FixedPanel = "Panel1"
+$askSplit.Anchor = "Top, Bottom, Left, Right"
+$askSplit.AccessibleName = "Prompt and answer divider"
+$pageAsk.Controls.Add($askSplit)
 $prompt = New-Object System.Windows.Forms.TextBox
 $prompt.Multiline = $true
 $prompt.ScrollBars = "Vertical"
-$prompt.Location = New-Object System.Drawing.Point(20, 100)
-$prompt.Size = New-Object System.Drawing.Size(($script:pageW - 152), 52)
+$prompt.Location = [Drawing.Point]::new(0, 0)
+$prompt.Size = [Drawing.Size]::new(($askSplit.Panel1.ClientSize.Width - 112), 52)
 Style-Box $prompt
-$pageAsk.Controls.Add($prompt)
+$askSplit.Panel1.Controls.Add($prompt)
 $script:askWorker = [PowerShell]::Create()
 $script:askJob = $null
 $send = New-Object System.Windows.Forms.Button
 $send.Text = "Send"
-$send.Location = New-Object System.Drawing.Point(($script:pageW - 124), 100)
+$send.Location = [Drawing.Point]::new(($askSplit.Panel1.ClientSize.Width - 104), 0)
 $send.Size = New-Object System.Drawing.Size(104, 34)
 Paint-Button $send $true
 $send.Add_Click({
@@ -2243,21 +2441,24 @@ $send.Add_Click({
         Path = [string]$askPath.Text
         ImageModel = ($script:modelPick -eq "image")
         ReviewFile = [bool]$reviewFile.Checked
+        Mode = @("answer", "research", "fix")[$askMode.SelectedIndex]
+        Attachments = [string[]]@($askAttachments.Items | ForEach-Object Path)
     }
-    $reply.Text = "working..."
+    $reply.Text = "$($askMode.SelectedItem): working..."
     $send.Enabled = $false
+    foreach ($control in @($askAttachments) + $script:askAttachmentButtons) { $control.Enabled = $false }
     $script:askWorker.Commands.Clear()
     $script:askWorker.Streams.Error.Clear()
     [void]$script:askWorker.AddCommand($PSCommandPath).AddParameter("AskRequest", $request)
     $script:askJob = $script:askWorker.BeginInvoke()
 })
-$pageAsk.Controls.Add($send)
+$askSplit.Panel1.Controls.Add($send)
 $reviewFile = [System.Windows.Forms.CheckBox]::new()
 $reviewFile.Text = "Review complete file (read-only; auto above 128 KiB)"
 $reviewFile.ForeColor = $ink
-$reviewFile.Location = [Drawing.Point]::new(20, 156)
-$reviewFile.Size = [Drawing.Size]::new(($script:pageW - 40), 24)
-$pageAsk.Controls.Add($reviewFile)
+$reviewFile.Location = [Drawing.Point]::new(0, 56)
+$reviewFile.Size = [Drawing.Size]::new($askSplit.Panel1.ClientSize.Width, 24)
+$askSplit.Panel1.Controls.Add($reviewFile)
 function Update-Ask {
     if (-not $script:askJob -or -not $script:askJob.IsCompleted) { return }
     try {
@@ -2265,25 +2466,26 @@ function Update-Ask {
         if ($result.Count -ne 1) { throw "Invalid Ask response." }
         $reply.Text = ([string]$result[0]) -replace "\r?\n", "`r`n"
     } catch {
-        $reply.Text = "Error: $($_.Exception.Message)"
+        $reply.Text = "Error: $($_.Exception.GetBaseException().Message)"
         if ($_.ErrorDetails.Message) { $reply.Text += "`r`n$($_.ErrorDetails.Message)" }
     } finally {
         $script:askJob = $null
         $send.Enabled = $true
+        foreach ($control in @($askAttachments) + $script:askAttachmentButtons) { $control.Enabled = $true }
     }
 }
 $reply = New-Object System.Windows.Forms.TextBox
 $reply.Multiline = $true
 $reply.ScrollBars = "Vertical"
-$reply.Location = New-Object System.Drawing.Point(20, 188)
-$reply.Size = New-Object System.Drawing.Size(($script:pageW - 40), ($pageAsk.ClientSize.Height - $reply.Top - 20))
+$reply.Dock = "Fill"
 $reply.MaxLength = 0
 Style-Box $reply
-$pageAsk.Controls.Add($reply)
+$askSplit.Panel2.Controls.Add($reply)
 
-foreach ($control in @($askPath, $prompt, $reviewFile)) { $control.Anchor = "Top, Left, Right" }
+$askPath.Anchor = "Top, Left, Right"
+$prompt.Anchor = "Top, Bottom, Left, Right"
+$reviewFile.Anchor = "Bottom, Left, Right"
 $send.Anchor = "Top, Right"
-$reply.Anchor = "Top, Bottom, Left, Right"
 
 Add-Head $pageLyrics "Lyrics" 16
 function Add-Field([string]$label, [string]$value, [int]$x, [int]$y, [int]$w) {

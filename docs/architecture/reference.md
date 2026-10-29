@@ -73,6 +73,10 @@ never changes; only status does.
 | `POST` | `/api/observe` | Bearer; 401 if unset | Host inventory (Heal each tick; unchanged is idempotent) |
 | `POST` | `/api/truth` | Bearer; 401 if unset | Caller host_fact / doc_fact / playbook stays candidate; matching quote/probe may return a separate verified `assertion` |
 | `POST` | `/api/judge` | Bearer; 401 if unset | `verified` or `rejected` with reasoning; rewrites `logs/last-pending.json` |
+| `POST` | `/api/index` | Bearer; 401 if unset | Exactly `{}`; persist a bounded untrusted target-host index without a model or RAG rebuild |
+| `GET` / `POST` | `/api/context` | Bearer; 401 if unset | Compose up to 4 KiB of framed shared context; personal/technical scope stays isolated |
+| `POST` | `/api/shelf` | Bearer; 401 if unset | Bounded read/post of untrusted discussion/research, not Golden Record ingestion |
+| `GET` | `/api/shelf/schema` | Bearer; 401 if unset | Discover the native working-shelf contract |
 | `POST` | `/api/chat` | Reads open; bearer for write slashes | RAG plus streamed mouth inference; loopback only. `/yolo` duration and off, `/verify`, and `/reject` need the bearer (401 if unset). Bare `/yolo`, `/yolo status`, and `/yolo ?` stay reads |
 | `POST` | `/api/chat` with `command_type` | Bearer; reasoning for high-risk | Direct privileged kernel dispatch |
 
@@ -162,6 +166,13 @@ Source-of-truth collections:
 | `source_observations` | Append-only external-source ingestion identities |
 | `ingestion_runs` | Lease-guarded `staging -> validated -> committed` |
 | `skills` | Verified committed-node promotions only |
+
+Separate working collections `discussion_messages` and `research_notes` contain
+immutable, hash-bound **untrusted** posts. Their identity includes target host,
+shelf, scope and request; identical retries are idempotent and changed retries
+fail. They do not enter canonical ingestion or `rag_documents`. The native-only
+stdin extension is `command="shelf", action="post"|"read"`; existing C++/Go
+ingestion contracts remain unchanged. See the [native store contract](../../godbrain_core/cpp_memory_store/README.md#working-shelves-native-extension).
 
 Derivative collections (`rag_documents`, `rag_provenance`, `rag_embeddings`,
 `rag_metadata`) are rebuildable. Cleanup may delete derivative generations,

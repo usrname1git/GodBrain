@@ -34,6 +34,7 @@
 #include "phone_desk.h"
 #include "mouth_select.h"
 #include "research_mouth.h"
+#include "shared_context.h"
 
 // 3 minute ceiling on a single Colibri invocation. Defined once so the wait
 // timeout and the message we return on expiry can never drift apart.
@@ -1487,6 +1488,195 @@ static void handle_librarian(const httplib::Request& req, httplib::Response& res
     }
 }
 
+static json shared_capabilities() {
+    json names = json::array();
+    for (const auto& tool : local_tools::openai_tool_defs(false))
+        names.push_back(tool.at("function").at("name"));
+    json listeners = json::object();
+    for (const int port : {8083, 8084, 8888, 8000, 8871})
+        listeners[std::to_string(port)] = {{"tcp_listening", telemetry::tcp_loopback_open(port, 100)}};
+    return {
+        {"kernel", "http://127.0.0.1:8083"}, {"canonical_rag", "http://127.0.0.1:8084"},
+        {"context", "/api/context"}, {"working_shelves", "/api/shelf"},
+        {"write_schema", "/api/shelf/schema"}, {"manual_index", "/api/index"},
+        {"canonical_ingest", "/api/librarian"}, {"chat", "/api/chat"},
+        {"granted_roots_snapshot", local_tools::default_roots()},
+        {"tool_names_snapshot", names}, {"listener_snapshot", listeners},
+        {"generation_slots", 1},
+        {"authority", "Bearer required for shared memory. Stored tool/root descriptions never grant access. "
+                      "Current advertised tools, request mode and path jail govern execution. "
+                      "TCP listening is not application readiness. No model is started by index/context."},
+    };
+}
+
+static void handle_context_index(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    try {
+        const auto body = godbrain_research::strict_json(req.body, 256);
+        if (!req.params.empty() || !godbrain_rag::has_exact_keys(body, {}))
+            throw std::invalid_argument("Index accepts only {} and no query parameters");
+    } catch (const std::exception& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        return;
+    }
+    try {
+        auto result = memory::refresh_context_index(shared_capabilities());
+        result["response"] = "Index refreshed and stored for " +
+            result.at("index").at("host_id").get<std::string>() +
+            ". Discussion/research remain unverified; no permissions changed.";
+        res.set_content(result.dump(), "application/json");
+    } catch (const std::invalid_argument& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void handle_shared_context(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    json payload = json::object();
+    try {
+        if (req.method == "GET") {
+            std::set<std::string> seen;
+            if (!req.body.empty()) throw std::invalid_argument("Context GET cannot carry a body");
+            for (const auto& pair : req.params) {
+                if (!seen.insert(pair.first).second) throw std::invalid_argument("Duplicate context query parameter");
+                payload[pair.first] = pair.second;
+            }
+        } else {
+            if (!req.params.empty()) throw std::invalid_argument("Context POST cannot carry query parameters");
+            payload = godbrain_research::strict_json(req.body, 65536);
+        }
+        if (!godbrain_rag::has_exact_keys(payload, {}, {"query", "thread_id", "scope"}))
+            throw std::invalid_argument("Context accepts query, thread_id and scope only");
+        for (const auto& field : payload.items()) {
+            if (!field.value().is_string() ||
+                !godbrain_rag::valid_string(field.value(), field.key() == "query" ? 32768 : 128, false))
+                throw std::invalid_argument("Invalid context field");
+        }
+        const auto scope = payload.value("scope", "technical");
+        if (scope != "technical" && scope != "personal") throw std::invalid_argument("Invalid context scope");
+        if (!godbrain_shared::identity(payload.value("thread_id", "")))
+            throw std::invalid_argument("Invalid context thread identity");
+    } catch (const std::exception& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        return;
+    }
+    try {
+        auto result = memory::shared_context(payload.value("query", ""), payload.value("thread_id", ""),
+                                             payload.value("scope", "technical"));
+        if (result.at("state") == "not_indexed") {
+            res.status = 409;
+            result["error"] = "Shared context is not indexed. Run index once, and after infrastructure changes.";
+        } else result["live_granted_roots"] = local_tools::default_roots();
+        res.set_content(result.dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void handle_working_shelf(const httplib::Request& req, httplib::Response& res) {
+    if (!write_authorized(req, res)) return;
+    json payload;
+    try {
+        if (!req.params.empty()) throw std::invalid_argument("Shelf accepts no query parameters");
+        payload = godbrain_research::strict_json(req.body, 131072);
+        if (!godbrain_rag::has_exact_keys(payload, {"action", "shelf"},
+                {"scope", "thread_id", "exclude_thread_id", "request_id", "speaker", "title", "text", "sources", "query", "limit"}))
+            throw std::invalid_argument("Invalid shelf fields; see /api/shelf/schema");
+        const auto action = payload.at("action").get<std::string>();
+        if (action != "post" && action != "read") throw std::invalid_argument("Shelf action must be post or read");
+        if (payload.at("shelf") != "discussion" && payload.at("shelf") != "research")
+            throw std::invalid_argument("Only discussion and research working shelves are available");
+        if (payload.contains("scope") && payload.at("scope") != "technical" && payload.at("scope") != "personal")
+            throw std::invalid_argument("Invalid shelf scope");
+        for (const auto& field : payload.items()) {
+            if (field.key() == "sources" || field.key() == "limit") continue;
+            const size_t cap = field.key() == "text" ? 32768 :
+                               (field.key() == "title" || field.key() == "query" ? 512 : 128);
+            if (!godbrain_rag::valid_string(field.value(), cap, false))
+                throw std::invalid_argument("Invalid shelf string field");
+        }
+        for (const char* key : {"thread_id", "exclude_thread_id", "request_id"})
+            if (payload.contains(key) && !godbrain_shared::identity(payload.at(key).get<std::string>(),
+                    action == "post"))
+                throw std::invalid_argument("Invalid shelf thread/request identity");
+        if (!payload.value("thread_id", "").empty() && !payload.value("exclude_thread_id", "").empty())
+            throw std::invalid_argument("thread_id and exclude_thread_id cannot be combined");
+        if (action == "post") {
+            if (!payload.contains("text") || payload.at("text").get<std::string>().find_first_not_of(" \r\n\t") == std::string::npos ||
+                (payload.at("shelf") == "research" && (!payload.contains("title") ||
+                    payload.at("title").get<std::string>().find_first_not_of(" \r\n\t") == std::string::npos)))
+                throw std::invalid_argument("Post requires text; research also requires a title");
+            if (payload.contains("speaker") &&
+                payload.at("speaker").get<std::string>().find_first_not_of(" \r\n\t") == std::string::npos)
+                throw std::invalid_argument("Speaker cannot be blank");
+            if (payload.value("thread_id", "") == "environment-index")
+                throw std::invalid_argument("Use /api/index for the reserved environment index thread");
+            if (payload.contains("query") || payload.contains("limit") || payload.contains("exclude_thread_id"))
+                throw std::invalid_argument("Post cannot contain read fields");
+        } else {
+            for (const char* key : {"request_id", "speaker", "title", "text", "sources"})
+                if (payload.contains(key)) throw std::invalid_argument("Read cannot contain post fields");
+        }
+        if (payload.contains("limit") && (!payload.at("limit").is_number_integer() ||
+            payload.at("limit") < 1 || payload.at("limit") > 20))
+            throw std::invalid_argument("Shelf limit must be an integer from 1 to 20");
+        if (payload.contains("sources")) {
+            if (!payload.at("sources").is_array() || payload.at("sources").size() > 16)
+                throw std::invalid_argument("Sources must be at most 16 reference strings");
+            for (const auto& source : payload.at("sources"))
+                if (!godbrain_rag::valid_string(source, 2048, true)) throw std::invalid_argument("Invalid source reference");
+        }
+    } catch (const std::exception& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+        return;
+    }
+    try {
+        res.set_content(memory::working_shelf(payload).dump(), "application/json");
+    } catch (const std::invalid_argument& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    } catch (const std::exception& error) {
+        res.status = 503;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
+    }
+}
+
+static void attach_shared_routes(httplib::Server& server,
+    const std::function<void(const httplib::Request&, httplib::Response&)>& cors = {}) {
+    const auto wrap = [cors](httplib::Server::Handler handler) {
+        return [cors, handler](const httplib::Request& req, httplib::Response& res) {
+            if (cors) cors(req, res);
+            handler(req, res);
+        };
+    };
+    server.Post("/api/index", wrap(handle_context_index));
+    server.Get("/api/context", wrap(handle_shared_context));
+    server.Post("/api/context", wrap(handle_shared_context));
+    server.Post("/api/shelf", wrap(handle_working_shelf));
+    server.Get("/api/shelf/schema", wrap([](const httplib::Request& req, httplib::Response& res) {
+        if (!write_authorized(req, res)) return;
+        res.set_content(json({
+            {"schema_version", "working-shelf-v1"}, {"endpoint", "/api/shelf"},
+            {"shelves", {"discussion", "research"}}, {"scopes", {"technical", "personal"}},
+            {"post", {{"action", "post"}, {"shelf", "research"}, {"text", "Unverified finding"},
+                      {"title", "Finding title"}, {"thread_id", "investigation"}, {"sources", json::array()}}},
+            {"read", {{"action", "read"}, {"shelf", "research"}, {"query", "distinctive term"}, {"limit", 5}}},
+            {"limits", {{"text_utf8_bytes", 32768}, {"title_query_utf8_bytes", 512},
+                        {"source_count", 16}, {"source_utf8_bytes", 2048}, {"read_records", 20}}},
+            {"idempotency", "Optional request_id; reuse only for the identical post. Server generates it if omitted."},
+            {"trust", "Always untrusted/provisional. No automatic RAG projection or promotion."},
+        }).dump(), "application/json");
+    }));
+}
+
 static void handle_observe(const httplib::Request& req, httplib::Response& res) {
     if (!write_authorized(req, res)) return;
     try {
@@ -1731,6 +1921,7 @@ static void handle_judge(const httplib::Request& req, httplib::Response& res) {
 }
 
 static void attach_shortcut_routes(httplib::Server& server) {
+    attach_shared_routes(server);
     server.Get("/api/status", [](const httplib::Request& req, httplib::Response& res) {
         if (!write_authorized(req, res)) return;
         res.set_content(kernel_status_body().dump(), "application/json");
@@ -2068,8 +2259,10 @@ static std::vector<json> load_core_event_tail(size_t n) {
 struct ChainEvidence {
     std::string task_id;
     std::string attempt_id;
+    std::string tool_mode = "legacy";
     bool history_complete = true;
     json results = json::array();
+    json model_requests = json::array();
     size_t omitted = 0;
 };
 
@@ -2106,7 +2299,9 @@ static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops,
                        const std::string& phase = "", bool hops_ok = true,
                        const ChainEvidence* evidence = nullptr) {
-    if (ledger.size() > kToolContextBytes) {
+    const auto context_limit = evidence && evidence->tool_mode == "research"
+                                   ? kResearchToolContextBytes : kToolContextBytes;
+    if (ledger.size() > context_limit) {
         throw std::runtime_error("task context exceeds its bound; no partial result saved");
     }
     std::lock_guard<std::mutex> lock(g_chain_mu);
@@ -2147,8 +2342,10 @@ static void save_chain(const std::string& goal, const std::string& ledger,
         {"skill_promote_eligible", false},
     };
     if (evidence) {
+        doc["tool_mode"] = evidence->tool_mode;
         doc["attempt_id"] = evidence->attempt_id;
         doc["tool_evidence"] = evidence->results;
+        doc["model_requests"] = evidence->model_requests;
         doc["evidence_omitted"] = evidence->omitted;
         doc["evidence_history_complete"] = evidence->history_complete && evidence->omitted == 0;
         doc["evidence_scope"] = "executor_result_metadata_only";
@@ -2193,7 +2390,9 @@ static json load_chain() {
 static json revalidate_chain_references(json chain, const godbrain_rag::Client& client) {
     if (!chain.contains("ledger") || !chain["ledger"].is_string()) return chain;
     const auto ledger = chain["ledger"].get<std::string>();
-    if (ledger.size() > kToolContextBytes)
+    const auto context_limit = chain.value("tool_mode", "") == "research"
+                                   ? kResearchToolContextBytes : kToolContextBytes;
+    if (ledger.size() > context_limit)
         throw std::runtime_error("saved tool context exceeds its bound");
     std::string refreshed;
     size_t start = 0;
@@ -2231,7 +2430,7 @@ static json revalidate_chain_references(json chain, const godbrain_rag::Client& 
         refreshed += '\n';
         start = end + 1;
     }
-    if (refreshed.size() > kToolContextBytes)
+    if (refreshed.size() > context_limit)
         throw std::runtime_error("revalidated tool context exceeds its bound");
     chain["ledger"] = std::move(refreshed);
     return chain;
@@ -2240,7 +2439,9 @@ static json revalidate_chain_references(json chain, const godbrain_rag::Client& 
 static std::string resume_chain_prompt(const json& chain, const std::string& continuation) {
     if (!chain.contains("ledger") || !chain["ledger"].is_string()) return continuation;
     const std::string ledger = chain["ledger"];
-    if (ledger.size() > kToolContextBytes) {
+    const auto context_limit = chain.value("tool_mode", "") == "research"
+                                   ? kResearchToolContextBytes : kToolContextBytes;
+    if (ledger.size() > context_limit) {
         throw std::runtime_error("saved tool context exceeds its bound");
     }
     return ledger.empty() ? continuation :
@@ -3626,7 +3827,30 @@ std::string run_colibri_serve(
     const std::string& serve_model = {},
     bool exl3_mouth = false,
     const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth,
-    const godbrain_rag::Client* skill_client = nullptr) {
+    const godbrain_rag::Client* skill_client = nullptr,
+    local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
+    json* request_receipt = nullptr) {
+    const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
+    if (tool_mode == local_tools::ToolMode::Legacy || is_continue_command(chain_goal)) {
+        const json previous = load_chain();
+        if (previous.value("status", "") == "running" &&
+            (is_continue_command(chain_goal) ||
+             browser_evidence::keccak_hex(chain_goal) == previous.value("goal_hash", ""))) {
+            const auto saved_mode = previous.value("tool_mode", "legacy");
+            if (saved_mode == "research" && tool_mode != local_tools::ToolMode::Answer) {
+                tool_mode = local_tools::ToolMode::Research;
+            }
+            else if (saved_mode == "answer") tool_mode = local_tools::ToolMode::Answer;
+        }
+    }
+    json local_receipt;
+    json& receipt = request_receipt ? *request_receipt : local_receipt;
+    receipt = {{"tool_mode", local_tools::tool_mode_name(tool_mode)},
+               {"tool_attempts", json::array()}, {"answer_retry", false},
+               {"output_requests", json::array()}, {"verification", "not_run"}};
+    local_tools::RequestScope scope;
+    scope.mode = tool_mode;
+    scope.operator_text = chain_goal;
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3670,16 +3894,10 @@ std::string run_colibri_serve(
     std::string assembled;
     std::string last_reason;
     std::string last_tool_out;
-    const auto no_final_answer = [&](const std::string& reason) {
-        const std::string error =
-            reason == "length"
-                ? "Error: model reached the output limit without a final answer."
-                : "Error: model returned no final answer.";
-        if (spoken) *spoken = error;
-        return error;
-    };
+    bool answer_retry = false;
     const bool native_tools =
         tool_mouth && !apply_cont &&
+        tool_mode != local_tools::ToolMode::Answer &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
     {
         std::ofstream dbg(
@@ -3688,9 +3906,8 @@ std::string run_colibri_serve(
         dbg << "llama=" << llama_mouth << " exl3=" << exl3_mouth
             << " port=" << serve_port << " native=" << native_tools
             << " yolo=" << local_tools::yolo_active()
+            << " mode=" << local_tools::tool_mode_name(tool_mode)
             << " user_len=" << user.size() << "\n";
-        dbg << "hint=" << (tool_hint.empty() ? user : tool_hint).substr(0, 240)
-            << "\n";
     }
     // llama.cpp CUDA IMA is KV reuse after role:tool, not "12B cannot
     // think twice." Flatten tool output into a fresh user turn, cache_prompt
@@ -3698,14 +3915,16 @@ std::string run_colibri_serve(
     // tools schema even after the ledger is non-empty. Last round is
     // speak-only.
     std::string tool_ledger;
+    std::vector<std::string> research_results;
     int chain_hops = 0;
-    const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
     // A pasted crash plus "fix" gets the long loop. YOLO stays off, so
     // elevate and git push stay denied. Eight rounds: seven can run tools,
     // the last only talks. A passing rerun after a crash ends it sooner.
-    const bool fix_job = native_tools && looks_like_fix_job(chain_goal);
+    const bool fix_job = native_tools && tool_mode != local_tools::ToolMode::Research &&
+                         looks_like_fix_job(chain_goal);
     int max_tool_rounds =
-        native_tools ? ((local_tools::yolo_active() || fix_job) ? 8 : 3) : 1;
+        native_tools ? (tool_mode == local_tools::ToolMode::Research ? 8 :
+                        ((local_tools::yolo_active() || fix_job) ? 8 : 3)) : 1;
     if (fix_job && !base_messages.empty() &&
         base_messages.back().value("role", "") == "user") {
         const std::string note =
@@ -3721,6 +3940,7 @@ std::string run_colibri_serve(
     ChainEvidence evidence;
     evidence.task_id = mint_chain_id();
     evidence.attempt_id = mint_chain_id();
+    evidence.tool_mode = local_tools::tool_mode_name(tool_mode);
     {
         const json prev_ch = load_chain();
         if (prev_ch.value("status", "") == "running" &&
@@ -3732,12 +3952,30 @@ std::string run_colibri_serve(
             evidence.history_complete = false;
         }
     }
+    const auto fail_reply = [&](const std::string& error, const std::string& reason) {
+        receipt["answer_error_reason"] = reason;
+        if (chain_hops > 0 || !tool_ledger.empty()) {
+            evidence.model_requests = receipt["output_requests"];
+            save_chain(chain_goal, tool_ledger, error, chain_hops,
+                       "final", false, &evidence);
+        }
+        if (spoken) *spoken = error;
+        return error;
+    };
+    const auto no_final_answer = [&](const std::string& reason) {
+        return fail_reply(
+            reason == "length"
+                ? "Error: model reached the output limit without a final answer."
+                : "Error: model returned no final answer.",
+            reason.empty() ? "empty_completion" : reason);
+    };
     bool unused49_seen = false;
     const json tool_defs =
-        native_tools ? local_tools::openai_tool_defs_for(chain_goal)
+        native_tools ? local_tools::openai_tool_defs_for(chain_goal, tool_mode)
                      : json::array();
     const std::string hop_hint0 = chain_goal;
-    if (!fix_job && tool_mouth && native_tools && !local_tools::yolo_active() &&
+    if (!fix_job && tool_mode != local_tools::ToolMode::Research &&
+        tool_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
         std::string seed = local_tools::analysis_observe(hop_hint0);
@@ -3764,8 +4002,24 @@ std::string run_colibri_serve(
     assembled.clear();
     last_reason.clear();
     json tool_acc = json::array();
-    const bool use_tools =
+    bool use_tools = !answer_retry &&
         tools_schema_on_round(native_tools, tool_round, max_tool_rounds);
+    const auto retry_answer = [&](const std::string& reason) {
+        if (answer_retry) return false;
+        answer_retry = true;
+        receipt["answer_retry"] = true;
+        receipt["answer_retry_reason"] = reason;
+        assembled.clear();
+        if (spoken) spoken->clear();
+        use_tools = false;
+        messages.push_back(json{
+            {"role", "user"},
+            {"content", "The previous attempt did not produce a usable final answer "
+                        "and was discarded. Give a concise final answer from the supplied "
+                        "observations. Distinguish inspected facts from failed or unproved "
+                        "evidence. State what is unknown. Do not repeat reads or call tools."}});
+        return true;
+    };
     for (int chunk = 0; chunk < max_chunks; ++chunk) {
         json body = {
             {"model", model},
@@ -3775,22 +4029,34 @@ std::string run_colibri_serve(
         };
         if (tool_mouth) {
             // Tool rounds and /edit stay off, regardless of the saved effort.
-            const bool force_off = use_tools || apply_cont;
-            if (!force_off && thinking.enabled && !thinking.effort.empty() &&
+            const bool force_off = use_tools || apply_cont || answer_retry;
+            if (!force_off && thinking.enabled && (exl3_mouth || !thinking.effort.empty()) &&
                 reasoning_models.is_null()) {
                 const auto response = client.Get("/v1/models");
                 if (!response || response->status != 200) {
-                    return "Error: could not check reasoning capabilities. No reasoning generation was sent.";
+                    return fail_reply(
+                        "Error: could not check reasoning capabilities. No reasoning generation was sent.",
+                        "reasoning_capabilities");
                 }
                 try {
                     reasoning_models = json::parse(response->body);
                 } catch (const json::exception&) {
-                    return "Error: invalid reasoning capabilities. No reasoning generation was sent.";
+                    return fail_reply(
+                        "Error: invalid reasoning capabilities. No reasoning generation was sent.",
+                        "reasoning_capabilities");
                 }
             }
             std::string thinking_error;
             if (!configure_thinking_request(body, thinking, force_off, reasoning_models, thinking_error)) {
-                return "Error: " + thinking_error;
+                return fail_reply("Error: " + thinking_error, "reasoning_configuration");
+            }
+            if (exl3_mouth && !force_off && thinking.enabled &&
+                !configure_exl3_thinking_budget(body, reasoning_models, thinking_error)) {
+                return fail_reply("Error: " + thinking_error, "reasoning_configuration");
+            }
+            if (answer_retry) {
+                body["max_tokens"] = 4096;
+                body["tool_choice"] = "none";
             }
             // cache_prompt is llama.cpp. EXL3 ignores it; omit so the
             // server does not have to.
@@ -3802,11 +4068,23 @@ std::string run_colibri_serve(
             body["parse_tool_calls"] = true;
             body["parallel_tool_calls"] = true;
         }
+        receipt["output_requests"].push_back({
+            {"max_tokens", body.at("max_tokens")}, {"tools", use_tools},
+            {"answer_retry", answer_retry}});
         std::string piece;
         std::string reasoning_piece;
         std::string sse_buf;
         std::string finish_reason;
         bool heading_loop = false;
+        const auto record_completion = [&](const std::string& content, int status) {
+            auto& output = receipt["output_requests"].back();
+            output["http_status"] = status;
+            output["finish_reason"] = finish_reason;
+            output["content_bytes"] = content.size();
+            output["reasoning_bytes"] = reasoning_piece.size();
+            output["tool_calls"] = tool_acc.size();
+            output["generation_loop"] = heading_loop;
+        };
         const DWORD tick = GetTickCount();
         g_coli_job_started_ms.store(tick == 0 ? 1 : tick, std::memory_order_relaxed);
         if (use_tools && tool_mouth) {
@@ -3817,6 +4095,7 @@ std::string run_colibri_serve(
             const auto response = client.Post(
                 "/v1/chat/completions", json_headers, body.dump(),
                 "application/json");
+            record_completion("", response ? response->status : 0);
             if (!response) {
                 std::string err;
                 if (exl3_mouth) {
@@ -3831,13 +4110,14 @@ std::string run_colibri_serve(
                                 "Starting it. Ask again in about a minute. "
                                 "Not Colibri, not GLM paging.";
                 }
-                if (!last_tool_out.empty()) return last_tool_out + "\n" + err;
-                return err;
+                if (!last_tool_out.empty()) err = last_tool_out + "\n" + err;
+                return fail_reply(err, "transport_error");
             }
             if (response->status != 200) {
-                return std::string(exl3_mouth ? "Error: EXL3 HTTP "
-                                              : "Error: llama-server HTTP ") +
-                       std::to_string(response->status);
+                return fail_reply(
+                    std::string(exl3_mouth ? "Error: EXL3 HTTP "
+                                          : "Error: llama-server HTTP ") +
+                        std::to_string(response->status), "http_error");
             }
             try {
                 const json parsed = json::parse(response->body);
@@ -3856,25 +4136,43 @@ std::string run_colibri_serve(
                 if (unused49::contains(reasoning_piece)) unused49_seen = true;
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
                     tool_acc = msg["tool_calls"];
-                    finish_reason = "tool_calls";
+                    if (!tool_acc.empty()) finish_reason = "tool_calls";
                 }
+                record_completion(assembled, response->status);
                 if (trim_copy(assembled).empty() && tool_acc.empty()) {
+                    if (tool_mode == local_tools::ToolMode::Research &&
+                        retry_answer(finish_reason == "length" ? "output_limit" : "empty_completion")) {
+                        --chunk;
+                        continue;
+                    }
                     if (unused49_seen && llama_mouth && !exl3_mouth) restart_mouth(true);
                     return no_final_answer(finish_reason);
                 }
             } catch (const json::exception&) {
-                return exl3_mouth
-                           ? "Error: EXL3 on :8888 returned a malformed completion."
-                           : "Error: llama-server returned a malformed completion.";
+                receipt["output_requests"].back()["parse_error"] = true;
+                return fail_reply(
+                    exl3_mouth ? "Error: EXL3 on :8888 returned a malformed completion."
+                               : "Error: llama-server returned a malformed completion.",
+                    "malformed_completion");
             }
             last_reason = finish_reason;
+            if (tool_mode == local_tools::ToolMode::Research && tool_acc.empty() &&
+                (is_generation_loop(assembled) || finish_reason == "length")) {
+                if (!retry_answer(is_generation_loop(assembled) ? "generation_loop" : "output_limit")) {
+                    return no_final_answer("length");
+                }
+                --chunk;
+                continue;
+            }
             break;
         }
         const auto response = client.Post(
             "/v1/chat/completions", headers, body.dump(), "application/json",
             [&](const char* data, size_t len) {
                 godbrain_coli::feed_sse(
-                    sse_buf, data, len, piece, on_token, on_ping,
+                    sse_buf, data, len, piece,
+                    (tool_mode == local_tools::ToolMode::Research || answer_retry) ? ColiTokenFn{} : on_token,
+                    on_ping,
                     [&](const std::string& reason) { finish_reason = reason; },
                     spoken,
                     &tool_acc,
@@ -3887,7 +4185,16 @@ std::string run_colibri_serve(
                 }
                 return true;
             });
+        record_completion(piece, response ? response->status : 0);
         if (heading_loop) {
+            if (tool_mode == local_tools::ToolMode::Research) {
+                if (!retry_answer("generation_loop")) {
+                    const std::string error = "Error: model repeated its answer; no complete research answer was produced.";
+                    return fail_reply(error, "generation_loop");
+                }
+                --chunk;
+                continue;
+            }
             if (unused49::contains(piece) ||
                 unused49::contains(reasoning_piece)) unused49_seen = true;
             piece = sanitize_oracle_body(piece);
@@ -3907,8 +4214,8 @@ std::string run_colibri_serve(
                     const std::string err =
                         "Error: EXL3 on :8888 returned no body. Ask again. "
                         "Gemma stays paused.";
-                    if (!last_tool_out.empty()) return last_tool_out + "\n" + err;
-                    return err;
+                    return fail_reply(last_tool_out.empty() ? err : last_tool_out + "\n" + err,
+                                      "transport_error");
                 }
                 if (llama_mouth) {
                     restart_mouth(false);
@@ -3920,40 +4227,61 @@ std::string run_colibri_serve(
                               "Starting it. Ask again in about a minute. "
                               "Not Colibri, not GLM paging.";
                     if (!last_tool_out.empty()) {
-                        return last_tool_out + "\n" + err;
+                        return fail_reply(last_tool_out + "\n" + err, "transport_error");
                     }
-                    return err;
+                    return fail_reply(err, "transport_error");
                 }
-                return "Error: Colibri serve did not finish in 1200s. "
-                       "GLM-5.2 is paging experts off disk on 16 GB. "
-                       "Wait until /status shows coli=serve (not busy) and ask again.";
+                return fail_reply(
+                    "Error: Colibri serve did not finish in 1200s. "
+                    "GLM-5.2 is paging experts off disk on 16 GB. "
+                    "Wait until /status shows coli=serve (not busy) and ask again.",
+                    "transport_error");
             }
             assembled += exl3_mouth
                              ? "\n[cut — EXL3 dropped mid-generate. Ask again. Gemma stays paused.]"
                              : (llama_mouth
                                     ? "\n[cut — mouth dropped mid-generate. Ask again, do not Continue.]"
                                     : "\n[cut — serve timed out, say continue]");
-            return assembled;
+            return fail_reply(assembled, "transport_error");
         }
         if (response->status != 200) {
             assembled += piece;
             if (assembled.empty()) {
                 if (exl3_mouth) {
-                    return "Error: EXL3 HTTP " + std::to_string(response->status);
+                    return fail_reply("Error: EXL3 HTTP " + std::to_string(response->status),
+                                      "http_error");
                 }
-                return llama_mouth
-                           ? ("Error: llama-server HTTP " +
-                              std::to_string(response->status))
-                           : ("Error: Colibri serve returned HTTP " +
-                              std::to_string(response->status));
+                return fail_reply(
+                    llama_mouth ? ("Error: llama-server HTTP " + std::to_string(response->status))
+                                : ("Error: Colibri serve returned HTTP " + std::to_string(response->status)),
+                    "http_error");
             }
             assembled += "\n[cut — serve HTTP " +
                          std::to_string(response->status) + ", say continue]";
-            return assembled;
+            return fail_reply(assembled, "http_error");
+        }
+        if (finish_reason.compare(0, 6, "error:") == 0) {
+            return fail_reply("Error: " + finish_reason.substr(6), "model_error");
         }
         last_reason = finish_reason;
+        if (answer_retry && finish_reason != "stop") return no_final_answer(finish_reason);
+        if (tool_mode == local_tools::ToolMode::Research &&
+            (finish_reason == "length" ||
+             (trim_copy(piece).empty() && trim_copy(assembled).empty() && tool_acc.empty()))) {
+            if (retry_answer(finish_reason == "length" ? "output_limit" : "empty_completion")) {
+                --chunk;
+                continue;
+            }
+            return no_final_answer(finish_reason);
+        }
         if (trim_copy(piece).empty() && !reasoning_piece.empty() &&
             tool_acc.empty()) {
+            if (exl3_mouth && thinking.enabled && !use_tools &&
+                finish_reason == "length" && !answer_retry) {
+                retry_answer("output_limit");
+                --chunk;
+                continue;
+            }
             if (unused49::contains(reasoning_piece) && llama_mouth && !exl3_mouth) {
                 restart_mouth(true);
             }
@@ -3972,9 +4300,10 @@ std::string run_colibri_serve(
                                 .get<std::string>();
                 } catch (const json::exception&) {
                     if (assembled.empty()) {
-                        return llama_mouth
-                                   ? "Error: llama-server returned a malformed completion."
-                                   : "Error: Colibri serve returned a malformed completion.";
+                        return fail_reply(
+                            llama_mouth ? "Error: llama-server returned a malformed completion."
+                                        : "Error: Colibri serve returned a malformed completion.",
+                            "malformed_completion");
                     }
                     break;
                 }
@@ -4019,6 +4348,10 @@ std::string run_colibri_serve(
         messages.push_back(
             json{{"role", "user"}, {"content", make_continue_prompt(assembled)}});
     }
+    if (answer_retry &&
+        (!tool_acc.empty() || local_tools::has_tool_block(assembled))) {
+        return no_final_answer("tool_calls");
+    }
     if (!tool_mouth || apply_cont) break;
     // Native tools: execute in-process. Do not send role:tool back to
     // llama.cpp (CUDA IMA on that KV). Flatten into a fresh user turn.
@@ -4043,7 +4376,7 @@ std::string run_colibri_serve(
             !fix_job &&
             local_tools::looks_like_local_fs_ask(hop_hint) &&
             !local_tools::looks_like_list_only_ask(hop_hint);
-        if (!has_procedure && analysis) {
+        if (!has_procedure && analysis && tool_mode != local_tools::ToolMode::Research) {
             const std::string map = local_tools::analysis_observe(hop_hint);
             if (!map.empty() &&
                 (tool_out.find("list_local_dir") != std::string::npos ||
@@ -4054,14 +4387,37 @@ std::string run_colibri_serve(
                 if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
                 tool_out += map;
             }
-        } else if (!has_procedure && !fix_job) {
+        } else if (!has_procedure && !fix_job && tool_mode != local_tools::ToolMode::Research) {
             tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
         }
-        if (!has_procedure) results = {tool_out};
+        if (!has_procedure && tool_mode != local_tools::ToolMode::Research) results = {tool_out};
         last_tool_out.clear();
+        bool new_research_evidence = false;
+        bool research_capacity_reached = false;
         for (const auto& result : results) {
-            const bool retained = append_tool_context(tool_ledger, result);
-            append_tool_context(last_tool_out, result);
+            if (tool_mode == local_tools::ToolMode::Research) {
+                if (std::find(research_results.begin(), research_results.end(), result) !=
+                    research_results.end()) continue;
+                if (result.size() > 11000 ||
+                    tool_ledger.size() + result.size() + 1 > kResearchToolContextBytes - 256) {
+                    const std::string omission =
+                        "\nResearch capacity reached: a new result was omitted. Prior complete "
+                        "observations remain retained. Do not claim the omitted evidence was "
+                        "supplied. Narrow the task; no partial source was supplied.\n";
+                    if (tool_ledger.find(omission) == std::string::npos) {
+                        append_tool_context(tool_ledger, omission, kResearchToolContextBytes);
+                    }
+                    hops_ok = false;
+                    research_capacity_reached = true;
+                    continue;
+                }
+                research_results.push_back(result);
+                new_research_evidence = true;
+            }
+            const auto context_limit = tool_mode == local_tools::ToolMode::Research
+                                           ? kResearchToolContextBytes : kToolContextBytes;
+            const bool retained = append_tool_context(tool_ledger, result, context_limit);
+            append_tool_context(last_tool_out, result, context_limit);
             hops_ok = hops_ok && retained;
         }
         ++chain_hops;
@@ -4070,11 +4426,17 @@ std::string run_colibri_serve(
         if (stayed && max_tool_rounds > tool_round + 2) {
             max_tool_rounds = tool_round + 2;
         }
+        if (tool_mode == local_tools::ToolMode::Research &&
+            (!new_research_evidence || research_capacity_reached)) {
+            max_tool_rounds = (std::min)(max_tool_rounds, tool_round + 2);
+        }
         const bool speak =
             stayed || next_round_speak_only(tool_round, max_tool_rounds);
         messages.push_back(json{
             {"role", "user"},
-            {"content", flatten_continue_prompt(tool_ledger, speak, fix_job)}});
+            {"content", tool_mode == local_tools::ToolMode::Research
+                            ? flatten_research_prompt(tool_ledger, speak)
+                            : flatten_continue_prompt(tool_ledger, speak, fix_job)}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
                   << max_tool_rounds << " (" << tool_ledger.size()
                   << " bytes, cache_prompt=0)" << std::endl;
@@ -4126,9 +4488,10 @@ std::string run_colibri_serve(
                 one_calls.empty() ? std::string("unknown tool\n")
                                   : local_tools::execute_calls(one_calls, &one_ok,
                                                                &advertised, evidence.task_id,
-                                                               skill_client);
+                                                               skill_client, &scope);
             if (one_calls.empty()) one_ok = false;
             record_tool_evidence(evidence, one_calls, advertised, one_ok, one);
+            receipt["tool_attempts"] = evidence.results;
             hop_ok = hop_ok && one_ok;
             tool_results.push_back(one);
             for (const auto& call : one_calls) {
@@ -4166,8 +4529,9 @@ std::string run_colibri_serve(
     const auto legacy_calls = local_tools::parse_tool_blocks(assembled);
     const std::string tool_out =
         local_tools::execute_calls(legacy_calls, &hop_ok, &advertised, evidence.task_id,
-                                   skill_client);
+                                   skill_client, &scope);
     record_tool_evidence(evidence, legacy_calls, advertised, hop_ok, tool_out);
+    receipt["tool_attempts"] = evidence.results;
     hops_ok = hops_ok && hop_ok;
     if (tool_out.empty()) break;
     const bool has_procedure = std::any_of(
@@ -4204,7 +4568,7 @@ std::string run_colibri_serve(
     if (hit49 && unused49::keep_count(assembled) < 24) assembled.clear();
     if (hit49 && spoken && unused49::keep_count(*spoken) < 24) spoken->clear();
     if ((unused49_seen || hit49) && llama_mouth && !exl3_mouth) restart_mouth(true);
-    if (assembled.empty()) {
+    if (assembled.empty() && tool_mode == local_tools::ToolMode::Legacy) {
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
         if (local_tools::looks_like_jarvis_need_ask(hop_hint)) {
             // Observe is the map. Need-asks must conclude in sentences.
@@ -4219,6 +4583,7 @@ std::string run_colibri_serve(
     if (trim_copy(assembled).empty()) return no_final_answer(last_reason);
     if (spoken && spoken->empty()) *spoken = assembled;
     if (chain_hops > 0 || !tool_ledger.empty()) {
+        evidence.model_requests = receipt["output_requests"];
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, assembled,
                    chain_hops, "final", hops_ok, &evidence);
     }
@@ -4231,6 +4596,7 @@ std::string run_colibri_serve(
             << " fix=" << (fix_job ? 1 : 0)
             << " rounds=" << max_tool_rounds << "\n";
     }
+    if ((tool_mode == local_tools::ToolMode::Research || answer_retry) && on_token) on_token(assembled);
     return assembled;
 }
 
@@ -4353,7 +4719,9 @@ std::string run_colibri(
     const std::string& prior_user = {},
     const std::string& prior_assistant = {},
     std::string* spoken = nullptr,
-    const std::string& tool_hint = {}) {
+    const std::string& tool_hint = {},
+    local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
+    json* request_receipt = nullptr) {
     DWORD expected = 0;
     const DWORD now = GetTickCount();
     const DWORD stamp = now == 0 ? 1 : now;
@@ -4389,7 +4757,8 @@ std::string run_colibri(
                       << " model=" << id << " (llama stays paused)" << std::endl;
             return run_colibri_serve(
                 system, user, on_token, on_ping, prior_user, prior_assistant,
-                spoken, tool_hint, "127.0.0.1", choice.port, id, true);
+                spoken, tool_hint, "127.0.0.1", choice.port, id, true,
+                maybe_restart_mouth, nullptr, tool_mode, request_receipt);
         }
         return "Error: mouth is paused (logs/mouth-pause.txt) and EXL3 "
                "is down on :8888. "
@@ -4414,7 +4783,8 @@ std::string run_colibri(
         std::cout << "[COLIBRI] Persistent serve at 127.0.0.1:8000" << std::endl;
         return run_colibri_serve(
             system, user, on_token, on_ping, prior_user, prior_assistant,
-            spoken, tool_hint);
+            spoken, tool_hint, kColibriServeHost, kColibriServePort, {}, false,
+            maybe_restart_mouth, nullptr, tool_mode, request_receipt);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
@@ -4686,6 +5056,8 @@ int main() {
         handle_sre(req, res);
     });
 
+    attach_shared_routes(svr, set_cors);
+
     svr.Post("/api/remember", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         handle_remember(req, res);
@@ -4745,6 +5117,32 @@ int main() {
         try {
             json payload = json::parse(req.body);
             std::string user_msg = payload.value("message", "");
+            local_tools::ToolMode tool_mode;
+            std::string mode_error;
+            if (!local_tools::parse_tool_mode(payload, user_msg, tool_mode, mode_error)) {
+                res.status = 400;
+                res.set_content(json({{"response", mode_error}}).dump(), "application/json");
+                return;
+            }
+            if (is_continue_command(user_msg)) {
+                const auto previous = load_chain();
+                if (previous.value("status", "") == "running") {
+                    const auto saved_mode = previous.value("tool_mode", "legacy");
+                    if (saved_mode == "answer") tool_mode = local_tools::ToolMode::Answer;
+                    else if (saved_mode == "research" && tool_mode != local_tools::ToolMode::Answer) {
+                        tool_mode = local_tools::ToolMode::Research;
+                    }
+                }
+            }
+            if ((tool_mode == local_tools::ToolMode::Answer ||
+                 tool_mode == local_tools::ToolMode::Research) &&
+                local_edit::looks_like_edit_request(user_msg)) {
+                res.status = 400;
+                res.set_content(
+                    "{\"response\":\"Select Fix mode to request /edit; no edit was attempted.\"}",
+                    "application/json");
+                return;
+            }
             const browser_evidence::Evidence ev =
                 parse_browser_evidence(payload, false);
             const std::string evidence_block =
@@ -4773,6 +5171,14 @@ int main() {
                 value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
                 return value;
             };
+
+            if (ascii_lower_copy(trim_view(user_msg)) == "index" ||
+                ascii_lower_copy(trim_view(user_msg)) == "/index") {
+                auto forwarded = req;
+                forwarded.body = "{}";
+                handle_context_index(forwarded, res);
+                return;
+            }
 
             if (starts_with_ignore_case(user_msg, "/status") &&
                 (user_msg.size() == 7 ||
@@ -5613,7 +6019,8 @@ int main() {
                 local_tools::looks_like_local_fs_ask(user_msg);
             const bool list_only_ask =
                 local_tools::looks_like_list_only_ask(user_msg);
-            const bool no_tools_ask = local_tools::looks_like_no_tools(user_msg);
+            const bool no_tools_ask = tool_mode == local_tools::ToolMode::Answer ||
+                                      local_tools::looks_like_no_tools(user_msg);
             const bool fs_analyze =
                 local_fs_ask && !list_only_ask && !no_tools_ask &&
                 !local_edit::looks_like_edit_request(user_msg);
@@ -5634,9 +6041,25 @@ int main() {
             std::string session_text;
             std::string session_error;
             std::string rag_text;
+            std::string shared_text;
+            bool shared_memory_active = false;
             if (!continue_cmd) {
                 const bool edit_req = local_edit::looks_like_edit_request(user_msg);
                 const bool skip_rag = edit_req || local_fs_ask || no_tools_ask;
+                if (!skip_rag && token_matches(extract_bearer_token(req))) {
+                    try {
+                        const auto working = memory::shared_working_context(user_msg, "desk");
+                        if (working.at("state") == "ready") {
+                            shared_memory_active = true;
+                            shared_text = working.at("context").get<std::string>();
+                        }
+                    } catch (const std::exception& error) {
+                        res.status = 503;
+                        res.set_content(json({{"response", std::string("Shared memory unavailable: ") + error.what()}}).dump(),
+                                        "application/json");
+                        return;
+                    }
+                }
                 if (!skip_rag &&
                     !memory::render_session_context(session_text, session_error)) {
                     std::cerr << "[MEMORY] Session context rejected: " << session_error
@@ -5661,13 +6084,20 @@ int main() {
                 if (!have_rag) {
                     std::cerr << "[RAG] Canonical search failed closed: " << rag_error
                               << std::endl;
-                    if (session_text.empty()) {
+                    if (session_text.empty() &&
+                        !(shared_memory_active && rag_error == "canonical RAG returned no usable context")) {
                         res.status = 503;
                         res.set_content(
                             "{\"response\":\"Canonical Golden Record retrieval is unavailable.\"}",
                             "application/json");
                         return;
                     }
+                }
+                if (!shared_text.empty()) {
+                    rag_text = godbrain_shared::bounded(rag_text, 1300);
+                    session_text = godbrain_shared::merge(
+                        godbrain_shared::bounded(shared_text, 2500),
+                        session_text, 2800);
                 }
             }
 
@@ -5712,9 +6142,10 @@ int main() {
             std::string system_prompt = oracle_system_prompt();
             if (!local_edit::looks_like_edit_request(user_msg) &&
                 !no_tools_ask) {
-                system_prompt += local_tools::tool_system_addendum_for(user_msg);
+                system_prompt += local_tools::tool_system_addendum_for(user_msg, tool_mode);
             }
-            if (fs_analyze && !local_tools::yolo_active()) {
+            if (fs_analyze && tool_mode != local_tools::ToolMode::Research &&
+                !local_tools::yolo_active()) {
                 system_prompt +=
                     " Jarvis on this PC is Heal/Watch, kernel tools, Golden "
                     "Records, and /verify — not a butler persona file. "
@@ -5794,7 +6225,8 @@ int main() {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             }
             std::string tool_hint = asked;
-            if (local_fs_ask && !no_tools_ask && !continue_cmd &&
+            if (local_fs_ask && tool_mode != local_tools::ToolMode::Research &&
+                !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
                 if (fs_analyze && !local_tools::yolo_active()) {
                     const std::string gp =
@@ -5930,7 +6362,7 @@ int main() {
                 res.set_chunked_content_provider(
                     "text/event-stream",
                     [sys, usr, asked_q, tool_hint, hist_q, hist_a,
-                     stitch_continue, local_fs_ask, no_tools_ask](
+                     stitch_continue, local_fs_ask, no_tools_ask, tool_mode](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -5943,6 +6375,7 @@ int main() {
                         const DWORD coli_started = GetTickCount();
                         std::string streamed;
                         std::string spoken;
+                        json request_receipt = json::object();
                         DWORD last_partial = 0;
                         const std::string combined = run_colibri(
                             sys,
@@ -5972,7 +6405,7 @@ int main() {
                             hist_q,
                             hist_a,
                             &spoken,
-                            tool_hint);
+                            tool_hint, tool_mode, &request_receipt);
                         std::string chunk = strip_coli_reply(combined);
                         std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
@@ -6009,7 +6442,12 @@ int main() {
                             emit({{"type", "token"},
                                   {"text", std::string("\n\n") + probe}});
                         }
-                        const auto edit = local_edit::maybe_apply(
+                        const auto edit =
+                            (tool_mode == local_tools::ToolMode::Answer ||
+                             tool_mode == local_tools::ToolMode::Research ||
+                             request_receipt.value("tool_mode", "") == "research" ||
+                             request_receipt.value("tool_mode", "") == "answer")
+                            ? local_edit::Result{} : local_edit::maybe_apply(
                             asked_q,
                             for_memory,
                             [&](const std::string& sys, const std::string& usr) {
@@ -6049,7 +6487,8 @@ int main() {
                         } else {
                             // Stream already showed new tokens. Do not replace
                             // the bubble with the stitched prior+new dump.
-                            emit({{"type", "done"}, {"response", chunk}});
+                            emit({{"type", "done"}, {"response", chunk},
+                                  {"request_receipt", request_receipt}});
                         }
                         sink.done();
                         return true;
@@ -6058,6 +6497,7 @@ int main() {
             }
             const DWORD coli_started = GetTickCount();
             std::string spoken;
+            json request_receipt = json::object();
             const bool hist =
                 follow_up &&
                 (continue_cmd ||
@@ -6072,7 +6512,7 @@ int main() {
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
                 &spoken,
-                tool_hint);
+                tool_hint, tool_mode, &request_receipt);
             std::string chunk = strip_coli_reply(combined);
             std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);
@@ -6102,7 +6542,12 @@ int main() {
                     for_memory = probe;
                 }
             }
-            const auto edit = local_edit::maybe_apply(
+            const auto edit =
+                (tool_mode == local_tools::ToolMode::Answer ||
+                 tool_mode == local_tools::ToolMode::Research ||
+                 request_receipt.value("tool_mode", "") == "research" ||
+                 request_receipt.value("tool_mode", "") == "answer")
+                ? local_edit::Result{} : local_edit::maybe_apply(
                 asked,
                 for_memory,
                 [&](const std::string& sys, const std::string& usr) {
@@ -6133,6 +6578,18 @@ int main() {
                       << " ms (" << combined.size() << " bytes)" << std::endl;
             json resp;
             resp["response"] = continue_cmd ? chunk : final_answer;
+            resp["request_receipt"] = request_receipt;
+            if (shared_memory_active) {
+                try {
+                    const auto saved = memory::save_working_turn(asked, final_answer);
+                    resp["shared_saved"] = true;
+                    resp["shared_record_id"] = saved.at("record").at("_id");
+                } catch (const std::exception& error) {
+                    res.status = 503;
+                    resp["shared_saved"] = false;
+                    resp["memory_error"] = error.what();
+                }
+            }
             res.set_content(resp.dump(), "application/json");
         } catch (...) {
             res.status = 400;
