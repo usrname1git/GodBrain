@@ -115,7 +115,7 @@ report and receipt; no replacement values are invented.
 | Enumerate `mouclass\Parameters` properties | Query only | Report property names without changing them. |
 | USB selective suspend / USB 3 link power | AC `0` | Already in latency bake. Stable subgroup/setting IDs; DC remains untouched. |
 | NVIDIA `DisableLinesetting` | DWORD `1` | Latency bake. Resolve each present NVIDIA display device to its actual display-class instance; never assume `0000` is NVIDIA. |
-| NVIDIA `PowerMizerEnable`, `PerfLevelSrc` | DWORD `0`, DWORD decimal `3322` | Latency bake. Read the present device's `Device Parameters\VideoID`, validate its driver/vendor mapping, then target that `Control\Video\{VideoID}\0000` only. The before-values cover the supplied read-only probes. Decimal `3322` is `0x0CFA`, not `0x3322` (decimal `13090`). |
+| NVIDIA `PowerMizerEnable`, `PerfLevelSrc` | DWORD `0`, DWORD decimal `3322` | Latency bake. Set all three NVIDIA values in one block under the same resolved display-class instance as `DisableLinesetting`; no separate Video-path writes. The before-values cover the supplied read-only probes. Decimal `3322` is `0x0CFA`, not `0x3322` (decimal `13090`). |
 
 Registry write verification proves the requested value/type was stored,
 **not** a frametime improvement, driver consumption, P2 change or maximum
@@ -130,7 +130,9 @@ restore files remain supported. Restore order uses full UTC receipt times,
 not mixed old/new directory names; invalid timestamps fail explicitly.
 Device-bound apply/restore rechecks
 identity and refuses changed/missing mappings rather than writing a new
-adapter's key. No matching hardware is a reported skip; discovery,
+adapter's key. Older NVIDIA backups using the device's validated
+`Control\Video\{VideoID}\0000` path remain restorable. No matching hardware
+is a reported skip; discovery,
 permission, write/readback and restore errors are reported as failures.
 The GUI logs applied/failed counts and inspection results; restore
 failures also reach the aggregate restore result. These actions refuse

@@ -82,10 +82,11 @@ function Add-FixtureGpu {
     Add-FixtureValue "$root\Device Parameters" "VideoID" "String" $VideoId
     $class = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$DriverKey"
     $video = "HKLM:\SYSTEM\CurrentControlSet\Control\Video\$VideoId\0000"
-    Add-FixtureValue $class "MatchingDeviceId" "String" "PCI\VEN_10DE&DEV_1234"
-    Add-FixtureValue $video "MatchingDeviceId" "String" "PCI\VEN_10DE&DEV_1234"
-    Add-FixtureValue $video "PowerMizerEnable" "DWord" 1
-    Add-FixtureValue $video "PerfLevelSrc" "String" "original-mode"
+    foreach ($path in @($class, $video)) {
+        Add-FixtureValue $path "MatchingDeviceId" "String" "PCI\VEN_10DE&DEV_1234"
+        Add-FixtureValue $path "PowerMizerEnable" "DWord" 1
+        Add-FixtureValue $path "PerfLevelSrc" "String" "original-mode"
+    }
 }
 function Reset-Fixture {
     $script:F = @{
@@ -248,7 +249,13 @@ try {
     }
     Invoke-FixtureCase "Multiple NVIDIA cards are mapped independently" {
         Add-FixtureGpu "PCI\VEN_10DE&DEV_1234\SECOND" "{4d36e968-e325-11ce-bfc1-08002be10318}\0008" "{66666666-6666-4666-8666-666666666666}"
-        Assert-True (@(Get-Reclaim11NvidiaRegistryTargets).Count -eq 2) "Lost second GPU"
+        $targets = @(Get-Reclaim11NvidiaRegistryTargets)
+        Assert-True ($targets.Count -eq 2) "Lost second GPU"
+        $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot -WhatIf
+        foreach ($target in $targets) {
+            $rows = @($plan.registry | Where-Object { $_.path -eq $target.class_path })
+            Assert-True ($rows.Count -eq 3) "NVIDIA values were not grouped in each card's Class key"
+        }
     }
     Invoke-FixtureCase "NIC TEST lists both TCP writes even without advanced-property actions" {
         $plan = Invoke-Reclaim11NicTune -Root $RepoRoot -WhatIf
@@ -261,6 +268,8 @@ try {
         Assert-True ($plan.registry.Count -eq 7 -and $plan.inspection.Count -eq 7) "Incomplete latency plan"
         Assert-True (@($plan.would | Where-Object { $_ -like "inspect *" }).Count -eq 7) "Missing inspections"
         Assert-True (@($plan.registry | Where-Object { $_.name -eq "PerfLevelSrc" -and $_.wanted -eq 3322 }).Count -eq 1) "PerfLevelSrc changed base"
+        $nvidia = @($plan.registry | Where-Object { $_.name -in @("DisableLinesetting", "PowerMizerEnable", "PerfLevelSrc") })
+        Assert-True ($nvidia.Count -eq 3 -and @($nvidia | Where-Object { $_.path -ne $script:ClassPath }).Count -eq 0) "NVIDIA writes did not share the resolved Class key"
         Assert-True ($script:F.Backups -eq 0 -and $script:F.Events.Count -eq 0 -and -not $plan.power_switch_high_performance) "TEST mutated or implicitly switched"
     }
     Invoke-FixtureCase "TCP apply backs up first, reads back DWORDs and restores type/absence" {
@@ -275,12 +284,45 @@ try {
     Invoke-FixtureCase "NVIDIA/mouse apply and restore preserve exact values, types and absence" {
         $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot
         Assert-True ($plan.failed.Count -eq 0 -and $script:F.Events[0] -eq "backup") "Latency apply failed: $($plan.failed -join '; ')"
-        Assert-True ($script:F.Registry[$script:ClassPath].DisableLinesetting.value -eq 1 -and $script:F.Registry[$script:VideoPath].PowerMizerEnable.value -eq 0 -and $script:F.Registry[$script:VideoPath].PerfLevelSrc.value -eq 3322) "Wrong NVIDIA values"
+        Assert-True ($script:F.Registry[$script:ClassPath].DisableLinesetting.value -eq 1 -and $script:F.Registry[$script:ClassPath].PowerMizerEnable.value -eq 0 -and $script:F.Registry[$script:ClassPath].PerfLevelSrc.value -eq 3322) "Wrong NVIDIA values"
+        Assert-True (@($script:F.Events | Where-Object { $_ -like "reg:HKLM:\SYSTEM\CurrentControlSet\Control\Video\*" }).Count -eq 0) "New profile wrote through a Video path"
         Assert-True (@($script:F.Events | Where-Object { $_ -match ':(GPU Priority|Priority|Scheduling Category|SFIO Priority|KeyboardDataQueueSize)$' }).Count -eq 0) "Inspection caused a write"
         Save-FixtureRestore $plan
         $restore = Restore-Reclaim11LatencyBackup -Manifest $script:Manifest
         Assert-True ($restore.failed.Count -eq 0 -and -not $script:F.Registry[$script:ClassPath].ContainsKey("DisableLinesetting")) "Absent NVIDIA value not restored"
-        Assert-True ($script:F.Registry[$script:VideoPath].PerfLevelSrc.kind -eq "String" -and $script:F.Registry[$script:VideoPath].PerfLevelSrc.value -eq "original-mode") "NVIDIA original type/data lost"
+        Assert-True ($script:F.Registry[$script:ClassPath].PowerMizerEnable.kind -eq "DWord" -and $script:F.Registry[$script:ClassPath].PowerMizerEnable.value -eq 1) "NVIDIA original DWORD lost"
+        Assert-True ($script:F.Registry[$script:ClassPath].PerfLevelSrc.kind -eq "String" -and $script:F.Registry[$script:ClassPath].PerfLevelSrc.value -eq "original-mode") "NVIDIA original type/data lost"
+    }
+    Invoke-FixtureCase "Legacy Video-path NVIDIA backups still restore exact types and values" {
+        $plan = Invoke-Reclaim11LatencyBake -Root $RepoRoot
+        $legacy = $script:F.Saved[$plan.manifest_path] | ConvertFrom-Json
+        foreach ($row in $legacy.registry) {
+            if ($row.name -in @("PowerMizerEnable", "PerfLevelSrc")) { $row.path = $script:VideoPath }
+        }
+        Add-FixtureValue $script:VideoPath "PowerMizerEnable" "DWord" 0
+        Add-FixtureValue $script:VideoPath "PerfLevelSrc" "DWord" 3322
+        $script:F.Saved[$plan.manifest_path] = $legacy | ConvertTo-Json -Depth 12
+        Save-FixtureRestore $plan
+        $restore = Restore-Reclaim11LatencyBackup -Manifest $script:Manifest
+        Assert-True ($restore.failed.Count -eq 0) "Legacy NVIDIA restore failed: $($restore.failed -join '; ')"
+        Assert-True ($script:F.Registry[$script:VideoPath].PowerMizerEnable.kind -eq "DWord" -and $script:F.Registry[$script:VideoPath].PowerMizerEnable.value -eq 1) "Legacy NVIDIA DWORD lost"
+        Assert-True ($script:F.Registry[$script:VideoPath].PerfLevelSrc.kind -eq "String" -and $script:F.Registry[$script:VideoPath].PerfLevelSrc.value -eq "original-mode") "Legacy NVIDIA original type/data lost"
+    }
+    Invoke-FixtureCase "NVIDIA backups reject unrelated Class and Video paths" {
+        foreach ($path in @(
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000",
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Video\{99999999-9999-4999-8999-999999999999}\0000"
+        )) {
+            foreach ($name in @("DisableLinesetting", "PowerMizerEnable", "PerfLevelSrc")) {
+                $row = [pscustomobject]@{
+                    path = $path; name = $name
+                    binding = [pscustomobject]@{ kind = "nvidia"; instance_id = $script:Device }
+                }
+                $errorText = ""
+                try { Assert-Reclaim11RegistryBinding -Row $row } catch { $errorText = $_.Exception.Message }
+                Assert-True ($errorText -match "registry target changed") "Unbound NVIDIA path accepted: $path"
+            }
+        }
     }
     Invoke-FixtureCase "Repeated direct and aggregate restores preserve originally absent BCD elements" {
         $script:F.Bcd["{current}"].Remove("useplatformclock")

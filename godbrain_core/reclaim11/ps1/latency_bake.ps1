@@ -269,9 +269,12 @@ function Invoke-Reclaim11LatencyBake {
     if ($nvidia.Count -eq 0) { $skipped += "NVIDIA registry: no present NVIDIA display device" }
     foreach ($target in $nvidia) {
         $binding = [pscustomobject]@{ kind = "nvidia"; instance_id = $target.instance_id }
-        $regs += New-Reclaim11RegistryWrite -Path $target.class_path -Name "DisableLinesetting" -Wanted 1 -Binding $binding
-        foreach ($spec in @(@{ name = "PowerMizerEnable"; value = 0 }, @{ name = "PerfLevelSrc"; value = 3322 })) {
-            $regs += New-Reclaim11RegistryWrite -Path $target.video_path -Name $spec.name -Wanted $spec.value -Binding $binding
+        foreach ($spec in @(
+            @{ name = "DisableLinesetting"; value = 1 },
+            @{ name = "PowerMizerEnable"; value = 0 },
+            @{ name = "PerfLevelSrc"; value = 3322 }
+        )) {
+            $regs += New-Reclaim11RegistryWrite -Path $target.class_path -Name $spec.name -Wanted $spec.value -Binding $binding
         }
     }
     $inspection = @(Get-Reclaim11GamingInspection)

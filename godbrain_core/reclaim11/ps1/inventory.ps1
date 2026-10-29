@@ -570,8 +570,12 @@ function Assert-Reclaim11RegistryBinding {
         "nvidia" {
             $target = @(Get-Reclaim11NvidiaRegistryTargets | Where-Object { $_.instance_id -ieq $Row.binding.instance_id })
             if ($target.Count -ne 1) { throw "NVIDIA backup device is no longer uniquely present" }
-            $path = if ($Row.name -eq "DisableLinesetting") { $target[0].class_path } else { $target[0].video_path }
-            if ($Row.name -notin @("DisableLinesetting", "PowerMizerEnable", "PerfLevelSrc") -or $Row.path -ine $path) {
+            $paths = @($target[0].class_path)
+            # Older backups recorded the two power values through the Video alias.
+            if ($Row.name -in @("PowerMizerEnable", "PerfLevelSrc")) {
+                $paths += $target[0].video_path
+            }
+            if ($Row.name -notin @("DisableLinesetting", "PowerMizerEnable", "PerfLevelSrc") -or $Row.path -notin $paths) {
                 throw "NVIDIA registry target changed since backup: $($Row.path)"
             }
         }
