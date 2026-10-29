@@ -184,7 +184,17 @@ def make_attachment_plan(sources, task, context, output, count):
             "lines": len(lines),
         })
         texts.append(lines)
-    if len(sources) == 2 and all(source["kind"] == "text" for source in sources):
+    diff_pair = len(sources) == 2 and all(source["kind"] == "text" for source in sources)
+    # SequenceMatcher can be quadratic on repetitive input. DIFF is optional;
+    # gate its worst-case work before calling it, never truncate original sources.
+    diff_bounded = diff_pair and len(texts[0]) * len(texts[1]) <= 1_000_000 and sum(
+        len(source["text"].encode("utf-8")) for source in sources) <= 262144
+    if diff_pair and not diff_bounded:
+        documents[0]["diff_omitted_reason"] = (
+            "Derived DIFF omitted: work limit (1,000,000 line pairs / 262144 UTF-8 bytes); "
+            "all original A and B lines remain covered."
+        )
+    if diff_bounded:
         pieces = difflib.unified_diff(texts[0], texts[1], fromfile="A", tofile="B")
         diff = "".join(piece if piece.endswith("\n") else
                        piece + "\n\\ No newline at end of file\n" for piece in pieces)

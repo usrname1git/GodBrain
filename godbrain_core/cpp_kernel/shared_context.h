@@ -6,6 +6,16 @@
 namespace godbrain_shared {
 using json = nlohmann::json;
 
+inline bool contains_string(const json& value, const std::string& needle) {
+    if (needle.empty()) return false;
+    if (value.is_string())
+        return value.get_ref<const std::string&>().find(needle) != std::string::npos;
+    if (value.is_array() || value.is_object())
+        for (const auto& child : value)
+            if (contains_string(child, needle)) return true;
+    return false;
+}
+
 inline bool identity(const std::string& value, bool required = false) {
     if (value.empty()) return !required;
     for (const unsigned char ch : value)
@@ -46,6 +56,56 @@ inline std::string merge(const std::string& first, const std::string& second,
     return out;
 }
 
+inline std::string capability_summary(const json& capabilities, int64_t captured_ms) {
+    std::ostringstream text;
+    text << "snapshot_unix_ms=" << captured_ms;
+    const auto list = [&](const char* field, size_t count, size_t bytes) {
+        const auto values = capabilities.value(field, json::array());
+        if (!values.is_array()) throw std::runtime_error("Invalid capability list snapshot");
+        text << '\n' << field << '=';
+        for (size_t n = 0; n < std::min<size_t>(values.size(), count); ++n) {
+            if (n) text << ", ";
+            const auto value = values.at(n).get<std::string>();
+            text << godbrain_rag::utf8_prefix(value, bytes);
+            if (value.size() > bytes) text << " [truncated]";
+        }
+        if (values.empty()) text << "unavailable";
+        if (values.size() > count) text << "; omitted=" << values.size() - count;
+    };
+    list("tool_names_snapshot", 4, 40);
+    list("granted_roots_snapshot", 1, 96);
+    text << "\nTCP snapshot=";
+    const auto listeners = capabilities.value("listener_snapshot", json::object());
+    if (!listeners.is_object()) throw std::runtime_error("Invalid listener snapshot");
+    size_t count = 0;
+    for (const auto& listener : listeners.items()) {
+        if (count++ == 5) { text << " [remaining listeners omitted]"; break; }
+        text << listener.key() << ':' << (listener.value().at("tcp_listening").get<bool>() ? "listening" : "closed") << ' ';
+    }
+    if (listeners.empty()) text << "unavailable";
+    text << "\nFull snapshot: /api/index. Current advertised tools and path jail still govern execution.";
+    return text.str();
+}
+
+inline std::string record_excerpt(const std::string& body, const std::string& shelf, size_t bytes) {
+    const auto clip = [](const std::string& value, size_t cap) {
+        auto excerpt = godbrain_rag::utf8_prefix(value, cap);
+        if (value.size() > cap) excerpt += " [excerpt truncated]";
+        return excerpt;
+    };
+    const std::string operator_marker = "Operator:\n";
+    const std::string assistant_marker = "\n\nAssistant:\n";
+    const auto split = body.find(assistant_marker, operator_marker.size());
+    if (shelf != "discussion" || body.compare(0, operator_marker.size(), operator_marker) != 0 ||
+        split == std::string::npos) return clip(body, bytes);
+    const auto request = body.substr(operator_marker.size(), split - operator_marker.size());
+    const auto answer = body.substr(split + assistant_marker.size());
+    auto request_bytes = std::min<size_t>(request.size(), bytes / 2);
+    const auto answer_bytes = std::min<size_t>(answer.size(), bytes - request_bytes);
+    request_bytes = std::min<size_t>(request.size(), bytes - answer_bytes);
+    return operator_marker + clip(request, request_bytes) + assistant_marker + clip(answer, answer_bytes);
+}
+
 inline std::string records(const json& rows, const std::string& shelf, size_t cap) {
     if (rows.empty()) return {};
     const auto render = [&](size_t count, size_t excerpt_bytes) {
@@ -59,8 +119,7 @@ inline std::string records(const json& rows, const std::string& shelf, size_t ca
             if (shelf != "discussion")
                 text << "title_excerpt=" << godbrain_rag::utf8_prefix(row.at("title").get<std::string>(), 40)
                      << "; speaker_excerpt=" << godbrain_rag::utf8_prefix(row.at("speaker").get<std::string>(), 16) << '\n';
-            text << godbrain_rag::utf8_prefix(body, excerpt_bytes);
-            if (body.size() > excerpt_bytes) text << " [excerpt truncated]";
+            text << record_excerpt(body, shelf, excerpt_bytes);
             json references = json::array();
             for (const auto& source : row.at("sources"))
                 if (references.dump().size() + source.dump().size() + 1 <= 96)

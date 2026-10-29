@@ -312,7 +312,7 @@ function Get-DeskReviewRuntime {
         '^qwen3\.8-flash-next-exl3-3\.05bpw$' { Join-Path (Split-Path $Kit -Parent) "Qwen3.8-Flash-Next-EXL3-3.05bpw\tokenizer.json"; break }
         default { throw "No trusted local tokenizer mapping for the running model '$model'." }
     }
-    $output = [Math]::Min(16384, ([int]$health.context_length - 4096) / 2)
+    $output = [Math]::Max(1024, [Math]::Min(16384, ([int]$health.context_length - 4096) / 2))
     $preference = Read-DeskReasoningPreference (Join-Path $Repo "logs\thinking.txt")
     $thinking = [bool]$preference.Enabled
     $effort = [string]$preference.Effort
@@ -420,7 +420,7 @@ function ConvertFrom-DeskAttachmentBytes([byte[]]$Bytes) {
     return @{ Text = $text; Encoding = $name }
 }
 
-function Invoke-DeskCpuOcr([byte[]]$Bytes) {
+function New-DeskCpuOcrStartInfo {
     $python = (Get-Command python, python.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
     if (-not $python) { throw "CPU OCR requires the existing Python/EasyOCR environment." }
     $info = [Diagnostics.ProcessStartInfo]::new($python)
@@ -434,32 +434,77 @@ function Invoke-DeskCpuOcr([byte[]]$Bytes) {
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     Set-DeskReviewPlannerEncoding $info
+    return $info
+}
+
+function Invoke-DeskCpuOcr([byte[]]$Bytes,
+    [ValidateRange(1, 180000)][int]$TimeoutMilliseconds = 180000) {
     $process = [Diagnostics.Process]::new()
-    $process.StartInfo = $info
+    $process.StartInfo = New-DeskCpuOcrStartInfo
     $started = $false
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $output = [IO.MemoryStream]::new()
+    $errors = [IO.MemoryStream]::new()
     try {
         $started = $process.Start()
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        $process.StandardInput.BaseStream.Write($Bytes, 0, $Bytes.Length)
-        $process.StandardInput.Close()
-        if (-not $process.WaitForExit(180000)) {
-            $process.Kill($true)
-            $process.WaitForExit()
-            throw "CPU OCR timed out; no model was started."
+        if (-not $started) { throw "CPU OCR could not start; no model was started." }
+        $outBuffer = [byte[]]::new(65536)
+        $errBuffer = [byte[]]::new(65536)
+        $stdout = $process.StandardOutput.BaseStream.ReadAsync($outBuffer, 0, $outBuffer.Length)
+        $stderr = $process.StandardError.BaseStream.ReadAsync($errBuffer, 0, $errBuffer.Length)
+        $write = $process.StandardInput.BaseStream.WriteAsync($Bytes, 0, $Bytes.Length)
+        # A single deadline includes a blocked stdin, process execution and pipe EOF.
+        while ($true) {
+            if ($clock.ElapsedMilliseconds -ge $TimeoutMilliseconds) {
+                throw "CPU OCR timed out; no model was started."
+            }
+            if ($null -ne $write -and $write.IsCompleted) {
+                $null = $write.GetAwaiter().GetResult()
+                $process.StandardInput.Close()
+                $write = $null
+            }
+            foreach ($stream in @("stdout", "stderr")) {
+                $pending = if ($stream -eq "stdout") { $stdout } else { $stderr }
+                if ($null -eq $pending -or -not $pending.IsCompleted) { continue }
+                $length = $pending.GetAwaiter().GetResult()
+                if ($length -eq 0) {
+                    if ($stream -eq "stdout") { $stdout = $null } else { $stderr = $null }
+                    continue
+                }
+                $sink = if ($stream -eq "stdout") { $output } else { $errors }
+                $buffer = $outBuffer
+                if ($stream -eq "stderr") { $buffer = $errBuffer }
+                $limit = if ($stream -eq "stdout") { 4MB } else { 64KB }
+                if ($sink.Length + $length -gt $limit) { throw "CPU OCR output exceeded its bounded receipt limit." }
+                $sink.Write($buffer, 0, $length)
+                if ($stream -eq "stdout") {
+                    $stdout = $process.StandardOutput.BaseStream.ReadAsync($outBuffer, 0, $outBuffer.Length)
+                } else {
+                    $stderr = $process.StandardError.BaseStream.ReadAsync($errBuffer, 0, $errBuffer.Length)
+                }
+            }
+            if ($process.HasExited -and $null -eq $write -and $null -eq $stdout -and $null -eq $stderr) { break }
+            Start-Sleep -Milliseconds 5
         }
-        if ($process.ExitCode) { throw "CPU OCR failed (exit $($process.ExitCode)): $($stderr.GetAwaiter().GetResult())" }
-        $result = $stdout.GetAwaiter().GetResult() | ConvertFrom-Json
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        if ($process.ExitCode) { throw "CPU OCR failed (exit $($process.ExitCode)): $($utf8.GetString($errors.ToArray()))" }
+        $result = $utf8.GetString($output.ToArray()) | ConvertFrom-Json
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
         if ($result.version -ne 1 -or $result.engine -cne "cpu" -or
             $result.source_sha256 -cne $hash -or [string]::IsNullOrWhiteSpace($result.text)) {
             throw "CPU OCR returned an invalid or empty source receipt."
         }
+        if ($clock.ElapsedMilliseconds -ge $TimeoutMilliseconds) { throw "CPU OCR timed out; no model was started." }
         return [string]$result.text
     } finally {
         try {
-            if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
-        } finally { $process.Dispose() }
+            if ($started) {
+                if (-not $process.HasExited) { $process.Kill() }
+                if (-not $process.WaitForExit(3000)) { throw "CPU OCR child could not be reaped within the cleanup bound." }
+            }
+        } finally {
+            $output.Dispose(); $errors.Dispose(); $process.Dispose()
+        }
     }
 }
 

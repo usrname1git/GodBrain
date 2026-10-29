@@ -31,7 +31,7 @@ function Update-GodBrainContextIndex {
 function Get-GodBrainSharedContext {
     param(
         [string]$Query,
-        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "powershell",
+        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "desk",
         [ValidateSet("technical", "personal")][string]$Scope = "technical"
     )
     $result = Invoke-GodBrainMemoryRequest -Route context -Payload @{
@@ -67,7 +67,7 @@ function Save-GodBrainWorkingTurn {
     param(
         [string]$Prompt,
         [string]$Response,
-        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "powershell",
+        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "desk",
         [ValidateSet("technical", "personal")][string]$Scope = "technical",
         [string[]]$Sources = @(),
         [string]$RequestId = ([guid]::NewGuid().ToString("N"))

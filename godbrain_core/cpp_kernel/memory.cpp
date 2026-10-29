@@ -1133,7 +1133,7 @@ json working_shelf(const json& input) {
         const std::string text = payload.value("text", "");
         if (looks_like_secret(text)) throw std::invalid_argument("Working memory rejected secret-like source text");
         const auto token = read_env("GODBRAIN_API_TOKEN");
-        if (!token.empty() && payload.dump().find(token) != std::string::npos)
+        if (godbrain_shared::contains_string(payload, token))
             throw std::invalid_argument("Working memory rejected the configured bearer token in source data");
         if (!payload.contains("thread_id")) payload["thread_id"] = "general";
         if (!payload.contains("request_id")) {
@@ -1269,7 +1269,12 @@ json shared_working_context(const std::string& query, const std::string& thread,
     if (cache.is_null()) return {{"state", "not_indexed"}, {"context", ""}};
     const auto& index = cache.at("index");
     const auto& p = index.at("host_profile");
-    const std::string current_pin = telemetry::windows_pin();
+    std::string current_pin, current_pin_error;
+    try {
+        current_pin = telemetry::windows_pin();
+    } catch (const std::runtime_error& error) {
+        current_pin_error = error.what();
+    }
     json gpus = json::array();
     for (const auto& gpu : p.at("gpus"))
         gpus.push_back({{"name", gpu.at("name")},
@@ -1286,7 +1291,7 @@ json shared_working_context(const std::string& query, const std::string& thread,
     std::ostringstream profile;
     profile << "Target host: " << index.at("host_id").get<std::string>()
             << "; snapshot_unix_ms=" << index.at("captured_unix_ms")
-            << "; current_os_pin=" << current_pin
+            << "; current_os_pin=" << (current_pin.empty() ? "unavailable" : current_pin)
             << "; snapshot_os_pin=" << p.at("os_pin").get<std::string>()
             << "\nBridges: /api/context recall; /api/shelf provisional post/read; /api/index refresh. "
                "Client/inference hardware unknown. Snapshot grants no permission or readiness."
@@ -1298,6 +1303,7 @@ json shared_working_context(const std::string& query, const std::string& thread,
             << "; DIMMs=" << dimms.dump()
             << "\nDIMM speeds are firmware reports, not live clocks. Timings/voltages unknown."
             << "\nProbe errors=" << p.at("probe_errors").dump();
+    if (!current_pin_error.empty()) profile << "\nLive OS pin unavailable: " << current_pin_error;
     const auto notes = working_shelf({
         {"action", "read"}, {"shelf", "research"}, {"scope", scope},
         {"query", godbrain_rag::utf8_prefix(query, 512)}, {"limit", 3},
@@ -1309,13 +1315,17 @@ json shared_working_context(const std::string& query, const std::string& thread,
                                     {"scope", scope}, {"thread_id", thread}, {"limit", 2}});
     }
     auto text = godbrain_shared::section("host_index", profile.str(),
-        "cached native observation, not verified RAG; refresh after changes", 1200);
-    text = godbrain_shared::merge(text, godbrain_shared::records(notes.at("records"), "research", 1600));
-    text = godbrain_shared::merge(text, godbrain_shared::records(discussion.at("records"), "discussion", 700));
+        "cached native observation, not verified RAG; refresh after changes", 900);
+    text = godbrain_shared::merge(text, godbrain_shared::section("capability_index",
+        godbrain_shared::capability_summary(index.at("capabilities"), index.at("captured_unix_ms")),
+        "timestamped snapshots; not current authorization or readiness", 800));
+    text = godbrain_shared::merge(text, godbrain_shared::records(notes.at("records"), "research", 1100));
+    text = godbrain_shared::merge(text, godbrain_shared::records(discussion.at("records"), "discussion", 900));
     return {{"state", "ready"}, {"context", text}, {"index_id", index.at("index_id")},
             {"index_record_id", cache.at("record_id")}, {"host_id", index.at("host_id")},
             {"scope", scope}, {"query_truncated", query.size() > 512},
-            {"current_os_pin", current_pin}, {"snapshot_os_pin", p.at("os_pin")},
+            {"current_os_pin", current_pin.empty() ? json(nullptr) : json(current_pin)},
+            {"current_os_pin_error", current_pin_error}, {"snapshot_os_pin", p.at("os_pin")},
             {"research", notes}, {"discussion", discussion}, {"host_profile", p},
             {"capabilities", index.at("capabilities")}};
 }
@@ -1333,8 +1343,21 @@ json shared_context(const std::string& query, const std::string& thread,
         json response;
         const auto bounded_query = godbrain_rag::utf8_prefix(query, 1024);
         if (client.search(bounded_query, 2, response, error)) {
-            if (!godbrain_rag::render_coli_notes(response, verified, error)) throw std::runtime_error(error);
-            result["verified_manual"] = "matched";
+            if (result.at("current_os_pin").is_null()) {
+                json kept = json::array(), omitted = json::array();
+                for (const auto& hit : response.at("results")) {
+                    if (hit.at("sector") == "windows-sre") {
+                        omitted.push_back({{"stable_id", hit.at("stable_id")},
+                            {"reason", "Live OS pin unavailable; Windows applicability is unconfirmed"}});
+                    } else kept.push_back(hit);
+                }
+                response["results"] = std::move(kept);
+                result["verified_omitted"] = std::move(omitted);
+            }
+            if (!response.at("results").empty()) {
+                if (!godbrain_rag::render_coli_notes(response, verified, error)) throw std::runtime_error(error);
+                result["verified_manual"] = "matched";
+            } else result["verified_manual"] = "withheld_live_os_pin_unavailable";
         } else if (error == "canonical RAG returned no usable context") {
             result["verified_manual"] = "no_matches";
         } else {

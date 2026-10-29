@@ -21,10 +21,58 @@ function Assert-Fails([scriptblock]$Action, [string]$Pattern = "*") {
     }
     throw "Expected failure: $Pattern"
 }
-$fixture = Join-Path $env:TEMP ("desk-attachments-" + [guid]::NewGuid().ToString("N"))
+$fixture = Join-Path (Split-Path $PSScriptRoot -Parent) ("logs\desk-attachments-" + [guid]::NewGuid().ToString("N"))
 [void][IO.Directory]::CreateDirectory($fixture)
 $Repo = $fixture; $Kit = $fixture
 try {
+    & {
+        Assert ((Get-Command Invoke-DeskCpuOcr).Parameters.ContainsKey("TimeoutMilliseconds")) "OCR has no injectable bounded input/output deadline."
+        $script:ocrMode = "stdin"
+        $ocrPidPath = Join-Path $fixture "fake-ocr.pid"
+        $fakePython = (Get-Command python -ErrorAction Stop).Source
+        function New-DeskCpuOcrStartInfo {
+            $info = [Diagnostics.ProcessStartInfo]::new($fakePython)
+            foreach ($value in @("-c", @'
+import hashlib,json,os,sys,time
+open(sys.argv[1], "w").write(str(os.getpid()))
+mode = sys.argv[2]
+if mode == "stdin":
+    time.sleep(60)
+if mode == "staged":
+    time.sleep(1.2)
+raw = sys.stdin.buffer.read()
+if mode == "staged":
+    time.sleep(1.2)
+if mode == "output":
+    print("pending", flush=True)
+    time.sleep(60)
+if mode == "failure":
+    sys.exit(7)
+if mode == "oversized":
+    print("x" * (5 * 1024 * 1024), flush=True)
+else:
+    print(json.dumps(dict(version=1,engine="cpu",source_sha256=hashlib.sha256(raw).hexdigest(),text="fixture OCR")))
+'@, $ocrPidPath, $script:ocrMode)) { $info.ArgumentList.Add($value) }
+            $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+            $info.RedirectStandardInput = $true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+            Set-DeskReviewPlannerEncoding $info
+            return $info
+        }
+        $largeBytes = [byte[]]::new(10MB)
+        foreach ($mode in @("stdin", "output", "staged", "failure", "oversized")) {
+            $script:ocrMode = $mode
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $pattern = if ($mode -in @("stdin", "output", "staged")) { "*CPU OCR timed out*" }
+                elseif ($mode -eq "oversized") { "*CPU OCR output exceeded*" } else { "*CPU OCR failed*exit 7*" }
+            Assert-Fails { Invoke-DeskCpuOcr $largeBytes -TimeoutMilliseconds 2000 } $pattern
+            Assert ($clock.Elapsed.TotalSeconds -lt 6) "OCR exceeded its input/output deadline and cleanup grace."
+            $childId = [int][IO.File]::ReadAllText($ocrPidPath)
+            Assert (-not (Get-Process -Id $childId -ErrorAction SilentlyContinue)) "OCR left its exact child running."
+        }
+        $script:ocrMode = "valid"
+        $ocrText = Invoke-DeskCpuOcr ([byte[]]@(1,2,3)) -TimeoutMilliseconds 5000
+        Assert ($ocrText -is [string] -and $ocrText -ceq "fixture OCR") "Valid OCR receipt changed."
+    }
     $original = "state=enabled`r`nvalue=$([char]0xe5)`r`n"
     foreach ($encoding in @([Text.UTF8Encoding]::new($false), [Text.UTF8Encoding]::new($true),
         [Text.UnicodeEncoding]::new($false, $true), [Text.UnicodeEncoding]::new($true, $true))) {

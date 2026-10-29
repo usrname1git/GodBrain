@@ -164,6 +164,9 @@ Text is capped at 32,768 UTF-8 bytes, title/query at 512, and sources at
 16 references of 2,048 bytes each. Reads accept a lexical `query`, a
 `thread_id` or `exclude_thread_id` filter, and `limit` 1-20 (default 8).
 Search uses the complete collection's text index, not just recent messages.
+Queries are natural-language literal terms, not MongoDB search expressions:
+quotes, backslashes and minus signs cannot turn command flags into exclusions.
+An operator-only query fails explicitly rather than becoming an unfiltered read.
 Unknown/authority fields, malformed UTF-8/JSON and conflicting filters fail.
 The existing one-document stdin and one-JSON stdout contract still applies.
 
@@ -173,9 +176,14 @@ the public write/read contract. `POST /api/index` accepts only `{}` and stores
 a timestamped native hardware/capability snapshot in reserved research thread
 `environment-index`, then atomically publishes its hash-bound local cache.
 It never starts a model, rebuilds RAG, expands grants or verifies research.
-Authenticated GET/POST `/api/context` returns that snapshot, current granted
-roots, relevant provisional research, optional discussion continuity and
+Authenticated GET/POST `/api/context` returns that snapshot's root/capability
+observations, relevant provisional research, optional discussion continuity and
 separately labeled canonical verified retrieval in a 4 KiB model context.
+The model-facing context includes bounded timestamped tool/root/listener
+snapshots; these do not establish current authorization or application readiness.
+An unavailable live Windows pin is reported separately from the cached pin and
+does not suppress untrusted or personal continuity. Windows SRE verified hits are
+withheld while that live applicability check is unavailable.
 Missing/corrupt indexes and unavailable/invalid canonical retrieval are
 explicit errors; personal context never queries technical RAG.
 These routes are not exposed by the read-only Phone Desk listener.

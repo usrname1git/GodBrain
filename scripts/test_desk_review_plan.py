@@ -1,4 +1,7 @@
 import unittest
+import json
+import time
+from unittest.mock import patch
 
 from desk_review_plan import (
     load_request, make_plan, structural_boundaries, synthesis, formatted_token_count,
@@ -65,6 +68,11 @@ class ReviewPlanTests(unittest.TestCase):
                       plan["chunks"][0]["messages"][1]["content"])
         self.assertEqual(plan["chunks"][0]["end"], 2)
         self.assertLessEqual(plan["chunks"][0]["prompt_tokens"] + 512 + 1024, 4096)
+
+    def test_minimum_live_context_with_minimum_output(self):
+        plan = make_plan("int fixture;\n", "fixture.cpp", "review", 4096, 1024, count)
+        self.assertEqual(len(plan["chunks"]), 1)
+        self.assertLessEqual(plan["chunks"][0]["prompt_tokens"] + 1024 + 1024, 4096)
 
     def test_sixteen_k_output_preserves_prompt_and_reserve(self):
         plan = make_plan("int fixture;\n", "fixture.cpp", "review", 49152, 16384, count)
@@ -154,6 +162,38 @@ class AttachmentPlanTests(unittest.TestCase):
         self.assertIn("-state=enabled", diff)
         self.assertIn("+state=disabled", diff)
         self.assertLessEqual(plan["chunks"][0]["prompt_tokens"] + 512 + 1024, 8192)
+
+    def test_minimum_live_context_with_minimum_output(self):
+        plan = make_attachment_plan(self.sources("one\n", "two\n"), "Compare", 4096, 1024, count)
+        self.assertEqual(len(plan["chunks"]), 1)
+        self.assertLessEqual(plan["chunks"][0]["prompt_tokens"] + 1024 + 1024, 4096)
+
+    def test_large_repetitive_inputs_omit_unbounded_diff_not_originals(self):
+        texts = ["a\nb\nc\n" * 165000, "b\nc\na\n" * 165000]
+        self.assertTrue(all(len(text.encode()) == 990000 for text in texts))
+        started = time.monotonic()
+        with patch("desk_review_plan.difflib.unified_diff",
+                   side_effect=AssertionError("Unbounded derived diff was attempted")):
+            plan = make_attachment_plan(
+                self.sources(*texts), "Compare", 262144, 1024,
+                lambda messages: max(1, count(messages) // 128))
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual([doc["id"] for doc in plan["documents"]], ["A", "B"])
+        self.assertIn("work limit", plan["documents"][0]["diff_omitted_reason"])
+        reconstructed = {"A": [], "B": []}
+        next_line = {"A": 1, "B": 1}
+        for chunk in plan["chunks"]:
+            body = chunk["messages"][1]["content"]
+            evidence = json.loads(body[body.index('{"sources"'):])
+            self.assertIn("diff_omitted_reason", evidence["sources"][0])
+            for window in evidence["windows"]:
+                identity = window["id"]
+                self.assertEqual(window["start"], next_line[identity])
+                reconstructed[identity].extend(line.split(": ", 1)[1] for line in window["lines"])
+                next_line[identity] = window["end"] + 1
+        for identity, original in zip(("A", "B"), texts):
+            self.assertEqual("".join(reconstructed[identity]), original)
+            self.assertEqual(next_line[identity], len(original.splitlines()) + 1)
 
     def test_balanced_parts_cover_every_original_and_diff_line(self):
         import json

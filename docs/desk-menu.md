@@ -274,6 +274,8 @@ the native target-host hardware/capability snapshot without starting a model.
 This is not a full-vault RAG rebuild, continuous broadcast, permission grant
 or verification. The configured `GODBRAIN_API_TOKEN` is required; ordinary
 Desk and Ask-GodBrain requests send it when configured.
+Ask-GodBrain accepts only `http://127.0.0.1:8083` (or its `localhost`
+alias), always targets that canonical loopback kernel and never follows redirects.
 
 Verified technical RAG remains the manual. Separate Mongo discussion and
 research shelves hold untrusted continuity and provisional findings; personal
@@ -282,6 +284,8 @@ scope is separate from technical retrieval. The authenticated kernel exposes
 persisted outside chat, so a fresh integrated client can recall published
 research without repeating the history. Unpublished Copilot history is not
 magically available.
+PowerShell shared-context reads and discussion saves use the same `desk` thread
+by default; the shared-memory helper functions still accept an explicit `-ThreadId`.
 
 Prompt excerpts share a bounded budget. Long references cannot crowd out every
 later research finding; omitted excerpts/references are labeled, with complete
@@ -341,12 +345,16 @@ explicitly. Text is read directly as strict UTF-8 or BOM-marked UTF-16.
 Screenshots are transcribed by the existing CPU EasyOCR implementation in a
 bounded one-shot Python child, without starting the speech listener, using
 the vision tower or changing the saved model settings. No downloads occur.
+The 180-second OCR deadline includes stdin delivery and output draining;
+oversized output fails explicitly and only that child is terminated on failure.
 OCR is derived text, not verified visual evidence; non-text pictures still
 need the separate vision path described below.
 
 Up to eight files are accepted (1 MiB per text file/extracted text, 10 MiB per
 image). Sources receive stable IDs, byte hashes and original/extracted line
-numbers. Two text inputs also get a deterministic unified diff. The local
+numbers. Two bounded text inputs also get a deterministic unified diff. Derived
+diffs above one million line pairs or 262144 combined UTF-8 bytes are explicitly
+omitted in source metadata; original source coverage is never dropped. The local
 tokenizer budgets all sources together; larger inputs use serial source
 windows (at most 16 parts) and an explicitly unverified synthesis, not silent truncation.
 Every supplied line is covered across parts, which is not a guarantee of

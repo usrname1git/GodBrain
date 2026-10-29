@@ -16,6 +16,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$destination = $null
+if (-not [Uri]::TryCreate($Base, [UriKind]::Absolute, [ref]$destination) -or
+    $destination.Scheme -cne "http" -or $destination.Port -ne 8083 -or
+    $destination.Host -notin @("127.0.0.1", "localhost") -or $destination.UserInfo -or
+    $destination.AbsolutePath -cne "/" -or $destination.Query -or $destination.Fragment) {
+    throw "Ask-GodBrain -Base must be the canonical loopback kernel: http://127.0.0.1:8083 (localhost alias allowed)."
+}
 $message = (($Text | ForEach-Object { $_ }) -join " ").Trim()
 if ($Ideas) { $message = "/ideas" }
 elseif ($Idea) {
@@ -41,12 +48,16 @@ function Test-GodBrainWriteSlash([string]$Text) {
 }
 
 $body = @{ message = $message } | ConvertTo-Json -Compress
+if ((Test-GodBrainWriteSlash $message) -and [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
+    throw "This kernel command requires GODBRAIN_API_TOKEN in this process."
+}
 $invoke = @{
-    Uri = ($Base + "/api/chat")
+    Uri = "http://127.0.0.1:8083/api/chat"
     Method = "POST"
     ContentType = "application/json"
     Body = $body
     TimeoutSec = $timeout
+    MaximumRedirection = 0
 }
 if (-not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
     $invoke.Headers = @{ Authorization = "Bearer " + $env:GODBRAIN_API_TOKEN }
@@ -54,7 +65,8 @@ if (-not [string]::IsNullOrWhiteSpace($env:GODBRAIN_API_TOKEN)) {
 try {
     $r = Invoke-RestMethod @invoke
 } catch {
-    throw "Ask-GodBrain failed: $_"
+    # Remote bodies/exception text can echo credentials; do not include them.
+    throw "Ask-GodBrain failed: the canonical loopback request did not complete (redirects are disabled)."
 }
 if ($r.response) {
     Write-Output $r.response

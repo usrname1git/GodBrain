@@ -263,6 +263,12 @@ bool shelf_command(_mongoc_client_t* client, const std::string& db_name,
         bson_error_t issue{};
         const bool present = mongoc_database_has_collection(db.get(), name, &issue);
         if (!present && issue.code) return fail(error, std::string("shelf collection read: ") + issue.message);
+        std::string search_terms = r.query;
+        for (char& ch : search_terms)
+            if (ch == '-' || ch == '"' || ch == '\\') ch = ' ';
+        search_terms = normalize_ws(search_terms);
+        if (!r.query.empty() && search_terms.empty())
+            return fail(error, "shelf query has no literal search terms");
         J rows = J::array();
         bool more = false;
         if (present) {
@@ -272,7 +278,7 @@ bool shelf_command(_mongoc_client_t* client, const std::string& db_name,
                 if (!r.thread_id.empty()) return fail(error, "thread_id and exclude_thread_id cannot be combined");
                 filter["thread_id"] = J{{"$ne", r.exclude_thread_id}};
             }
-            if (!r.query.empty()) filter["$text"] = J{{"$search", r.query}};
+            if (!search_terms.empty()) filter["$text"] = J{{"$search", search_terms}};
             auto where = bson(filter);
             auto opts = bson(J{{"limit", r.limit + 1}, {"maxTimeMS", 2000}});
             if (!where || !opts) return fail(error, "shelf query encoding failed");

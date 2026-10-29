@@ -3,7 +3,7 @@ param()
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $helper = Join-Path $repo "GodBrain-Cs2.ps1"
-$fixture = Join-Path ([System.IO.Path]::GetTempPath()) ("GodBrain-Cs2-test-" + [guid]::NewGuid().ToString("N"))
+$fixture = Join-Path $repo ("logs\GodBrain-Cs2-test-" + [guid]::NewGuid().ToString("N"))
 $null = New-Item -ItemType Directory -Path $fixture
 
 function Assert-Equal($Actual, $Expected) {
@@ -441,6 +441,38 @@ function Resume-GodBrainAfterCs2 { throw "Automatic resume is forbidden." }
     }
     & {
         . $helper
+        $legacy = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $python = (Get-Command python -ErrorAction Stop).Source
+        $expected = @("plain", "", "two words", 'quote"inside', 'C:\path with space\', '\\server\share\\', 'a\"b', 'x\\\"y')
+        $expectedPath = Join-Path $fixture "argv-expected.json"
+        $actualPath = Join-Path $fixture "argv-actual.json"
+        $driverPath = Join-Path $fixture "legacy-argv.ps1"
+        [IO.File]::WriteAllText($expectedPath, (ConvertTo-Json -InputObject $expected), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($driverPath, @'
+param($Helper, $Python, $ExpectedPath, $ActualPath)
+$ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -ne 5) { throw "Not Windows PowerShell 5." }
+. $Helper
+$values = Get-Content -LiteralPath $ExpectedPath -Raw | ConvertFrom-Json
+$code = 'import json,sys; open(sys.argv[1], "w").write(json.dumps(sys.argv[2:]))'
+Invoke-TailscaleCs2 $Python (@("-c", $code, $ActualPath) + $values)
+'@, [Text.UTF8Encoding]::new($false))
+        $info = [Diagnostics.ProcessStartInfo]::new($legacy)
+        foreach ($argument in @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $driverPath,
+            $helper, $python, $expectedPath, $actualPath)) { $info.ArgumentList.Add($argument) }
+        $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+        $info.RedirectStandardError = $true
+        $legacyProcess = [Diagnostics.Process]::new()
+        $legacyProcess.StartInfo = $info
+        try {
+            [void]$legacyProcess.Start()
+            $failure = $legacyProcess.StandardError.ReadToEndAsync()
+            if (-not $legacyProcess.WaitForExit(15000)) { $legacyProcess.Kill(); throw "Legacy argv fixture timed out." }
+            if ($legacyProcess.ExitCode) { throw "Legacy argv fixture failed: $($failure.GetAwaiter().GetResult())" }
+        } finally { $legacyProcess.Dispose() }
+        $actual = @(Get-Content -LiteralPath $actualPath -Raw | ConvertFrom-Json)
+        Assert-Equal $actual.Count $expected.Count
+        for ($i = 0; $i -lt $expected.Count; $i++) { Assert-Equal $actual[$i] $expected[$i] }
         Invoke-TailscaleCs2 "C:\pwsh\pwsh.exe" @("-NoProfile", "-Command", "exit 0")
         Assert-Throws {
             Invoke-TailscaleCs2 "C:\pwsh\pwsh.exe" @("-NoProfile", "-Command", "[Console]::Error.WriteLine('fixture rejection'); exit 7")

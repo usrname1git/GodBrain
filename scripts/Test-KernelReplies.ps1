@@ -98,6 +98,8 @@ try {
         $missingPinRoot = Join-Path $build 'missing-pin'
         $missingPinNative = Join-Path $missingPinRoot 'godbrain_core\cpp_kernel'
         $null = New-Item -ItemType Directory -Path $missingPinNative
+        Copy-Item -LiteralPath (Join-Path $build 'logs\shared-context-index.json') `
+            -Destination (Join-Path $missingPinRoot 'prior-context-index.json')
         $telemetry = [IO.File]::ReadAllText((Join-Path $source 'telemetry.cpp'))
         $pinRead = 'const auto ubr = reg_dword(HKEY_LOCAL_MACHINE, key, L"UBR");'
         if (($telemetry.Split($pinRead, [StringSplitOptions]::None).Count - 1) -ne 1) {

@@ -70,8 +70,13 @@ void protocol_tests() {
 
 #if defined(GODBRAIN_HAVE_MONGOC)
 void mongo_tests(const char* uri) {
+#if defined(_WIN32)
     check(_putenv_s("MONGODB_URI", uri) == 0 &&
           _putenv_s("MONGODB_DB_NAME", "godbrain_cpp_store_test") == 0, "test environment");
+#else
+    check(setenv("MONGODB_URI", uri, 1) == 0 &&
+          setenv("MONGODB_DB_NAME", "godbrain_cpp_store_test", 1) == 0, "test environment");
+#endif
     std::string error;
     StoreHandle* store = store_open(&error);
     check(store != nullptr, "open isolated test database");
@@ -117,7 +122,7 @@ void mongo_tests(const char* uri) {
         post.thread_id = "speaker";
         post.request_id = "first";
         post.title = "Provisional speaker investigation";
-        post.text = "shelfneedlexyz Bluetooth pairing hypothesis, not verified.";
+        post.text = "shelfneedlexyz -NoProfile Bluetooth pairing hypothesis, not verified.";
         const J stored = run(post);
         check(stored.at("trust") == "untrusted" && stored.at("promoted") == false &&
               stored.at("record").at("source_hash") == keccak256_hex(post.text), "working receipt and exact source hash");
@@ -131,6 +136,13 @@ void mongo_tests(const char* uri) {
         read.host_id = host;
         read.query = "shelfneedlexyz";
         check(run(read).at("count") == 1, "full collection indexed research retrieval");
+        for (const char* query : {"-NoProfile", "Explain -NoProfile", "\"-NoProfile\"", "\\-NoProfile"}) {
+            read.query = query;
+            check(run(read).at("count") == 1, "command flags are positive literal shelf search terms");
+        }
+        read.query = "--- \"\\";
+        check(!store_shelf(store, read, &output, &error), "operator-only query must not become an unfiltered read");
+        read.query = "shelfneedlexyz";
         read.scope = "personal";
         check(run(read).at("count") == 0, "personal boundary");
         read.scope = "technical";

@@ -226,10 +226,16 @@ function Get-TailscaleExe {
     return $null
 }
 
+function ConvertTo-Cs2WindowsArgument([string]$Argument) {
+    # Windows argv: double backslashes before quotes and the closing delimiter.
+    $escaped = [regex]::Replace($Argument, '(\\*)"', '$1$1\"')
+    return '"' + [regex]::Replace($escaped, '(\\+)$', '$1$1') + '"'
+}
+
 # Never logout, --reset, or stop the Windows service.
 function Invoke-TailscaleCs2([string]$Exe, [string[]]$TsArgs, [int]$TimeoutMilliseconds = 10000) {
     $info = [Diagnostics.ProcessStartInfo]::new($Exe)
-    foreach ($argument in $TsArgs) { $info.ArgumentList.Add($argument) }
+    $info.Arguments = ($TsArgs | ForEach-Object { ConvertTo-Cs2WindowsArgument $_ }) -join " "
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true

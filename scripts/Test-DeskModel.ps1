@@ -94,7 +94,7 @@ Assert-Fails { Get-DeskModelLaunchOptions "27b" $profile }
     $script:vlFixtureHealth.cache_quant = "4"
     Assert-Fails { & $verify }
 }
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ("desk-model-" + [guid]::NewGuid().ToString("N"))
+$fixture = Join-Path (Split-Path $PSScriptRoot -Parent) ("logs\desk-model-" + [guid]::NewGuid().ToString("N"))
 [void][IO.Directory]::CreateDirectory($fixture)
 try {
     $thinkingPath = Join-Path $fixture "thinking.txt"
@@ -224,6 +224,7 @@ try {
     $script:reviewRequests = @()
     $script:failPart = 0
     $script:reviewModel = "qwen3.8-27b-exl3-3.5bpw"
+    $script:reviewContext = 8192
     function Read-DeskGrantedBytes {
         param($Path, $Maximum, $Purpose)
         $script:sourceReads++
@@ -233,13 +234,22 @@ try {
     function Invoke-RestMethod {
         param($Uri, $Method, $Body, $ContentType, $TimeoutSec)
         $model = $script:reviewModel
-        if ($Uri -like "*/health") { return @{ backend = "exl3"; busy = $false; model = $model; context_length = 8192 } }
+        if ($Uri -like "*/health") { return @{ backend = "exl3"; busy = $false; model = $model; context_length = $script:reviewContext } }
         if ($Uri -like "*/models") { return @{ data = @(@{ id = $model; supported_reasoning_efforts = @("low", "medium", "xhigh") }) } }
         $script:reviewRequests += ($Body | ConvertFrom-Json)
         $finish = if ($script:reviewRequests.Count -eq $script:failPart) { "length" } else { "stop" }
         return @{ choices = @(@{ finish_reason = $finish; message = @{ content = "fixture candidate" } })
             usage = @{ prompt_tokens = 120; completion_tokens = 4 } }
     }
+    foreach ($context in @(4096, 8192, 36864, 49152)) {
+        $script:reviewContext = $context
+        $runtime = Get-DeskReviewRuntime
+        $expected = @{4096=1024;8192=2048;36864=16384;49152=16384}[$context]
+        Assert ($runtime.Output -eq $expected) "Invalid review output budget for context $context."
+        Assert ($runtime.Context - $runtime.Output - 1024 -ge 1024) "Review lost the prompt reserve."
+    }
+    Assert ($script:reviewRequests.Count -eq 0) "Runtime planning generated a completion."
+    $script:reviewContext = 8192
     function Invoke-DeskReviewPlanner {
         param($Request)
         $script:plannerRequests += ($Request | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
