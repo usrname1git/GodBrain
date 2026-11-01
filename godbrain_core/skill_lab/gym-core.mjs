@@ -545,6 +545,19 @@ function ownedRunPath(workDir, id) {
 
 async function retainArtifacts(workDir, state, keep) {
   const protectedIds = new Set([...state.lessons.map(item => item.runId), ...state.recent.slice(-keep)]);
+  const campaigns = await readJson(path.join(workDir, 'campaigns.json'), { items: [] });
+  for (const campaign of campaigns.items) {
+    for (const version of [campaign, ...(campaign.buildHistory ?? []), ...(campaign.alternativeHistory ?? [])]) {
+      for (const id of [version.previewRunId, ...(version.assemblyRunIds ?? []),
+        ...(version.alternatives ?? []).flatMap(item => [item.runId, item.appRunId])]) {
+        if (id) protectedIds.add(id);
+      }
+    }
+  }
+  const objectives = await readJson(path.join(workDir, 'objectives.json'), { items: [] });
+  for (const item of objectives.items) {
+    if (item.initialRunId && item.status !== 'completed') protectedIds.add(item.initialRunId);
+  }
   const runs = path.join(workDir, 'runs');
   for (const entry of await fs.readdir(runs, { withFileTypes: true })) {
     if (!/^[0-9]{8}-[a-f0-9]{12}$/.test(entry.name) || protectedIds.has(entry.name)) continue;
@@ -833,11 +846,6 @@ export function cannedTutorAdvice(active = {}) {
         '2. Do not invent className=nav; App.jsx is immutable in styles mode.',
       ].join('\n');
     }
-    return [
-      'CAUSE: Seeded nav links stay hidden or overflow because mobile CSS does not hide the nav element and open it with nav.open.',
-      '1. At max-width 640px use nav{display:none} nav.open{display:flex} button.menu{display:inline-flex}. Never .nav.',
-      '2. Markup is <nav className={menu?\'open\':\'\'}> with no className nav. Do not replace nav{ with .nav{.',
-    ].join('\n');
   }
   return '';
 }
@@ -963,6 +971,7 @@ export async function runPractice(options, dependencies) {
     tutorEvery = 2, externalSignal, maxTokens = 2400, pauseReason = async () => null,
     autoplayEnabled = async () => true,
     nextTask = async () => null, onObjectiveResult = async () => {},
+    prepareState = async () => {}, onCheckpoint = async () => {},
     taskAlreadyComplete = async () => false,
     taskIsCurrent = async () => true,
     selectTask = async ({ state: current, tasks: available }) => available[current.cursor % available.length],
@@ -1046,6 +1055,7 @@ export async function runPractice(options, dependencies) {
       });
       state.active = null;
     }
+    await prepareState(state);
     await saveState(workDir, state);
     await appendEvent(workDir, { type: 'worker_started', pid: process.pid, resumed: Boolean(state.active) });
     while (continuous || roundCount < rounds) {
@@ -1058,21 +1068,41 @@ export async function runPractice(options, dependencies) {
         await delay(Math.max(retryMs, 500), undefined, { signal });
         continue;
       }
-      if (!state.active) {
-        const queuedTask = await nextTask();
-        const task = queuedTask ?? await selectTask({ state, tasks });
-        if (!task) {
-          state.status = 'ladder_complete';
-          state.lastError = null;
-          await saveState(workDir, state);
-          await delay(Math.max(retryMs, 5000), undefined, { signal });
-          continue;
+      const autoplay = await autoplayEnabled();
+      let queuedTask = null;
+      if (!state.active || (!autoplay && !state.active.customTask?.objectiveId)) {
+        queuedTask = await nextTask();
+        if (queuedTask && state.active) {
+          state.suspendedCourse = state.active;
+          state.active = null;
         }
-        state.active = {
-          taskId: task.id, attempt: 0, files: task.initialFiles ?? null, feedback: '', advice: '',
-          trainSeed: 11 + state.sequence * 17, holdoutSeed: 1009 + state.sequence * 31,
-          customTask: queuedTask ?? (task.fileMode ? task : null),
-        };
+      }
+      if (!state.active) {
+        if (!queuedTask && autoplay && state.suspendedCourse) {
+          state.active = state.suspendedCourse;
+          state.suspendedCourse = null;
+        }
+        if (!state.active) {
+          const task = queuedTask ?? (autoplay ? await selectTask({ state, tasks }) : null);
+          if (!task) {
+            state.status = autoplay ? 'ladder_complete' : 'autoplay_off';
+            state.lastError = null;
+            await saveState(workDir, state);
+            await delay(Math.max(retryMs, 5000), undefined, { signal });
+            continue;
+          }
+          state.active = {
+            taskId: task.id, attempt: 0, files: task.initialFiles ?? null, feedback: '', advice: '',
+            trainSeed: 11 + state.sequence * 17, holdoutSeed: 1009 + state.sequence * 31,
+            customTask: queuedTask ?? (task.fileMode ? task : null),
+          };
+        }
+      }
+      if (!autoplay && !state.active.customTask?.objectiveId) {
+        state.status = 'autoplay_off';
+        await saveState(workDir, state);
+        await delay(500, undefined, { signal });
+        continue;
       }
       const active = state.active;
       const task = active.customTask ?? tasks.find(item => item.id === active.taskId);
@@ -1320,14 +1350,9 @@ export async function runPractice(options, dependencies) {
         }
         state.status = 'running';
         await saveState(workDir, state);
+        await onCheckpoint(state);
         await retainArtifacts(workDir, state, keepRuns);
         options.onProgress?.({ ...state.lastRun, stats: state.stats, lessonCount: state.lessons.filter(item => !item.stale).length });
-        while (!(await autoplayEnabled())) {
-          if (await pauseReason()) break;
-          state.status = 'autoplay_off';
-          await saveState(workDir, state);
-          await delay(500, undefined, { signal });
-        }
         if (await pauseReason()) continue;
         if (continuous || roundCount < rounds) await delay(intervalMs, undefined, { signal });
       } catch (error) {

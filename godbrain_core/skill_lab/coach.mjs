@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { cancelObjective, enqueueObjective, listObjectives } from './objectives.mjs';
 import { readJson, writeJson } from './gym-core.mjs';
@@ -75,29 +74,6 @@ export function validateClientBrief(input) {
   };
 }
 
-function capabilityPlan(brief) {
-  const ids = new Set(['keyboard-tabs-dialog-v1']);
-  const add = id => ids.add(id);
-  if (brief.siteType === 'storefront' || brief.siteType === 'documentation') add('catalog-search-sort-v1');
-  if (brief.siteType === 'saas-dashboard' || brief.siteType === 'community') {
-    add('task-list-productivity-v1');
-    add('settings-persistence-v1');
-  }
-  if (brief.siteType === 'booking') {
-    add('registration-validation-v1');
-    add('settings-persistence-v1');
-  }
-  if (['business', 'portfolio', 'community'].includes(brief.siteType)) add('registration-validation-v1');
-  for (const feature of brief.features) {
-    if (['catalog', 'search-filter-sort', 'analytics'].includes(feature)) add('catalog-search-sort-v1');
-    if (['contact-form', 'registration'].includes(feature)) add('registration-validation-v1');
-    if (['account-settings', 'persistent-data'].includes(feature)) add('settings-persistence-v1');
-    if (feature === 'workflow') add('task-list-productivity-v1');
-    if (['dialogs', 'keyboard-accessibility', 'responsive-navigation'].includes(feature)) add('keyboard-tabs-dialog-v1');
-  }
-  return [...ids];
-}
-
 function campaignPrompt(brief, contractTitle) {
   return objectivePrompt([
     `Client project: ${brief.name}`,
@@ -119,7 +95,9 @@ function assemblyShellPrompt(campaign) {
     brief.pages ? `Pages or sections: ${brief.pages}` : '',
     brief.brandNotes ? `Brand direction: ${brief.brandNotes}` : '',
     brief.features.length ? `Requested capabilities: ${brief.features.join(', ')}.` : '',
-    `Qualified practice completed for: ${campaign.capabilities.map(item => item.title).join(', ')}.`,
+    campaign.capabilities.length
+      ? `Earlier capability checks: ${campaign.capabilities.map(item => item.title).join(', ')}.`
+      : 'Build the requested website directly. Do not substitute training exercises for the client deliverable.',
     limitations.length
       ? `Training limitations to handle carefully: ${limitations.map(item => item.title).join(', ')} reached the attempt limit rather than a passing verdict.`
       : '',
@@ -194,6 +172,36 @@ export async function listCampaigns(workDir) {
 async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
   const objectives = await listObjectives(workDir);
   let changed = false;
+  const repeatFile = path.join(workDir, 'repeat-campaign.json');
+  const repeat = await readJson(repeatFile, null);
+  if (repeat && !repeat.retiredAt) {
+    const campaign = campaigns.items.find(item => item.id === (repeat.campaignId ?? repeat.previousCampaignId));
+    const previous = campaign?.alternativeHistory?.filter(set =>
+      ['alternatives_ready', 'alternatives_limited'].includes(set.status)).at(-1);
+    if (campaign?.status === 'showcasing' && previous) {
+      for (const variant of campaign.alternatives ?? []) {
+        for (const id of [variant.appObjectiveId, variant.styleObjectiveId].filter(Boolean)) {
+          await cancelObjective(workDir, id, 'Automatic client repetition retired; generation now requires an explicit request.');
+        }
+      }
+      campaign.alternativeHistory.push({
+        generation: campaign.alternativeGeneration, status: 'cancelled',
+        archivedAt: new Date().toISOString(), alternatives: campaign.alternatives,
+      });
+      campaign.alternativeHistory = campaign.alternativeHistory.slice(-MAX_ALTERNATIVE_HISTORY);
+      campaign.alternatives = previous.alternatives;
+      campaign.alternativeGeneration = previous.generation;
+      campaign.status = previous.status;
+      campaign.updatedAt = new Date().toISOString();
+      campaign.lastError = null;
+      changed = true;
+    }
+    if (changed) await writeJson(path.join(workDir, 'campaigns.json'), campaigns);
+    await writeJson(repeatFile, {
+      ...repeat, previousCampaignId: repeat.campaignId ?? repeat.previousCampaignId,
+      campaignId: null, disabled: true, retiredAt: new Date().toISOString(),
+    });
+  }
   const ordered = [...(campaigns.items ?? [])].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   for (const campaign of ordered) {
     const duplicate = ordered.find(candidate =>
@@ -340,10 +348,11 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
           changed = true;
         }
       }
-      const complete = campaign.capabilities.length > 0 &&
-        campaign.capabilities.every(item => ['passed', 'attempt_limit'].includes(item.outcome));
+      const complete = campaign.buildMode === 'website' ||
+        (campaign.capabilities.length > 0 &&
+          campaign.capabilities.every(item => ['passed', 'attempt_limit'].includes(item.outcome)));
       if (complete) {
-        const stableKey = `campaign:${campaign.id}:assembly:shell-v2`;
+        const stableKey = assemblyKey(campaign, 'shell');
         let assembly = objectives.find(item => item.stableKey === stableKey);
         if (!assembly) {
           assembly = await enqueueObjective(workDir, {
@@ -366,31 +375,6 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
         changed = true;
       }
     }
-    if (campaign.status === 'blocked' && !campaign.recoveryStartedAt) {
-      const stableKey = `campaign:${campaign.id}:assembly:shell-v2`;
-      let assembly = objectives.find(item => item.stableKey === stableKey);
-      if (!assembly) {
-        assembly = await enqueueObjective(workDir, {
-          mode: 'explore',
-          title: `${campaign.brief.name}: recovered site shell`,
-          prompt: assemblyShellPrompt(campaign),
-          styleReference: campaign.brief.styleReference,
-        }, trustedTasks, {
-          stableKey,
-          campaignId: campaign.id,
-          campaignStage: 'assembly-shell',
-          maxTokens: 4096,
-        });
-        objectives.push(assembly);
-      }
-      campaign.assemblyObjectiveId = assembly.id;
-      campaign.assemblyStage = 'shell';
-      campaign.status = 'assembling';
-      campaign.recoveryStartedAt = new Date().toISOString();
-      campaign.updatedAt = campaign.recoveryStartedAt;
-      campaign.lastError = null;
-      changed = true;
-    }
     if (campaign.status === 'assembling') {
       const assembly = objectives.find(item =>
         item.id === campaign.assemblyObjectiveId);
@@ -399,11 +383,16 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
         changed = true;
       }
       campaign.assemblyRunIds = assembly?.runIds ?? [];
+      if (campaign.assemblyStage === 'polish' && assembly?.initialRunId && !campaign.previewRunId) {
+        campaign.previewRunId = assembly.initialRunId;
+        changed = true;
+      }
       if (assembly?.outcome === 'passed') {
+        campaign.previewRunId = assembly.runIds.at(-1);
         if (campaign.assemblyStage === 'shell' || campaign.assemblyStage === 'shell-recovery') {
           const initialRunId = assembly.runIds.at(-1);
           if (!initialRunId) throw new Error(`Passing assembly objective ${assembly.id} has no source run.`);
-          const stableKey = `campaign:${campaign.id}:assembly:polish-v2`;
+          const stableKey = assemblyKey(campaign, 'polish');
           let polish = objectives.find(item => item.stableKey === stableKey);
           if (!polish) {
             polish = await enqueueObjective(workDir, {
@@ -432,7 +421,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
         }
       } else if (assembly?.outcome === 'attempt_limit') {
         if (campaign.assemblyStage === 'shell') {
-          const stableKey = `campaign:${campaign.id}:assembly:shell-recovery-v2`;
+          const stableKey = assemblyKey(campaign, 'shell-recovery');
           let recovery = objectives.find(item => item.stableKey === stableKey);
           if (!recovery) {
             recovery = await enqueueObjective(workDir, {
@@ -480,29 +469,20 @@ export async function createCampaign(workDir, input, trustedTasks) {
       throw new Error(`Campaign capacity (${MAX_CAMPAIGNS}) reached; archive completed campaigns first.`);
     }
     const duplicate = campaigns.items.find(campaign =>
-      ['planning', 'training', 'assembling'].includes(campaign.status) &&
+      ['planning', 'training', 'assembling', 'showcasing'].includes(campaign.status) &&
       campaign.brief.siteType === brief.siteType &&
       campaign.brief.name.trim().toLowerCase() === brief.name.trim().toLowerCase());
     if (duplicate) throw new Error(`An active campaign named "${brief.name}" already exists (${duplicate.id}).`);
     const id = randomUUID().replaceAll('-', '').slice(0, 12);
-    const capabilities = capabilityPlan(brief).map(contractTaskId => {
-      const contract = trustedTasks.find(task => task.id === contractTaskId);
-      if (!contract) throw new Error(`Missing trusted coach contract: ${contractTaskId}`);
-      return {
-        contractTaskId,
-        title: contract.title,
-        stableKey: `campaign:${id}:capability:${contractTaskId}`,
-        objectiveId: null,
-        outcome: null,
-      };
-    });
     const campaign = {
       id,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       status: 'planning',
+      buildMode: 'website',
+      buildGeneration: 1,
       brief,
-      capabilities,
+      capabilities: [],
       assemblyObjectiveId: null,
       assemblyStage: null,
       assemblyRunIds: [],
@@ -516,6 +496,11 @@ export async function createCampaign(workDir, input, trustedTasks) {
   });
 }
 
+function assemblyKey(campaign, stage) {
+  const generation = campaign.buildGeneration == null ? '' : `:site-g${campaign.buildGeneration}`;
+  return `campaign:${campaign.id}${generation}:assembly:${stage}-v2`;
+}
+
 export async function advanceCampaigns(workDir, trustedTasks) {
   return transaction(async () => {
     const campaigns = await readCampaigns(workDir);
@@ -523,49 +508,42 @@ export async function advanceCampaigns(workDir, trustedTasks) {
   });
 }
 
-async function saveReadyAlternatives(workDir, campaign, saveDir) {
-  const generation = campaign.alternativeGeneration ?? 1;
-  for (const variant of campaign.alternatives ?? []) {
-    if (variant.status !== 'ready' || !variant.runId) continue;
-    const folder = path.join(saveDir, `${campaign.id}-g${generation}-${variant.id}`);
-    try {
-      await fs.access(path.join(folder, 'source.json'));
-      continue;
-    } catch { /* not saved yet */ }
-    await fs.mkdir(folder, { recursive: true });
-    const runDir = path.join(workDir, 'runs', variant.runId);
-    const sourcePath = path.join(runDir, 'source.json');
-    try {
-      const source = await readJson(sourcePath, {});
-      for (const [name, text] of Object.entries(source)) {
-        if (typeof text !== 'string') continue;
-        await fs.writeFile(path.join(folder, name.replace(/[\\/]/g, '_')), text);
-      }
-      await fs.copyFile(sourcePath, path.join(folder, 'source.json'));
-    } catch { /* source missing */ }
-    for (const shot of ['practice/desktop.png', 'practice/mobile.png']) {
-      try {
-        await fs.copyFile(path.join(runDir, shot), path.join(folder, shot.replace('/', '-')));
-      } catch { /* screenshot missing */ }
+export async function regenerateCampaign(workDir, campaignId, trustedTasks) {
+  return transaction(async () => {
+    const campaigns = await readCampaigns(workDir);
+    const campaign = campaigns.items.find(item => item.id === campaignId);
+    if (!campaign) throw new Error(`Unknown website ${campaignId}.`);
+    if (!['delivered', 'delivered_limited', 'blocked', 'alternatives_ready', 'alternatives_limited'].includes(campaign.status)) {
+      throw new Error('Wait for the current generation to finish before regenerating.');
     }
-  }
-}
-
-// repeat-campaign.json keeps one finished brief generating another set of four
-// until the file is removed or training is paused.
-export async function continueRepeatedCampaign(workDir, trustedTasks) {
-  const marker = await readJson(path.join(workDir, 'repeat-campaign.json'), null);
-  const campaignId = marker?.campaignId;
-  if (!campaignId) return null;
-  const campaigns = await readCampaigns(workDir);
-  const campaign = (campaigns.items ?? []).find(item => item.id === campaignId);
-  if (!campaign || !['alternatives_ready', 'alternatives_limited'].includes(campaign.status)) {
-    return null;
-  }
-  const saveDir = marker.saveDir || 'C:\\nvme\\godbrain-sites\\trippus';
-  await saveReadyAlternatives(workDir, campaign, saveDir);
-  console.log(`Repeat campaign ${campaign.brief?.name || campaignId}: generation ${campaign.alternativeGeneration ?? 1} saved, starting the next four.`);
-  return requestCampaignAlternatives(workDir, campaignId, trustedTasks);
+    campaign.buildHistory = [...(campaign.buildHistory ?? []), {
+      generation: campaign.buildGeneration ?? 0, status: campaign.status,
+      previewRunId: campaign.previewRunId ?? null,
+      assemblyRunIds: campaign.assemblyRunIds ?? [],
+      archivedAt: new Date().toISOString(),
+    }].slice(-MAX_ALTERNATIVE_HISTORY);
+    if (campaign.alternatives?.length) {
+      campaign.alternativeHistory = [...(campaign.alternativeHistory ?? []), {
+        generation: campaign.alternativeGeneration, status: campaign.status,
+        archivedAt: new Date().toISOString(), alternatives: campaign.alternatives,
+      }].slice(-MAX_ALTERNATIVE_HISTORY);
+      campaign.alternatives = [];
+    }
+    campaign.buildMode = 'website';
+    campaign.buildGeneration = (campaign.buildGeneration ?? 0) + 1;
+    campaign.status = 'planning';
+    campaign.capabilities = [];
+    campaign.assemblyObjectiveId = null;
+    campaign.assemblyRunIds = [];
+    campaign.assemblyStage = null;
+    campaign.previewRunId = null;
+    campaign.deliveredAt = null;
+    campaign.lastError = null;
+    campaign.updatedAt = new Date().toISOString();
+    await writeJson(path.join(workDir, 'campaigns.json'), campaigns);
+    await reconcileCampaigns(workDir, campaigns, trustedTasks);
+    return campaign;
+  });
 }
 
 export async function requestCampaignAlternatives(workDir, campaignId, trustedTasks) {

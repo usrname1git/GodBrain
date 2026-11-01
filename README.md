@@ -40,7 +40,7 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
 - **🧠 Model-agnostic mouth** — Plug in an **OpenAI-compatible** `/v1/chat/completions` server. Desk default: Qwen 3.8 27B EXL3 on `:8888`.
 - Not an arbitrary chat API. No model is special; they inherit the same teachings.
 
-- **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
+- **📚 Models teach models** — Librarian writes **candidate** Golden Records; you `/verify` or `/reject`. Saying **"make this a Golden Record"** is also your judgment: the agent saves the evidence, submits that decision and checks canonical retrieval without a second approval step. Chat retrieves **committed** teachings through rag-service (`:8084`), so the next model does not start from a blank context. That is the query path — not a Mongo shell.
 
 - **Shared working memory** — Integrated Desk and PowerShell clients recall the
   same bounded host index, discussion and research shelves across fresh sessions.
@@ -56,7 +56,7 @@ Mongo + RAG-service is the vault. The mouth is just compute. A bigger card, a fu
 This machine has **one generate slot** (Qwen 3.8 27B EXL3 3.5bpw on the 16 GB card). A 3090 replacing the 4080 would still use a single slot, not a second mouth and not a silent swap to GLM MoE.
 
 Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them.
-Cloud models do not skip `/verify`, do not get a Mongo shell, and do not run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
+Cloud models cannot self-verify; they may execute an explicit operator judgment through the same authenticated status door. They do not get a Mongo shell or run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
 ## See it running
 

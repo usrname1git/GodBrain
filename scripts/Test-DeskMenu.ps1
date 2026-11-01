@@ -722,6 +722,10 @@ if ($receiptAnswer -notlike "*Mode: research; model tool attempts: 2*" -or
     $receiptAnswer -notlike "*answer retry: thinking off (saved preference unchanged)*") {
     throw "Ask lost its actual-call/recovery receipt."
 }
+$script:askResponses["http://127.0.0.1:8083/api/chat"].request_receipt.tool_attempts[0].context_supplied = $false
+if ((Invoke-DeskAsk $request) -notlike "*1 observation(s) omitted from model context*") {
+    throw "Ask hid an executed observation that was not supplied to the model."
+}
 $script:askResponses["http://127.0.0.1:8083/api/chat"].Remove("request_receipt")
 Assert-Equal (Test-DeskWriteSlash "/yolo") $false
 Assert-Equal (Test-DeskWriteSlash "/yolo status") $false

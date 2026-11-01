@@ -206,6 +206,17 @@ test('app-only prompts summarize immutable CSS and discard large truncated respo
   assert.ok(messages[1].content.length < 10_600);
 });
 
+test('canned overflow advice does not blame a working mobile nav', () => {
+  const advice = cannedTutorAdvice({
+    feedback: 'intentional-mobile-composition: Mobile composition overflows the viewport.',
+    files: {
+      'App.jsx': '<nav className={menu?\'open\':\'\'}>links</nav>',
+      'styles.css': '@media(max-width:640px){nav{display:none}nav.open{display:flex}button.menu{display:inline-flex}.tinted,.dark{margin:0 -24px}}',
+    },
+  });
+  assert.equal(advice, '');
+});
+
 test('canned tutor advice names computed tones and .nav, not new CSS variables', () => {
   const tonal = cannedTutorAdvice({
     feedback: 'professional-visual-system: The computed visual system has insufficient tonal depth.',
@@ -234,8 +245,7 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
       'styles.css': 'nav{display:flex}button.menu{display:none}',
     },
   });
-  assert.match(unhidden, /Never \.nav/);
-  assert.doesNotMatch(unhidden, /Replace nav\{display:none\} with \.nav/);
+  assert.equal(unhidden, '');
   const spacing = cannedTutorAdvice({
     feedback: 'professional-visual-system: Section spacing is too compressed for a premium marketing page.',
   });
@@ -579,7 +589,7 @@ test('an evaluator change revalidates the saved candidate before generating agai
   assert.equal(receipt.finishReason, 'revalidate');
 });
 
-test('autoplay off waits after evaluate instead of starting the next generate', async t => {
+test('course autoplay off does not start a course generation', async t => {
   const workDir = await workspace(t);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new StopRequested('stop after one')), 800);
@@ -593,7 +603,7 @@ test('autoplay off waits after evaluate instead of starting the next generate', 
     evaluate,
   });
   clearTimeout(timer);
-  assert.equal(completes, 1);
+  assert.equal(completes, 0);
   const state = JSON.parse(await fs.readFile(path.join(workDir, 'state.json'), 'utf8'));
   assert.equal(state.status, 'stopped');
 });

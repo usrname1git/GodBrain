@@ -268,6 +268,20 @@ surface extraction failures. Keep personal and technical recall isolated;
 stored/candidate does not mean verified. This intake integration is a target,
 not a claim that every input type is already wired.
 
+- **One-request Golden Records.** An explicit operator request such as
+  "please make this a Golden Record" supplies the human judgment for the
+  identified, completed result. The agent handles canonical candidate ingestion,
+  then authenticated `/api/judge` / `set_godbrain_status` with the operator's
+  request and concrete evidence as the reasoning. Do not ask the operator to
+  repeat the decision with `/verify`. This is delegated execution of their
+  judgment, not model self-verification; praise alone is not promotion authority.
+  Keep the symptom, observed dependency, scoped fix, checks, operator-confirmed
+  outcome and unresolved limits. Never invent an isolated culprit from a group
+  change, or turn a successful historical recovery into proof of current readiness.
+  Search existing records first; preserve immutable sources, candidate-only ingest,
+  bearer authorization, source/freshness gates and personal-sector isolation.
+  Read back the committed verified record and check canonical retrieval before
+  claiming it is available to future integrated callers; report any blocked step.
 - **Raw is immutable.** Sources (transcripts, observe blobs, session files)
   are never edited after ingest. Librarian and chat must not rewrite the
   source to match a later opinion.
@@ -300,6 +314,13 @@ Tanks / military hardware are **not** the current ingest sector. Do not
 seed tank cards.
 
 ### This host: Windows SRE (B-line)
+
+Prioritize the SRE evidence library before expanding agent autonomy. Ordinary
+coding and host troubleshooting should accumulate reusable, operator-judged
+incident cases: symptom, dependency evidence, scoped intervention, verification
+and limits. Make those historical cases canonically retrievable; they are not
+live readiness probes or permission to replay a repair. Do not build a blind
+repair loop in place of that library.
 
 B-line is closed-loop OS/network on this host: detect → reason →
 allowlist patch → verify.

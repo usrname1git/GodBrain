@@ -2284,6 +2284,7 @@ static void record_tool_evidence(
         {"result_bytes", result.size()},
         {"result_keccak256", browser_evidence::keccak_hex(result)},
         {"content_retained", false},
+        {"context_supplied", false},
         {"verification", "not_run"},
     };
     if (evidence.results.size() < 128) {
@@ -2299,7 +2300,8 @@ static void save_chain(const std::string& goal, const std::string& ledger,
                        const std::string& answer, int hops,
                        const std::string& phase = "", bool hops_ok = true,
                        const ChainEvidence* evidence = nullptr) {
-    const auto context_limit = evidence && evidence->tool_mode == "research"
+    const auto context_limit = evidence &&
+        (evidence->tool_mode == "research" || evidence->tool_mode == "answer")
                                    ? kResearchToolContextBytes : kToolContextBytes;
     if (ledger.size() > context_limit) {
         throw std::runtime_error("task context exceeds its bound; no partial result saved");
@@ -2390,7 +2392,8 @@ static json load_chain() {
 static json revalidate_chain_references(json chain, const godbrain_rag::Client& client) {
     if (!chain.contains("ledger") || !chain["ledger"].is_string()) return chain;
     const auto ledger = chain["ledger"].get<std::string>();
-    const auto context_limit = chain.value("tool_mode", "") == "research"
+    const auto context_limit = (chain.value("tool_mode", "") == "research" ||
+                                chain.value("tool_mode", "") == "answer")
                                    ? kResearchToolContextBytes : kToolContextBytes;
     if (ledger.size() > context_limit)
         throw std::runtime_error("saved tool context exceeds its bound");
@@ -2439,7 +2442,8 @@ static json revalidate_chain_references(json chain, const godbrain_rag::Client& 
 static std::string resume_chain_prompt(const json& chain, const std::string& continuation) {
     if (!chain.contains("ledger") || !chain["ledger"].is_string()) return continuation;
     const std::string ledger = chain["ledger"];
-    const auto context_limit = chain.value("tool_mode", "") == "research"
+    const auto context_limit = (chain.value("tool_mode", "") == "research" ||
+                                chain.value("tool_mode", "") == "answer")
                                    ? kResearchToolContextBytes : kToolContextBytes;
     if (ledger.size() > context_limit) {
         throw std::runtime_error("saved tool context exceeds its bound");
@@ -3829,7 +3833,8 @@ std::string run_colibri_serve(
     const std::function<bool(bool)>& restart_mouth = maybe_restart_mouth,
     const godbrain_rag::Client* skill_client = nullptr,
     local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
-    json* request_receipt = nullptr) {
+    json* request_receipt = nullptr,
+    bool protected_reads_authorized = false) {
     const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
     if (tool_mode == local_tools::ToolMode::Legacy || is_continue_command(chain_goal)) {
         const json previous = load_chain();
@@ -3844,6 +3849,7 @@ std::string run_colibri_serve(
         }
     }
     json local_receipt;
+    const bool read_only = local_tools::read_only_mode(tool_mode);
     json& receipt = request_receipt ? *request_receipt : local_receipt;
     receipt = {{"tool_mode", local_tools::tool_mode_name(tool_mode)},
                {"tool_attempts", json::array()}, {"answer_retry", false},
@@ -3851,6 +3857,7 @@ std::string run_colibri_serve(
     local_tools::RequestScope scope;
     scope.mode = tool_mode;
     scope.operator_text = chain_goal;
+    scope.protected_reads_authorized = protected_reads_authorized;
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3897,7 +3904,6 @@ std::string run_colibri_serve(
     bool answer_retry = false;
     const bool native_tools =
         tool_mouth && !apply_cont &&
-        tool_mode != local_tools::ToolMode::Answer &&
         !local_tools::looks_like_no_tools(tool_hint.empty() ? user : tool_hint);
     {
         std::ofstream dbg(
@@ -3920,7 +3926,7 @@ std::string run_colibri_serve(
     // A pasted crash plus "fix" gets the long loop. YOLO stays off, so
     // elevate and git push stay denied. Eight rounds: seven can run tools,
     // the last only talks. A passing rerun after a crash ends it sooner.
-    const bool fix_job = native_tools && tool_mode != local_tools::ToolMode::Research &&
+    const bool fix_job = native_tools && !read_only &&
                          looks_like_fix_job(chain_goal);
     int max_tool_rounds =
         native_tools ? (tool_mode == local_tools::ToolMode::Research ? 8 :
@@ -3974,7 +3980,7 @@ std::string run_colibri_serve(
         native_tools ? local_tools::openai_tool_defs_for(chain_goal, tool_mode)
                      : json::array();
     const std::string hop_hint0 = chain_goal;
-    if (!fix_job && tool_mode != local_tools::ToolMode::Research &&
+    if (!fix_job && !read_only &&
         tool_mouth && native_tools && !local_tools::yolo_active() &&
         local_tools::looks_like_local_fs_ask(hop_hint0) &&
         !local_tools::looks_like_list_only_ask(hop_hint0)) {
@@ -4140,7 +4146,7 @@ std::string run_colibri_serve(
                 }
                 record_completion(assembled, response->status);
                 if (trim_copy(assembled).empty() && tool_acc.empty()) {
-                    if (tool_mode == local_tools::ToolMode::Research &&
+                    if (read_only &&
                         retry_answer(finish_reason == "length" ? "output_limit" : "empty_completion")) {
                         --chunk;
                         continue;
@@ -4156,7 +4162,7 @@ std::string run_colibri_serve(
                     "malformed_completion");
             }
             last_reason = finish_reason;
-            if (tool_mode == local_tools::ToolMode::Research && tool_acc.empty() &&
+            if (read_only && tool_acc.empty() &&
                 (is_generation_loop(assembled) || finish_reason == "length")) {
                 if (!retry_answer(is_generation_loop(assembled) ? "generation_loop" : "output_limit")) {
                     return no_final_answer("length");
@@ -4171,7 +4177,7 @@ std::string run_colibri_serve(
             [&](const char* data, size_t len) {
                 godbrain_coli::feed_sse(
                     sse_buf, data, len, piece,
-                    (tool_mode == local_tools::ToolMode::Research || answer_retry) ? ColiTokenFn{} : on_token,
+                    (read_only || answer_retry) ? ColiTokenFn{} : on_token,
                     on_ping,
                     [&](const std::string& reason) { finish_reason = reason; },
                     spoken,
@@ -4187,7 +4193,7 @@ std::string run_colibri_serve(
             });
         record_completion(piece, response ? response->status : 0);
         if (heading_loop) {
-            if (tool_mode == local_tools::ToolMode::Research) {
+            if (read_only) {
                 if (!retry_answer("generation_loop")) {
                     const std::string error = "Error: model repeated its answer; no complete research answer was produced.";
                     return fail_reply(error, "generation_loop");
@@ -4265,7 +4271,7 @@ std::string run_colibri_serve(
         }
         last_reason = finish_reason;
         if (answer_retry && finish_reason != "stop") return no_final_answer(finish_reason);
-        if (tool_mode == local_tools::ToolMode::Research &&
+        if (read_only &&
             (finish_reason == "length" ||
              (trim_copy(piece).empty() && trim_copy(assembled).empty() && tool_acc.empty()))) {
             if (retry_answer(finish_reason == "length" ? "output_limit" : "empty_completion")) {
@@ -4376,7 +4382,7 @@ std::string run_colibri_serve(
             !fix_job &&
             local_tools::looks_like_local_fs_ask(hop_hint) &&
             !local_tools::looks_like_list_only_ask(hop_hint);
-        if (!has_procedure && analysis && tool_mode != local_tools::ToolMode::Research) {
+        if (!has_procedure && analysis && !read_only) {
             const std::string map = local_tools::analysis_observe(hop_hint);
             if (!map.empty() &&
                 (tool_out.find("list_local_dir") != std::string::npos ||
@@ -4387,19 +4393,27 @@ std::string run_colibri_serve(
                 if (!tool_out.empty() && tool_out.back() != '\n') tool_out += '\n';
                 tool_out += map;
             }
-        } else if (!has_procedure && !fix_job && tool_mode != local_tools::ToolMode::Research) {
+        } else if (!has_procedure && !fix_job && !read_only) {
             tool_out = local_tools::complete_fs_listing(hop_hint, tool_out);
         }
-        if (!has_procedure && tool_mode != local_tools::ToolMode::Research) results = {tool_out};
+        if (!has_procedure && !read_only) results = {tool_out};
         last_tool_out.clear();
         bool new_research_evidence = false;
         bool research_capacity_reached = false;
         for (const auto& result : results) {
-            if (tool_mode == local_tools::ToolMode::Research) {
+            const auto mark_supplied = [&](bool supplied) {
+                const auto hash = browser_evidence::keccak_hex(result);
+                for (auto& row : evidence.results) {
+                    if (row.value("result_keccak256", "") == hash) row["context_supplied"] = supplied;
+                }
+            };
+            if (read_only) {
                 if (std::find(research_results.begin(), research_results.end(), result) !=
-                    research_results.end()) continue;
-                if (result.size() > 11000 ||
-                    tool_ledger.size() + result.size() + 1 > kResearchToolContextBytes - 256) {
+                    research_results.end()) {
+                    mark_supplied(true);
+                    continue;
+                }
+                if (tool_ledger.size() + result.size() + 1 > kResearchToolContextBytes - 256) {
                     const std::string omission =
                         "\nResearch capacity reached: a new result was omitted. Prior complete "
                         "observations remain retained. Do not claim the omitted evidence was "
@@ -4409,24 +4423,27 @@ std::string run_colibri_serve(
                     }
                     hops_ok = false;
                     research_capacity_reached = true;
+                    mark_supplied(false);
                     continue;
                 }
                 research_results.push_back(result);
                 new_research_evidence = true;
             }
-            const auto context_limit = tool_mode == local_tools::ToolMode::Research
+            const auto context_limit = read_only
                                            ? kResearchToolContextBytes : kToolContextBytes;
             const bool retained = append_tool_context(tool_ledger, result, context_limit);
             append_tool_context(last_tool_out, result, context_limit);
+            mark_supplied(retained);
             hops_ok = hops_ok && retained;
         }
+        receipt["tool_attempts"] = evidence.results;
         ++chain_hops;
         messages = base_messages;
         const bool stayed = fix_job && fix_test_stayed_up(tool_ledger);
         if (stayed && max_tool_rounds > tool_round + 2) {
             max_tool_rounds = tool_round + 2;
         }
-        if (tool_mode == local_tools::ToolMode::Research &&
+        if (read_only &&
             (!new_research_evidence || research_capacity_reached)) {
             max_tool_rounds = (std::min)(max_tool_rounds, tool_round + 2);
         }
@@ -4434,7 +4451,7 @@ std::string run_colibri_serve(
             stayed || next_round_speak_only(tool_round, max_tool_rounds);
         messages.push_back(json{
             {"role", "user"},
-            {"content", tool_mode == local_tools::ToolMode::Research
+            {"content", read_only
                             ? flatten_research_prompt(tool_ledger, speak)
                             : flatten_continue_prompt(tool_ledger, speak, fix_job)}});
         std::cout << "[TOOLS] flatten hop " << (tool_round + 1) << "/"
@@ -4596,7 +4613,7 @@ std::string run_colibri_serve(
             << " fix=" << (fix_job ? 1 : 0)
             << " rounds=" << max_tool_rounds << "\n";
     }
-    if ((tool_mode == local_tools::ToolMode::Research || answer_retry) && on_token) on_token(assembled);
+    if ((read_only || answer_retry) && on_token) on_token(assembled);
     return assembled;
 }
 
@@ -4721,7 +4738,8 @@ std::string run_colibri(
     std::string* spoken = nullptr,
     const std::string& tool_hint = {},
     local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
-    json* request_receipt = nullptr) {
+    json* request_receipt = nullptr,
+    bool protected_reads_authorized = false) {
     DWORD expected = 0;
     const DWORD now = GetTickCount();
     const DWORD stamp = now == 0 ? 1 : now;
@@ -4758,7 +4776,7 @@ std::string run_colibri(
             return run_colibri_serve(
                 system, user, on_token, on_ping, prior_user, prior_assistant,
                 spoken, tool_hint, "127.0.0.1", choice.port, id, true,
-                maybe_restart_mouth, nullptr, tool_mode, request_receipt);
+                maybe_restart_mouth, nullptr, tool_mode, request_receipt, protected_reads_authorized);
         }
         return "Error: mouth is paused (logs/mouth-pause.txt) and EXL3 "
                "is down on :8888. "
@@ -4784,7 +4802,7 @@ std::string run_colibri(
         return run_colibri_serve(
             system, user, on_token, on_ping, prior_user, prior_assistant,
             spoken, tool_hint, kColibriServeHost, kColibriServePort, {}, false,
-            maybe_restart_mouth, nullptr, tool_mode, request_receipt);
+            maybe_restart_mouth, nullptr, tool_mode, request_receipt, protected_reads_authorized);
     }
     std::cout << "[COLIBRI] Serve is down; refusing cold-spawn on 16 GB"
               << std::endl;
@@ -4829,6 +4847,7 @@ static std::string oracle_system_prompt() {
 }
 
 int main() {
+    if (const auto helper = local_tools::protected_read_entry()) return *helper;
     if (read_env("GODBRAIN_SHOW_CONSOLE") != "1") {
         if (HWND console = GetConsoleWindow()) {
             ShowWindow(console, SW_HIDE);
@@ -5117,6 +5136,8 @@ int main() {
         try {
             json payload = json::parse(req.body);
             std::string user_msg = payload.value("message", "");
+            const bool protected_reads_authorized = !g_api_token.empty() &&
+                token_matches(extract_bearer_token(req));
             local_tools::ToolMode tool_mode;
             std::string mode_error;
             if (!local_tools::parse_tool_mode(payload, user_msg, tool_mode, mode_error)) {
@@ -6019,16 +6040,17 @@ int main() {
                 local_tools::looks_like_local_fs_ask(user_msg);
             const bool list_only_ask =
                 local_tools::looks_like_list_only_ask(user_msg);
-            const bool no_tools_ask = tool_mode == local_tools::ToolMode::Answer ||
-                                      local_tools::looks_like_no_tools(user_msg);
+            const bool no_tools_ask = local_tools::looks_like_no_tools(user_msg);
+            const bool skip_retrieval_ask = no_tools_ask ||
+                tool_mode == local_tools::ToolMode::Answer;
             const bool fs_analyze =
                 local_fs_ask && !list_only_ask && !no_tools_ask &&
                 !local_edit::looks_like_edit_request(user_msg);
             if ((local_edit::looks_like_edit_request(user_msg) || local_fs_ask ||
-                 no_tools_ask) &&
+                 skip_retrieval_ask) &&
                 !continue_cmd) {
                 std::cout << "[RAG] skipped ("
-                          << (no_tools_ask
+                          << (skip_retrieval_ask
                                   ? "no-tools"
                                   : (local_fs_ask ? "local-fs" : "/edit"))
                           << ")"
@@ -6045,7 +6067,7 @@ int main() {
             bool shared_memory_active = false;
             if (!continue_cmd) {
                 const bool edit_req = local_edit::looks_like_edit_request(user_msg);
-                const bool skip_rag = edit_req || local_fs_ask || no_tools_ask;
+                const bool skip_rag = edit_req || local_fs_ask || skip_retrieval_ask;
                 if (!skip_rag && token_matches(extract_bearer_token(req))) {
                     try {
                         const auto working = memory::shared_working_context(user_msg, "desk");
@@ -6103,7 +6125,7 @@ int main() {
 
             std::string session_pointer;
             const bool llama_ctx = load_mouth().value("label", "") == "llama";
-            if (llama_ctx && !list_only_ask && !no_tools_ask) {
+            if (llama_ctx && !list_only_ask && !skip_retrieval_ask) {
                 const std::string digest_path =
                     get_exe_dir() + "\\..\\..\\logs\\where-we-are.md";
                 std::ifstream din(digest_path, std::ios::binary);
@@ -6144,7 +6166,7 @@ int main() {
                 !no_tools_ask) {
                 system_prompt += local_tools::tool_system_addendum_for(user_msg, tool_mode);
             }
-            if (fs_analyze && tool_mode != local_tools::ToolMode::Research &&
+            if (fs_analyze && !local_tools::read_only_mode(tool_mode) &&
                 !local_tools::yolo_active()) {
                 system_prompt +=
                     " Jarvis on this PC is Heal/Watch, kernel tools, Golden "
@@ -6205,7 +6227,7 @@ int main() {
             }
             const bool follow_up =
                 have_prior && !prior_q.empty() && !prior_a.empty() &&
-                !local_fs_ask && !no_tools_ask &&
+                !local_fs_ask && !skip_retrieval_ask &&
                 (continue_cmd || prior_q != user_msg);
             // History is continuity, not a substitute for this turn's evidence.
             // Continue rechecks retained procedures through the canonical reader.
@@ -6225,7 +6247,7 @@ int main() {
                 user_prompt = local_edit::edit_user_with_excerpt(user_msg);
             }
             std::string tool_hint = asked;
-            if (local_fs_ask && tool_mode != local_tools::ToolMode::Research &&
+            if (local_fs_ask && !local_tools::read_only_mode(tool_mode) &&
                 !no_tools_ask && !continue_cmd &&
                 !local_edit::looks_like_edit_request(user_msg)) {
                 if (fs_analyze && !local_tools::yolo_active()) {
@@ -6362,7 +6384,7 @@ int main() {
                 res.set_chunked_content_provider(
                     "text/event-stream",
                     [sys, usr, asked_q, tool_hint, hist_q, hist_a,
-                     stitch_continue, local_fs_ask, no_tools_ask, tool_mode](
+                     stitch_continue, local_fs_ask, no_tools_ask, tool_mode, protected_reads_authorized](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -6405,7 +6427,7 @@ int main() {
                             hist_q,
                             hist_a,
                             &spoken,
-                            tool_hint, tool_mode, &request_receipt);
+                            tool_hint, tool_mode, &request_receipt, protected_reads_authorized);
                         std::string chunk = strip_coli_reply(combined);
                         std::string for_memory =
                             spoken.empty() ? chunk : strip_coli_reply(spoken);
@@ -6512,7 +6534,7 @@ int main() {
                     ? (continue_cmd ? continue_history_tail(prior_a) : prior_a)
                     : std::string(),
                 &spoken,
-                tool_hint, tool_mode, &request_receipt);
+                tool_hint, tool_mode, &request_receipt, protected_reads_authorized);
             std::string chunk = strip_coli_reply(combined);
             std::string for_memory =
                 spoken.empty() ? chunk : strip_coli_reply(spoken);

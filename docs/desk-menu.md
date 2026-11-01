@@ -203,17 +203,20 @@ semantically reclassified or trimmed as supposed reasoning.
 
 ### Ask text modes
 
-The visible selector defaults to **Research (read-only)**. **Answer** disables
-model tools even with a Path; an explicit leading `No tools` also wins over
-the selector. **Research** advertises only reads and enforces read-only
-arguments after alias normalization, even when YOLO is active. It cannot
-apply `/edit`, write files/registry/ACLs, elevate or change services.
+The visible selector defaults to **Research (read-only)**. **Answer (read-only
+tools)** can also inspect files, registry, services and documentation before
+answering; it uses a shorter tool loop. An explicit leading `No tools` disables
+tools and wins over the selector. Both modes advertise only reads and enforce read-only
+arguments after alias normalization, even when YOLO is active. They cannot
+apply `/edit`, write files/registry/ACLs, open an arbitrary privileged shell
+or change services. The fixed authenticated metadata reader below is the
+only privileged-read exception.
 **Fix** retains existing scoped tools, jail, bearer and sovereignty checks;
 it does not grant YOLO or elevation. Explicit authenticated operator
 `/yolo`, `/verify` and `/reject` commands retain their separate gates.
 Images and complete-source review retain their dedicated read-only/generated-image routes.
 
-Research can query service configuration (`run_host`, `exe=sc`, `args=qc SERVICE`)
+Both modes can query service configuration (`run_host`, `exe=sc`, `args=qc SERVICE`)
 and inspect a registry key or granted file/folder using `read_local_acl`.
 Host reads use the same executable-prefix normalization as the native executor.
 Registry reads accept either `args=query "KEY" ...` or `path=KEY` (quoted by
@@ -232,16 +235,28 @@ private client history is not automatically imported. After an explicit
 `index`, authenticated ordinary requests retrieve relevant shared working
 research and the target-host snapshot automatically. Published working
 context is not verified knowledge.
-Research retains up to 32 KiB of complete, distinct observations, including
+Answer and Research retain up to 32 KiB of complete, distinct observations, including
 on Continue. It does not evict earlier facts to fit later reads. Repeated
 identical results are deduplicated; a round with no new evidence ends tool
 collection. Capacity exhaustion preserves earlier observations and explicitly
 marks omitted new evidence before the final answer. Service observations
 include the exact invocation so a failed query is not attributed to another service.
+There is no separate 11 KiB per-result ceiling: a complete 15.6 KiB task brief
+fits the existing ledger and is delivered to the next model round.
+`inspect_protected_directory` requires a fresh authenticated request and an
+operator-named directory. It returns names and complete owner/group/DACL SDDL
+only, at depth one with an explicit 80-entry bound. An isolated native helper
+uses backup-read privilege; if unavailable it can launch that exact helper
+through the existing administrator launcher. It never uses a TI shell,
+takes ownership, edits ACLs, reads file contents or inherits authorization
+from a saved chain. The directory must remain in the file jail or be the
+named CodeIntegrity `CIPolicies\Active` / SystemProfile Defender directory;
+resolved-path changes/reparse traversal fail closed. An Everyone deny is
+reported as evidence, not silently removed.
 `read_local_file` decodes BOM-marked UTF-16LE/BE and UTF-8 before line slicing.
 The source-read and decoded-text bounds remain 256 KiB; clipped text is marked,
 malformed UTF-16 fails explicitly, and binary files remain rejected.
-Research can also
+Both modes can also
 search Microsoft Learn and read an exact documentation URL supplied by the
 operator or that request's search. Search terms must come from the operator
 question or a fixed public Windows access-control vocabulary, not private
@@ -250,20 +265,32 @@ in the source receipt. First-party fetches reuse the bounded
 HTTPS/allowlisted-host/HTTP-200/no-redirect transport. Text remains an
 **untrusted reference**, never an automatically verified claim or proof of
 the actual writer on this host. Documentation tools require no paid API.
-Large/earlier research results are explicitly omitted rather than cut through
-a reference. Ask shows the effective mode, actual model tool attempts and any
+`read_public_url` additionally reads an exact operator-supplied public HTTPS
+URL (or documentation-search result). It runs in a bounded native helper
+using Windows' existing curl client with configuration/proxy/auth/cookies
+disabled and the connection pinned to a validated public IPv4. No private,
+loopback, link-local or reserved destination, redirects, query strings,
+fragments or arbitrary model-generated URLs are accepted. TLS validation
+remains enabled. Results are bounded, explicitly clipped untrusted text;
+this is not an unrestricted web-search service or a paid API dependency.
+Results exceeding the remaining ledger capacity are explicitly omitted rather
+than cutting through a reference. Ask shows the effective mode, actual model tool attempts and any
 answer retry; failed attempts are explicitly marked as incomplete evidence.
-Empty, truncated or repetitive native Research drafts get one fresh, tools-off
+Empty, truncated or repetitive native read-only drafts get one fresh, tools-off
 answer attempt, never a replay of the discarded draft. Failed recovery is an
 explicit error rather than an apparently finished partial table.
 The same bounded recovery applies when the final streamed reasoning/answer
-loops or returns no visible answer. Research emits answer text only after a complete answer is accepted;
+loops or returns no visible answer. Both modes emit answer text only after a complete answer is accepted;
 progress pings continue while generating, and discarded drafts never stream
 into the displayed answer. The saved thinking preference is unchanged.
 Failed model requests finalize an existing task as failed rather than leaving it
 running. Saved task diagnostics include HTTP status, finish reason and
 visible/reasoning byte counts, never private reasoning text.
 Receipts are execution metadata, not task verification.
+`context_supplied` distinguishes a successful tool execution from delivery
+of its result to a model round. Ask explicitly reports omitted observations.
+`content_retained=false` means the execution-metadata row itself does not
+store source content; complete retained context is in the separate ledger.
 The API field is `tool_mode: "answer"|"research"|"fix"`; omitted mode preserves
 legacy clients. A running read-only chain retains its restrictions on Continue.
 
@@ -555,9 +582,20 @@ reported separately and is not disguised as successful public readiness.
 Drop local video/audio files into Inbox. Originals remain untouched. Published
 H.264/AAC MP4 or MP3 files get seven-day read-only share links; the source library
 requires login as `owner` (Copy login copies the generated password).
-Copy link selects the latest completed, unexpired share. Links are bearer
+Copy link selects the newest active readable owner share from the live Copyparty
+database, including manually created and never-expiring shares, not a cached
+import receipt. Expired/revoked shares cannot be selected. Links are bearer
 access and forwardable. Expiration revokes access, not storage.
-Fresh installations default to `http://127.0.0.1:3923` links on this PC only.
+The backend and owner Library stay on `http://127.0.0.1:3923`; native sharing
+requires a public HTTPS hostname and rejects loopback recipient links.
+That same origin configures Copyparty's `shr-site`: creation/QR and the share
+page's sharekey link use the public hostname. Its separate LAN navigation stays
+private.
+Public share-folder links, including existing directory shares, automatically
+open the minimal ClipShare player when the share grants anonymous access to
+`watch.html`. QR/download query routes and shares without a player are preserved;
+the owner Library remains private. These behaviors require the separately
+installed ClipShare backend; it is not bundled in this repository.
 Public HTTPS requires separately approved ingress setup, restricted proxy routes
 and outside-network verification; Desk preserves that saved configuration.
 The native status deliberately reports local readiness only: its external

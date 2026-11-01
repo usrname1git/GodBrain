@@ -4,6 +4,9 @@ const pct = value => `${Math.round((value || 0) * 100)}%`;
 const elapsed = ms => ms == null ? '-' : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 const humanize = value => String(value ?? '').replace(/-v\d+$/,'').replaceAll('-',' ').replace(/^./,c=>c.toUpperCase());
 const sourceLabel = value => ({new_source:'New candidate source',known_lesson_source:'Reused qualified source',no_source:'Invalid / no source'}[value]||humanize(value));
+const previewActions = (preview,title,label='OPEN SAVED WEBSITE') => preview?.url
+  ? `<div class="preview-actions"><button data-preview="${esc(preview.url)}" data-title="${esc(title)}">${esc(label)}</button><a class="preview-tab" href="${esc(preview.url)}" target="_blank" rel="noopener">OPEN IN NEW TAB</a></div>`
+  : preview?.error ? `<p class="fail">${esc(preview.error)}</p>` : '';
 let contractsLoaded = false;
 const coachFeatures = [
   ['catalog','Catalog'],['search-filter-sort','Search / filter / sort'],['contact-form','Contact form'],
@@ -73,7 +76,7 @@ function render(data) {
     : data.trainingPaused
       ? (data.trainingStopQwen ? 'paused · Qwen stops when idle' : 'paused and saved')
       : data.status === 'autoplay_off'
-        ? 'autoplay off · waiting'
+        ? 'course autoplay off · waiting for manual work'
         : data.status === 'ladder_complete'
           ? (staleCourses.length
               ? `idle · ${staleCourses.length} courses under 100%`
@@ -83,14 +86,14 @@ function render(data) {
   $('liveDot').style.background = !data.trainingPaused && live ? 'var(--green)' : 'var(--amber)';
   $('trainingToggle').textContent = armed
     ? 'PAUSE ARMED — WAIT'
-    : data.trainingPaused ? 'RESUME SAVED TRAINING' : 'PAUSE & SAVE TRAINING';
+    : data.trainingPaused ? 'RESUME SAVED WORK' : 'PAUSE & SAVE WORK';
   $('trainingToggle').dataset.paused=String(Boolean(data.trainingPaused));
   $('trainingToggle').dataset.armed=String(armed);
   const stopBtn=$('trainingStopQwen');
   stopBtn.hidden=Boolean(data.trainingPaused && data.trainingStopQwen);
   stopBtn.textContent=data.trainingPaused?'STOP QWEN (WHEN IDLE)':'PAUSE, SAVE & STOP QWEN';
   const autoplayOn=data.trainingAutoplay!==false;
-  $('autoplayToggle').textContent=autoplayOn?'AUTOPLAY ON':'AUTOPLAY OFF';
+  $('autoplayToggle').textContent=autoplayOn?'COURSE AUTOPLAY ON':'COURSE AUTOPLAY OFF';
   $('autoplayToggle').classList.toggle('is-off',!autoplayOn);
   $('autoplayToggle').dataset.on=String(autoplayOn);
   const lifetime = data.lifetime || {};
@@ -98,8 +101,18 @@ function render(data) {
   $('metrics').innerHTML = [
     ['Session tries',session.attempts],['Session passed',session.passed],['Session failed',session.failed],
     ['Session pass rate',pct(session.attempts ? session.passed/session.attempts : 0)],
-    ['Reusable lessons',data.lessons?.length || 0],['Session infrastructure errors',session.infrastructureErrors],
+    ['Compatible lessons',data.lessons?.length || 0],['Session infrastructure errors',session.infrastructureErrors],
   ].map(([label,value])=>`<div class="metric"><span>${label}</span><strong>${value ?? 0}</strong></div>`).join('');
+  const db=data.builderDatabase;
+  $('builderDatabaseStatus').textContent=db
+    ? db.ok===1?`${db.database}: insert/read/update/read passed at ${new Date(db.at).toLocaleString()}. Database round-trip only; not a verdict on this website's features.`
+      : `Backend check failed: ${db.error}`
+    : 'Backend tests use godbrain_builder_test with synthetic records; they do not prove website feature integration.';
+  const shared=data.sharedLessons;
+  $('sharedLessonsStatus').textContent=shared
+    ? shared.ok===1?`${shared.database}: ${shared.stored} stored lessons · ${shared.compatible} compatible with this verifier · shared across models.`
+      : `Shared memory pending: ${shared.error}. Local evidence is retained.`
+    : `${data.storedLessonCount||0} local lesson records; shared-memory sync has not completed.`;
   $('phase').textContent = data.status;
   $('active').innerHTML = data.active ? [
     ['Task',data.active.taskId],['Attempt',data.active.attempt],['Mode',data.active.objectiveMode || 'curriculum'],
@@ -144,13 +157,14 @@ function render(data) {
   const campaignCard=c=>{
     const caps=c.capabilities||[];
     const alternatives=c.alternatives||[];
-    const done=caps.filter(x=>x.outcome==='passed').length;
-    const limited=caps.filter(x=>x.outcome==='attempt_limit').length;
-    const running=caps.filter(x=>objectiveById.get(x.objectiveId)?.status==='running').length;
-    const queued=caps.filter(x=>!x.outcome&&objectiveById.get(x.objectiveId)?.status!=='running').length;
     const showingAlternatives=alternatives.length>0;
     const ready=alternatives.filter(x=>x.status==='ready').length;
     const blocked=alternatives.filter(x=>x.status==='blocked').length;
+    const assembly=objectiveById.get(c.assemblyObjectiveId);
+    const terminal=['delivered','delivered_limited','blocked','alternatives_ready','alternatives_limited'].includes(c.status);
+    const status=c.status==='showcasing'?`GENERATING SET ${c.alternativeGeneration||1}`
+      :c.status==='assembling'?(assembly?.status==='queued'?'QUEUED':data.active?.taskId===`objective-${assembly?.id}`&&data.status==='evaluating'?'CHECKING':'GENERATING')
+      :['delivered','alternatives_ready'].includes(c.status)?'READY':c.status.toUpperCase();
     const segments=(showingAlternatives?alternatives:caps).map(x=>`<i class="${['ready','passed'].includes(x.status||x.outcome)?'done':['blocked','attempt_limit'].includes(x.status||x.outcome)?'limit':''}" title="${esc(x.title)}"></i>`).join('');
     const complete=['delivered','alternatives_ready'].includes(c.status);
     const setupDetails=caps.map(x=>{
@@ -159,29 +173,45 @@ function render(data) {
       return `${esc(x.title)}: ${esc(outcome)}`;
     }).join(' · ');
     const summary=showingAlternatives
-      ? `${esc(c.brief.siteType)} · ${ready}/${alternatives.length} alternatives ready${blocked?` · ${blocked} blocked`:''}${c.status==='alternatives_ready'?' · generation complete':''}`
-      : `${esc(c.brief.siteType)} · ${done}/${caps.length} setup checks passed${limited?` · ${limited} capped`:''}${running?` · ${running} running`:''}${queued?` · ${queued} queued`:''}${c.assemblyStage?` · ${esc(c.assemblyStage)} stage`:''}`;
-    return `<article class="campaign"><div class="card-head"><strong>${esc(c.brief.name)}</strong><b class="${complete?'pass':''}">${esc(c.status).toUpperCase()}</b></div>
+      ? `${esc(c.brief.siteType)} · set ${c.alternativeGeneration||1} · ${ready}/${alternatives.length} alternatives ready${blocked?` · ${blocked} blocked`:''}${c.status==='alternatives_ready'?' · generation complete':''}`
+      : `${esc(c.brief.siteType)} · website version ${c.buildGeneration||1} · ${esc(c.assemblyStage||c.status)}${assembly?.status==='queued'?' queued':''}`;
+    const history=(c.alternativeHistory||[]).filter(set=>set.generation!==c.alternativeGeneration||!showingAlternatives);
+    return `<article class="campaign"><div class="card-head"><strong>${esc(c.brief.name)}</strong><b class="${complete?'pass':''}">${esc(status)}</b></div>
       <div class="meta">${summary}</div>
-      <div class="campaign-progress">${segments}${showingAlternatives?'':`<i class="${c.status==='delivered'?'done':c.status==='delivered_limited'?'limit':''}" title="Staged site assembly"></i>`}</div>
+      <div class="campaign-progress">${showingAlternatives?segments:`<i class="done" title="Explicit generation requested"></i><i class="${c.buildPreview?.url?'done':''}" title="Browser-checked shell"></i><i class="${c.status==='delivered'?'done':c.status==='delivered_limited'||c.status==='blocked'?'limit':''}" title="Final integration"></i>`}</div>
       <p>${esc(c.brief.brief).slice(0,240)}</p>
-      <div class="meta">${showingAlternatives?'Earlier setup probes: ':''}${setupDetails}${showingAlternatives?' · Final alternatives were independently browser-qualified.':''}</div>
-      ${c.status==='blocked'&&!c.alternatives?`<button data-alternative-campaign="${esc(c.id)}">BUILD FOUR ALTERNATIVES</button>`:''}
-      ${['alternatives_ready','alternatives_limited'].includes(c.status)?`<button data-alternative-campaign="${esc(c.id)}">RERUN FOUR ALTERNATIVES</button>`:''}</article>`;
+      ${caps.length?`<div class="meta">Earlier setup probes: ${setupDetails}</div>`:''}
+      ${c.lastError?`<p class="meta">${esc(c.lastError)}</p>`:''}
+      ${previewActions(c.buildPreview,c.brief.name,c.status==='assembling'?'OPEN PASSING SHELL':'OPEN SAVED WEBSITE')}
+      ${alternatives.map(v=>previewActions(v.preview,v.title,v.title)).join('')}
+      ${(c.buildHistory||[]).length?`<details data-campaign-history="${esc(c.id)}:build"><summary>Previous website versions (${c.buildHistory.length})</summary>${c.buildHistory.slice().reverse().map(build=>`<p class="meta">Version ${build.generation||'original'} · ${esc(build.status)}</p>${previewActions(build.preview,c.brief.name)}`).join('')}</details>`:''}
+      ${history.length?`<details data-campaign-history="${esc(c.id)}:alternatives"><summary>Previous alternative sets (${history.length})</summary>${history.slice().reverse().map(set=>`<p class="meta">Set ${set.generation} · ${esc(set.status)}</p><div class="campaign-progress">${set.alternatives.map(v=>`<i class="${v.status==='ready'?'done':v.status==='blocked'?'limit':''}" title="${esc(v.title)}"></i>`).join('')}</div>${set.alternatives.map(v=>previewActions(v.preview,v.title,v.title)).join('')}`).join('')}</details>`:''}
+      ${terminal?`<button data-regenerate-campaign="${esc(c.id)}">REGENERATE</button>`:''}</article>`;
   };
   const campaigns=(data.campaigns||[]).slice().reverse();
-  const terminalStatuses=['blocked','superseded','delivered','delivered_limited','alternatives_ready','alternatives_limited'];
-  const archived=campaigns.filter(c=>terminalStatuses.includes(c.status));
-  const visible=campaigns.filter(c=>!terminalStatuses.includes(c.status));
+  const projectKey=c=>`${c.brief.name.trim().toLowerCase()}:${c.brief.siteType}`;
+  const latest=new Map();
+  for(const c of campaigns)if(c.status!=='superseded'&&!latest.has(projectKey(c)))latest.set(projectKey(c),c.id);
+  const visible=campaigns.filter(c=>latest.get(projectKey(c))===c.id);
+  const archived=campaigns.filter(c=>latest.get(projectKey(c))!==c.id);
+  const openHistories=new Set([...document.querySelectorAll('details[data-campaign-history][open]')].map(node=>node.dataset.campaignHistory));
   $('campaigns').innerHTML=visible.map(campaignCard).join('')||'<p class="meta">No active client campaigns.</p>';
   $('campaignHistory').innerHTML=archived.map(campaignCard).join('');
+  for(const node of document.querySelectorAll('details[data-campaign-history]'))node.open=openHistories.has(node.dataset.campaignHistory);
   $('campaignHistoryWrap').hidden=archived.length===0;
   $('campaignHistorySummary').textContent=`Completed / archived campaigns (${archived.length})`;
-  const alternatives=campaigns.flatMap(campaign=>(campaign.alternatives||[]).map(variant=>({...variant,campaignName:campaign.brief.name})));
+  const alternatives=campaigns.flatMap(campaign=>{
+    const sets=[{generation:campaign.alternativeGeneration,alternatives:campaign.alternatives||[]}];
+    if(!sets[0].alternatives.length||sets[0].alternatives.some(v=>v.status!=='ready')){
+      const saved=(campaign.alternativeHistory||[]).filter(set=>set.status==='alternatives_ready').at(-1);
+      if(saved&&saved.generation!==sets[0].generation)sets.push(saved);
+    }
+    return sets.flatMap(set=>set.alternatives.map(variant=>({...variant,campaignName:`${campaign.brief.name} · set ${set.generation}`})));
+  });
   $('alternatives').innerHTML=alternatives.map(variant=>`<article class="alternative">
     <div class="card-head"><strong>${esc(variant.title)}</strong><b class="${variant.status==='ready'?'pass':variant.status==='blocked'?'fail':''}">${esc(variant.status).toUpperCase()}</b></div>
     <p>${esc(variant.direction)}</p><div class="meta">${esc(variant.campaignName)}${variant.lastError?` · ${esc(variant.lastError)}`:''}</div>
-    ${variant.runId?`<div class="preview-actions"><button data-preview="/preview/${esc(variant.runId)}" data-title="${esc(variant.title)}">OPEN QUALIFIED ALTERNATIVE</button><a class="preview-tab" href="/preview/${esc(variant.runId)}" target="_blank" rel="noopener">OPEN IN NEW TAB</a></div>`:''}
+    ${previewActions(variant.preview,variant.title,'OPEN QUALIFIED ALTERNATIVE')}
   </article>`).join('')||'<p class="meta">No alternative set has been requested.</p>';
   $('gallery').innerHTML=(data.gallery||[]).map(item=>`<article class="card">
     <div class="shots">${item.desktop?`<img src="${item.desktop}" alt="Desktop evidence">`:'<span></span>'}${item.mobile?`<img src="${item.mobile}" alt="Mobile evidence">`:''}</div>
@@ -274,7 +304,7 @@ $('startCampaign').addEventListener('pointerup',async event=>{
       features:[...document.querySelectorAll('#featureChecks input:checked')].map(input=>input.value),
     })});
     const body=await response.json();
-    $('coachResult').textContent=response.ok?`Campaign ${body.id} planned with ${body.capabilities.length} trusted training jobs.`:`Failed: ${body.error}`;
+    $('coachResult').textContent=response.ok?`Website ${body.id} queued. This generation runs once; regeneration is manual.`:`Failed: ${body.error}`;
     if(response.ok){
       for(const id of ['clientName','clientBrief','pages','brandNotes','coachStyleReference']) $(id).value='';
       document.querySelectorAll('#featureChecks input:checked').forEach(input=>{input.checked=false});
@@ -299,6 +329,19 @@ $('objectiveForm').addEventListener('submit',async event=>{
   refresh();
 });
 document.addEventListener('click',event=>{
+  const regenerateButton=event.target.closest('[data-regenerate-campaign]');
+  if(regenerateButton){
+    regenerateButton.disabled=true;
+    fetch(`/api/campaigns/${regenerateButton.dataset.regenerateCampaign}/regenerate`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:'{}',
+    }).then(async response=>{
+      const body=await response.json();
+      if(!response.ok)throw new Error(body.error||'Regeneration failed.');
+      await refresh();
+    }).catch(error=>{$('updated').textContent=`Regeneration failed: ${error.message}`})
+      .finally(()=>{regenerateButton.disabled=false});
+    return;
+  }
   const alternativesButton=event.target.closest('[data-alternative-campaign]');
   if(alternativesButton){
     alternativesButton.disabled=true;
@@ -320,5 +363,18 @@ document.addEventListener('click',event=>{
   $('previewDialog').showModal();
 });
 $('closePreview').addEventListener('click',()=>{$('previewFrame').src='about:blank';$('previewDialog').close()});
+for(const [id,url] of [['testBuilderDatabase','/api/builder/database-check'],['syncSharedLessons','/api/builder/shared-lessons']]){
+  $(id).addEventListener('click',async()=>{
+    const button=$(id);
+    button.disabled=true;
+    try{
+      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const body=await response.json();
+      if(!response.ok)throw new Error(body.error||'Builder check failed.');
+      await refresh();
+    }catch(error){$('updated').textContent=`Builder check failed: ${error.message}`}
+    finally{button.disabled=false}
+  });
+}
 refresh();
 setInterval(refresh,2000);

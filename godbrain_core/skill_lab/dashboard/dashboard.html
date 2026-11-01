@@ -60,11 +60,11 @@
 
     <section class="panel coach-panel">
       <div class="panel-title">
-        <div><p class="eyebrow">CLIENT BRIEF → TRAINING CAMPAIGN → SITE</p><h2>Frontend Coach</h2></div>
-        <span>Coach chooses trusted exercises; Qwen practices and assembles</span>
+        <div><p class="eyebrow">MANUAL GENERATION · SAVED VERSIONS</p><h2>CLIENT WEB SITE BUILDER</h2></div>
+        <span>Start once. Browser-check the site. Regenerate only when you choose.</span>
       </div>
       <form id="coachForm" class="coach-form">
-        <label>Project name<input id="clientName" required maxlength="120" placeholder="Northstar Commerce"></label>
+        <label>Project name<input id="clientName" required maxlength="120" placeholder="Autom8ed.me"></label>
         <label>Site type
           <select id="siteType">
             <option value="business">Business</option><option value="storefront">Storefront</option>
@@ -74,12 +74,19 @@
           </select>
         </label>
         <label class="wide">Pages / sections<textarea id="pages" maxlength="1000" placeholder="Home&#10;Platform&#10;Features&#10;Pricing&#10;Contact"></textarea></label>
-        <label class="wide">Client request<textarea id="clientBrief" required maxlength="3000" placeholder="Build a premium storefront for an independent audio equipment brand. Fast product discovery, clear specifications, and a dark editorial look."></textarea></label>
+        <label class="wide">Client request<textarea id="clientBrief" required maxlength="3000" placeholder="Build a portfolio gallery of real projects, with screenshots, descriptions, categories and working project links."></textarea></label>
         <label class="wide">Brand direction<textarea id="brandNotes" maxlength="1600" placeholder="Charcoal, warm copper, technical typography, large product photography."></textarea></label>
         <label class="wide">Style reference<textarea id="coachStyleReference" maxlength="1200" placeholder="https://example.com&#10;Premium Scandinavian B2B SaaS, spacious editorial layout, restrained motion."></textarea></label>
-        <fieldset class="wide"><legend>Required capabilities</legend><div id="featureChecks" class="checks"></div></fieldset>
-        <button id="startCampaign" type="button">START TRAINING CAMPAIGN</button><p id="coachResult"></p>
+        <fieldset class="wide"><legend>Website requirements</legend><div id="featureChecks" class="checks"></div></fieldset>
+        <button id="startCampaign" type="button">START GENERATION</button><p id="coachResult"></p>
       </form>
+      <p class="meta">No automatic client reruns or prerequisite training drills. Previous passing versions remain available.</p>
+      <div class="preview-actions">
+        <button id="testBuilderDatabase" type="button">TEST MONGODB BACKEND</button>
+        <button id="syncSharedLessons" type="button">SYNC SHARED LESSONS</button>
+      </div>
+      <p id="builderDatabaseStatus" class="meta">Backend tests use a separate synthetic-data shelf, not Alexandria.</p>
+      <p id="sharedLessonsStatus" class="meta">Shared lessons retain their source hashes and browser evidence across models.</p>
       <div id="campaigns" class="campaigns"></div>
       <details id="campaignHistoryWrap" class="campaign-history" hidden>
         <summary id="campaignHistorySummary">Completed / archived campaigns</summary>

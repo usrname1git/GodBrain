@@ -157,7 +157,7 @@ export async function claimObjective(workDir, trustedTasks) {
     return {
       id: `objective-${item.id}`,
       objectiveId: item.id,
-      family: base?.family ?? 'custom-exploration',
+      family: base?.family ?? (item.campaignId ? 'marketing-sites' : 'custom-exploration'),
       title: valid.title,
       docs: base?.docs ?? [],
       baseTaskId: base?.id ?? null,
