@@ -699,9 +699,13 @@ Invoke-DeskAsk $request | Out-Null
 Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "answer"
 $request.Path = "C:\Temp\GitHub"
 $request.Message = "No tools. Explain the supplied path."
-$request.Mode = "research"
-Invoke-DeskAsk $request | Out-Null
-Assert-Equal ($script:lastBody | ConvertFrom-Json).tool_mode "answer"
+foreach ($selector in @("answer", "research", "fix")) {
+    $request.Mode = $selector
+    Invoke-DeskAsk $request | Out-Null
+    $payload = $script:lastBody | ConvertFrom-Json
+    Assert-Equal $payload.tool_mode "answer"
+    Assert-Equal $payload.message ("No tools. Explain the supplied path.`n`nPath: " + $request.Path)
+}
 $request.Mode = "fix"
 $request.Message = "Read this path."
 Invoke-DeskAsk $request | Out-Null

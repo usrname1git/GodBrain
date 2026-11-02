@@ -2439,9 +2439,7 @@ std::string execute_calls(const std::vector<Call>& calls, bool* all_ok,
         }
         if (c.name == "inspect_protected_directory") {
             const bool named = scope &&
-                (request_names_directory(expand_env(scope->operator_text), c.path) ||
-                 (ascii_lower(c.path) == "c:\\windows\\system32\\codeintegrity\\cipolicies\\active" &&
-                  contains_ci(scope->operator_text, "cipolicies")));
+                request_names_directory(expand_env(scope->operator_text), c.path);
             if (!scope || !scope->protected_reads_authorized || !named ||
                 !protected_directory_allowed(c.path) || !c.args.empty() || !c.content.empty() ||
                 !c.exe.empty() || !c.dest.empty() || !c.sql.empty() || !c.old_text.empty()) {

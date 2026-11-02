@@ -491,8 +491,23 @@ export function newState() {
   return {
     version: 1, status: 'idle', sequence: 0, cursor: 0, active: null,
     stats: { attempts: 0, passed: 0, failed: 0, infrastructureErrors: 0, byTask: {} },
-    lessons: [], recent: [],
+    lessons: [], lessonInvalidations: [], recent: [],
   };
+}
+
+export function lessonSourceKey({ taskId, sourceHash, evaluatorVersion }) {
+  return JSON.stringify([taskId, sourceHash, evaluatorVersion]);
+}
+
+export function invalidateLessonSource(state, { taskId, sourceHash, evaluatorVersion }) {
+  if (![taskId, sourceHash, evaluatorVersion].every(value => typeof value === 'string' && value.length)) {
+    throw new Error('Invalid lesson-source invalidation.');
+  }
+  const invalidation = { taskId, sourceHash, evaluatorVersion };
+  state.lessonInvalidations ??= [];
+  if (!state.lessonInvalidations.some(item => lessonSourceKey(item) === lessonSourceKey(invalidation))) {
+    state.lessonInvalidations.push(invalidation);
+  }
 }
 
 export async function loadState(workDir) {
@@ -501,6 +516,7 @@ export async function loadState(workDir) {
   if (state.version !== 1 || !Number.isSafeInteger(state.sequence) || state.sequence < 0 ||
       !Number.isSafeInteger(state.cursor) || state.cursor < 0 ||
       !Array.isArray(state.lessons) || !Array.isArray(state.recent) ||
+      (state.lessonInvalidations !== undefined && !Array.isArray(state.lessonInvalidations)) ||
       !state.stats || !state.stats.byTask || typeof state.stats.byTask !== 'object') {
     throw new Error('Unsupported or damaged gym state. Refusing to reset its learning history.');
   }
@@ -515,6 +531,10 @@ export async function loadState(workDir) {
     !Number.isSafeInteger(state.active.trainSeed) || !Number.isSafeInteger(state.active.holdoutSeed) ||
     state.active.trainSeed === state.active.holdoutSeed)) {
     throw new Error('The saved exercise has invalid attempts or non-independent input seeds.');
+  }
+  state.lessonInvalidations ??= [];
+  for (const lesson of [...state.lessonInvalidations, ...state.lessons.filter(item => item.stale)]) {
+    invalidateLessonSource(state, lesson);
   }
   return state;
 }
@@ -969,7 +989,7 @@ export async function runPractice(options, dependencies) {
     maxAttempts = 4, rounds = 1, continuous = false, intervalMs = 2000, retryMs = 30_000,
     keepRuns = 24, browserPath, token, teacherToken = token, timeoutMs = 180_000,
     tutorEvery = 2, externalSignal, maxTokens = 2400, pauseReason = async () => null,
-    autoplayEnabled = async () => true,
+    autoplayEnabled = async () => true, explicitTask = null,
     nextTask = async () => null, onObjectiveResult = async () => {},
     prepareState = async () => {}, onCheckpoint = async () => {},
     taskAlreadyComplete = async () => false,
@@ -1068,7 +1088,7 @@ export async function runPractice(options, dependencies) {
         await delay(Math.max(retryMs, 500), undefined, { signal });
         continue;
       }
-      const autoplay = await autoplayEnabled();
+      const autoplay = Boolean(explicitTask) || await autoplayEnabled();
       let queuedTask = null;
       if (!state.active || (!autoplay && !state.active.customTask?.objectiveId)) {
         queuedTask = await nextTask();
@@ -1307,8 +1327,10 @@ export async function runPractice(options, dependencies) {
             active.resetContrastOnce = true;
           }
         }
-        if (sourceHash && state.lessons.some(item => item.sourceHash === sourceHash && item.taskId === task.id) && !passed) {
-          for (const item of state.lessons.filter(item => item.sourceHash === sourceHash && item.taskId === task.id)) {
+        if (sourceHash && !passed) {
+          const invalidation = { taskId: task.id, sourceHash, evaluatorVersion };
+          invalidateLessonSource(state, invalidation);
+          for (const item of state.lessons.filter(item => lessonSourceKey(item) === lessonSourceKey(invalidation))) {
             item.stale = true;
           }
         }
@@ -1318,6 +1340,8 @@ export async function runPractice(options, dependencies) {
             evaluatorVersion, model: receipt.model, seeds: receipt.seeds, stale: false,
             summary: `${task.title}: browser acceptance passed on two input variants. Scope is this exercise only.`,
           };
+          lessonRecord.stale = state.lessonInvalidations.some(item =>
+            lessonSourceKey(item) === lessonSourceKey(lessonRecord));
           const otherTasks = state.lessons.filter(item => item.taskId !== task.id);
           const taskVariants = state.lessons.filter(item => item.taskId === task.id);
           const existingIndex = taskVariants.findIndex(item => item.sourceHash === sourceHash);

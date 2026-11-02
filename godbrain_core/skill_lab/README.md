@@ -237,6 +237,8 @@ The latest build of each project remains visible, including completed work.
 Passing shell/final previews, previous website versions and completed alternative
 sets remain clickable while a new version is being generated. Superseded
 projects are collapsed under **Completed / archived campaigns**.
+Passing versions are retained independently of the ten-entry recent-history
+window, so failed regenerations cannot evict their source or receipts.
 There is no automatic client repetition. The legacy `repeat-campaign.json`
 switch is retired non-destructively; its unsolicited successor is cancelled
 while the last completed set and every source/receipt remain intact.
@@ -277,8 +279,11 @@ the current model; switching the learner does not reset the shared course
 ledger or require repeating the degree. Startup restores missing compatible
 sources, and later lesson/staleness changes are synchronized incrementally.
 **SYNC SHARED LESSONS** explicitly rechecks and republishes the local library.
-Source and receipt content use insert-only storage; a stale record cannot be
-revived by an older reader. Mongo outages produce an explicit pending receipt
+Source and receipt content use insert-only storage. Durable local and shared
+invalidation keys bind task, source hash and exact evaluator version; a later
+failure blocks older or new run IDs for that same evidence identity. An older
+reader cannot revive it, while a different evaluator must qualify it anew.
+Mongo outages produce an explicit pending receipt
 while preserving the local evidence.
 
 Reuse still requires an exact compatible evaluator fingerprint, matching source

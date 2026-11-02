@@ -4374,7 +4374,9 @@ std::string run_colibri_serve(
             }
         }
     }
-    auto flatten_tool_turn = [&](std::vector<std::string> results, bool has_procedure) {
+    auto flatten_tool_turn = [&](std::vector<std::string> results, bool has_procedure,
+                                 size_t evidence_start) {
+        const auto observations = results;
         std::string tool_out;
         for (const auto& result : results) tool_out += result;
         const std::string hop_hint = tool_hint.empty() ? user : tool_hint;
@@ -4401,16 +4403,9 @@ std::string run_colibri_serve(
         bool new_research_evidence = false;
         bool research_capacity_reached = false;
         for (const auto& result : results) {
-            const auto mark_supplied = [&](bool supplied) {
-                const auto hash = browser_evidence::keccak_hex(result);
-                for (auto& row : evidence.results) {
-                    if (row.value("result_keccak256", "") == hash) row["context_supplied"] = supplied;
-                }
-            };
             if (read_only) {
                 if (std::find(research_results.begin(), research_results.end(), result) !=
                     research_results.end()) {
-                    mark_supplied(true);
                     continue;
                 }
                 if (tool_ledger.size() + result.size() + 1 > kResearchToolContextBytes - 256) {
@@ -4423,7 +4418,6 @@ std::string run_colibri_serve(
                     }
                     hops_ok = false;
                     research_capacity_reached = true;
-                    mark_supplied(false);
                     continue;
                 }
                 research_results.push_back(result);
@@ -4433,8 +4427,12 @@ std::string run_colibri_serve(
                                            ? kResearchToolContextBytes : kToolContextBytes;
             const bool retained = append_tool_context(tool_ledger, result, context_limit);
             append_tool_context(last_tool_out, result, context_limit);
-            mark_supplied(retained);
             hops_ok = hops_ok && retained;
+        }
+        for (size_t i = 0; i < observations.size() &&
+                           evidence_start + i < evidence.results.size(); ++i) {
+            evidence.results[evidence_start + i]["context_supplied"] =
+                !observations[i].empty() && tool_ledger.find(observations[i]) != std::string::npos;
         }
         receipt["tool_attempts"] = evidence.results;
         ++chain_hops;
@@ -4492,6 +4490,7 @@ std::string run_colibri_serve(
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                    chain_hops + 1, "before", hops_ok, &evidence);
         std::vector<std::string> tool_results;
+        const size_t evidence_start = evidence.results.size();
         bool has_procedure = false;
         bool hop_ok = true;
         for (size_t i = 0; i < tcs.size(); ++i) {
@@ -4521,7 +4520,7 @@ std::string run_colibri_serve(
             if (spoken) *spoken = assembled;
             break;
         }
-        flatten_tool_turn(std::move(tool_results), has_procedure);
+        flatten_tool_turn(std::move(tool_results), has_procedure, evidence_start);
         save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                    chain_hops, "after", hops_ok, &evidence);
         assembled.clear();
@@ -4547,6 +4546,7 @@ std::string run_colibri_serve(
     const std::string tool_out =
         local_tools::execute_calls(legacy_calls, &hop_ok, &advertised, evidence.task_id,
                                    skill_client, &scope);
+    const size_t evidence_start = evidence.results.size();
     record_tool_evidence(evidence, legacy_calls, advertised, hop_ok, tool_out);
     receipt["tool_attempts"] = evidence.results;
     hops_ok = hops_ok && hop_ok;
@@ -4554,7 +4554,7 @@ std::string run_colibri_serve(
     const bool has_procedure = std::any_of(
         legacy_calls.begin(), legacy_calls.end(),
         [](const local_tools::Call& call) { return call.name == "query_godbrain_skills"; });
-    flatten_tool_turn({tool_out}, has_procedure);
+    flatten_tool_turn({tool_out}, has_procedure, evidence_start);
     save_chain(tool_hint.empty() ? user : tool_hint, tool_ledger, "",
                chain_hops, "after", hops_ok, &evidence);
     assembled.clear();

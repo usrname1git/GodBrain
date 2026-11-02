@@ -36,27 +36,45 @@ function record() {
 
 function fakeMongo() {
   const rows = new Map();
+  const invalidations = new Map();
   let calls = 0;
+  const valueAt = (row, key) => key.split('.').reduce((value, part) => value?.[part], row);
   const matches = (row, filter) => Object.entries(filter).every(([key, value]) =>
-    value && typeof value === 'object' && '$in' in value ? value.$in.includes(row[key]) : row[key] === value);
+    value && typeof value === 'object' && '$in' in value
+      ? value.$in.includes(valueAt(row, key)) : valueAt(row, key) === value);
+  const collection = records => ({
+    updateOne(filter, update) {
+      const existing = records.get(filter._id);
+      if (existing && !matches(existing, filter)) throw new Error('Immutable source conflict');
+      records.set(filter._id, structuredClone({
+        ...(existing ?? { _id: filter._id, ...update.$setOnInsert }), ...update.$set,
+      }));
+    },
+    updateMany(filter, update) {
+      for (const row of records.values()) {
+        if (!matches(row, filter)) continue;
+        for (const [key, value] of Object.entries(update.$set)) {
+          const parts = key.split('.');
+          const target = parts.slice(0, -1).reduce((item, part) => item[part], row);
+          target[parts.at(-1)] = structuredClone(value);
+        }
+      }
+    },
+    findOne(filter) { return [...records.values()].find(row => matches(row, filter)) ?? null; },
+    find(filter) {
+      return { toArray: () => structuredClone([...records.values()].filter(row => matches(row, filter))) };
+    },
+    countDocuments(filter) { return [...records.values()].filter(row => matches(row, filter)).length; },
+  });
   return {
-    rows,
+    rows, invalidations,
     get calls() { return calls; },
     run: async (database, script) => {
       assert.equal(database, LESSON_MONGO_DB);
       calls++;
       let output;
-      const collection = {
-        updateOne(filter, update) {
-          const existing = rows.get(filter._id);
-          if (existing && !matches(existing, filter)) throw new Error('Immutable source conflict');
-          rows.set(filter._id, { ...(existing ?? { _id: filter._id, ...update.$setOnInsert }), ...update.$set });
-        },
-        find(filter) { return { toArray: () => [...rows.values()].filter(row => matches(row, filter)) }; },
-        countDocuments(filter) { return [...rows.values()].filter(row => matches(row, filter)).length; },
-      };
       vm.runInNewContext(script, {
-        db: { qualified_lessons: collection },
+        db: { qualified_lessons: collection(rows), lesson_invalidations: collection(invalidations) },
         print: value => { output = JSON.parse(value); },
       }, { timeout: 1000 });
       return output;
@@ -74,6 +92,70 @@ test('every Mongo shelf rejects Alexandria and the other shelves', () => {
     }
     assert.throws(() => assertBuilderMongoUri(`https://127.0.0.1/${database}`, database), /never Alexandria/);
   }
+});
+
+test('a later failure invalidates older and future runs of the exact source/task/evaluator', async t => {
+  const from = await workspace(t);
+  const mongo = fakeMongo();
+  const older = record();
+  const newer = structuredClone(older);
+  newer.lesson.runId = newer.receipt.runId = '00000002-aaaaaaaaaaaa';
+  const otherTask = structuredClone(older);
+  otherTask.lesson.taskId = otherTask.receipt.taskId = 'another-task';
+  otherTask.lesson.runId = otherTask.receipt.runId = '00000003-aaaaaaaaaaaa';
+  for (const split of otherTask.receipt.evidence) split.taskId = otherTask.lesson.taskId;
+  const otherEvaluator = structuredClone(older);
+  otherEvaluator.lesson.evaluatorVersion = otherEvaluator.receipt.evaluatorVersion = 'browser-test-v2';
+  otherEvaluator.lesson.runId = otherEvaluator.receipt.runId = '00000004-aaaaaaaaaaaa';
+  const future = structuredClone(older);
+  future.lesson.runId = future.receipt.runId = '00000005-aaaaaaaaaaaa';
+  for (const item of [older, newer, otherTask, otherEvaluator, future]) {
+    const dir = path.join(from, 'runs', item.lesson.runId);
+    await fs.mkdir(dir, { recursive: true });
+    await writeJson(path.join(dir, 'source.json'), item.source);
+    await writeJson(path.join(dir, 'receipt.json'), item.receipt);
+  }
+  for (const item of [older, newer, otherTask, otherEvaluator]) {
+    await syncSharedLessons(from, {
+      lessons: [item.lesson], evaluatorVersion: item.lesson.evaluatorVersion,
+    }, { force: true, mongo: mongo.run });
+  }
+  newer.lesson.stale = true;
+  await syncSharedLessons(from, {
+    lessons: [newer.lesson], evaluatorVersion: newer.lesson.evaluatorVersion,
+  }, { force: true, mongo: mongo.run });
+  assert.equal(mongo.invalidations.size, 1);
+  for (const item of [older, future]) {
+    await syncSharedLessons(from, {
+      lessons: [structuredClone(item.lesson)], evaluatorVersion: item.lesson.evaluatorVersion,
+    }, { force: true, mongo: mongo.run });
+    assert.equal(mongo.rows.get(`${item.lesson.runId}:${item.lesson.sourceHash}`).stale, true);
+  }
+  for (const [version, expected] of [['browser-test-v1', otherTask], ['browser-test-v2', otherEvaluator]]) {
+    const to = await workspace(t);
+    const fresh = { lessons: [], evaluatorVersion: version };
+    const result = await syncSharedLessons(to, fresh, { restore: true, mongo: mongo.run });
+    assert.equal(result.compatible, 1);
+    assert.deepEqual(fresh.lessons.map(item => item.runId), [expected.lesson.runId]);
+  }
+  const local = { lessons: [structuredClone(older.lesson)], evaluatorVersion: older.lesson.evaluatorVersion };
+  await syncSharedLessons(from, local, { restore: true, mongo: mongo.run });
+  assert.equal(local.lessons.find(item => item.runId === older.lesson.runId).stale, true);
+});
+
+test('legacy stale rows create durable source invalidations before restoration', async t => {
+  const workDir = await workspace(t);
+  const mongo = fakeMongo();
+  const item = record();
+  mongo.rows.set('legacy', { _id: 'legacy', owner: 'frontend-shared-lessons-v1',
+    sourceHash: item.lesson.sourceHash, evaluatorVersion: item.lesson.evaluatorVersion,
+    runId: item.lesson.runId, ...structuredClone(item), stale: true });
+  const state = { lessons: [], evaluatorVersion: item.lesson.evaluatorVersion };
+  const result = await syncSharedLessons(workDir, state, { restore: true, mongo: mongo.run });
+  assert.equal(result.compatible, 0);
+  assert.equal(mongo.invalidations.size, 1);
+  assert.equal(state.lessonInvalidations.length, 1);
+  assert.equal(state.lessons.length, 0);
 });
 
 test('shared lessons require exact source, two passing fixtures and frontend-only authority', () => {

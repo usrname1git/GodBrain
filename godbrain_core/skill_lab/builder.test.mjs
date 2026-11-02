@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 import { advanceCampaigns, createCampaign, listCampaigns, regenerateCampaign } from './coach.mjs';
 import { startDashboard } from './dashboard.mjs';
 import { hashFiles, newState, readJson, runPractice, writeJson } from './gym-core.mjs';
-import { enqueueObjective, listObjectives } from './objectives.mjs';
+import { completeObjective, enqueueObjective, listObjectives } from './objectives.mjs';
 
 const contracts = [{
   id: 'trusted-v1', family: 'marketing-sites', title: 'Trusted',
@@ -92,6 +92,61 @@ test('legacy repeat retirement preserves the last completed set and cancels only
   assert.equal(queue.find(item => item.campaignId === manual.id).status, 'queued');
   assert.equal(queue.length, 2);
   assert.equal((await readJson(path.join(workDir, 'repeat-campaign.json'))).campaignId, null);
+});
+
+test('regenerating an archived website cannot queue a duplicate active project', async t => {
+  const workDir = await workspace(t);
+  const older = await createCampaign(workDir, brief, contracts);
+  const campaigns = await readJson(path.join(workDir, 'campaigns.json'));
+  campaigns.items[0].status = 'delivered';
+  campaigns.items[0].createdAt = '2020-01-01T00:00:00Z';
+  await writeJson(path.join(workDir, 'campaigns.json'), campaigns);
+  const newer = await createCampaign(workDir, { ...brief, name: ' PORTFOLIO ' }, contracts);
+  const before = await fs.readFile(path.join(workDir, 'campaigns.json'), 'utf8');
+  await assert.rejects(regenerateCampaign(workDir, older.id, contracts), /active campaign named/);
+  assert.equal(await fs.readFile(path.join(workDir, 'campaigns.json'), 'utf8'), before);
+  assert.equal((await listCampaigns(workDir)).find(item => item.id === newer.id).status, 'assembling');
+  assert.equal((await listObjectives(workDir)).length, 2);
+});
+
+test('passing website and alternative artifacts survive more than ten failed regenerations', async t => {
+  const workDir = await workspace(t);
+  const saved = ['00000001-bbbbbbbbbbbb', '00000002-bbbbbbbbbbbb'];
+  for (const id of saved) await passingSource(workDir, id);
+  await writeJson(path.join(workDir, 'campaigns.json'), { version: 1, items: [{
+    id: 'aaaaaaaaaaaa', status: 'delivered', createdAt: '2020-01-01T00:00:00Z',
+    brief, capabilities: [], buildMode: 'website', buildGeneration: 1,
+    previewRunId: saved[0], assemblyRunIds: [saved[0]],
+    alternatives: [{ status: 'ready', runId: saved[1] }],
+  }] });
+  for (let i = 0; i < 12; i++) {
+    const campaign = await regenerateCampaign(workDir, 'aaaaaaaaaaaa', contracts);
+    await completeObjective(workDir, campaign.assemblyObjectiveId, { runId: 'failed-shell' }, 'attempt_limit');
+    const recovery = (await advanceCampaigns(workDir, contracts))[0];
+    await completeObjective(workDir, recovery.assemblyObjectiveId, { runId: 'failed-recovery' }, 'attempt_limit');
+    await advanceCampaigns(workDir, contracts);
+  }
+  const stored = (await listCampaigns(workDir))[0];
+  assert.equal(stored.buildHistory[0].previewRunId, saved[0]);
+  assert.equal(stored.buildHistory.length, 11);
+  assert.equal(stored.alternativeHistory[0].alternatives[0].runId, saved[1]);
+  await runPractice({
+    workDir, endpoint: 'http://127.0.0.1:9998/v1', rounds: 1, maxAttempts: 1,
+    intervalMs: 0, tutorEvery: 0, keepRuns: 1,
+    nextTask: async () => ({ ...contracts[0], objectiveId: 'retention', retainLesson: false }),
+  }, {
+    tasks: contracts, evaluatorVersion: 'test',
+    complete: async () => ({
+      text: JSON.stringify({ files: {
+        'App.jsx': 'export default function App(){return <main>Retention</main>}', 'styles.css': '',
+      } }), model: 'test', finishReason: 'stop',
+    }),
+    evaluate: async request => ({
+      taskId: request.taskId, seed: request.seed, passed: true,
+      checks: [{ name: 'synthetic-browser-check', passed: true }], errors: [], artifacts: [],
+    }),
+  });
+  for (const id of saved) assert.ok(await readJson(path.join(workDir, 'runs', id, 'source.json')));
 });
 
 test('a manually queued client job runs with course autoplay off', async t => {

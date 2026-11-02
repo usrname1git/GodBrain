@@ -892,7 +892,7 @@ function Invoke-DeskAsk($Request) {
         $text = $text.Trim()
     } elseif ($path) {
         if ([string]::IsNullOrWhiteSpace($text)) { $text = "Read this path and say what the file or folder is." }
-        $text = "Path: $path`n`n$text"
+        $text = if ($text -match '^\s*(?i)no tools\b') { "$text`n`nPath: $path" } else { "Path: $path`n`n$text" }
     }
     $body = @{ message = $text; tool_mode = $mode } | ConvertTo-Json -Compress
     $chat = @{

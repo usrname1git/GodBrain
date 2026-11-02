@@ -38,6 +38,23 @@ const ALTERNATIVE_DIRECTIONS = Object.freeze([
 const MAX_ALTERNATIVE_HISTORY = 10;
 let transactionTail = Promise.resolve();
 
+function retainVersionHistory(versions) {
+  return versions.filter((version, index) =>
+    index >= versions.length - MAX_ALTERNATIVE_HISTORY ||
+    version.previewRunId ||
+    (['delivered', 'delivered_limited'].includes(version.status) && version.assemblyRunIds?.length) ||
+    version.alternatives?.some(item => item.status === 'ready' && item.runId));
+}
+
+function assertNoActiveProject(campaigns, brief, exceptId) {
+  const duplicate = campaigns.items.find(campaign =>
+    campaign.id !== exceptId &&
+    ['planning', 'training', 'assembling', 'showcasing'].includes(campaign.status) &&
+    campaign.brief.siteType === brief.siteType &&
+    campaign.brief.name.trim().toLowerCase() === brief.name.trim().toLowerCase());
+  if (duplicate) throw new Error(`An active campaign named "${brief.name}" already exists (${duplicate.id}).`);
+}
+
 function transaction(action) {
   const current = transactionTail.then(action);
   transactionTail = current.catch(() => {});
@@ -188,7 +205,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
         generation: campaign.alternativeGeneration, status: 'cancelled',
         archivedAt: new Date().toISOString(), alternatives: campaign.alternatives,
       });
-      campaign.alternativeHistory = campaign.alternativeHistory.slice(-MAX_ALTERNATIVE_HISTORY);
+      campaign.alternativeHistory = retainVersionHistory(campaign.alternativeHistory);
       campaign.alternatives = previous.alternatives;
       campaign.alternativeGeneration = previous.generation;
       campaign.status = previous.status;
@@ -468,11 +485,7 @@ export async function createCampaign(workDir, input, trustedTasks) {
     if (campaigns.items.length >= MAX_CAMPAIGNS) {
       throw new Error(`Campaign capacity (${MAX_CAMPAIGNS}) reached; archive completed campaigns first.`);
     }
-    const duplicate = campaigns.items.find(campaign =>
-      ['planning', 'training', 'assembling', 'showcasing'].includes(campaign.status) &&
-      campaign.brief.siteType === brief.siteType &&
-      campaign.brief.name.trim().toLowerCase() === brief.name.trim().toLowerCase());
-    if (duplicate) throw new Error(`An active campaign named "${brief.name}" already exists (${duplicate.id}).`);
+    assertNoActiveProject(campaigns, brief);
     const id = randomUUID().replaceAll('-', '').slice(0, 12);
     const campaign = {
       id,
@@ -516,17 +529,18 @@ export async function regenerateCampaign(workDir, campaignId, trustedTasks) {
     if (!['delivered', 'delivered_limited', 'blocked', 'alternatives_ready', 'alternatives_limited'].includes(campaign.status)) {
       throw new Error('Wait for the current generation to finish before regenerating.');
     }
-    campaign.buildHistory = [...(campaign.buildHistory ?? []), {
+    assertNoActiveProject(campaigns, campaign.brief, campaign.id);
+    campaign.buildHistory = retainVersionHistory([...(campaign.buildHistory ?? []), {
       generation: campaign.buildGeneration ?? 0, status: campaign.status,
       previewRunId: campaign.previewRunId ?? null,
       assemblyRunIds: campaign.assemblyRunIds ?? [],
       archivedAt: new Date().toISOString(),
-    }].slice(-MAX_ALTERNATIVE_HISTORY);
+    }]);
     if (campaign.alternatives?.length) {
-      campaign.alternativeHistory = [...(campaign.alternativeHistory ?? []), {
+      campaign.alternativeHistory = retainVersionHistory([...(campaign.alternativeHistory ?? []), {
         generation: campaign.alternativeGeneration, status: campaign.status,
         archivedAt: new Date().toISOString(), alternatives: campaign.alternatives,
-      }].slice(-MAX_ALTERNATIVE_HISTORY);
+      }]);
       campaign.alternatives = [];
     }
     campaign.buildMode = 'website';
@@ -557,6 +571,7 @@ export async function requestCampaignAlternatives(workDir, campaignId, trustedTa
         (campaign.alternatives && !terminalWithAlternatives)) {
       throw new Error('Alternatives can be requested only after the primary campaign reaches a terminal result.');
     }
+    assertNoActiveProject(campaigns, campaign.brief, campaign.id);
     if (campaign.alternatives) {
       const history = Array.isArray(campaign.alternativeHistory) ? campaign.alternativeHistory : [];
       history.push({
@@ -565,7 +580,7 @@ export async function requestCampaignAlternatives(workDir, campaignId, trustedTa
         archivedAt: new Date().toISOString(),
         alternatives: campaign.alternatives,
       });
-      campaign.alternativeHistory = history.slice(-MAX_ALTERNATIVE_HISTORY);
+      campaign.alternativeHistory = retainVersionHistory(history);
       campaign.alternativeGeneration = (campaign.alternativeGeneration ?? 1) + 1;
     } else {
       campaign.alternativeGeneration = 1;

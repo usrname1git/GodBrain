@@ -531,7 +531,8 @@ int main() {
                       answered.receipt["tool_attempts"].empty(),
                   "Answer mode omitted read tools or misreported its calls");
             const auto no_tools = run({completion("", "No tools were used.")}, "off",
-                "No tools. Explain Path: C:\\Temp\\GitHub", "Fixture system.", true, true, false, "",
+                "No tools. Explain the supplied path.\n\nPath: C:\\Temp\\GitHub",
+                "Fixture system.", true, true, false, "",
                 false, nullptr, local_tools::ToolMode::Answer);
             check(!no_tools.requests[0].contains("tools") &&
                       no_tools.receipt["tool_attempts"].empty(),
@@ -886,6 +887,16 @@ int main() {
                       "requires authenticated operator") != std::string::npos && !ok,
                   "protected read did not require bearer-bound scope");
             scope.protected_reads_authorized = true;
+            call.path = "C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Active";
+            for (const auto& request : {
+                    "Inspect CIPolicies.",
+                    "Inspect C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Staged"}) {
+                scope.operator_text = request;
+                check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                          "explicitly named") != std::string::npos && !ok,
+                      "protected read widened a keyword or another named directory to Active");
+            }
+            call.path = directory.string();
             scope.operator_text = "Inspect a different target.";
             check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
                       "explicitly named") != std::string::npos && !ok,
@@ -915,6 +926,47 @@ int main() {
                 denied = std::string(error.what()).find("outside the read allowlist") != std::string::npos;
             }
             check(denied, "native protected reader did not reject before opening a read token");
+        }
+        {
+            const auto first = root / "batch-first.txt";
+            const auto second = root / "batch-second.txt";
+            std::ofstream(first) << "first\n";
+            std::ofstream(second) << "second\n";
+            MockCompletion batch;
+            batch.finish = "tool_calls";
+            batch.deltas.push_back({{"tool_calls", json::array({
+                {{"index", 0}, {"id", "batch-first"}, {"type", "function"},
+                 {"function", {{"name", "get_file_info"},
+                               {"arguments", json({{"path", first.string()}}).dump()}}}},
+                {{"index", 1}, {"id", "batch-second"}, {"type", "function"},
+                 {"function", {{"name", "get_file_info"},
+                               {"arguments", json({{"path", second.string()}}).dump()}}}}
+            })}});
+            const auto delivered = run({batch, completion("", "Both observations received.")},
+                "off", "Inspect the two metadata observations.", "Fixture system.",
+                true, true, false, "", false, nullptr, local_tools::ToolMode::Fix);
+            const auto prompt = delivered.requests.at(1)["messages"].back()["content"].get<std::string>();
+            check(prompt.find("batch-first.txt") != std::string::npos &&
+                      prompt.find("batch-second.txt") != std::string::npos &&
+                      delivered.receipt["tool_attempts"].size() == 2,
+                  "batched observations did not reach the next prompt");
+            for (const auto& attempt : delivered.receipt["tool_attempts"]) {
+                check(attempt["executor_ok"] == true && attempt["context_supplied"] == true,
+                      "batched result was falsely reported as omitted");
+            }
+            auto replaced = batch;
+            replaced.deltas[0]["tool_calls"].erase(1);
+            replaced.deltas[0]["tool_calls"][0]["function"] = {
+                {"name", "list_local_dir"}, {"arguments", json({{"path", root.string()}}).dump()}
+            };
+            const auto mapped = run({replaced, completion("", "Repo map received.")},
+                "off", "Review what is wrong under " + root.string(), "Fixture system.",
+                true, true, false, "", false, nullptr, local_tools::ToolMode::Fix);
+            check(mapped.requests.at(1)["messages"].dump().find("Repo map") != std::string::npos &&
+                      mapped.receipt["tool_attempts"][0]["context_supplied"] == false,
+                  "repo-map replacement incorrectly claimed delivery of the original observation");
+            std::filesystem::remove(first);
+            std::filesystem::remove(second);
         }
 
         const auto continued = run({

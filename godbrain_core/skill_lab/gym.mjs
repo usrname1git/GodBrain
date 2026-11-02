@@ -270,6 +270,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
       teacherToken: process.env.GODBRAIN_GYM_TEACHER_TOKEN ?? process.env.GODBRAIN_GYM_TOKEN,
       maxAttempts: Number(values['max-attempts']), rounds: Number(values.rounds),
       continuous: values.continuous, keepRuns: Number(values['keep-runs']),
+      explicitTask: values.task,
       maxTokens: Number(values['max-tokens']), timeoutMs: Number(values['timeout-seconds']) * 1000,
       intervalMs: Number(values['interval-seconds']) * 1000, retryMs: Number(values['retry-seconds']) * 1000,
       tutorEvery: Number(values['tutor-every']), browserPath: values.browser,
@@ -303,7 +304,9 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         if (unpark.size && state.scheduler?.parkedTaskIds?.length) {
           state.scheduler.parkedTaskIds = state.scheduler.parkedTaskIds.filter(id => !unpark.has(id));
         }
-        const selected = await selectCurriculumTask(workDir, state, combined);
+        const selected = values.task
+          ? available.find(task => task.id === values.task)
+          : await selectCurriculumTask(workDir, state, combined);
         if (!selected) return null;
         if (selected.university) {
           const plan = universityLessonPlan({
