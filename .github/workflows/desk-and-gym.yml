@@ -1,0 +1,147 @@
+name: Desk and gym
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/desk-and-gym.yml'
+      - 'godbrain_core/cpp_kernel/**'
+      - 'godbrain_core/cpp_tools/**'
+      - 'godbrain_core/skill_lab/**'
+      - 'scripts/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/desk-and-gym.yml'
+      - 'godbrain_core/cpp_kernel/**'
+      - 'godbrain_core/cpp_tools/**'
+      - 'godbrain_core/skill_lab/**'
+      - 'scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desk-and-gym-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GODBRAIN_GYM_MONGO_URI: mongodb://127.0.0.1:27917/godbrain_gym
+      GODBRAIN_GYM_REQUIRE_MONGO: '1'
+      GODBRAIN_SHARED_LESSONS_TEST_URI: mongodb://127.0.0.1:27917/godbrain_gym_memory
+      GODBRAIN_SHARED_LESSONS_MONGO_URI: mongodb://127.0.0.1:27917/godbrain_gym_memory
+      GODBRAIN_BUILDER_MONGO_URI: mongodb://127.0.0.1:27917/godbrain_builder_test
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: godbrain_core/skill_lab/package-lock.json
+      - name: Start disposable native Mongo
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path $env:RUNNER_TEMP 'native-mongo'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $packages = @(
+            @{
+              Name = 'server'
+              Url = 'https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-8.0.17.zip'
+              Hash = '39f0b72797f73e0909da3b454739d0f86bfcd5df436509f43d3df1aeeafc30e3'
+            },
+            @{
+              Name = 'shell'
+              Url = 'https://github.com/mongodb-js/mongosh/releases/download/v2.14.1/mongosh-2.14.1-win32-x64.zip'
+              Hash = 'be58d3c67a2bca990c790b359c99fa9b5da1b12bb5b01e8442bea5998b1a38e2'
+            }
+          )
+          foreach ($package in $packages) {
+            $zip = Join-Path $tools ($package.Name + '.zip')
+            Invoke-WebRequest -Uri $package.Url -OutFile $zip
+            if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $package.Hash) {
+              throw "Published checksum mismatch: $($package.Name)"
+            }
+            Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $tools $package.Name)
+          }
+          $server = @(Get-ChildItem (Join-Path $tools 'server') -Filter mongod.exe -Recurse)
+          $shell = @(Get-ChildItem (Join-Path $tools 'shell') -Filter mongosh.exe -Recurse)
+          if ($server.Count -ne 1 -or $shell.Count -ne 1) { throw 'Ambiguous Mongo binaries.' }
+          "GODBRAIN_MONGOSH=$($shell[0].FullName)" >> $env:GITHUB_ENV
+          $data = Join-Path $tools 'data'
+          New-Item -ItemType Directory -Path $data | Out-Null
+          $mongo = Start-Process -FilePath $server[0].FullName -PassThru -ArgumentList @(
+            '--bind_ip', '127.0.0.1', '--port', '27917', '--quiet',
+            '--dbpath', "`"$data`"", '--logpath', "`"$(Join-Path $tools 'mongod.log')`""
+          )
+          @{
+            Pid = $mongo.Id
+            Path = $server[0].FullName
+            Started = $mongo.StartTime.ToUniversalTime().Ticks
+          } | ConvertTo-Json | Set-Content (Join-Path $tools 'process.json')
+          $ready = $false
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            if ($mongo.HasExited) { throw 'Disposable Mongo exited before readiness.' }
+            & $shell[0].FullName 'mongodb://127.0.0.1:27917/admin?serverSelectionTimeoutMS=1000' `
+              --quiet --norc --eval 'quit(db.runCommand({ping:1}).ok === 1 ? 0 : 1)' *> $null
+            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) { throw 'Disposable Mongo never became ready.' }
+      - name: Install checked-in lab dependencies and browser
+        working-directory: godbrain_core/skill_lab
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE) { throw 'npm ci failed.' }
+          npx --no-install playwright install chromium
+          if ($LASTEXITCODE) { throw 'Chromium installation failed.' }
+          $browser = node --input-type=module -e "import {chromium} from 'playwright'; console.log(chromium.executablePath());"
+          if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $browser)) { throw 'Chromium is missing.' }
+          "GODBRAIN_BROWSER=$browser" >> $env:GITHUB_ENV
+      - name: Full browser, worker and real Mongo tests
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          Push-Location godbrain_core\skill_lab
+          try {
+            npm test 2>&1 | Tee-Object -FilePath ..\..\logs\ci-gym.log
+            if ($LASTEXITCODE) { throw 'Frontend gym tests failed.' }
+          } finally { Pop-Location }
+      - name: Native production link and reply fixtures
+        run: |
+          .\scripts\Test-KernelReplies.ps1 2>&1 | Tee-Object -FilePath logs\ci-native.log
+      - name: Desk payload and native UI smoke
+        run: |
+          .\scripts\Test-DeskMenu.ps1 -UiSmoke 2>&1 | Tee-Object -FilePath logs\ci-desk.log
+          .\scripts\Test-DeskModel.ps1
+          .\scripts\Test-DeskAttachments.ps1
+          .\scripts\Test-ClipShare.ps1
+      - name: Stop only the disposable Mongo process
+        if: always()
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP 'native-mongo\process.json'
+          if (Test-Path -LiteralPath $file) {
+            $owned = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+            $process = Get-Process -Id $owned.Pid -ErrorAction SilentlyContinue
+            if ($process) {
+              if ($process.Path -ne $owned.Path -or
+                  $process.StartTime.ToUniversalTime().Ticks -ne $owned.Started) {
+                throw 'Refusing to stop a reused or unrelated Mongo PID.'
+              }
+              Stop-Process -Id $process.Id
+            }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: desk-and-gym-evidence
+          path: |
+            logs/ci-*.log
+            ${{ runner.temp }}/native-mongo/mongod.log
+          retention-days: 7

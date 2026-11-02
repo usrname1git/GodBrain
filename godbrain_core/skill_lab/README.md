@@ -391,6 +391,35 @@ The suite includes passing reference apps, broken-app rejection and the loop's
 repair, transfer, persistence, teacher, stop and evidence rules. References are
 test fixtures; the live learner is never silently supplied a reference answer.
 
+Marketing reference palettes obey the same dark, single-surface and contrast
+checks as learner artifacts. Tests exercise every palette on two input seeds
+and retain negative controls for bleached pages and light-teal controls; the
+evaluator is not relaxed to accommodate references.
+
+The **Desk and gym** GitHub Actions workflow runs the full suite, actual
+shared-lesson Mongo commands, native kernel production/reply fixtures and Desk
+UI smoke on a disposable Windows runner. Native MongoDB and mongosh ZIPs are
+version/hash-pinned. Its Mongo instance uses an empty data directory on loopback
+port 27917, never the host service or Alexandria. No model or secret is required.
+
+For the same real-storage test locally, first start a disposable native Mongo
+with its own empty data directory on a non-production loopback port, then set:
+
+```powershell
+$env:GODBRAIN_SHARED_LESSONS_TEST_URI = "mongodb://127.0.0.1:27917/godbrain_gym_memory"
+$env:GODBRAIN_GYM_MONGO_URI = "mongodb://127.0.0.1:27917/godbrain_gym"
+$env:GODBRAIN_GYM_REQUIRE_MONGO = "1"
+npm test --prefix .\godbrain_core\skill_lab
+```
+
+The shared-storage test refuses port 27017, remote hosts and nonempty lesson
+collections. It removes only its own records. `GODBRAIN_GYM_REQUIRE_MONGO=1`
+makes unavailable storage fail instead of silently skipping shop/CMS coverage.
+Without an explicit test URI, the additional real shared-storage test is opt-in.
+`GODBRAIN_BROWSER` selects an explicit browser for both browser suites; otherwise
+the evaluator uses its existing local discovery. Live inference remains a
+separate, bounded host integration check, not a hosted-CI or model-quality claim.
+
 The original Vite/React dashboard under `fixtures\dashboard-shell-v1` and
 `scripts\Verify-SkillLab.ps1` remain a **legacy build/README check**. They are
 not the autonomous browser gym. The new exercises use React with a fixed,
