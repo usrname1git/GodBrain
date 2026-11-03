@@ -285,6 +285,8 @@ test('client covers require rendered area and visible image ancestors', { timeou
   for (const css of [
     'img{visibility:hidden}', 'img{opacity:0}', 'article{visibility:hidden}',
     'main{opacity:0}', 'img{height:0!important}',
+    'article{height:0;overflow:hidden}', 'img{position:absolute;left:-10000px}',
+    'img{position:absolute;top:-10000px}',
   ]) {
     await t.test(css, async () => {
       const result = await evaluateProjectCandidate({
@@ -296,4 +298,10 @@ test('client covers require rendered area and visible image ancestors', { timeou
       }
     });
   }
+  await t.test('visible below-fold covers remain valid', async () => {
+    const belowFold = await evaluateProjectCandidate({
+      workDir, task, seed: 11, files: { ...files, 'styles.css': files['styles.css'] + 'article{margin-top:1200px}' },
+    });
+    assert.equal(belowFold.passed, true, belowFold.errors.join('\n'));
+  });
 });

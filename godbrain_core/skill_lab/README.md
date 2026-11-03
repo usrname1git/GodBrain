@@ -229,7 +229,9 @@ Image clients use the independent `client-project-assets-v1` browser profile,
 not the course verifier. Each seed has its own URL namespace, including the
 worker's actual training/holdout pairs, to reject frozen screenshot URLs.
 Desktop/mobile layouts, nonzero image area, image/ancestor visibility and opacity,
-and network isolation are checked.
+intersection with the captured document and overflow-clipping ancestors, and
+network isolation are checked. Valid below-fold covers remain eligible for the
+full-page capture.
 These explorations cannot qualify or publish course/shared lessons, including
 after a queue reload. The protected course fingerprint and old receipts remain
 unchanged. Image-client alternatives restyle their passing source rather than

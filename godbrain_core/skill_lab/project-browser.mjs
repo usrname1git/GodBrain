@@ -117,13 +117,27 @@ export async function evaluateProjectCandidate({ task, taskId, files, artifactDi
             const bounds = image.getBoundingClientRect();
             if (image.src !== url || !image.complete || image.naturalWidth <= 0 ||
                 bounds.width <= 0 || bounds.height <= 0) return false;
+            let left = Math.max(bounds.left, 0), right = Math.min(bounds.right, innerWidth);
+            let top = Math.max(bounds.top, -scrollY);
+            let bottom = Math.min(bounds.bottom, document.documentElement.scrollHeight - scrollY);
             for (let node = image; node; node = node.parentElement) {
               const style = getComputedStyle(node);
               if (style.visibility !== 'visible' || Number(style.opacity) <= 0) return false;
+              if (node !== image && node !== document.scrollingElement) {
+                const clip = node.getBoundingClientRect();
+                if (style.overflowX !== 'visible') {
+                  left = Math.max(left, clip.left + node.clientLeft);
+                  right = Math.min(right, clip.left + node.clientLeft + node.clientWidth);
+                }
+                if (style.overflowY !== 'visible') {
+                  top = Math.max(top, clip.top + node.clientTop);
+                  bottom = Math.min(bottom, clip.top + node.clientTop + node.clientHeight);
+                }
+              }
             }
-            return true;
+            return right > left && bottom > top;
           }), expected);
-        check(`${view}-cover-${project.id}`, loaded, 'Selected project cover must use the current catalog asset.');
+        check(`${view}-cover-${project.id}`, loaded, 'Selected project cover must visibly render within the captured page using the current catalog asset.');
       }
       if (await page.evaluate(() => document.documentElement.scrollHeight > 8192)) throw new Error('Client page exceeds the bounded screenshot height.');
       const image = await page.screenshot({ fullPage: true, animations: 'disabled', timeout: 4000 });
