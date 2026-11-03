@@ -37,7 +37,7 @@ export async function evaluateProjectCandidate({ task, taskId, files, artifactDi
     if (!catalog?.projects.length) throw new Error('Selected project catalog is unavailable.');
     catalogHash = catalog.catalogHash;
     const built = await buildBundle(files);
-    const prefix = seed % 2 === 0 ? '/fixture-2' : '';
+    const prefix = `/fixture-${seed}`;
     const assets = new Map([...catalog.assets].map(([url, asset]) => [prefix + url, asset]));
     const assetRequest = key => assets.get(key);
     const projects = catalog.projects.map(project => ({
@@ -113,8 +113,16 @@ export async function evaluateProjectCandidate({ task, taskId, files, artifactDi
         const cover = project.images.find(image => image.id === project.cover);
         const expected = new URL(cover.url, `${origin}/`).href;
         const loaded = await page.locator('img').evaluateAll((images, url) =>
-          images.some(image => image.src === url && image.complete && image.naturalWidth > 0 &&
-            image.getBoundingClientRect().width > 0), expected);
+          images.some(image => {
+            const bounds = image.getBoundingClientRect();
+            if (image.src !== url || !image.complete || image.naturalWidth <= 0 ||
+                bounds.width <= 0 || bounds.height <= 0) return false;
+            for (let node = image; node; node = node.parentElement) {
+              const style = getComputedStyle(node);
+              if (style.visibility !== 'visible' || Number(style.opacity) <= 0) return false;
+            }
+            return true;
+          }), expected);
         check(`${view}-cover-${project.id}`, loaded, 'Selected project cover must use the current catalog asset.');
       }
       if (await page.evaluate(() => document.documentElement.scrollHeight > 8192)) throw new Error('Client page exceeds the bounded screenshot height.');

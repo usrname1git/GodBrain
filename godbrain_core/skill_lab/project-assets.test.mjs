@@ -255,3 +255,45 @@ test('static client export rechecks source and current assets and copies the pre
   await assert.rejects(exportProjectSite(workDir, runId, path.join(workDir, 'bad-export')), /changed since verification/);
   assert.equal((await listObjectives(workDir)).length, 0);
 });
+
+test('actual worker seed pairs require prop-driven image namespaces', { timeout: 120000 }, async t => {
+  const workDir = await workspace(t);
+  await fixture(workDir);
+  for (const sequence of [0, 1]) {
+    await t.test(`worker sequence ${sequence}`, async () => {
+      const seeds = [11 + 17 * sequence, 1009 + 31 * sequence];
+      for (const seed of seeds) {
+        const result = await evaluateProjectCandidate({ workDir, task, files, seed });
+        assert.equal(result.passed, true, result.errors.join('\n'));
+      }
+      const frozen = {
+        ...files,
+        'App.jsx': files['App.jsx'].replace('src={i.url}',
+          `src={i.url.replace('/fixture-${seeds[1]}/', '/fixture-${seeds[0]}/')}`),
+      };
+      const train = await evaluateProjectCandidate({ workDir, task, files: frozen, seed: seeds[0] });
+      assert.equal(train.passed, true, train.errors.join('\n'));
+      const holdout = await evaluateProjectCandidate({ workDir, task, files: frozen, seed: seeds[1] });
+      assert.equal(holdout.passed, false, 'A frozen training URL must not pass the holdout.');
+    });
+  }
+});
+
+test('client covers require rendered area and visible image ancestors', { timeout: 120000 }, async t => {
+  const workDir = await workspace(t);
+  await fixture(workDir);
+  for (const css of [
+    'img{visibility:hidden}', 'img{opacity:0}', 'article{visibility:hidden}',
+    'main{opacity:0}', 'img{height:0!important}',
+  ]) {
+    await t.test(css, async () => {
+      const result = await evaluateProjectCandidate({
+        workDir, task, seed: 11, files: { ...files, 'styles.css': files['styles.css'] + css },
+      });
+      for (const view of ['desktop', 'mobile']) {
+        assert.equal(result.checks.find(check => check.name === `${view}-cover-alpha`)?.passed, false,
+          `${view} must reject a loaded but invisible cover.`);
+      }
+    });
+  }
+});

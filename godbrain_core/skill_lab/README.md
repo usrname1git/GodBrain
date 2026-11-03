@@ -226,8 +226,10 @@ without regenerating source. Only explicitly selected, exact-hash local PNG/WebP
 assets are served; arbitrary paths, external images and stale URLs are denied.
 
 Image clients use the independent `client-project-assets-v1` browser profile,
-not the course verifier. Two URL-input variants reject hardcoded screenshots;
-desktop/mobile layouts, visible covers and network isolation are checked.
+not the course verifier. Each seed has its own URL namespace, including the
+worker's actual training/holdout pairs, to reject frozen screenshot URLs.
+Desktop/mobile layouts, nonzero image area, image/ancestor visibility and opacity,
+and network isolation are checked.
 These explorations cannot qualify or publish course/shared lessons, including
 after a queue reload. The protected course fingerprint and old receipts remain
 unchanged. Image-client alternatives restyle their passing source rather than
