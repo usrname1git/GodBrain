@@ -200,6 +200,7 @@ struct Target {
     std::string display;
     std::wstring topology;
     ULONGLONG discovered_at = 0;
+    mutable bool read_failed = false;
 };
 
 static std::wstring topology_signature() {
@@ -234,7 +235,7 @@ static std::wstring topology_signature() {
 template <typename Discover>
 static Target& session_target(std::unique_ptr<Target>& cached, const std::wstring& topology,
                               ULONGLONG now, Discover discover) {
-    if (!cached || cached->topology != topology || now - cached->discovered_at >= 30000) {
+    if (!cached || cached->read_failed || cached->topology != topology || now - cached->discovered_at >= 30000) {
         if (cached && cached->owner) cached->owner->close();
         cached.reset();
         auto target = discover();
@@ -328,18 +329,20 @@ static DWORD read_dark(HANDLE monitor) {
     return dark_level(read_value(monitor, 0xF4));
 }
 
-static json feature(const Target& target, BYTE code, bool continuous) {
+template <typename Read = decltype(&read_value)>
+static json feature(const Target& target, BYTE code, bool continuous, Read read = read_value) {
     if (code == 0xF4 && !supports_dark(target.caps))
         return {{"supported", false}, {"error", "Absolute Dark Stabilizer levels are not advertised. The separate cycle action does not report a current level."}};
     if (!target.caps.has(code)) return {{"supported", false}, {"error", "Control is not advertised by this monitor"}};
     try {
         DWORD maximum = 0;
-        const DWORD value = code == 0xF4 ? read_dark(target.handle) : read_value(target.handle, code, &maximum);
+        const DWORD value = code == 0xF4 ? read_dark(target.handle) : read(target.handle, code, &maximum);
         if (continuous && (maximum != 100 || value > maximum))
             throw std::runtime_error("Unexpected brightness/contrast range");
         return {{"supported", true}, {"current", value},
             {"maximum", continuous ? maximum : (code == 0xF4 ? 3u : 255u)}};
     } catch (const std::runtime_error& error) {
+        target.read_failed = true;
         return {{"supported", false}, {"error", error.what()}};
     }
 }
@@ -513,6 +516,27 @@ static json self_test() {
     cached.reset();
     session_target(cached, L"changed", 30400, discover);
     check(discoveries == 4);
+    cached->caps = legacy;
+    unsigned reads = 0;
+    const auto failed = feature(*cached, 0x10, true, [&](HANDLE, BYTE, DWORD*) -> DWORD {
+        ++reads;
+        throw std::runtime_error("Fixture advertised VCP read failed");
+    });
+    check(failed["supported"] == false && failed["error"] == "Fixture advertised VCP read failed");
+    if (!cached->read_failed) throw std::runtime_error("Advertised read failure left cached target reusable");
+    session_target(cached, L"changed", 30401, discover);
+    check(discoveries == 5 && !cached->read_failed);
+    cached->caps = legacy;
+    const auto unreadable = feature(*cached, 0xF4, false, [&](HANDLE, BYTE, DWORD*) -> DWORD {
+        ++reads; return 0;
+    });
+    check(unreadable["supported"] == false && reads == 1 && !cached->read_failed);
+    const auto readable = feature(*cached, 0x12, true, [&](HANDLE, BYTE, DWORD* maximum) -> DWORD {
+        ++reads; *maximum = 100; return 75;
+    });
+    check(readable["supported"] == true && readable["current"] == 75 && !cached->read_failed);
+    session_target(cached, L"changed", 30402, discover);
+    check(discoveries == 5 && reads == 2);
     return {{"schema_version", 1}, {"ok", true}, {"self_test", "passed"}};
 }
 
@@ -564,7 +588,9 @@ static int serve() {
                     throw std::runtime_error("Display topology changed during discovery; refresh");
                 return found;
             });
-            std::cout << operate(target, control, value, may_have_changed).dump() << '\n' << std::flush;
+            const auto result = operate(target, control, value, may_have_changed);
+            if (target.read_failed) cached.reset();
+            std::cout << result.dump() << '\n' << std::flush;
         } catch (const std::exception& error) {
             cached.reset();
             std::cout << json{{"schema_version", 1}, {"ok", false}, {"error", error.what()},

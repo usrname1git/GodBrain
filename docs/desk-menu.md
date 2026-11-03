@@ -633,6 +633,9 @@ connection while the window is open. Repeated Apply operations reuse the
 expensive capability discovery for at most 30 seconds; active display/device
 identities are checked each time, and topology changes or errors discard the
 cached handles. Hardware writes and complete readback still run serially.
+A failed advertised-control read also discards the handles after returning the
+partial snapshot; genuinely unadvertised controls do not. The next request
+rediscovers the target without replaying a write.
 There is no artificial unlock delay, queued write or premature success; controls
 unlock when the verified result arrives. Quitting closes the owned helper.
 Discovery checks all active monitor identities, ignoring stale records left
