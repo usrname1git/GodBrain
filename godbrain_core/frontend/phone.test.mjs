@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -166,4 +169,27 @@ test('Live mobile route', { skip: process.env.GODBRAIN_PHONE_LIVE_TEST !== '1' }
     assert.ok(requests.every(request =>
       request.method() === 'GET' && ['/','/api/phone/status'].includes(new URL(request.url()).pathname)));
   } finally { await browser.close(); }
+});
+
+test('passive capture entry point honors an explicit browser and never uses live status in this fixture', { timeout: 60000 }, async t => {
+  const work = await mkdtemp(path.join(os.tmpdir(), 'phone-capture-'));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const preload = `globalThis.fetch=async (url,options)=>{
+    if(url!=='http://127.0.0.1:8085/api/phone/status'||options.headers.Authorization!=='Bearer synthetic-capture-token') throw Error('Unexpected capture request');
+    return new Response(${JSON.stringify(JSON.stringify(snapshot()))},{status:200,headers:{'Content-Type':'application/json'}});
+  };`;
+  const run = browser => promisify(execFile)(process.execPath, [
+    '--import', `data:text/javascript,${encodeURIComponent(preload)}`,
+    path.join(directory, 'capture-phone.mjs'), '--output', path.join(work, 'capture.png'),
+  ], {
+    env: { ...process.env, GODBRAIN_API_TOKEN: 'synthetic-capture-token', GODBRAIN_BROWSER: browser },
+    timeout: 20000, maxBuffer: 65536, windowsHide: true,
+  });
+  const missing = path.join(work, 'nonexistent-browser.exe');
+  await assert.rejects(run(missing), error => error.stderr.includes('nonexistent-browser.exe'));
+  const selected = executablePath ?? chromium.executablePath();
+  const { stdout } = await run(selected);
+  assert.equal(JSON.parse(stdout).id, 'PHONEDASHBOARD');
+  const bytes = await readFile(path.join(work, 'capture.png'));
+  assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
 });

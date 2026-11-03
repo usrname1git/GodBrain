@@ -31,7 +31,7 @@ data.gpu.detail = 'Private sensor details omitted.';
 let html = await fs.readFile(path.join(directory, 'phone.html'), 'utf8');
 html = html.replace('<main>', '<main><p class="stamp">Sanitized passive-status capture, not a live dashboard.</p>');
 html = html.replace('</head>', '<style>#stamp{display:none}</style></head>');
-const executablePath = [
+const executablePath = process.env.GODBRAIN_BROWSER ?? [
   'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
 ].find(candidate => existsSync(candidate));
