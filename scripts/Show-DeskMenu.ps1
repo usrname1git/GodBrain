@@ -892,7 +892,7 @@ function Invoke-DeskAsk($Request) {
         $text = $text.Trim()
     } elseif ($path) {
         if ([string]::IsNullOrWhiteSpace($text)) { $text = "Read this path and say what the file or folder is." }
-        $text = "Path: $path`n`n$text"
+        $text = if ($text -match '^\s*(?i)no tools\b') { "$text`n`nPath: $path" } else { "Path: $path`n`n$text" }
     }
     $body = @{ message = $text; tool_mode = $mode } | ConvertTo-Json -Compress
     $chat = @{
@@ -912,10 +912,12 @@ function Invoke-DeskAsk($Request) {
             $attempts = @($receipt.tool_attempts)
             $callCount = [int](($attempts | Measure-Object -Property requested_calls -Sum).Sum)
             $failedCount = @($attempts | Where-Object { $_.executor_ok -eq $false }).Count
+            $omittedCount = @($attempts | Where-Object { $_.context_supplied -eq $false }).Count
             $names = @($attempts | ForEach-Object { $_.requested_tool_names } | Sort-Object -Unique)
             $notice = "Mode: $($receipt.tool_mode); model tool attempts: $callCount"
             if ($names.Count) { $notice += " ($($names -join ', '))" }
             if ($failedCount) { $notice += "; $failedCount failed attempt(s), evidence incomplete" }
+            if ($omittedCount) { $notice += "; $omittedCount observation(s) omitted from model context" }
             if ($receipt.answer_retry) { $notice += "; answer retry: thinking off (saved preference unchanged)" }
             return "[$notice]`r`n`r`n$($res.response)"
         }
@@ -2059,7 +2061,7 @@ $shareHint = New-Object System.Windows.Forms.Label
 $shareHint.Location = [Drawing.Point]::new(20, 348)
 $shareHint.Size = [Drawing.Size]::new(($script:pageW - 40), 180)
 $shareHint.ForeColor = $mute
-$shareHint.Text = "Background user app, not a Windows service. Closing Desk leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nDefault is local-only on 127.0.0.1:3923. External HTTPS is not configured automatically. Share links expire after 7 days; files are not auto-deleted."
+$shareHint.Text = "Background user app, not a Windows service. Closing Desk leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nSharing uses the configured public HTTPS hostname; Library stays private. Copy link selects the newest active share, including manual and never-expiring shares. Imports default to 7 days; files are not auto-deleted."
 $pageShare.Controls.Add($shareHint)
 
 Add-Head $pageModel "Model" 16
@@ -2403,7 +2405,7 @@ $askMode = [Windows.Forms.ComboBox]::new()
 $askMode.DropDownStyle = "DropDownList"
 $askMode.Location = [Drawing.Point]::new(126, 226)
 $askMode.Size = [Drawing.Size]::new(($script:pageW - 146), 28)
-[void]$askMode.Items.AddRange(@("Answer (no model tools)", "Research (read-only)", "Fix (scoped tools)"))
+[void]$askMode.Items.AddRange(@("Answer (read-only tools)", "Research (read-only)", "Fix (scoped tools)"))
 $askMode.SelectedIndex = 1
 $askMode.AccessibleName = "Ask text tool mode"
 $askMode.Anchor = "Top, Left, Right"

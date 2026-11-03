@@ -208,42 +208,49 @@ business claims, typography scale, spacing, tonal depth, mobile composition,
 navigation behavior, seeded feature exploration, plan comparison and form
 validation. Qwen cannot edit those checks.
 
-### Frontend Coach campaigns
+### Client web site builder
 
-The dashboard's **Frontend Coach** accepts a client brief: project name, site
-type, pages, features, brand direction and an optional style reference. The
-coach deterministically maps that brief onto available trusted verifier
-contracts and queues one Qualify objective per required capability. It does not
-ask the model which tests should count.
+The dashboard's **CLIENT WEB SITE BUILDER** accepts a project name, site type,
+pages, features, brand direction and an optional style reference.
+**START GENERATION** explicitly queues one bounded website build, not a series
+of prerequisite training exercises. **REGENERATE** explicitly creates a new
+version from the same brief; it never overwrites the preceding passing version.
+Duplicate active requests are rejected.
 
-After every capability either passes or reaches its bounded attempt limit, the
-coach builds the site in resumable stages. A bounded, compact shell establishes
+A bounded, compact shell establishes
 the complete navigation and requested sections; a second integration/polish
 stage starts from that browser-qualified source instead of regenerating from
 scratch. Repeated shell failure triggers one larger recovery attempt rather than
 blindly repeating the same strategy. If optional polish exhausts its attempts,
 the qualified shell remains available as `delivered_limited`.
 
-The dashboard persists capability outcomes as they arrive and distinguishes
-qualified, limited, running and queued work. Campaign creation is deliberately
-pointer-only: Enter and Ctrl+Enter never submit the coach form, and duplicate
-active project names are rejected. The integrated build receives generic
+Generation is deliberately pointer-only: Enter and Ctrl+Enter never submit the
+builder form. Cards distinguish queued, generating, checking, ready and limited
+work. The integrated build receives generic
 browser, isolation, responsive screenshot and rendering evidence; it is not
 misrepresented as fully production-qualified until dedicated end-to-end
 contracts exist for that site class.
 
 Campaigns persist in `campaigns.json`. Worker, model, or watchdog restarts resume
 the objective queue and advance the campaign without losing completed evidence.
-Terminal campaigns remain durable but are collapsed under **Completed / archived
-campaigns** rather than occupying the active campaign workspace. Completed
-alternative sets keep their rerun control in that section.
+The latest build of each project remains visible, including completed work.
+Passing shell/final previews, previous website versions and completed alternative
+sets remain clickable while a new version is being generated. Superseded
+projects are collapsed under **Completed / archived campaigns**.
+Passing versions are retained independently of the ten-entry recent-history
+window, so failed regenerations cannot evict their source or receipts.
+There is no automatic client repetition. The legacy `repeat-campaign.json`
+switch is retired non-destructively; its unsolicited successor is cancelled
+while the last completed set and every source/receipt remain intact.
+After the 24-course degree is graduated, course autoplay is idle rather than
+starting unrelated drills. A named CLI `--task` remains an explicit exercise.
 
 **Pause & save** writes `training-pause.json` and lets the in-flight generate
 finish, then sleeps the loop. Qwen stays warm. **Pause, save & stop Qwen**
 arms the same pause and the watchdog stops `:8888` only after gym is idle
-(not mid-CUDA). **AUTOPLAY OFF** is YouTube-style: after evaluate (or a
-parse-fail with no evaluate), the worker waits instead of starting the next
-generate. Resume continues the persisted attempt. CS2 sleep still stops Qwen
+(not mid-CUDA). **COURSE AUTOPLAY OFF** stops automatic course generation.
+Explicit client jobs can still run; an interrupted course checkpoint is retained
+and resumes when course autoplay is enabled. CS2 sleep still stops Qwen
 when the gym is idle.
 
 Blocked client campaigns can be promoted into a four-direction alternative set.
@@ -255,9 +262,43 @@ boilerplate. The coach records source and computed visual fingerprints, retries
 one duplicate or failed direction, and exposes passing concepts together under
 **Alternative concepts**. Current Trippus directions are Nordic editorial,
 product-led interactive, enterprise trust, and event-experience storytelling.
-Completed or limited sets can be rerun from the campaign card. A rerun creates a
-new versioned set of four objectives while retaining the preceding set as
-bounded campaign history.
+The saved four-direction sets remain accessible. Manual website regeneration
+uses the builder workflow and retains those older sets; a finished client job
+never starts another job by itself.
+
+### Isolated Mongo shelves and shared model memory
+
+**TEST MONGODB BACKEND** performs insert/read/update/read against
+`godbrain_builder_test.backend_checks`, retaining a synthetic probe receipt.
+This tests the database round-trip, not integration of arbitrary generated
+website features. It never writes Alexandria or the course fixtures.
+
+Proven lesson sources and complete browser receipts are mirrored into
+`godbrain_gym_memory.qualified_lessons`. This durable shelf is independent of
+the current model; switching the learner does not reset the shared course
+ledger or require repeating the degree. Startup restores missing compatible
+sources, and later lesson/staleness changes are synchronized incrementally.
+**SYNC SHARED LESSONS** explicitly rechecks and republishes the local library.
+Source and receipt content use insert-only storage. Durable local and shared
+invalidation keys bind task, source hash and exact evaluator version; a later
+failure blocks older or new run IDs for that same evidence identity. An older
+reader cannot revive it, while a different evaluator must qualify it anew.
+Checkpoint syncs cache remote invalidations for at most 30 seconds even when
+the local library is unchanged; unchanged source uploads remain cached separately.
+Mongo outages produce an explicit pending receipt
+while preserving the local evidence.
+
+Reuse still requires an exact compatible evaluator fingerprint, matching source
+hash and two passing input variants. Historical versions remain stored, not
+silently treated as current evidence. **Compatible lessons** counts the current
+usable subset, while the shared shelf reports its full inventory. Examples are
+selected by task/family/prerequisites, not by the model that authored them.
+This is shared external memory, not weight training or globally verified
+Alexandria knowledge.
+
+The existing course fixture database remains `godbrain_gym`. Optional
+`GODBRAIN_BUILDER_MONGO_URI` and `GODBRAIN_SHARED_LESSONS_MONGO_URI` must name
+their exact respective databases; Alexandria and cross-shelf URIs are rejected.
 
 ## What counts as learning
 
@@ -351,6 +392,35 @@ npm test --prefix .\godbrain_core\skill_lab
 The suite includes passing reference apps, broken-app rejection and the loop's
 repair, transfer, persistence, teacher, stop and evidence rules. References are
 test fixtures; the live learner is never silently supplied a reference answer.
+
+Marketing reference palettes obey the same dark, single-surface and contrast
+checks as learner artifacts. Tests exercise every palette on two input seeds
+and retain negative controls for bleached pages and light-teal controls; the
+evaluator is not relaxed to accommodate references.
+
+The **Desk and gym** GitHub Actions workflow runs the full suite, actual
+shared-lesson Mongo commands, native kernel production/reply fixtures and Desk
+UI smoke on a disposable Windows runner. Native MongoDB and mongosh ZIPs are
+version/hash-pinned. Its Mongo instance uses an empty data directory on loopback
+port 27917, never the host service or Alexandria. No model or secret is required.
+
+For the same real-storage test locally, first start a disposable native Mongo
+with its own empty data directory on a non-production loopback port, then set:
+
+```powershell
+$env:GODBRAIN_SHARED_LESSONS_TEST_URI = "mongodb://127.0.0.1:27917/godbrain_gym_memory"
+$env:GODBRAIN_GYM_MONGO_URI = "mongodb://127.0.0.1:27917/godbrain_gym"
+$env:GODBRAIN_GYM_REQUIRE_MONGO = "1"
+npm test --prefix .\godbrain_core\skill_lab
+```
+
+The shared-storage test refuses port 27017, remote hosts and nonempty lesson
+collections. It removes only its own records. `GODBRAIN_GYM_REQUIRE_MONGO=1`
+makes unavailable storage fail instead of silently skipping shop/CMS coverage.
+Without an explicit test URI, the additional real shared-storage test is opt-in.
+`GODBRAIN_BROWSER` selects an explicit browser for both browser suites; otherwise
+the evaluator uses its existing local discovery. Live inference remains a
+separate, bounded host integration check, not a hosted-CI or model-quality claim.
 
 The original Vite/React dashboard under `fixtures\dashboard-shell-v1` and
 `scripts\Verify-SkillLab.ps1` remain a **legacy build/README check**. They are

@@ -7,6 +7,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #include "shared_context_test.h"
+#include "public_web.h"
 
 struct MockCompletion {
     std::vector<json> deltas;
@@ -26,6 +27,7 @@ struct ReplyResult {
 };
 
 int main() {
+    if (const auto helper = local_tools::protected_read_entry()) return *helper;
     const auto root = std::filesystem::path(repo_root_from_exe()).lexically_normal();
     const auto expected =
         std::filesystem::path(read_env("GODBRAIN_REPLY_TEST_ROOT")).lexically_normal();
@@ -367,11 +369,75 @@ int main() {
             }
             check(names.count("run_host") && names.count("run_reg") &&
                       names.count("read_local_acl") &&
+                      names.count("inspect_protected_directory") && names.count("read_public_url") &&
                       names.count("search_microsoft_docs") && names.count("read_microsoft_doc") &&
                       !names.count("write_local_file") && !names.count("edit_local_file") &&
                       !names.count("run_pwsh") && !names.count("run_elevate") &&
                       !names.count("acl_takeover") && !names.count("run_sysint"),
                   "Research schema omitted reads or advertised writes");
+            check(definitions == local_tools::openai_tool_defs_for(
+                      "Explain Windows services", local_tools::ToolMode::Answer),
+                  "Answer did not receive the same bounded read-only tools");
+            check(local_tools::openai_tool_defs_for("No tools. Explain Windows services",
+                      local_tools::ToolMode::Fix).empty(), "No tools schema was not empty");
+            for (const auto& url : {"http://example.com/", "https://user:password@example.com/",
+                    "https://example.com:8443/", "https://example.com/?token=private",
+                    "https://example.com/#fragment", "https://localhost/", "https://[::1]/",
+                    "https://example.com/\"\r\n--output"}) {
+                bool rejected = false;
+                try { godbrain_public_web::target(url); }
+                catch (const std::runtime_error&) { rejected = true; }
+                check(rejected, "unsafe public URL passed syntax validation");
+            }
+            for (const char* address : {"0.0.0.0", "10.0.0.1", "127.0.0.1", "169.254.169.254",
+                    "172.16.0.1", "192.168.1.1", "100.64.0.1", "198.18.0.1", "224.0.0.1"}) {
+                IN_ADDR ip{};
+                check(InetPtonA(AF_INET, address, &ip) == 1 &&
+                          !godbrain_public_web::public_ipv4(ip.S_un.S_addr),
+                      "private/reserved web destination was admitted");
+            }
+            const auto web = godbrain_public_web::observation("https://example.com/",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+                "<html><body><p>PUBLIC WEB FIXTURE</p></body></html>");
+            check(web["text"].get<std::string>().find("PUBLIC WEB FIXTURE") != std::string::npos &&
+                      web["verified"] == false, "public web text lost its untrusted framing");
+            for (const auto& response : {
+                    "HTTP/1.1 302 Found\r\nContent-Type: text/plain\r\n\r\nRedirect",
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: text/plain\r\n\r\nPartial",
+                    "HTTP/1.1 200 OK\r\n\r\nMissing type",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\nBinary"}) {
+                bool rejected = false;
+                try { godbrain_public_web::observation("https://example.com/", response); }
+                catch (const std::runtime_error&) { rejected = true; }
+                check(rejected, "unsafe public response was accepted");
+            }
+            {
+                local_tools::RequestScope web_scope;
+                web_scope.mode = local_tools::ToolMode::Answer;
+                web_scope.operator_text = "Read https://example.com/approved/path";
+                local_tools::Call web_call;
+                web_call.name = "read_public_url";
+                for (const auto& url : {"https://example.com/", "https://example.com/approved",
+                                        "https://unrequested.example/"}) {
+                    web_call.path = url;
+                    bool ok = true;
+                    check(local_tools::execute_calls({web_call}, &ok, nullptr, "", nullptr, &web_scope)
+                              .find("exact URL") != std::string::npos && !ok,
+                          "public read accepted a guessed URL or an operator URL prefix");
+                }
+                web_call.path = "https://example.com/approved/path";
+                web_call.args = "no headers";
+                bool ok = true;
+                check(local_tools::execute_calls({web_call}, &ok, nullptr, "", nullptr, &web_scope)
+                          .find("path only") != std::string::npos && !ok,
+                      "public read accepted extra arguments");
+                web_call.args.clear();
+                web_call.path = "https://example.com/?private=value";
+                web_scope.operator_text = "Read " + web_call.path;
+                check(local_tools::execute_calls({web_call}, &ok, nullptr, "", nullptr, &web_scope)
+                          .find("denied:") != std::string::npos && !ok,
+                      "public reader launched a request with an operator query");
+            }
             local_tools::RequestScope scope;
             scope.mode = local_tools::ToolMode::Research;
             scope.operator_text = "Research Windows services";
@@ -442,16 +508,35 @@ int main() {
             query.name = "list_granted_roots";
             ok = true;
             check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
+                      "request mode forbids") == std::string::npos && ok,
+                  "Answer mode could not execute a read");
+            query.name = "execute_command";
+            query.args = "throw 'Answer alias must not execute'";
+            ok = true;
+            check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
                       "request mode forbids") != std::string::npos && !ok,
-                  "Answer mode executed a fallback read");
+                  "Answer mode allowed a mutating runner alias during YOLO");
+            scope.operator_text = "No tools. Explain.";
+            query.name = "list_granted_roots";
+            ok = true;
+            check(local_tools::execute_calls({query}, &ok, nullptr, "", nullptr, &scope).find(
+                      "request mode forbids") != std::string::npos && !ok,
+                  "explicit No tools allowed a fallback read");
             local_tools::set_yolo_minutes(0);
             const auto answered = run({completion("", "No tools were used.")}, "off",
                 "Explain Path: C:\\Temp\\GitHub", "Fixture system.", true, true, false, "",
                 false, nullptr, local_tools::ToolMode::Answer);
-            check(!answered.requests[0].contains("tools") &&
+            check(answered.requests[0].contains("tools") &&
                       answered.receipt["tool_mode"] == "answer" &&
                       answered.receipt["tool_attempts"].empty(),
-                  "Answer mode with Path advertised tools or misreported its calls");
+                  "Answer mode omitted read tools or misreported its calls");
+            const auto no_tools = run({completion("", "No tools were used.")}, "off",
+                "No tools. Explain the supplied path.\n\nPath: C:\\Temp\\GitHub",
+                "Fixture system.", true, true, false, "",
+                false, nullptr, local_tools::ToolMode::Answer);
+            check(!no_tools.requests[0].contains("tools") &&
+                      no_tools.receipt["tool_attempts"].empty(),
+                  "explicit No tools advertised a schema");
         }
         {
             const auto path = root / "read-text-fixture.txt";
@@ -479,7 +564,8 @@ int main() {
                 bool ok = !expected_ok;
                 const std::string text = local_tools::execute_calls(
                     {call}, &ok, &advertised, "text-read-fixture", nullptr, &scope);
-                check(ok == expected_ok, "text decoder reported incorrect executor success");
+                check(ok == expected_ok,
+                      ("text decoder reported incorrect executor success: " + text).c_str());
                 std::ifstream unchanged(path, std::ios::binary);
                 const std::string original((std::istreambuf_iterator<char>(unchanged)), {});
                 check(original == bytes, "text read changed source bytes");
@@ -553,22 +639,28 @@ int main() {
             const std::string sid(sid_text);
             LocalFree(sid_text);
             const std::string sddl = "O:" + sid + "D:P(D;;0x2;;;SY)(A;;KA;;;" + sid + ")";
-            PSECURITY_DESCRIPTOR descriptor = nullptr;
-            check(ConvertStringSecurityDescriptorToSecurityDescriptorA(sddl.c_str(),
-                      SDDL_REVISION_1, &descriptor, nullptr) != FALSE,
-                  "cannot construct isolated fixture descriptor");
-            SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
-            fixture.subkey = "Software\\GodBrain ACL Read Test-" + std::to_string(GetCurrentProcessId());
-            const LSTATUS created = RegCreateKeyExA(HKEY_CURRENT_USER, fixture.subkey.c_str(),
-                0, nullptr, 0, KEY_READ | KEY_SET_VALUE | DELETE, &attributes, &fixture.key, nullptr);
-            LocalFree(descriptor);
-            check(created == ERROR_SUCCESS, "cannot create disposable registry fixture");
             const std::string secret = "FIXTURE_VALUE_MUST_NOT_ENTER_ACL_EVIDENCE";
-            check(RegSetValueExA(fixture.key, "Sentinel", 0, REG_SZ,
-                      reinterpret_cast<const BYTE*>(secret.c_str()),
-                      static_cast<DWORD>(secret.size() + 1)) == ERROR_SUCCESS,
-                  "cannot write isolated fixture sentinel");
+            const bool registry_fixture = read_env("GODBRAIN_REPLY_TEST_NO_REGISTRY_WRITES") != "1";
+            if (registry_fixture) {
+                PSECURITY_DESCRIPTOR descriptor = nullptr;
+                check(ConvertStringSecurityDescriptorToSecurityDescriptorA(sddl.c_str(),
+                          SDDL_REVISION_1, &descriptor, nullptr) != FALSE,
+                      "cannot construct isolated fixture descriptor");
+                SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
+                fixture.subkey = "Software\\GodBrain ACL Read Test-" + std::to_string(GetCurrentProcessId());
+                const LSTATUS created = RegCreateKeyExA(HKEY_CURRENT_USER, fixture.subkey.c_str(),
+                    0, nullptr, 0, KEY_READ | KEY_SET_VALUE | DELETE, &attributes, &fixture.key, nullptr);
+                LocalFree(descriptor);
+                check(created == ERROR_SUCCESS, "cannot create disposable registry fixture");
+                check(RegSetValueExA(fixture.key, "Sentinel", 0, REG_SZ,
+                          reinterpret_cast<const BYTE*>(secret.c_str()),
+                          static_cast<DWORD>(secret.size() + 1)) == ERROR_SUCCESS,
+                      "cannot write isolated fixture sentinel");
+            } else {
+                std::cout << "SKIP: disposable registry-write fixtures (read-only validation)" << std::endl;
+            }
             const auto key_security = [&]() {
+                if (!fixture.key) return std::vector<unsigned char>{};
                 DWORD count = 0;
                 const auto requested = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
                                        DACL_SECURITY_INFORMATION;
@@ -600,65 +692,67 @@ int main() {
                 }
                 return json::parse(text.substr(text.find('\n') + 1));
             };
-            const auto observed = inspect(call, true);
-            local_tools::Call registry_query;
-            registry_query.name = "run_reg";
-            registry_query.path = "HKCU\\" + fixture.subkey;
-            bool registry_ok = false;
-            const std::unordered_set<std::string> registry_tools{"run_reg"};
-            const auto registry_result = local_tools::execute_calls(
-                {registry_query}, &registry_ok, &registry_tools, "registry-read-fixture", nullptr, &scope);
-            check(registry_ok && registry_result.find(secret) != std::string::npos &&
-                      key_security() == before,
-                  "path-only Research registry query failed or changed the fixture descriptor");
-            registry_query.args = "query \"" + registry_query.path +
-                "\" /s /f /t REG_SZ /d \"fixture\"";
-            registry_ok = true;
-            const auto malformed_result = local_tools::execute_calls(
-                {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope);
-            check(!registry_ok &&
-                      malformed_result.find("run_reg " + registry_query.args + "\n") != std::string::npos &&
-                      malformed_result.find("request mode forbids") == std::string::npos &&
-                      key_security() == before,
-                  "malformed registry syntax was hidden, rewritten or confused with a policy denial");
-            registry_query.args.clear();
-            registry_query.path += "\nquery HKLM\\SOFTWARE";
-            registry_ok = true;
-            check(local_tools::execute_calls(
-                      {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope).find(
-                          "args must be one line") != std::string::npos && !registry_ok,
-                  "path-only registry query bypassed one-line validation");
-            local_tools::Call host_query;
-            host_query.name = "run_host";
-            host_query.exe = "hostname";
-            host_query.args = "hostname.exe";
-            bool host_ok = false;
-            const std::unordered_set<std::string> host_tools{"run_host"};
-            const auto host_result = local_tools::execute_calls(
-                {host_query}, &host_ok, &host_tools, "normalized-read-fixture", nullptr, &scope);
-            check(host_ok && host_result.find("run_host hostname \nexit=0") != std::string::npos,
-                  "normalized Research host arguments differed from actual process arguments");
-            check(observed["owner_sid"] == sid && observed["inheritance_disabled"] == true &&
-                      observed["dacl_present"] == true && observed["null_dacl"] == false &&
-                      observed["aces"][0]["type"] == "deny" &&
-                      observed["aces"][0]["sid"] == "S-1-5-18" &&
-                      observed["aces"][0]["identity"] == "SYSTEM" &&
-                      observed["aces"][0]["rights"] == json::array({"SetValue"}) &&
-                      observed["aces"][1]["rights"] == json::array({"FullControl"}),
-                  "ACL reader changed owner, inheritance, ACE order or mask meaning");
-            call.path = "Registry::HKEY_CURRENT_USER:\\" + fixture.subkey;
-            check(inspect(call, true)["sddl"] == observed["sddl"], "registry aliases resolved differently");
-            for (const auto& path : {"HKLM\\SAM", "HKLM\\SECURITY", "\\\\remote\\HKLM\\SOFTWARE",
-                                    "C:\\Windows\\win.ini"}) {
-                call.path = path;
+            if (registry_fixture) {
+                const auto observed = inspect(call, true);
+                local_tools::Call registry_query;
+                registry_query.name = "run_reg";
+                registry_query.path = "HKCU\\" + fixture.subkey;
+                bool registry_ok = false;
+                const std::unordered_set<std::string> registry_tools{"run_reg"};
+                const auto registry_result = local_tools::execute_calls(
+                    {registry_query}, &registry_ok, &registry_tools, "registry-read-fixture", nullptr, &scope);
+                check(registry_ok && registry_result.find(secret) != std::string::npos &&
+                          key_security() == before,
+                      "path-only Research registry query failed or changed the fixture descriptor");
+                registry_query.args = "query \"" + registry_query.path +
+                    "\" /s /f /t REG_SZ /d \"fixture\"";
+                registry_ok = true;
+                const auto malformed_result = local_tools::execute_calls(
+                    {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope);
+                check(!registry_ok &&
+                          malformed_result.find("run_reg " + registry_query.args + "\n") != std::string::npos &&
+                          malformed_result.find("request mode forbids") == std::string::npos &&
+                          key_security() == before,
+                      "malformed registry syntax was hidden, rewritten or confused with a policy denial");
+                registry_query.args.clear();
+                registry_query.path += "\nquery HKLM\\SOFTWARE";
+                registry_ok = true;
+                check(local_tools::execute_calls(
+                          {registry_query}, &registry_ok, &registry_tools, "", nullptr, &scope).find(
+                              "args must be one line") != std::string::npos && !registry_ok,
+                      "path-only registry query bypassed one-line validation");
+                local_tools::Call host_query;
+                host_query.name = "run_host";
+                host_query.exe = "hostname";
+                host_query.args = "hostname.exe";
+                bool host_ok = false;
+                const std::unordered_set<std::string> host_tools{"run_host"};
+                const auto host_result = local_tools::execute_calls(
+                    {host_query}, &host_ok, &host_tools, "normalized-read-fixture", nullptr, &scope);
+                check(host_ok && host_result.find("run_host hostname \nexit=0") != std::string::npos,
+                      "normalized Research host arguments differed from actual process arguments");
+                check(observed["owner_sid"] == sid && observed["inheritance_disabled"] == true &&
+                          observed["dacl_present"] == true && observed["null_dacl"] == false &&
+                          observed["aces"][0]["type"] == "deny" &&
+                          observed["aces"][0]["sid"] == "S-1-5-18" &&
+                          observed["aces"][0]["identity"] == "SYSTEM" &&
+                          observed["aces"][0]["rights"] == json::array({"SetValue"}) &&
+                          observed["aces"][1]["rights"] == json::array({"FullControl"}),
+                      "ACL reader changed owner, inheritance, ACE order or mask meaning");
+                call.path = "Registry::HKEY_CURRENT_USER:\\" + fixture.subkey;
+                check(inspect(call, true)["sddl"] == observed["sddl"], "registry aliases resolved differently");
+                for (const auto& path : {"HKLM\\SAM", "HKLM\\SECURITY", "\\\\remote\\HKLM\\SOFTWARE",
+                                        "C:\\Windows\\win.ini"}) {
+                    call.path = path;
+                    inspect(call, false);
+                }
+                call.path = "HKCU\\" + fixture.subkey + "-Missing";
                 inspect(call, false);
+                call.path = "HKCU\\" + fixture.subkey;
+                call.args = "deny SYSTEM";
+                inspect(call, false);
+                call.args.clear();
             }
-            call.path = "HKCU\\" + fixture.subkey + "-Missing";
-            inspect(call, false);
-            call.path = "HKCU\\" + fixture.subkey;
-            call.args = "deny SYSTEM";
-            inspect(call, false);
-            call.args.clear();
             fixture.file = root / "acl-read-fixture.txt";
             std::ofstream(fixture.file, std::ios::binary) << secret;
             call.path = fixture.file.string();
@@ -697,6 +791,31 @@ int main() {
             check(researched.requests[1]["messages"].dump().find("owner_sid") != std::string::npos,
                   "native ACL evidence did not reach the next model round");
             rounds.clear();
+            const auto large_file = root / "research-large-brief.txt";
+            fixture.extra_files.push_back(large_file);
+            const std::string large_body = "BRIEF_START\n" + std::string(15549, 'x') + "\nBRIEF_END\n";
+            std::ofstream(large_file, std::ios::binary) << large_body;
+            auto large_read = acl_reply;
+            large_read.deltas[0]["tool_calls"][0]["function"] = {
+                {"name", "read_local_file"}, {"arguments", json({{"path", large_file.string()}}).dump()}};
+            for (const auto mode : {local_tools::ToolMode::Answer, local_tools::ToolMode::Research}) {
+                const auto large = run({large_read, completion("", "Complete brief inspected.")},
+                    "off", "Read the entire brief at " + large_file.string(), "Fixture system.",
+                    true, true, false, "", false, nullptr, mode);
+                const auto next_prompt = large.requests.at(1)["messages"].dump();
+                const auto chain = load_chain();
+                check(next_prompt.find("BRIEF_START") != std::string::npos &&
+                          next_prompt.find("BRIEF_END") != std::string::npos &&
+                          next_prompt.find("capacity reached") == std::string::npos &&
+                          chain["ledger"].get<std::string>().find(large_body) != std::string::npos &&
+                          chain["tool_evidence"][0]["executor_ok"] == true &&
+                          chain["tool_evidence"][0]["context_supplied"] == true &&
+                          chain["hop_ok"] == true,
+                      "read-only mode discarded the operator-sized complete brief");
+                check(resume_chain_prompt(revalidate_chain_references(chain, godbrain_rag::Client{}),
+                          "Continue.").find(large_body) != std::string::npos,
+                      "Answer/Research Continue discarded the complete brief");
+            }
             for (int i = 0; i < 7; ++i) {
                 const auto extra = root / ("research-evidence-" + std::to_string(i) + ".txt");
                 fixture.extra_files.push_back(extra);
@@ -729,7 +848,8 @@ int main() {
             rounds.pop_back();
             rounds.resize(6);
             for (int i = 0; i < 6; ++i) {
-                std::ofstream(fixture.extra_files[i], std::ios::binary)
+                std::ofstream(root / ("research-evidence-" + std::to_string(i) + ".txt"),
+                              std::ios::binary)
                     << "CAPACITY_OBSERVATION_" << i << ":" << std::string(6000, 'x');
             }
             rounds.push_back(completion("", "Capacity reached; later evidence was omitted."));
@@ -743,6 +863,8 @@ int main() {
                       bounded.find("CAPACITY_OBSERVATION_0:") != std::string::npos &&
                       bounded.find("CAPACITY_OBSERVATION_4:") != std::string::npos &&
                       bounded.find("CAPACITY_OBSERVATION_5:") == std::string::npos &&
+                      saturated.receipt["tool_attempts"][0]["context_supplied"] == true &&
+                      saturated.receipt["tool_attempts"][5]["context_supplied"] == false &&
                       load_chain()["hop_ok"] == false,
                   "Research capacity exhaustion evicted earlier evidence or silently claimed delivery");
             bool ok = true;
@@ -750,6 +872,101 @@ int main() {
             const auto denied = local_tools::execute_calls({call}, &ok, &no_advertised_tools, "", nullptr, &scope);
             check(!ok && denied.find("not advertised") != std::string::npos,
                   "native ACL reader bypassed advertised-schema authorization");
+        }
+        {
+            local_tools::RequestScope scope;
+            scope.mode = local_tools::ToolMode::Research;
+            const auto directory = root / "protected-read-fixture";
+            scope.operator_text = "Inspect " + directory.string();
+            local_tools::Call call;
+            call.name = "inspect_protected_directory";
+            call.path = directory.string();
+            bool ok = true;
+            const std::unordered_set<std::string> advertised{call.name};
+            check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                      "requires authenticated operator") != std::string::npos && !ok,
+                  "protected read did not require bearer-bound scope");
+            scope.protected_reads_authorized = true;
+            call.path = "C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Active";
+            for (const auto& request : {
+                    "Inspect CIPolicies.",
+                    "Inspect C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Staged"}) {
+                scope.operator_text = request;
+                check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                          "explicitly named") != std::string::npos && !ok,
+                      "protected read widened a keyword or another named directory to Active");
+            }
+            call.path = directory.string();
+            scope.operator_text = "Inspect a different target.";
+            check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                      "explicitly named") != std::string::npos && !ok,
+                  "protected read accepted a target not named by the operator");
+            call.path = "C:\\Tools";
+            scope.operator_text = "Inspect C:\\Tools\\different-directory";
+            check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                      "explicitly named") != std::string::npos && !ok,
+                  "protected read accepted an operator path prefix");
+            call.path = directory.string();
+            scope.operator_text = "Inspect " + directory.string();
+            call.args = "anything";
+            check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                      "path only") != std::string::npos && !ok,
+                  "protected read accepted extra command arguments");
+            call.args.clear();
+            call.path = "C:\\Windows\\System32";
+            scope.operator_text = "Inspect " + call.path;
+            check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
+                      "allowlisted directory") != std::string::npos && !ok,
+                  "protected read escaped the directory allowlist");
+            bool denied = false;
+            try {
+                godbrain_protected_read::inspect(directory.string(),
+                    [](const std::string&) { return false; });
+            } catch (const std::runtime_error& error) {
+                denied = std::string(error.what()).find("outside the read allowlist") != std::string::npos;
+            }
+            check(denied, "native protected reader did not reject before opening a read token");
+        }
+        {
+            const auto first = root / "batch-first.txt";
+            const auto second = root / "batch-second.txt";
+            std::ofstream(first) << "first\n";
+            std::ofstream(second) << "second\n";
+            MockCompletion batch;
+            batch.finish = "tool_calls";
+            batch.deltas.push_back({{"tool_calls", json::array({
+                {{"index", 0}, {"id", "batch-first"}, {"type", "function"},
+                 {"function", {{"name", "get_file_info"},
+                               {"arguments", json({{"path", first.string()}}).dump()}}}},
+                {{"index", 1}, {"id", "batch-second"}, {"type", "function"},
+                 {"function", {{"name", "get_file_info"},
+                               {"arguments", json({{"path", second.string()}}).dump()}}}}
+            })}});
+            const auto delivered = run({batch, completion("", "Both observations received.")},
+                "off", "Inspect the two metadata observations.", "Fixture system.",
+                true, true, false, "", false, nullptr, local_tools::ToolMode::Fix);
+            const auto prompt = delivered.requests.at(1)["messages"].back()["content"].get<std::string>();
+            check(prompt.find("batch-first.txt") != std::string::npos &&
+                      prompt.find("batch-second.txt") != std::string::npos &&
+                      delivered.receipt["tool_attempts"].size() == 2,
+                  "batched observations did not reach the next prompt");
+            for (const auto& attempt : delivered.receipt["tool_attempts"]) {
+                check(attempt["executor_ok"] == true && attempt["context_supplied"] == true,
+                      "batched result was falsely reported as omitted");
+            }
+            auto replaced = batch;
+            replaced.deltas[0]["tool_calls"].erase(1);
+            replaced.deltas[0]["tool_calls"][0]["function"] = {
+                {"name", "list_local_dir"}, {"arguments", json({{"path", root.string()}}).dump()}
+            };
+            const auto mapped = run({replaced, completion("", "Repo map received.")},
+                "off", "Review what is wrong under " + root.string(), "Fixture system.",
+                true, true, false, "", false, nullptr, local_tools::ToolMode::Fix);
+            check(mapped.requests.at(1)["messages"].dump().find("Repo map") != std::string::npos &&
+                      mapped.receipt["tool_attempts"][0]["context_supplied"] == false,
+                  "repo-map replacement incorrectly claimed delivery of the original observation");
+            std::filesystem::remove(first);
+            std::filesystem::remove(second);
         }
 
         const auto continued = run({

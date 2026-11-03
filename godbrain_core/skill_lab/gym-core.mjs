@@ -491,8 +491,23 @@ export function newState() {
   return {
     version: 1, status: 'idle', sequence: 0, cursor: 0, active: null,
     stats: { attempts: 0, passed: 0, failed: 0, infrastructureErrors: 0, byTask: {} },
-    lessons: [], recent: [],
+    lessons: [], lessonInvalidations: [], recent: [],
   };
+}
+
+export function lessonSourceKey({ taskId, sourceHash, evaluatorVersion }) {
+  return JSON.stringify([taskId, sourceHash, evaluatorVersion]);
+}
+
+export function invalidateLessonSource(state, { taskId, sourceHash, evaluatorVersion }) {
+  if (![taskId, sourceHash, evaluatorVersion].every(value => typeof value === 'string' && value.length)) {
+    throw new Error('Invalid lesson-source invalidation.');
+  }
+  const invalidation = { taskId, sourceHash, evaluatorVersion };
+  state.lessonInvalidations ??= [];
+  if (!state.lessonInvalidations.some(item => lessonSourceKey(item) === lessonSourceKey(invalidation))) {
+    state.lessonInvalidations.push(invalidation);
+  }
 }
 
 export async function loadState(workDir) {
@@ -501,6 +516,7 @@ export async function loadState(workDir) {
   if (state.version !== 1 || !Number.isSafeInteger(state.sequence) || state.sequence < 0 ||
       !Number.isSafeInteger(state.cursor) || state.cursor < 0 ||
       !Array.isArray(state.lessons) || !Array.isArray(state.recent) ||
+      (state.lessonInvalidations !== undefined && !Array.isArray(state.lessonInvalidations)) ||
       !state.stats || !state.stats.byTask || typeof state.stats.byTask !== 'object') {
     throw new Error('Unsupported or damaged gym state. Refusing to reset its learning history.');
   }
@@ -515,6 +531,10 @@ export async function loadState(workDir) {
     !Number.isSafeInteger(state.active.trainSeed) || !Number.isSafeInteger(state.active.holdoutSeed) ||
     state.active.trainSeed === state.active.holdoutSeed)) {
     throw new Error('The saved exercise has invalid attempts or non-independent input seeds.');
+  }
+  state.lessonInvalidations ??= [];
+  for (const lesson of [...state.lessonInvalidations, ...state.lessons.filter(item => item.stale)]) {
+    invalidateLessonSource(state, lesson);
   }
   return state;
 }
@@ -545,6 +565,19 @@ function ownedRunPath(workDir, id) {
 
 async function retainArtifacts(workDir, state, keep) {
   const protectedIds = new Set([...state.lessons.map(item => item.runId), ...state.recent.slice(-keep)]);
+  const campaigns = await readJson(path.join(workDir, 'campaigns.json'), { items: [] });
+  for (const campaign of campaigns.items) {
+    for (const version of [campaign, ...(campaign.buildHistory ?? []), ...(campaign.alternativeHistory ?? [])]) {
+      for (const id of [version.previewRunId, ...(version.assemblyRunIds ?? []),
+        ...(version.alternatives ?? []).flatMap(item => [item.runId, item.appRunId])]) {
+        if (id) protectedIds.add(id);
+      }
+    }
+  }
+  const objectives = await readJson(path.join(workDir, 'objectives.json'), { items: [] });
+  for (const item of objectives.items) {
+    if (item.initialRunId && item.status !== 'completed') protectedIds.add(item.initialRunId);
+  }
   const runs = path.join(workDir, 'runs');
   for (const entry of await fs.readdir(runs, { withFileTypes: true })) {
     if (!/^[0-9]{8}-[a-f0-9]{12}$/.test(entry.name) || protectedIds.has(entry.name)) continue;
@@ -833,11 +866,6 @@ export function cannedTutorAdvice(active = {}) {
         '2. Do not invent className=nav; App.jsx is immutable in styles mode.',
       ].join('\n');
     }
-    return [
-      'CAUSE: Seeded nav links stay hidden or overflow because mobile CSS does not hide the nav element and open it with nav.open.',
-      '1. At max-width 640px use nav{display:none} nav.open{display:flex} button.menu{display:inline-flex}. Never .nav.',
-      '2. Markup is <nav className={menu?\'open\':\'\'}> with no className nav. Do not replace nav{ with .nav{.',
-    ].join('\n');
   }
   return '';
 }
@@ -961,8 +989,9 @@ export async function runPractice(options, dependencies) {
     maxAttempts = 4, rounds = 1, continuous = false, intervalMs = 2000, retryMs = 30_000,
     keepRuns = 24, browserPath, token, teacherToken = token, timeoutMs = 180_000,
     tutorEvery = 2, externalSignal, maxTokens = 2400, pauseReason = async () => null,
-    autoplayEnabled = async () => true,
+    autoplayEnabled = async () => true, explicitTask = null,
     nextTask = async () => null, onObjectiveResult = async () => {},
+    prepareState = async () => {}, onCheckpoint = async () => {},
     taskAlreadyComplete = async () => false,
     taskIsCurrent = async () => true,
     selectTask = async ({ state: current, tasks: available }) => available[current.cursor % available.length],
@@ -986,6 +1015,15 @@ export async function runPractice(options, dependencies) {
   let monitor;
   let monitorBusy = false;
   let roundCount = 0;
+  async function currentSavedTask(saved) {
+    if (!saved?.customTask || await taskIsCurrent(saved.customTask)) return saved;
+    await appendEvent(workDir, {
+      type: 'course_definition_replaced',
+      taskId: saved.taskId,
+      message: 'The saved attempt used an obsolete generated-course definition and was safely restarted.',
+    });
+    return null;
+  }
   try {
     state = await loadState(workDir);
     const priorEvaluatorVersion = state.evaluatorVersion;
@@ -1038,14 +1076,8 @@ export async function runPractice(options, dependencies) {
     if (state.active && !state.active.customTask && !tasks.some(task => task.id === state.active.taskId)) {
       throw new Error('The resumed task is absent from this curriculum. Resume with the original course.');
     }
-    if (state.active?.customTask && !await taskIsCurrent(state.active.customTask)) {
-      await appendEvent(workDir, {
-        type: 'course_definition_replaced',
-        taskId: state.active.taskId,
-        message: 'The saved attempt used an obsolete generated-course definition and was safely restarted.',
-      });
-      state.active = null;
-    }
+    state.active = await currentSavedTask(state.active);
+    await prepareState(state);
     await saveState(workDir, state);
     await appendEvent(workDir, { type: 'worker_started', pid: process.pid, resumed: Boolean(state.active) });
     while (continuous || roundCount < rounds) {
@@ -1058,21 +1090,41 @@ export async function runPractice(options, dependencies) {
         await delay(Math.max(retryMs, 500), undefined, { signal });
         continue;
       }
-      if (!state.active) {
-        const queuedTask = await nextTask();
-        const task = queuedTask ?? await selectTask({ state, tasks });
-        if (!task) {
-          state.status = 'ladder_complete';
-          state.lastError = null;
-          await saveState(workDir, state);
-          await delay(Math.max(retryMs, 5000), undefined, { signal });
-          continue;
+      const autoplay = Boolean(explicitTask) || await autoplayEnabled();
+      let queuedTask = null;
+      if (!state.active || (!autoplay && !state.active.customTask?.objectiveId)) {
+        queuedTask = await nextTask();
+        if (queuedTask && state.active) {
+          state.suspendedCourse = state.active;
+          state.active = null;
         }
-        state.active = {
-          taskId: task.id, attempt: 0, files: task.initialFiles ?? null, feedback: '', advice: '',
-          trainSeed: 11 + state.sequence * 17, holdoutSeed: 1009 + state.sequence * 31,
-          customTask: queuedTask ?? (task.fileMode ? task : null),
-        };
+      }
+      if (!state.active) {
+        if (!queuedTask && autoplay && state.suspendedCourse) {
+          state.active = await currentSavedTask(state.suspendedCourse);
+          state.suspendedCourse = null;
+        }
+        if (!state.active) {
+          const task = queuedTask ?? (autoplay ? await selectTask({ state, tasks }) : null);
+          if (!task) {
+            state.status = autoplay ? 'ladder_complete' : 'autoplay_off';
+            state.lastError = null;
+            await saveState(workDir, state);
+            await delay(Math.max(retryMs, 5000), undefined, { signal });
+            continue;
+          }
+          state.active = {
+            taskId: task.id, attempt: 0, files: task.initialFiles ?? null, feedback: '', advice: '',
+            trainSeed: 11 + state.sequence * 17, holdoutSeed: 1009 + state.sequence * 31,
+            customTask: queuedTask ?? (task.fileMode ? task : null),
+          };
+        }
+      }
+      if (!autoplay && !state.active.customTask?.objectiveId) {
+        state.status = 'autoplay_off';
+        await saveState(workDir, state);
+        await delay(500, undefined, { signal });
+        continue;
       }
       const active = state.active;
       const task = active.customTask ?? tasks.find(item => item.id === active.taskId);
@@ -1277,8 +1329,10 @@ export async function runPractice(options, dependencies) {
             active.resetContrastOnce = true;
           }
         }
-        if (sourceHash && state.lessons.some(item => item.sourceHash === sourceHash && item.taskId === task.id) && !passed) {
-          for (const item of state.lessons.filter(item => item.sourceHash === sourceHash && item.taskId === task.id)) {
+        if (sourceHash && !passed) {
+          const invalidation = { taskId: task.id, sourceHash, evaluatorVersion };
+          invalidateLessonSource(state, invalidation);
+          for (const item of state.lessons.filter(item => lessonSourceKey(item) === lessonSourceKey(invalidation))) {
             item.stale = true;
           }
         }
@@ -1288,6 +1342,8 @@ export async function runPractice(options, dependencies) {
             evaluatorVersion, model: receipt.model, seeds: receipt.seeds, stale: false,
             summary: `${task.title}: browser acceptance passed on two input variants. Scope is this exercise only.`,
           };
+          lessonRecord.stale = state.lessonInvalidations.some(item =>
+            lessonSourceKey(item) === lessonSourceKey(lessonRecord));
           const otherTasks = state.lessons.filter(item => item.taskId !== task.id);
           const taskVariants = state.lessons.filter(item => item.taskId === task.id);
           const existingIndex = taskVariants.findIndex(item => item.sourceHash === sourceHash);
@@ -1320,14 +1376,9 @@ export async function runPractice(options, dependencies) {
         }
         state.status = 'running';
         await saveState(workDir, state);
+        await onCheckpoint(state);
         await retainArtifacts(workDir, state, keepRuns);
         options.onProgress?.({ ...state.lastRun, stats: state.stats, lessonCount: state.lessons.filter(item => !item.stale).length });
-        while (!(await autoplayEnabled())) {
-          if (await pauseReason()) break;
-          state.status = 'autoplay_off';
-          await saveState(workDir, state);
-          await delay(500, undefined, { signal });
-        }
         if (await pauseReason()) continue;
         if (continuous || roundCount < rounds) await delay(intervalMs, undefined, { signal });
       } catch (error) {

@@ -24,6 +24,9 @@ try {
 } catch {
   mongo = false;
 }
+if (process.env.GODBRAIN_GYM_REQUIRE_MONGO === '1' && !mongo) {
+  throw new Error('Required isolated gym Mongo instance is unavailable; refusing to skip persistence tests.');
+}
 
 test('godbrain_gym shop checkout persists an order and isolates run ids', { skip: !mongo }, async () => {
   const ping = await pingGymMongo();

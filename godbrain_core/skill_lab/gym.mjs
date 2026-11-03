@@ -10,7 +10,8 @@ import { startDashboard } from './dashboard.mjs';
 import {
   claimObjective, completeObjective, listObjectives, objectiveIsTerminal,
 } from './objectives.mjs';
-import { advanceCampaigns, continueRepeatedCampaign } from './coach.mjs';
+import { advanceCampaigns } from './coach.mjs';
+import { syncSharedLessons } from './shared-lessons.mjs';
 import {
   advanceUniversity, COURSE_DEFINITION_VERSION, listUniversityTasks, readUniversity, universitySummary,
 } from './course-factory.mjs';
@@ -269,6 +270,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
       teacherToken: process.env.GODBRAIN_GYM_TEACHER_TOKEN ?? process.env.GODBRAIN_GYM_TOKEN,
       maxAttempts: Number(values['max-attempts']), rounds: Number(values.rounds),
       continuous: values.continuous, keepRuns: Number(values['keep-runs']),
+      explicitTask: values.task,
       maxTokens: Number(values['max-tokens']), timeoutMs: Number(values['timeout-seconds']) * 1000,
       intervalMs: Number(values['interval-seconds']) * 1000, retryMs: Number(values['retry-seconds']) * 1000,
       tutorEvery: Number(values['tutor-every']), browserPath: values.browser,
@@ -277,11 +279,15 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         const control = await readJson(path.join(workDir, 'training-pause.json'), { autoplay: true });
         return control.autoplay !== false;
       },
+      prepareState: async state => {
+        await advanceCampaigns(workDir, TASKS);
+        await syncSharedLessons(workDir, state, { restore: true });
+      },
       nextTask: async () => {
         await advanceCampaigns(workDir, TASKS);
-        await continueRepeatedCampaign(workDir, TASKS);
         return claimObjective(workDir, TASKS);
       },
+      onCheckpoint: state => syncSharedLessons(workDir, state),
       onObjectiveResult: (task, run, outcome) =>
         completeObjective(workDir, task.objectiveId, run, outcome),
       taskAlreadyComplete: task => objectiveIsTerminal(workDir, task.objectiveId),
@@ -291,13 +297,16 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         let generated = await listUniversityTasks(workDir, TASKS);
         let combined = [...available, ...generated];
         const university = await advanceUniversity(workDir, await masterySnapshot(workDir, state, combined), TASKS);
+        if (university.programStatus === 'graduated' && !values.task) return null;
         generated = await listUniversityTasks(workDir, TASKS);
         combined = [...available, ...generated];
         const unpark = new Set(university.courses.filter(course => course.retargetedAt).map(course => course.id));
         if (unpark.size && state.scheduler?.parkedTaskIds?.length) {
           state.scheduler.parkedTaskIds = state.scheduler.parkedTaskIds.filter(id => !unpark.has(id));
         }
-        const selected = await selectCurriculumTask(workDir, state, combined);
+        const selected = values.task
+          ? available.find(task => task.id === values.task)
+          : await selectCurriculumTask(workDir, state, combined);
         if (!selected) return null;
         if (selected.university) {
           const plan = universityLessonPlan({

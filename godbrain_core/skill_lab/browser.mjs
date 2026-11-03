@@ -513,7 +513,7 @@ export function taskProps(taskId, seed) {
   throw new Error(`No seed generator for task ${taskId}.`);
 }
 
-async function existingBrowserPath(explicit) {
+export async function existingBrowserPath(explicit) {
   const candidates = explicit ? [explicit] : process.platform === 'win32' ? [
     BRAVE_WINDOWS,
     path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),

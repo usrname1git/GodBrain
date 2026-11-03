@@ -3,9 +3,11 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildBundle, GYM_MEDIA_FILES, gymMediaDir, outputText, taskProps } from './browser.mjs';
-import { createCampaign, listCampaigns, requestCampaignAlternatives } from './coach.mjs';
+import { createCampaign, listCampaigns, regenerateCampaign, requestCampaignAlternatives } from './coach.mjs';
 import { listObjectives, enqueueObjective } from './objectives.mjs';
-import { readJson, writeJson } from './gym-core.mjs';
+import { hashFiles, readJson, writeJson } from './gym-core.mjs';
+import { checkBuilderDatabase } from './builder-db.mjs';
+import { syncSharedLessons } from './shared-lessons.mjs';
 import { masterySnapshot } from './scheduler.mjs';
 import { listUniversityTasks, readUniversity, universitySummary } from './course-factory.mjs';
 
@@ -40,6 +42,23 @@ async function readEvents(workDir) {
 async function receipt(workDir, runId) {
   if (!RUN_ID.test(runId)) return null;
   return await readJson(path.join(workDir, 'runs', runId, 'receipt.json'), null);
+}
+
+async function screenshot(workDir, id, name, artifacts = []) {
+  if (!artifacts.some(file => file.endsWith(`${name}.png`))) return null;
+  try {
+    const file = await fs.stat(path.join(workDir, 'runs', id, 'practice', `${name}.png`));
+    return file.isFile() ? `/artifacts/${id}/practice/${name}.png` : null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function sharedSummary(receipt) {
+  if (!receipt) return null;
+  const { ok, database, at, stored, compatible, modelIndependent, error } = receipt;
+  return { ok, database, at, stored, compatible, modelIndependent, error };
 }
 
 async function taskRows(workDir, state, trustedTasks, events) {
@@ -81,6 +100,41 @@ async function snapshot(workDir, trustedTasks) {
   const objectives = await listObjectives(workDir);
   const objectiveById = new Map(objectives.map(item => [item.id, item]));
   const campaigns = await listCampaigns(workDir);
+  const previews = new Map();
+  const passingPreview = async (ids, required = false) => {
+    for (const id of ids.filter(Boolean)) {
+      if (!RUN_ID.test(id)) continue;
+      if (!previews.has(id)) previews.set(id, (async () => {
+        const row = await receipt(workDir, id);
+        if (!row?.passed) return null;
+        const source = await readJson(path.join(workDir, 'runs', id, 'source.json'), null);
+        if (!source || !row.sourceHash || hashFiles(source) !== row.sourceHash) {
+          return { error: 'Saved passing build has missing or mismatched source evidence.' };
+        }
+        return { runId: id, url: `/preview/${id}`, at: row.at };
+      })());
+      const preview = await previews.get(id);
+      if (preview) return preview;
+      if (required) return { error: 'Saved passing receipt is unavailable; this preview cannot be verified.' };
+    }
+    return null;
+  };
+  for (const campaign of campaigns) {
+    const assembly = objectiveById.get(campaign.assemblyObjectiveId);
+    campaign.buildPreview = campaign.previewRunId
+      ? await passingPreview([campaign.previewRunId], true)
+      : await passingPreview([...(campaign.assemblyRunIds ?? []).slice().reverse(), assembly?.initialRunId]);
+    for (const build of campaign.buildHistory ?? []) {
+      build.preview = build.previewRunId
+        ? await passingPreview([build.previewRunId], true)
+        : await passingPreview([...(build.assemblyRunIds ?? []).slice().reverse()]);
+    }
+    for (const set of [{ alternatives: campaign.alternatives }, ...(campaign.alternativeHistory ?? [])]) {
+      for (const variant of set.alternatives ?? []) {
+        variant.preview = variant.status === 'ready' ? await passingPreview([variant.runId], true) : null;
+      }
+    }
+  }
   const universityState = await readUniversity(workDir);
   const universityTasks = await listUniversityTasks(workDir, trustedTasks);
   const allTasks = [...trustedTasks, ...universityTasks];
@@ -112,10 +166,8 @@ async function snapshot(workDir, trustedTasks) {
       galleryKey: objective ? `objective:${objective.id}` : `task:${item.taskId}`,
       durationMs: item.timings?.totalMs ?? null,
       failure: item.candidateError ?? item.evidence?.flatMap(split => split.errors ?? []).join('; ') ?? null,
-      desktop: item.evidence?.[0]?.artifacts?.some(file => file.endsWith('desktop.png'))
-        ? `/artifacts/${id}/practice/desktop.png` : null,
-      mobile: item.evidence?.[0]?.artifacts?.some(file => file.endsWith('mobile.png'))
-        ? `/artifacts/${id}/practice/mobile.png` : null,
+      desktop: await screenshot(workDir, id, 'desktop', item.evidence?.[0]?.artifacts),
+      mobile: await screenshot(workDir, id, 'mobile', item.evidence?.[0]?.artifacts),
       preview: item.sourceHash ? `/preview/${id}` : null,
     });
   }
@@ -144,7 +196,10 @@ async function snapshot(workDir, trustedTasks) {
     } : null,
     lifetime: state.stats,
     session: sessionStats(state),
-    lessons: state.lessons?.filter(item => !item.stale) ?? [],
+    lessons: state.lessons?.filter(item => !item.stale && item.evaluatorVersion === state.evaluatorVersion) ?? [],
+    storedLessonCount: state.lessons?.length ?? 0,
+    sharedLessons: sharedSummary(await readJson(path.join(workDir, 'shared-lessons-last.json'), null)),
+    builderDatabase: await readJson(path.join(workDir, 'builder-db-last.json'), null),
     tasks,
     university: universitySummary(universityState, tasks),
     scheduler: state.scheduler ?? null,
@@ -160,7 +215,10 @@ async function snapshot(workDir, trustedTasks) {
   };
 }
 
-export async function startDashboard({ workDir, trustedTasks, port = 4177, host = '127.0.0.1' }) {
+export async function startDashboard({
+  workDir, trustedTasks, port = 4177, host = '127.0.0.1',
+  databaseCheck = checkBuilderDatabase, lessonSync = syncSharedLessons,
+}) {
   if (host !== '127.0.0.1') throw new Error('Frontend gym dashboard must remain on literal loopback.');
   const staticRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
   const previewCache = new Map();
@@ -220,6 +278,46 @@ export async function startDashboard({ workDir, trustedTasks, port = 4177, host 
         return;
       }
       const alternativesMatch = /^\/api\/campaigns\/([a-f0-9]{12})\/alternatives$/.exec(url.pathname);
+      const regenerateMatch = /^\/api\/campaigns\/([a-f0-9]{12})\/regenerate$/.exec(url.pathname);
+      if (request.method === 'POST' && (regenerateMatch ||
+          ['/api/builder/database-check', '/api/builder/shared-lessons'].includes(url.pathname))) {
+        if (request.headers.origin !== origin || !request.headers['content-type']?.startsWith('application/json')) {
+          json(response, 403, { error: 'Builder actions require same-origin JSON.' });
+          return;
+        }
+        let body = '';
+        for await (const chunk of request) {
+          body += chunk;
+          if (body.length > 128) throw new Error('Builder action body is too large.');
+        }
+        const command = JSON.parse(body);
+        if (!command || Array.isArray(command) || typeof command !== 'object' || Object.keys(command).length) {
+          json(response, 400, { error: 'Builder action accepts only an empty object.' });
+          return;
+        }
+        if (regenerateMatch) {
+          try {
+            json(response, 202, await regenerateCampaign(workDir, regenerateMatch[1], trustedTasks));
+          } catch (error) {
+            json(response, 400, { error: error.message });
+          }
+        } else if (url.pathname === '/api/builder/database-check') {
+          try {
+            const result = await databaseCheck();
+            await writeJson(path.join(workDir, 'builder-db-last.json'), result);
+            json(response, 200, result);
+          } catch (error) {
+            await writeJson(path.join(workDir, 'builder-db-last.json'), { ok: 0, error: error.message, at: new Date().toISOString() });
+            throw error;
+          }
+        } else {
+          const state = await readJson(path.join(workDir, 'state.json'), null);
+          if (!state) throw new Error('Gym state is unavailable.');
+          const result = await lessonSync(workDir, state, { force: true });
+          json(response, result.ok === 1 ? 200 : 503, result);
+        }
+        return;
+      }
       if (request.method === 'POST' && alternativesMatch) {
         if (request.headers.origin !== origin || !request.headers['content-type']?.startsWith('application/json')) {
           json(response, 403, { error: 'Alternative controls require same-origin JSON.' });

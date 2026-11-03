@@ -206,6 +206,17 @@ test('app-only prompts summarize immutable CSS and discard large truncated respo
   assert.ok(messages[1].content.length < 10_600);
 });
 
+test('canned overflow advice does not blame a working mobile nav', () => {
+  const advice = cannedTutorAdvice({
+    feedback: 'intentional-mobile-composition: Mobile composition overflows the viewport.',
+    files: {
+      'App.jsx': '<nav className={menu?\'open\':\'\'}>links</nav>',
+      'styles.css': '@media(max-width:640px){nav{display:none}nav.open{display:flex}button.menu{display:inline-flex}.tinted,.dark{margin:0 -24px}}',
+    },
+  });
+  assert.equal(advice, '');
+});
+
 test('canned tutor advice names computed tones and .nav, not new CSS variables', () => {
   const tonal = cannedTutorAdvice({
     feedback: 'professional-visual-system: The computed visual system has insufficient tonal depth.',
@@ -234,8 +245,7 @@ test('canned tutor advice names computed tones and .nav, not new CSS variables',
       'styles.css': 'nav{display:flex}button.menu{display:none}',
     },
   });
-  assert.match(unhidden, /Never \.nav/);
-  assert.doesNotMatch(unhidden, /Replace nav\{display:none\} with \.nav/);
+  assert.equal(unhidden, '');
   const spacing = cannedTutorAdvice({
     feedback: 'professional-visual-system: Section spacing is too compressed for a premium marketing page.',
   });
@@ -579,7 +589,52 @@ test('an evaluator change revalidates the saved candidate before generating agai
   assert.equal(receipt.finishReason, 'revalidate');
 });
 
-test('autoplay off waits after evaluate instead of starting the next generate', async t => {
+test('obsolete suspended course definitions are discarded before a current task runs', async t => {
+  const workDir = await workspace(t), state = newState();
+  const obsolete = { ...task, id: 'obsolete-generated-contract' };
+  state.suspendedCourse = {
+    taskId: obsolete.id, customTask: obsolete, attempt: 0, files: null,
+    feedback: '', advice: '', trainSeed: 11, holdoutSeed: 1009,
+  };
+  await writeJson(path.join(workDir, 'state.json'), state);
+  const checked = [], evaluated = [];
+  await runPractice(options(workDir, {
+    taskIsCurrent: async candidate => { checked.push(candidate.id); return candidate.id !== obsolete.id; },
+  }), {
+    tasks: [task], evaluatorVersion, complete: async () => answer(),
+    evaluate: async request => { evaluated.push(request.taskId); return evaluate(request); },
+  });
+  assert.deepEqual(checked, [obsolete.id]);
+  assert.deepEqual(evaluated, [task.id, task.id]);
+  assert.equal((await readJson(path.join(workDir, 'state.json'))).suspendedCourse, null);
+});
+
+test('an explicit finite CLI task runs with course autoplay off', async t => {
+  const workDir = await workspace(t);
+  const { values } = parseOptions(['run', '--task', task.id, '--rounds', '1']);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new StopRequested('explicit task timed out')), 2000);
+  let completes = 0;
+  try {
+    await runPractice(options(workDir, {
+      rounds: Number(values.rounds), explicitTask: values.task,
+      autoplayEnabled: async () => false, externalSignal: controller.signal,
+      selectTask: async ({ tasks }) => tasks.find(item => item.id === values.task),
+    }), {
+      tasks: [task], evaluatorVersion, evaluate,
+      complete: async () => { completes++; return answer(); },
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  const state = await readJson(path.join(workDir, 'state.json'));
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(completes, 1);
+  assert.equal(state.stats.attempts, 1);
+  assert.equal(state.lastRun.taskId, task.id);
+});
+
+test('course autoplay off does not start a course generation', async t => {
   const workDir = await workspace(t);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new StopRequested('stop after one')), 800);
@@ -593,7 +648,7 @@ test('autoplay off waits after evaluate instead of starting the next generate', 
     evaluate,
   });
   clearTimeout(timer);
-  assert.equal(completes, 1);
+  assert.equal(completes, 0);
   const state = JSON.parse(await fs.readFile(path.join(workDir, 'state.json'), 'utf8'));
   assert.equal(state.status, 'stopped');
 });
@@ -706,7 +761,7 @@ test('a prior-evaluator lesson is selected only as a revalidation candidate', ()
   );
 });
 
-test('a later failure of the same implementation makes that lesson stale', async t => {
+test('a later failure stays invalidated across local passes and restart until the evaluator changes', async t => {
   const workDir = await workspace(t);
   await runPractice(options(workDir), { tasks: [task], evaluatorVersion, evaluate, complete: async () => answer() });
   const state = await runPractice(options(workDir, { maxAttempts: 1 }), {
@@ -714,6 +769,19 @@ test('a later failure of the same implementation makes that lesson stale', async
     evaluate: async request => ({ ...(await evaluate(request)), passed: false, checks: [{ name: 'regression', passed: false }] }),
   });
   assert.equal(state.lessons[0].stale, true);
+  const persisted = await loadState(workDir);
+  assert.equal(persisted.lessonInvalidations.length, 1);
+  assert.equal(persisted.lessonInvalidations[0].sourceHash, hashFiles(working));
+  const passedAgain = await runPractice(options(workDir), {
+    tasks: [task], evaluatorVersion, evaluate, complete: async () => answer(),
+  });
+  assert.equal(passedAgain.lessons[0].stale, true);
+  const requalified = await runPractice(options(workDir), {
+    tasks: [task], evaluatorVersion: 'new-evaluator', evaluate, complete: async () => answer(),
+  });
+  assert.equal(requalified.lessons[0].stale, false);
+  assert.equal(requalified.lessons[0].evaluatorVersion, 'new-evaluator');
+  assert.equal(requalified.lessonInvalidations.length, 1);
 });
 
 test('stop cancels a pending model request and the next invocation resumes the exercise', async t => {

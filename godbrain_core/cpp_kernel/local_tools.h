@@ -3,6 +3,7 @@
 #include "json.hpp"
 
 #include <string>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -12,6 +13,7 @@ namespace local_tools {
 
 enum class ToolMode { Legacy, Answer, Research, Fix };
 const char* tool_mode_name(ToolMode mode);
+bool read_only_mode(ToolMode mode);
 bool parse_tool_mode(const nlohmann::json& payload, const std::string& message,
                      ToolMode& mode, std::string& error);
 
@@ -30,8 +32,10 @@ struct RequestScope {
     ToolMode mode = ToolMode::Legacy;
     std::string operator_text;
     std::unordered_set<std::string> document_urls;
+    bool protected_reads_authorized = false;
 };
 
+std::optional<int> protected_read_entry();
 bool research_call_allowed(const Call& call);
 std::vector<std::string> default_roots();
 bool path_is_granted(const std::string& path, std::string* err = nullptr);

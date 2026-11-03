@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { startDashboard } from './dashboard.mjs';
 import {
-  advanceCampaigns, alternativePrompt, createCampaign, listCampaigns, requestCampaignAlternatives, validateClientBrief,
+  advanceCampaigns, alternativePrompt, createCampaign, listCampaigns, regenerateCampaign, requestCampaignAlternatives, validateClientBrief,
 } from './coach.mjs';
 import {
   claimObjective, completeObjective, enqueueObjective, listObjectives, validateObjective,
@@ -113,7 +113,7 @@ test('completed objective verdicts are immutable across replayed completion call
   assert.deepEqual(stored.runIds, ['passing-run']);
 });
 
-test('coach converts a client brief into trusted practice and queues assembly after training', async t => {
+test('a manual client brief queues a website directly without prerequisite training', async t => {
   const workDir = await workspace(t);
   const contracts = [
     ...trustedTasks,
@@ -127,13 +127,12 @@ test('coach converts a client brief into trusted practice and queues assembly af
     name: 'Northstar', siteType: 'storefront', brief: 'Build a premium audio store.',
     features: ['account-settings', 'workflow'], styleReference: 'https://example.test/design',
   }, contracts);
-  assert.equal(campaign.status, 'training');
-  assert.ok(campaign.capabilities.length >= 4);
+  assert.equal(campaign.status, 'assembling');
+  assert.equal(campaign.buildMode, 'website');
+  assert.deepEqual(campaign.capabilities, []);
   let objectives = await listObjectives(workDir);
-  assert.equal(objectives.length, campaign.capabilities.length);
-  for (const item of objectives) {
-    await completeObjective(workDir, item.id, { runId: `run-${item.id}` }, 'passed');
-  }
+  assert.equal(objectives.length, 1);
+  assert.equal(objectives[0].campaignStage, 'assembly-shell');
   let campaigns = await advanceCampaigns(workDir, contracts);
   assert.equal(campaigns[0].status, 'assembling');
   const objectiveCount = (await listObjectives(workDir)).length;
@@ -293,15 +292,15 @@ test('a completed alternative set can be rerun without overwriting its evidence'
   assert.equal(objectives.every(item => item.stableKey.includes(':set-v2:styles-v1')), true);
 });
 
-test('coach persists intermediate progress and rejects a duplicate active project', async t => {
+test('builder persists a passing shell and rejects a duplicate active project', async t => {
   const workDir = await workspace(t);
   const campaign = await createCampaign(workDir, {
     name: 'Persistent client', siteType: 'custom', brief: 'Build the client site.', features: [],
   }, trustedTasks);
-  await completeObjective(workDir, campaign.capabilities[0].objectiveId, { runId: 'capability-run' }, 'passed');
+  await completeObjective(workDir, campaign.assemblyObjectiveId, { runId: '00000001-aaaaaaaaaaaa' }, 'passed');
   const campaigns = await advanceCampaigns(workDir, trustedTasks);
-  assert.equal(campaigns[0].capabilities[0].outcome, 'passed');
-  assert.equal((await listCampaigns(workDir))[0].capabilities[0].outcome, 'passed');
+  assert.equal(campaigns[0].assemblyStage, 'polish');
+  assert.equal((await listCampaigns(workDir))[0].previewRunId, '00000001-aaaaaaaaaaaa');
   await assert.rejects(createCampaign(workDir, {
     name: ' persistent CLIENT ', siteType: 'custom', brief: 'A second submission.', features: [],
   }, trustedTasks), /active campaign named/i);
@@ -339,7 +338,7 @@ test('maximum accepted client fields are bounded into valid objective prompts', 
     brief: 'b'.repeat(3000), pages: 'p'.repeat(1000),
     brandNotes: 'n'.repeat(1600), styleReference: 's'.repeat(1200), features: [],
   }, trustedTasks);
-  assert.equal(campaign.status, 'training');
+  assert.equal(campaign.status, 'assembling');
   const objectives = await listObjectives(workDir);
   assert.equal(objectives.length, 1);
   assert.ok(objectives[0].prompt.length <= 1200);
@@ -375,6 +374,8 @@ test('dashboard is loopback-only, reports state, accepts same-origin objectives 
       timings: { totalMs: 1 },
     });
   }
+  await fs.mkdir(path.join(workDir, 'runs', qualityRun, 'practice'));
+  await fs.writeFile(path.join(workDir, 'runs', qualityRun, 'practice', 'desktop.png'), Buffer.from([137, 80, 78, 71]));
   const dashboard = await startDashboard({ workDir, trustedTasks, port: 0 });
   t.after(() => dashboard.close());
   assert.match(dashboard.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
@@ -391,18 +392,20 @@ test('dashboard is loopback-only, reports state, accepts same-origin objectives 
   assert.ok(pageText.indexOf('id="metrics"') < pageText.indexOf('Frontend University'));
   assert.ok(pageText.indexOf('Frontend University') < pageText.indexOf('Live loop'));
   assert.ok(pageText.indexOf('Live loop') < pageText.indexOf('New training objective'));
-  assert.ok(pageText.indexOf('New training objective') < pageText.indexOf('Frontend Coach'));
+  assert.ok(pageText.indexOf('New training objective') < pageText.indexOf('CLIENT WEB SITE BUILDER'));
+  assert.match(pageText, /START GENERATION/);
+  assert.match(pageText, /TEST MONGODB BACKEND/);
   const script = await (await fetch(`${dashboard.origin}/dashboard.js`)).text();
   assert.match(script, /startCampaign'\)\.addEventListener\('pointerup'/);
   assert.match(script, /if\(event\.key==='Enter'\) event\.preventDefault\(\)/);
   assert.match(script, /\/api\/training/);
-  assert.match(script, /terminalStatuses=/);
+  assert.match(script, /Previous alternative sets/);
   assert.match(script, /alternatives_ready/);
   assert.match(script, /Completed \/ archived campaigns/);
   assert.match(script, /alternatives ready/);
   assert.match(script, /generation complete/);
   assert.match(script, /Earlier setup probes/);
-  assert.match(script, /RERUN FOUR ALTERNATIVES/);
+  assert.match(script, /REGENERATE/);
   assert.match(script, /filter\(o=>o\.status!=='completed'\)/);
   const snapshot = await (await fetch(`${dashboard.origin}/api/snapshot`)).json();
   assert.equal(snapshot.session.attempts, 3);
@@ -415,6 +418,9 @@ test('dashboard is loopback-only, reports state, accepts same-origin objectives 
   assert.equal(snapshot.gallery.length, 1);
   assert.equal(snapshot.gallery[0].displayTitle, 'Trusted contract');
   assert.equal(snapshot.gallery[0].taskId, 'trusted-v1');
+  await fs.unlink(path.join(workDir, 'runs', qualityRun, 'practice', 'desktop.png'));
+  const restoredWithoutImages = await (await fetch(`${dashboard.origin}/api/snapshot`)).json();
+  assert.equal(restoredWithoutImages.gallery.length, 0);
   assert.equal(snapshot.university.blueprintCount > 0, true);
 
   const rejected = await fetch(`${dashboard.origin}/api/objectives`, {
@@ -434,7 +440,7 @@ test('dashboard is loopback-only, reports state, accepts same-origin objectives 
   });
   assert.equal(campaign.status, 201);
   const campaignBody = await campaign.json();
-  assert.equal(campaignBody.status, 'training');
+  assert.equal(campaignBody.status, 'assembling');
   const alternatives = await fetch(`${dashboard.origin}/api/campaigns/${campaignBody.id}/alternatives`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: dashboard.origin }, body: '{}',
   });

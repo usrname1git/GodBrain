@@ -10,7 +10,7 @@ import { GYM_MONGO_DB, pingGymMongo } from './gym-lab-db.mjs';
 import { getReference, REFERENCES } from './references.mjs';
 
 const labRoot = path.dirname(fileURLToPath(import.meta.url));
-const browserPath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
+const browserPath = process.env.GODBRAIN_BROWSER;
 
 async function workspace(t) {
   const root = path.join(labRoot, 'work', 'tests');
@@ -40,6 +40,9 @@ try {
   gymMongo = ping.ok === 1 && ping.db === GYM_MONGO_DB;
 } catch {
   gymMongo = false;
+}
+if (process.env.GODBRAIN_GYM_REQUIRE_MONGO === '1' && !gymMongo) {
+  throw new Error('Required isolated gym Mongo instance is unavailable; refusing to skip its browser contracts.');
 }
 
 function isLabTask(id) {
@@ -302,13 +305,41 @@ test('undefined CSS variables fail source-contract before tonal depth', async t 
 
 test('gradient section backgrounds still satisfy marketing tonal depth', async t => {
   const files = getReference('event-platform-showcase-v1');
-  files['styles.css'] = `main section:nth-child(even){background:#fff}\n${files['styles.css']}`
-    .replace('.tinted{background:var(--tint)}', '.tinted{background:linear-gradient(180deg,#eef7f7,#f6f3ec)}')
+  files['styles.css'] = files['styles.css']
+    .replace('.tinted{background:var(--tint)}', '.tinted{background:linear-gradient(180deg,var(--paper),#1c2638)}')
     .replace('.demo{display:grid;grid-template-columns:1fr 1fr;gap:48px;background:var(--hero)}',
-      '.demo{display:grid;grid-template-columns:1fr 1fr;gap:48px;background:linear-gradient(135deg,#fff,#eef7f7)}');
+      '.demo{display:grid;grid-template-columns:1fr 1fr;gap:48px;background:linear-gradient(135deg,var(--paper),#1c2638)}');
   const result = await evaluateIn(t, 'event-platform-showcase-v1', files, 21);
   assert.equal(result.passed, true, JSON.stringify(result.errors));
   assert.equal(result.errors.some(item => /tonal depth|distinct tones/i.test(item)), false);
+});
+
+test('every marketing reference palette passes two seeded browser fixtures', async t => {
+  for (const theme of ['ink', 'tide', 'ember', 'forest', 'sand']) {
+    const files = getReference('marketing-site-architecture-v1');
+    files['App.jsx'] = files['App.jsx'].replace(
+      "const theme=['ink','tide','ember','forest','sand'][(brand||'').length%5];",
+      `const theme=${JSON.stringify(theme)};`,
+    );
+    for (const seed of [1, 2]) {
+      const result = await evaluateIn(t, 'marketing-site-architecture-v1', files, seed);
+      assert.equal(result.passed, true, `${theme}/${seed}: ${JSON.stringify(result.errors)}`);
+    }
+  }
+});
+
+test('one-surface still rejects bleached photo pages and light-teal controls', async t => {
+  for (const [css, expected] of [
+    ['header{background:#edf5ee!important}', /bleached field/],
+    ['.stage-buttons button{background:rgb(201,221,219)!important}', /light teal/],
+  ]) {
+    const files = getReference('marketing-site-architecture-v1');
+    files['styles.css'] += `\n${css}`;
+    const result = await evaluateIn(t, 'marketing-site-architecture-v1', files, 1);
+    assert.equal(result.passed, false);
+    assert.equal(result.checks.find(check => check.name === 'one-surface')?.passed, false);
+    assert.match(result.errors.join('\n'), expected);
+  }
 });
 
 test('mobile overflow names .nav hide when markup has no className nav', async t => {
