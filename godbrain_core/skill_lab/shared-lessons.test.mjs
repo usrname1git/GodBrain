@@ -38,6 +38,7 @@ function fakeMongo() {
   const rows = new Map();
   const invalidations = new Map();
   let calls = 0;
+  let uploads = 0;
   const valueAt = (row, key) => key.split('.').reduce((value, part) => value?.[part], row);
   const matches = (row, filter) => Object.entries(filter).every(([key, value]) =>
     value && typeof value === 'object' && '$in' in value
@@ -69,9 +70,11 @@ function fakeMongo() {
   return {
     rows, invalidations,
     get calls() { return calls; },
+    get uploads() { return uploads; },
     run: async (database, script) => {
       assert.equal(database, LESSON_MONGO_DB);
       calls++;
+      if (script.includes('const records =')) uploads++;
       let output;
       vm.runInNewContext(script, {
         db: { qualified_lessons: collection(rows), lesson_invalidations: collection(invalidations) },
@@ -156,6 +159,69 @@ test('legacy stale rows create durable source invalidations before restoration',
   assert.equal(mongo.invalidations.size, 1);
   assert.equal(state.lessonInvalidations.length, 1);
   assert.equal(state.lessons.length, 0);
+});
+
+test('unchanged readers refresh remote invalidations after the cache deadline without reuploading unchanged sources', async t => {
+  const writer = await workspace(t), reader = await workspace(t);
+  const mongo = fakeMongo(), item = record();
+  const dir = path.join(writer, 'runs', item.lesson.runId);
+  await fs.mkdir(dir, { recursive: true });
+  await writeJson(path.join(dir, 'source.json'), item.source);
+  await writeJson(path.join(dir, 'receipt.json'), item.receipt);
+  await syncSharedLessons(writer, { lessons: [item.lesson], evaluatorVersion: item.lesson.evaluatorVersion }, { mongo: mongo.run });
+  const state = { lessons: [], evaluatorVersion: item.lesson.evaluatorVersion };
+  await syncSharedLessons(reader, state, { restore: true, mongo: mongo.run });
+  const file = path.join(reader, 'shared-lessons-last.json');
+  const expire = async () => {
+    const receipt = await readJson(file);
+    receipt.at = new Date(Date.now() - 30_001).toISOString();
+    await writeJson(file, receipt);
+  };
+  await expire();
+  const uploads = mongo.uploads, before = mongo.calls;
+  await syncSharedLessons(reader, state, { mongo: mongo.run });
+  assert.ok(mongo.calls > before);
+  assert.equal(mongo.uploads, uploads);
+  item.lesson.stale = true;
+  await syncSharedLessons(writer, { lessons: [item.lesson], evaluatorVersion: item.lesson.evaluatorVersion }, { mongo: mongo.run });
+  const cachedCalls = mongo.calls;
+  await syncSharedLessons(reader, state, { mongo: mongo.run });
+  assert.equal(mongo.calls, cachedCalls);
+  await expire();
+  const refreshed = await syncSharedLessons(reader, state, { mongo: mongo.run });
+  assert.equal(refreshed.compatible, 0);
+  assert.equal(state.lessons[0].stale, true);
+  assert.equal(state.lessonInvalidations.length, 1);
+});
+
+test('expired unchanged readers surface database outages instead of returning cached success', async t => {
+  const workDir = await workspace(t), mongo = fakeMongo();
+  const state = { lessons: [], evaluatorVersion: 'browser-test-v1' };
+  await syncSharedLessons(workDir, state, { mongo: mongo.run });
+  const file = path.join(workDir, 'shared-lessons-last.json');
+  const receipt = await readJson(file);
+  receipt.at = new Date(Date.now() - 30_001).toISOString();
+  await writeJson(file, receipt);
+  const result = await syncSharedLessons(workDir, state, {
+    mongo: async () => { throw new BuilderMongoError('Expired policy is unavailable.'); },
+  });
+  assert.equal(result.ok, 0);
+  assert.match((await readJson(file)).error, /unavailable/);
+});
+
+test('missing, invalid or future cache timestamps cannot extend policy freshness', async t => {
+  const workDir = await workspace(t), mongo = fakeMongo();
+  const state = { lessons: [], evaluatorVersion: 'browser-test-v1' };
+  await syncSharedLessons(workDir, state, { mongo: mongo.run });
+  const file = path.join(workDir, 'shared-lessons-last.json');
+  for (const at of [undefined, 'not-a-date', new Date(Date.now() + 60_000).toISOString()]) {
+    const receipt = await readJson(file);
+    receipt.at = at;
+    await writeJson(file, receipt);
+    const before = mongo.calls;
+    assert.equal((await syncSharedLessons(workDir, state, { mongo: mongo.run })).ok, 1);
+    assert.ok(mongo.calls > before);
+  }
 });
 
 test('shared lessons require exact source, two passing fixtures and frontend-only authority', () => {

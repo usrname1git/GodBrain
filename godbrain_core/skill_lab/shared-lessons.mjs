@@ -6,6 +6,7 @@ import { BuilderMongoError, LESSON_MONGO_DB, runBuilderMongo } from './builder-d
 
 const OWNER = 'frontend-shared-lessons-v1';
 const RUN_ID = /^\d{8}-[a-f0-9]{12}$/;
+const POLICY_CACHE_MS = 30_000;
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 let syncTail = Promise.resolve();
 
@@ -63,7 +64,9 @@ async function sync(workDir, state, { restore, force, mongo }) {
   const file = path.join(workDir, 'shared-lessons-last.json');
   const previous = await readJson(file, null);
   applyInvalidations(state, (state.lessons ?? []).filter(lesson => lesson.stale));
-  if (!restore && !force && previous?.ok === 1 && previous.libraryDigest === libraryDigest(state)) return previous;
+  const cacheAge = Date.now() - Date.parse(previous?.at);
+  if (!restore && !force && previous?.ok === 1 && cacheAge >= 0 && cacheAge < POLICY_CACHE_MS &&
+      previous.libraryDigest === libraryDigest(state)) return previous;
   try {
     const policy = await mongo(LESSON_MONGO_DB, `
 const owner = ${JSON.stringify(OWNER)};

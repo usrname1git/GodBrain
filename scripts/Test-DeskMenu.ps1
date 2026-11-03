@@ -304,7 +304,7 @@ $script:httpFails = $false
 $script:ports = @()
 
 & {
-    function Get-TailscaleExe { return "C:\pwsh\pwsh.exe" }
+    function Get-TailscaleExe { return (Join-Path $PSHOME "pwsh.exe") }
     Assert-Equal (Invoke-DeskTailscale @("-NoProfile", "-Command", "'{}'")) "{}"
     Assert-Throws { Invoke-DeskTailscale @("-NoProfile", "-Command", "exit 7") } "*exit 7*"
     Assert-Throws { Invoke-DeskTailscale @("-NoProfile", "-Command", "Start-Sleep -Seconds 20") } "*timed out*"

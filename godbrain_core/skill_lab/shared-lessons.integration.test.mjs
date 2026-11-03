@@ -96,8 +96,18 @@ print(JSON.stringify({ ok: 1 }));
   for (const record of [older, newer, otherTask, otherEvaluator]) {
     assert.equal((await upload(record)).ok, 1);
   }
+  const readerDir = path.join(workDir, 'cached-reader');
+  const readerState = { lessons: [], evaluatorVersion: older.lesson.evaluatorVersion };
+  assert.equal((await syncSharedLessons(readerDir, readerState, { restore: true })).compatible, 3);
   newer.lesson.stale = true;
   assert.equal((await upload(newer)).ok, 1);
+  const cachedFile = path.join(readerDir, 'shared-lessons-last.json');
+  const cached = JSON.parse(await fs.readFile(cachedFile, 'utf8'));
+  cached.at = new Date(Date.now() - 30_001).toISOString();
+  await writeJson(cachedFile, cached);
+  assert.equal((await syncSharedLessons(readerDir, readerState)).compatible, 1);
+  assert.equal(readerState.lessons.find(item => item.runId === older.lesson.runId).stale, true);
+  assert.equal(readerState.lessons.find(item => item.runId === newer.lesson.runId).stale, true);
   for (const record of [older, later]) assert.equal((await upload(record)).ok, 1);
   const stored = await runBuilderMongo(LESSON_MONGO_DB, `
 print(JSON.stringify({ ok: 1, items: db.qualified_lessons.find({
