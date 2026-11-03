@@ -8,6 +8,21 @@ $exe = Join-Path $repo "godbrain_core\cpp_tools\desk-monitor.exe"
 if (-not (Test-Path -LiteralPath $exe)) { throw "Run scripts\Build-DeskMonitor.ps1 first." }
 $self = (& $exe --self-test) | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or $self.self_test -ne "passed") { throw "Native monitor checks failed." }
+$requests = @(
+    '{"control":"contrast","value":"24"}',
+    '{"control":"preset","value":"hdr"}',
+    '{"control":"dark_stabilizer_cycle","value":"0"}',
+    '{"control":"read","extra":true}',
+    '{"control":"read","value":""'
+)
+$sessionReplies = @($requests | & $exe --serve)
+if ($LASTEXITCODE -ne 0 -or $sessionReplies.Count -ne $requests.Count) { throw 'Session framing/recovery failed.' }
+foreach ($line in $sessionReplies) {
+    $reply = $line | ConvertFrom-Json
+    if ($reply.ok -ne $false -or $reply.may_have_changed -ne $false -or -not $reply.error) {
+        throw 'Session accepted an invalid request before monitor access.'
+    }
+}
 foreach ($args in @(
     @("--set", "brightness", "101"), @("--set", "contrast", "-1"),
     @("--set", "contrast", "0"), @("--set", "contrast", "24"),

@@ -1,3 +1,85 @@
+if (-not ('DeskMonitorSession' -as [type])) {
+    Add-Type @'
+using System;
+using System.Diagnostics;
+using System.Text;
+using System.Threading;
+public static class DeskMonitorSession {
+    private sealed class Child {
+        public Process Process;
+        public string Error;
+        public string Executable;
+    }
+    private static readonly object Gate = new object();
+    private static Child current;
+    private static void StopCore() {
+        var child = current;
+        current = null;
+        if (child == null) return;
+        try {
+            if (!child.Process.HasExited) {
+                child.Process.StandardInput.Close();
+                if (!child.Process.WaitForExit(500)) {
+                    child.Process.Kill();
+                    if (!child.Process.WaitForExit(10000))
+                        throw new InvalidOperationException("Owned monitor helper has not exited; display-driver I/O is pending.");
+                }
+            }
+        } finally { child.Process.Dispose(); }
+    }
+    public static void Stop() { lock (Gate) { StopCore(); } }
+    public static string Request(string executable, string request, int timeoutMilliseconds) {
+        if (String.IsNullOrEmpty(request) || Encoding.UTF8.GetByteCount(request) > 1024 ||
+            request.IndexOfAny(new[] {'\r', '\n'}) >= 0)
+            throw new ArgumentException("Invalid bounded monitor request.");
+        lock (Gate) {
+            try {
+                if (current != null &&
+                    (current.Process.HasExited || current.Executable != executable)) StopCore();
+                if (current == null) {
+                    var child = new Child { Executable = executable, Process = new Process() };
+                    var info = child.Process.StartInfo;
+                    info.FileName = executable;
+                    info.ArgumentList.Add("--serve");
+                    info.UseShellExecute = false;
+                    info.CreateNoWindow = true;
+                    info.RedirectStandardInput = true;
+                    info.RedirectStandardOutput = true;
+                    info.RedirectStandardError = true;
+                    info.StandardInputEncoding = new UTF8Encoding(false);
+                    info.StandardOutputEncoding = Encoding.UTF8;
+                    info.StandardErrorEncoding = Encoding.UTF8;
+                    child.Process.ErrorDataReceived += (sender, args) => {
+                        if (!String.IsNullOrWhiteSpace(args.Data))
+                            Interlocked.CompareExchange(ref child.Error, args.Data, null);
+                    };
+                    try {
+                        if (!child.Process.Start()) throw new InvalidOperationException("Monitor helper did not start.");
+                        current = child;
+                        child.Process.BeginErrorReadLine();
+                    } catch { if (current == null) child.Process.Dispose(); throw; }
+                }
+                if (current.Error != null) throw new InvalidOperationException(current.Error);
+                current.Process.StandardInput.WriteLine(request);
+                current.Process.StandardInput.Flush();
+                var reply = current.Process.StandardOutput.ReadLineAsync();
+                if (!reply.Wait(timeoutMilliseconds))
+                    throw new TimeoutException("Monitor operation timed out; a requested change may have reached the monitor. Refresh before retrying. No automatic retry was made.");
+                if (reply.Result == null) throw new InvalidOperationException("Monitor helper exited without a response.");
+                if (reply.Result.Length > 32768) throw new InvalidOperationException("Monitor helper response is too large.");
+                if (current.Error != null) throw new InvalidOperationException(current.Error);
+                return reply.Result;
+            } catch { StopCore(); throw; }
+        }
+    }
+}
+'@
+}
+
+function Stop-DeskMonitorSession {
+    [DeskMonitorSession]::Stop()
+}
+
 function Assert-DeskMonitorContrast {
     param([string]$Value)
     [uint32]$contrast = 0
@@ -84,7 +166,8 @@ function Invoke-DeskMonitor {
         [string]$Control = "read",
         [string]$Value,
         [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
-        [ValidateRange(1, 60)][int]$TimeoutSeconds = 15
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 15,
+        [switch]$ReuseSession
     )
     if ($Control -eq "contrast") {
         Assert-DeskMonitorContrast $Value
@@ -95,6 +178,22 @@ function Invoke-DeskMonitor {
     $exe = Join-Path $RepoRoot "godbrain_core\cpp_tools\desk-monitor.exe"
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw "Monitor helper is missing. Run scripts\Build-DeskMonitor.ps1 once."
+    }
+    if ($ReuseSession) {
+        $request = @{ control = $Control; value = [string]$Value } | ConvertTo-Json -Compress
+        $reply = [DeskMonitorSession]::Request($exe, $request, $TimeoutSeconds * 1000)
+        $result = $reply | ConvertFrom-Json -ErrorAction Stop
+        if ($result.schema_version -ne 1 -or $result.ok -isnot [bool]) { throw "Invalid monitor helper response." }
+        if (-not $result.ok) {
+            if ([string]::IsNullOrWhiteSpace($result.error)) { throw "Monitor helper failed without an error description." }
+            $detail = if ($result.may_have_changed -and $Control -eq 'dark_stabilizer_cycle') {
+                " The cycle may have reached the monitor; current level is unavailable. Observe the picture before pressing again. No automatic retry was made."
+            } elseif ($result.may_have_changed) {
+                " Settings may have changed; refresh before retrying. No automatic retry was made."
+            } else { "" }
+            throw "$($result.error)$detail"
+        }
+        return Assert-DeskMonitorResult -Result $result -Control $Control -Value $Value
     }
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $exe

@@ -944,7 +944,8 @@ if ($DisplayRequest) {
 }
 
 if ($MonitorRequest) {
-    Invoke-DeskMonitor -Control $MonitorRequest.Control -Value $MonitorRequest.Value -RepoRoot $Repo
+    Invoke-DeskMonitor -Control $MonitorRequest.Control -Value $MonitorRequest.Value -RepoRoot $Repo `
+        -ReuseSession:([bool]$MonitorRequest.ReuseSession)
     return
 }
 
@@ -2811,7 +2812,7 @@ function Start-MonitorOperation([string]$Control, [string]$Value) {
     try {
         $script:monitorWorker.Commands.Clear()
         $script:monitorWorker.Streams.Error.Clear()
-        $request = [pscustomobject]@{ Control = $Control; Value = $Value }
+        $request = [pscustomobject]@{ Control = $Control; Value = $Value; ReuseSession = $true }
         [void]$script:monitorWorker.AddCommand($PSCommandPath).AddParameter("MonitorRequest", $request)
         $script:monitorJob = $script:monitorWorker.BeginInvoke()
     } catch {
@@ -3179,6 +3180,8 @@ try {
     $script:clipShareWorker.Stop()
     $script:clipShareWorker.Dispose()
     $script:monitorWorker.Stop()
+    try { Stop-DeskMonitorSession }
+    catch { Write-Error "Monitor helper cleanup failed: $($_.Exception.Message)" -ErrorAction Continue }
     $script:monitorWorker.Dispose()
     Clear-DisplayHotkeys
     $script:displayWorker.Stop()
