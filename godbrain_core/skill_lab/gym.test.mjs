@@ -589,6 +589,26 @@ test('an evaluator change revalidates the saved candidate before generating agai
   assert.equal(receipt.finishReason, 'revalidate');
 });
 
+test('obsolete suspended course definitions are discarded before a current task runs', async t => {
+  const workDir = await workspace(t), state = newState();
+  const obsolete = { ...task, id: 'obsolete-generated-contract' };
+  state.suspendedCourse = {
+    taskId: obsolete.id, customTask: obsolete, attempt: 0, files: null,
+    feedback: '', advice: '', trainSeed: 11, holdoutSeed: 1009,
+  };
+  await writeJson(path.join(workDir, 'state.json'), state);
+  const checked = [], evaluated = [];
+  await runPractice(options(workDir, {
+    taskIsCurrent: async candidate => { checked.push(candidate.id); return candidate.id !== obsolete.id; },
+  }), {
+    tasks: [task], evaluatorVersion, complete: async () => answer(),
+    evaluate: async request => { evaluated.push(request.taskId); return evaluate(request); },
+  });
+  assert.deepEqual(checked, [obsolete.id]);
+  assert.deepEqual(evaluated, [task.id, task.id]);
+  assert.equal((await readJson(path.join(workDir, 'state.json'))).suspendedCourse, null);
+});
+
 test('an explicit finite CLI task runs with course autoplay off', async t => {
   const workDir = await workspace(t);
   const { values } = parseOptions(['run', '--task', task.id, '--rounds', '1']);

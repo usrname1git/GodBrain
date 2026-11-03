@@ -663,13 +663,15 @@ $script:asyncFixture = $false
 $request.ImageModel = $false
 Invoke-DeskAsk $request | Out-Null
 Assert-Equal $script:lastUri "http://127.0.0.1:8871/v1/images/generations"
-$fixtureFile = [IO.Path]::GetTempFileName()
+$imageFixture = Join-Path $Repo ("logs\desk-image-" + [guid]::NewGuid().ToString("N"))
+[void][IO.Directory]::CreateDirectory($imageFixture)
+$fixtureFile = Join-Path $imageFixture "input.bin"
 try {
     [IO.File]::WriteAllBytes($fixtureFile, [byte[]]@(1, 2, 3, 4))
     $request.Path = $fixtureFile
     Invoke-DeskAsk $request | Out-Null
     Assert-Equal ($script:lastBody | ConvertFrom-Json).image_base64 "AQIDBA=="
-} finally { [IO.File]::Delete($fixtureFile) }
+} finally { Remove-Item -LiteralPath $imageFixture -Recurse -Force }
 $request.Path = "C:\Windows\fixture.png"
 Assert-Throws { Invoke-DeskAsk $request } "*outside the kernel file jail*"
 $request.Path = ""
@@ -805,8 +807,10 @@ if (-not $askWrite) { throw "Ask-GodBrain is missing Test-GodBrainWriteSlash." }
 Assert-Equal (Test-GodBrainWriteSlash "/reject last junk") $true
 Assert-Equal (Test-GodBrainWriteSlash "/yolo status extra") $false
 Assert-Equal (Test-GodBrainWriteSlash "/brief") $false
-$large = Join-Path $env:TEMP ("desk-review-" + [guid]::NewGuid().ToString("N") + ".cpp")
-$picture = $null
+$reviewFixture = Join-Path $Repo ("logs\desk-review-" + [guid]::NewGuid().ToString("N"))
+[void][IO.Directory]::CreateDirectory($reviewFixture)
+$large = Join-Path $reviewFixture "source.cpp"
+$picture = Join-Path $reviewFixture "image.jpg"
 try {
     [IO.File]::WriteAllText($large, ("int x;`n" * 20000))
     if ((Get-Item -LiteralPath $large).Length -le 128KB) { throw "Large-file fixture is under 128 KiB." }
@@ -823,7 +827,6 @@ try {
     $request.Path = ""
     $request.Message = $savedMessage
     $request.ReviewFile = $false
-    $picture = Join-Path $env:TEMP ("desk-vision-" + [guid]::NewGuid().ToString("N") + ".jpg")
     $pixels = [byte[]]::new(140KB)
     $pixels[0] = 0xFF; $pixels[1] = 0xD8; $pixels[2] = 0xFF; $pixels[3] = 0xD9
     [IO.File]::WriteAllBytes($picture, $pixels)
@@ -886,7 +889,7 @@ try {
     $script:askResponses.Remove("http://127.0.0.1:8888/health")
     $script:askResponses.Remove("http://127.0.0.1:8888/v1/models")
     $script:askResponses.Remove("http://127.0.0.1:8888/v1/chat/completions")
-} finally { Remove-Item -LiteralPath $large, $picture -Force -ErrorAction SilentlyContinue }
+} finally { Remove-Item -LiteralPath $reviewFixture -Recurse -Force }
 $script:fixtureBusy = $true
 Assert-Throws { Invoke-DeskAsk $request } "*already running*"
 $script:fixtureBusy = $null
@@ -1343,7 +1346,7 @@ if ($UiSmoke) {
         if ($askAttachments.Bottom -ge $askMode.Top -or $askAttachments.Top -le $script:askAttachmentButtons[0].Bottom) {
             throw "Attachments overlap the mode selector or attachment buttons."
         }
-        $attachmentFixture = Join-Path $env:TEMP ("desk-ui-attachments-" + [guid]::NewGuid().ToString("N"))
+        $attachmentFixture = Join-Path $Repo ("logs\desk-ui-attachments-" + [guid]::NewGuid().ToString("N"))
         [void][IO.Directory]::CreateDirectory($attachmentFixture)
         try {
             $one = Join-Path $attachmentFixture "one.txt"; $two = Join-Path $attachmentFixture "two.ps1"

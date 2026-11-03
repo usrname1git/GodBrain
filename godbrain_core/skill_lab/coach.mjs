@@ -567,8 +567,8 @@ export async function requestCampaignAlternatives(workDir, campaignId, trustedTa
     if (!campaign) throw new Error(`Unknown campaign ${campaignId}.`);
     const terminalWithoutAlternatives = ['blocked', 'delivered', 'delivered_limited'].includes(campaign.status);
     const terminalWithAlternatives = ['alternatives_ready', 'alternatives_limited'].includes(campaign.status);
-    if ((!campaign.alternatives && !terminalWithoutAlternatives) ||
-        (campaign.alternatives && !terminalWithAlternatives)) {
+    if ((!campaign.alternatives?.length && !terminalWithoutAlternatives) ||
+        (campaign.alternatives?.length && !terminalWithAlternatives)) {
       throw new Error('Alternatives can be requested only after the primary campaign reaches a terminal result.');
     }
     assertNoActiveProject(campaigns, campaign.brief, campaign.id);

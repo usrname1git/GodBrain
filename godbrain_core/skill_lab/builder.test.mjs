@@ -4,7 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { chromium } from 'playwright';
-import { advanceCampaigns, createCampaign, listCampaigns, regenerateCampaign } from './coach.mjs';
+import { existingBrowserPath } from './browser.mjs';
+import { advanceCampaigns, createCampaign, listCampaigns, regenerateCampaign, requestCampaignAlternatives } from './coach.mjs';
+import { getTask } from './curriculum.mjs';
 import { startDashboard } from './dashboard.mjs';
 import { hashFiles, newState, readJson, runPractice, writeJson } from './gym-core.mjs';
 import { completeObjective, enqueueObjective, listObjectives } from './objectives.mjs';
@@ -257,6 +259,24 @@ test('a saved course resumes after a manual site without losing its checkpoint',
   assert.equal((await readJson(path.join(workDir, 'state.json'))).suspendedCourse, null);
 });
 
+test('a regenerated website can request fresh alternatives without reusing archived objective keys', async t => {
+  const workDir = await workspace(t), id = 'ffffffffffff';
+  await writeJson(path.join(workDir, 'campaigns.json'), { version: 1, items: [{
+    id, status: 'alternatives_ready', brief, capabilities: [], buildGeneration: 1,
+    alternativeGeneration: 3, alternatives: [{ id: 'one', status: 'ready' }],
+  }] });
+  await regenerateCampaign(workDir, id, contracts);
+  const campaigns = await readJson(path.join(workDir, 'campaigns.json'));
+  assert.deepEqual(campaigns.items[0].alternatives, []);
+  campaigns.items[0].status = 'delivered';
+  await writeJson(path.join(workDir, 'campaigns.json'), campaigns);
+  const fresh = await requestCampaignAlternatives(workDir, id, [...contracts, getTask('event-platform-showcase-v1')]);
+  assert.equal(fresh.alternativeGeneration, 4);
+  assert.equal(fresh.alternatives.length, 4);
+  assert.equal(fresh.alternativeHistory[0].generation, 3);
+  assert.ok((await listObjectives(workDir)).some(item => item.stableKey.includes(':set-v4:')));
+});
+
 test('browser exposes retained previews, manual regeneration and the renamed builder', async t => {
   const workDir = await workspace(t);
   const runId = '00000001-aaaaaaaaaaaa';
@@ -272,11 +292,14 @@ test('browser exposes retained previews, manual regeneration and the renamed bui
     alternatives: [{ id: 'one', title: 'Saved direction', status: 'ready', runId }],
   }] });
   const dashboard = await startDashboard({ workDir, trustedTasks: contracts, port: 0 });
-  const browser = await chromium.launch({
-    executablePath: process.env.GODBRAIN_BROWSER || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  let browser;
+  t.after(async () => {
+    try { await browser?.close(); } finally { await dashboard.close(); }
+  });
+  browser = await chromium.launch({
+    executablePath: await existingBrowserPath(process.env.GODBRAIN_BROWSER) ?? undefined,
     headless: true, args: ['--disable-gpu'],
   });
-  t.after(async () => { await browser.close(); await dashboard.close(); });
   const page = await browser.newPage();
   await page.goto(dashboard.origin);
   await page.getByRole('heading', { name: 'CLIENT WEB SITE BUILDER', exact: true }).waitFor();
