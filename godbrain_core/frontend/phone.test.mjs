@@ -10,10 +10,10 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { chromium } = require(path.join(directory, '..', 'skill_lab', 'node_modules', 'playwright'));
 const html = await readFile(path.join(directory, 'phone.html'), 'utf8');
-const executablePath = process.platform === 'win32' ? [
+const executablePath = process.env.GODBRAIN_BROWSER ?? (process.platform === 'win32' ? [
   'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-].find(candidate => existsSync(candidate)) : undefined;
+].find(candidate => existsSync(candidate)) : undefined);
 const launchBrowser = () => chromium.launch({
   headless: true, chromiumSandbox: true, executablePath,
   args: ['--disable-gpu', '--disable-background-networking', '--disable-sync', '--no-first-run'],
@@ -56,6 +56,9 @@ test('Phone Desk mobile rendering, fail-closed states and GET-only polling', asy
   });
   try {
     await page.goto('http://phone.test/');
+    assert.equal(await page.title(), 'Remote Dashboard');
+    assert.equal(await page.locator('h1').textContent(), 'Remote Dashboard');
+    assert.equal(await page.locator('meta[name="apple-mobile-web-app-title"]').getAttribute('content'), 'Remote Dashboard');
     await page.waitForFunction(() => document.getElementById('models').textContent.includes('Qwen EXL3'));
     assert.equal(await page.locator('#services .card').count(), 3);
     assert.equal(await page.locator('#core .core-row').count(), 3);

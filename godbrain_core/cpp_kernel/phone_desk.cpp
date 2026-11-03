@@ -513,7 +513,7 @@ json collect() {
             {"models", models}, {"gpu", gpu_usage()},
             {"services", json::array({rust, tail, ssh})},
             {"speech", speech},
-            {"core", json::array({card("Kernel", "ready", "Phone Desk responds; no command dispatch"), rag, mongo})}};
+            {"core", json::array({card("Kernel", "ready", "Remote Dashboard responds; no command dispatch"), rag, mongo})}};
 }
 }
 
@@ -735,9 +735,9 @@ json model_status(int port, const json& models, const json& health) {
 
 Server::Server(std::string token, const std::string& path) : token_(std::move(token)) {
     std::ifstream file(path, std::ios::binary);
-    if (!file) throw std::runtime_error("Phone Desk HTML is missing");
+    if (!file) throw std::runtime_error("Remote Dashboard HTML is missing");
     html_ = std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    if (html_.empty() || html_.size() > 131072) throw std::runtime_error("Phone Desk HTML size is invalid");
+    if (html_.empty() || html_.size() > 131072) throw std::runtime_error("Remote Dashboard HTML size is invalid");
     if (token_.find_first_not_of(" \t\r\n") != std::string::npos)
         owner_.resolve(true, read_tailscale);
     server_.set_payload_max_length(1024);
@@ -755,7 +755,7 @@ Server::Server(std::string token, const std::string& path) : token_(std::move(to
             if (authorized(request, token_, owner, trusted)) return true;
         }
         response.status = 403;
-        response.set_content(R"({"error":"Open Phone Desk through private Tailscale Serve as the device owner."})", "application/json");
+        response.set_content(R"({"error":"Open Remote Dashboard through private Tailscale Serve as the device owner."})", "application/json");
         return false;
     };
     server_.Get("/", [this, gate](const httplib::Request& request, httplib::Response& response) {

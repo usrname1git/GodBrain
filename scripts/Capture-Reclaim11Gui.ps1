@@ -3,7 +3,8 @@
 param(
     [ValidateSet("door", "expert", "noob")]
     [string]$Door = "door",
-    [string]$OutPng = ""
+    [string]$OutPng = "",
+    [switch]$PublicPreview
 )
 
 Set-StrictMode -Version Latest
@@ -14,6 +15,7 @@ if ($sta -ne "STA") {
     $pwsh = Join-Path $PSHOME "pwsh.exe"
     $arg = @("-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path, "-Door", $Door)
     if ($OutPng) { $arg += @("-OutPng", $OutPng) }
+    if ($PublicPreview) { $arg += "-PublicPreview" }
     $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow
     exit $p.ExitCode
 }
@@ -35,6 +37,16 @@ $window = [Windows.Markup.XamlReader]::Load($reader)
 
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
+if ($PublicPreview) {
+    (Get-Ui OsPin).Text = 'Windows 11 - public UI preview'
+    (Get-Ui SecureBoot).Text = 'Private inventory omitted'
+    (Get-Ui BitLocker).Text = 'Private inventory omitted'
+    (Get-Ui NeverTouch).Text = 'Not scanned'
+    (Get-Ui WdBootGate).Text = 'Public UI capture; no repair handlers are connected.'
+    foreach ($name in @('BtnPrep', 'BtnSafe', 'BtnKill')) { (Get-Ui $name).IsEnabled = $false }
+    (Get-Ui LogBox).Text = 'SANITIZED UI PREVIEW - not a host scan or repair receipt. No host inventory collected. No repair controls invoked.'
+    if (Get-Ui NoobLog) { (Get-Ui NoobLog).Text = 'Sanitized UI preview. No host inventory or repair actions.' }
+} else {
 $inv = Get-Reclaim11Inventory -Root $here
 (Get-Ui OsPin).Text = $inv.os.os_pin
 $sb = $inv.secure_boot
@@ -73,6 +85,7 @@ $log.Text = $lines -join [Environment]::NewLine
 if (Get-Ui NoobLog) {
     (Get-Ui NoobLog).Text = "Beginner mode. TEST FIRST lists what would happen. INSTALL RUSTDESK TO GET REMOTE SUPPORT = official public servers, one-time codes only."
 }
+}
 
 (Get-Ui PanelDoor).Visibility = [Windows.Visibility]::Collapsed
 (Get-Ui PanelNoob).Visibility = [Windows.Visibility]::Collapsed
@@ -83,6 +96,13 @@ switch ($Door) {
     default { (Get-Ui PanelDoor).Visibility = [Windows.Visibility]::Visible }
 }
 
+$window.ShowActivated = $false
+if ($PublicPreview) {
+    $window.WindowStartupLocation = 'Manual'
+    $window.Left = -10000
+    $window.Top = -10000
+    $window.Title += ' - sanitized UI preview'
+}
 $window.Add_ContentRendered({
     $dpi = 96.0
     $w = [Math]::Max(1, [int]$window.ActualWidth)

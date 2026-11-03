@@ -138,7 +138,7 @@ try {
         if ($Serve) {
             $serveUrl = 'https://' + $tail.Self.DNSName.TrimEnd('.')
             $page = Invoke-WebRequest "$serveUrl/" -TimeoutSec 12
-            if ([int]$page.StatusCode -ne 200 -or $page.Content -notmatch 'Phone Desk') {
+            if ([int]$page.StatusCode -ne 200 -or $page.Content -notmatch 'Remote Dashboard') {
                 throw 'Private Serve owner could not open Phone Desk without bearer.'
             }
             $data = Invoke-RestMethod "$serveUrl/api/phone/status" -TimeoutSec 12

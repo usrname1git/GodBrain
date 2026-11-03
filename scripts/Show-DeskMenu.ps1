@@ -11,6 +11,9 @@
 param(
     [switch]$Status,
     [switch]$ControlPanelHost,
+    [ValidateSet('Status', 'Model')]
+    [string]$CaptureView,
+    [string]$CapturePng,
     [switch]$StatusSnapshot,
     [object]$TokenSample,
     [object]$AskRequest,
@@ -23,6 +26,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if (($CaptureView -and -not $CapturePng) -or ($CapturePng -and -not $CaptureView)) {
+    throw "CaptureView and CapturePng must be supplied together."
+}
+if ($CaptureView -and ($Status -or $StatusSnapshot -or $AskRequest -or $MonitorRequest -or $DisplayRequest -or $AirPlayRequest -or $ClipShareRequest)) {
+    throw "A read-only UI capture cannot be combined with an action request."
+}
 $Kit = "C:\nvme\Qwen3.8-27B-16gb"
 $Start27 = Join-Path $Kit "paper-godbrain\Start-Qwen.ps1"
 $StartUncensored = Join-Path $Kit "paper-godbrain\Start-UncensoredQwen.ps1"
@@ -255,7 +264,7 @@ function Get-DeskServeMapping($Configuration) {
         }
         foreach ($entry in $Configuration.AllowFunnel.PSObject.Properties) {
             if ($entry.Value -isnot [bool] -or $entry.Value) {
-                return [pscustomobject]@{ Configured = $false; Empty = $false; Url = ""; Detail = "Funnel enabled or invalid; private Phone Desk required" }
+                return [pscustomobject]@{ Configured = $false; Empty = $false; Url = ""; Detail = "Funnel enabled or invalid; private Remote Dashboard required" }
             }
         }
     }
@@ -274,7 +283,7 @@ function Get-DeskServeMapping($Configuration) {
     }
     return [pscustomobject]@{
         Configured = $false; Empty = $empty; Url = ""
-        Detail = $(if ($empty) { "Phone Desk not configured" } else { "Existing Serve mapping is not persistent private Phone Desk" })
+        Detail = $(if ($empty) { "Remote Dashboard not configured" } else { "Existing Serve mapping is not persistent private Remote Dashboard" })
     }
 }
 
@@ -306,7 +315,7 @@ function Start-DeskPhoneServe {
     if (-not $mapping.Empty) { throw "$($mapping.Detail). Existing Serve configuration was left unchanged." }
     $null = Invoke-DeskTailscale @("serve", "--bg", "--https=443", "http://127.0.0.1:8085")
     $mapping = Read-DeskServeMapping
-    if (-not $mapping.Configured) { throw "Private background Phone Desk Serve did not become configured." }
+    if (-not $mapping.Configured) { throw "Private background Remote Dashboard Serve did not become configured." }
 }
 
 function Get-WatchLine {
@@ -474,7 +483,7 @@ function Stop-OwnedListener([int]$Port, [string]$Needle, [string]$Label) {
         $failure = $_.Exception.GetBaseException()
         $detail = $failure.Message
         if ($failure -is [ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5) {
-            $detail = "Windows denied process access. The listener may be elevated; use a Desk at matching privilege to stop it."
+            $detail = "Windows denied process access. The listener may be elevated; use Command Center at matching privilege to stop it."
         }
         $null = [System.Windows.Forms.MessageBox]::Show(
             "$Label stop failed for PID $($conn.OwningProcess) on :${Port}: $detail`nNo other process was targeted.")
@@ -964,7 +973,7 @@ if ($Status) {
     exit 0
 }
 
-if (-not $ControlPanelHost) {
+if (-not $ControlPanelHost -and -not $CaptureView) {
     Start-Process -FilePath $Pwsh -ArgumentList @(
         "-NoProfile", "-Sta", "-File", $PSCommandPath, "-ControlPanelHost"
     ) -WindowStyle Hidden | Out-Null
@@ -972,7 +981,7 @@ if (-not $ControlPanelHost) {
 }
 
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne "STA") {
-    throw "The Desk control-panel host requires an STA PowerShell process."
+    throw "The Command Center host requires an STA PowerShell process."
 }
 
 if (-not ("NcIn" -as [type])) {
@@ -1650,7 +1659,7 @@ function New-GodBrainIcon {
 $railBg = [System.Drawing.Color]::FromArgb(7, 13, 22)
 $deskIcon = New-GodBrainIcon
 $f = New-Object System.Windows.Forms.Form
-$f.Text = "Desk"
+$f.Text = "Command Center"
 $f.FormBorderStyle = "Sizable"
 $f.MaximizeBox = $true
 # Wide enough for the longest model id, a gap, then Start and Stop.
@@ -1883,7 +1892,7 @@ function Style-Box([System.Windows.Forms.TextBox]$t) {
     $t.ForeColor = $ink
 }
 
-Add-Head $pageStatus "Status" 16
+Add-Head $pageStatus "Workstation && AI control" 16
 Add-Button $pageStatus "Galaxy" ($script:pageW - 100) 8 84 { Start-Process "http://127.0.0.1:8083/" } $false
 ($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Galaxy" }).Anchor = "Top, Right"
 $rowModel = Add-Pair $pageStatus "Model" 48 { Start-SelectedModel } { Stop-ActiveModel }
@@ -2022,11 +2031,11 @@ function Update-Status([switch]$Poll) {
         $script:statusRefreshRequested = $false
     }
 }
-Update-Status
+if (-not $CaptureView) { Update-Status }
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
 $timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation; Update-ClipShareOperation })
-$timer.Start()
+if (-not $CaptureView) { $timer.Start() }
 
 Add-Head $pageShare "ClipShare" 16
 $script:clipShareStatus = New-Object System.Windows.Forms.Label
@@ -2062,7 +2071,7 @@ $shareHint = New-Object System.Windows.Forms.Label
 $shareHint.Location = [Drawing.Point]::new(20, 348)
 $shareHint.Size = [Drawing.Size]::new(($script:pageW - 40), 180)
 $shareHint.ForeColor = $mute
-$shareHint.Text = "Background user app, not a Windows service. Closing Desk leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nSharing uses the configured public HTTPS hostname; Library stays private. Copy link selects the newest active share, including manual and never-expiring shares. Imports default to 7 days; files are not auto-deleted."
+$shareHint.Text = "Background user app, not a Windows service. Closing Command Center leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nSharing uses the configured public HTTPS hostname; Library stays private. Copy link selects the newest active share, including manual and never-expiring shares. Imports default to 7 days; files are not auto-deleted."
 $pageShare.Controls.Add($shareHint)
 
 Add-Head $pageModel "Model" 16
@@ -2739,7 +2748,7 @@ Paint-Button $script:monitorClaimHotkey $false
 $script:monitorClaimHotkey.Add_Click({ Register-MonitorHotkey })
 $pageMonitor.Controls.Add($script:monitorClaimHotkey)
 $monitorNote = [Windows.Forms.Label]::new()
-$monitorNote.Text = "DDM is not required. F9 stays active while Desk is hidden; quit releases it. No mouse hooks, automatic cycle retries or background monitor polling."
+$monitorNote.Text = "DDM is not required. F9 stays active while Command Center is hidden; quit releases it. No mouse hooks, automatic cycle retries or background monitor polling."
 $monitorNote.ForeColor = $mute
 $monitorNote.Location = [Drawing.Point]::new(20, 536)
 $monitorNote.Size = [Drawing.Size]::new(($script:pageW - 40), 60)
@@ -2770,7 +2779,7 @@ function Show-MonitorNotice([string]$Text, [bool]$Failed = $false) {
 }
 function Register-MonitorHotkey {
     if ($script:monitorHotkey.Register()) {
-        $script:monitorHotkeyHint.Text = "F9 ready, including while Desk is hidden. Each press advances one step; current level is unavailable."
+        $script:monitorHotkeyHint.Text = "F9 ready, including while Command Center is hidden. Each press advances one step; current level is unavailable."
         if ($script:monitorMessage.Text -like "F9 unavailable*") {
             Show-MonitorNotice "F9 registered. Each press sends one cycle command; current level is unavailable."
         }
@@ -3026,7 +3035,7 @@ function Register-DisplayHotkeys {
             param($sender, $event)
             Start-DisplayOperation "apply" $script:displayHotkeyNames[$sender.Handle.ToInt64()]
         })
-        if ($hotkey.Register()) { $script:displayHotkeyStatus += "Ctrl+Alt+F$($profile.hotkey): $($profile.name) ready (also while Desk is hidden)." }
+        if ($hotkey.Register()) { $script:displayHotkeyStatus += "Ctrl+Alt+F$($profile.hotkey): $($profile.name) ready (also while Command Center is hidden)." }
         else { $script:displayHotkeyStatus += "Ctrl+Alt+F$($profile.hotkey): unavailable, Windows error $($hotkey.RegistrationError). Release its other owner, then Refresh." }
     }
 }
@@ -3127,6 +3136,71 @@ Set-DisplayEnabled
 Update-DisplayDetails
 Show-Page "Status"
 
+if ($CaptureView) {
+    try {
+        $path = [IO.Path]::GetFullPath($CapturePng)
+        if ([IO.Path]::GetExtension($path) -ne '.png') { throw "CapturePng must name a PNG file." }
+        $snapshot = Get-DeskSnapshot
+        foreach ($entry in $script:statusRows.GetEnumerator()) {
+            $text = [string]$snapshot.Rows.($entry.Key)
+            if ($entry.Key -in @('Rust', 'Ssh', 'Tail', 'Serve', 'ClipShare', 'AirPlay', 'Watch')) {
+                $text = 'Private details omitted'
+            }
+            $text = $text -replace '[A-Za-z]:\\[^\r\n]*', '[local path omitted]'
+            $text = $text -replace 'https?://\S+', '[private URL omitted]'
+            $text = $text -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '[address omitted]'
+            $entry.Value.Text = $text
+        }
+        $script:modelLive.Text = 'Public UI capture; live diagnostic details omitted'
+        $f.ClientSize = [Drawing.Size]::new(660, 740)
+        Show-Page $CaptureView
+        $notice = [Windows.Forms.Label]::new()
+        $notice.Text = 'Sanitized read-only capture - not a host readiness certificate'
+        $notice.Dock = 'Bottom'
+        $notice.Height = 30
+        $notice.Padding = [Windows.Forms.Padding]::new(10, 6, 0, 0)
+        $notice.BackColor = $card
+        $notice.ForeColor = $mute
+        $f.Controls.Add($notice)
+        $notice.BringToFront()
+        if (-not ('ShowcaseWindow' -as [type])) {
+            Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class ShowcaseWindow {
+    [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")]
+    public static extern IntPtr GetStyle(IntPtr window, int index);
+    [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")]
+    public static extern IntPtr SetStyle(IntPtr window, int index, IntPtr value);
+}
+'@
+        }
+        $f.ShowInTaskbar = $false
+        $f.StartPosition = 'Manual'
+        $f.Location = [Drawing.Point]::new(-32000, -32000)
+        [void]$f.Handle
+        $style = [ShowcaseWindow]::GetStyle($f.Handle, -20).ToInt64() -bor 0x08000000
+        [void][ShowcaseWindow]::SetStyle($f.Handle, -20, [IntPtr]::new($style))
+        $f.Show()
+        [Windows.Forms.Application]::DoEvents()
+        $f.PerformLayout()
+        $bitmap = [Drawing.Bitmap]::new($f.Width, $f.Height)
+        try {
+            $f.DrawToBitmap($bitmap, [Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height))
+            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
+            $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $bitmap.Dispose() }
+        Write-Output $path
+    } finally {
+        $timer.Dispose()
+        foreach ($worker in @($script:statusWorker, $script:askWorker, $script:airPlayWorker, $script:clipShareWorker, $script:monitorWorker, $script:displayWorker)) {
+            if ($worker) { $worker.Dispose() }
+        }
+        $f.Dispose()
+    }
+    return
+}
+
 $script:quit = $false
 function Show-DeskFromTray {
     $p = [System.Windows.Forms.Cursor]::Position
@@ -3144,7 +3218,7 @@ function Show-DeskFromTray {
 }
 $script:ni = New-Object System.Windows.Forms.NotifyIcon
 $script:ni.Icon = $deskIcon
-$script:ni.Text = "GodBrain"
+$script:ni.Text = "GodBrain Command Center"
 $script:ni.Visible = $true
 $script:ni.Add_MouseUp({
     param($sender, $e)

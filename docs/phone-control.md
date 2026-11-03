@@ -20,23 +20,23 @@ The SSH start does not need the GodBrain kernel, model or tray panel running.
 It verifies the service and its SYSTEM-owned backend, not just a GUI process.
 The PC must already be awake and reachable over Tailscale/SSH, RustDesk must be
 installed, and the SSH account must have administrative rights. CS2 must be
-stopped. This is separate from the deliberately read-only Phone Desk page.
+stopped. This is separate from the deliberately read-only Remote Dashboard page.
 See the [copyable command and Shortcut flow](#rustdesk-one-command-then-open-the-client).
 
 ## What you can do
 
 | Capability | Phone workflow | Limits |
 |---|---|---|
-| Model identity/profile, busy state, global VRAM, RustDesk/Tailscale/SSH and core-service overview | Safari/Android browser: Phone Desk through Tailscale Serve | Read-only; Refresh never starts, repairs, restarts or generates. Mongo is service + TCP, not a database transaction test. |
+| Model identity/profile, busy state, global VRAM, RustDesk/Tailscale/SSH and core-service overview | Safari/Android browser: Remote Dashboard through Tailscale Serve | Read-only; Refresh never starts, repairs, restarts or generates. Mongo is service + TCP, not a database transaction test. |
 | Start the remote-desktop backend | iOS Run Script Over SSH or an Android key-authenticated SSH client: `scripts\Start-RustDesk.ps1` | Administrative Windows token; installed RustDesk executable; CS2 must be stopped. A GUI window alone is not readiness. |
 | Full PC GUI, files and desktop controls | Connect the mobile RustDesk client to the PC after backend success | Existing RustDesk authentication still applies. Opening the client does not connect or start the PC backend. |
 | Start only kernel/RAG | SSH: `Start-GodBrain.ps1 -Only kernel` or `-Only rag` | Existing binaries/environment/Mongo and required permissions; these scoped starts leave the model untouched. |
 | Diagnostics and local health | SSH: PowerShell service/process/log queries and loopback health URLs | Commands run as the authenticated Windows user, not a restricted web-dashboard role. |
 | Ask the local Jarvis or ingest a text source | SSH: `scripts\Ask-GodBrain.ps1`, `scripts\Invoke-Librarian.ps1` | Requires the configured services/mouth; ingestion remains candidate, not verified. |
 | Launch/stop a model or run gym work | SSH: existing installed launchers; or the desktop controls through RustDesk | Explicit actions, one GPU slot, required model kit/weights and pause/CS2 gates. Foreground launchers keep the SSH session occupied. |
-| Save ideas, read pending/last/edit history, or judge a candidate | Native Shortcut/SSH client using the existing tailnet API | Configured bearer token; judging needs a reason. Not controls on Phone Desk. |
+| Save ideas, read pending/last/edit history, or judge a candidate | Native Shortcut/SSH client using the existing tailnet API | Configured bearer token; judging needs a reason. Not controls on Remote Dashboard. |
 | AFK host recovery with optional gym/model maintenance | Existing desktop Watch controls, accessible through RustDesk | Operator-enabled; host-only default; Limited task service-start rights are not assumed or granted. |
-| OCR images, transcribe audio or synthesize speech | Native HTTP Shortcut/client to the optional `:8001` helper | Separate API key for remote POSTs; local assets required. STT/TTS stay CPU; OCR can use an already-idle vision model. Not actions on Phone Desk. |
+| OCR images, transcribe audio or synthesize speech | Native HTTP Shortcut/client to the optional `:8001` helper | Separate API key for remote POSTs; local assets required. STT/TTS stay CPU; OCR can use an already-idle vision model. Not actions on Remote Dashboard. |
 
 These are ways to operate the existing Windows runtime, not new permissions.
 Administrative SSH is powerful: use keys, protect the phone and do not turn
@@ -68,7 +68,12 @@ Private keys stay on the phone. Public keys go in the approved Windows key
 file. Do not commit keys, actual tailnet addresses, API tokens, service
 receipts or exported secret-bearing shortcuts.
 
-## Read-only Phone Desk
+<a id="read-only-phone-desk"></a>
+
+## Read-only Remote Dashboard
+
+The display name changed from Phone Desk; listener, route and launcher names
+are unchanged. Existing iOS home-screen shortcuts may retain their cached label.
 
 Build/reload the kernel with `GODBRAIN_API_TOKEN` configured. The separate
 listener binds **127.0.0.1:8085** inside the existing C++ process. It serves
@@ -236,7 +241,7 @@ endpoints, headers and payloads; their UI wiring is client-specific.
 
 ### Status and troubleshooting
 
-Phone Desk's **Speech / OCR** cards poll only local `/health.components`:
+Remote Dashboard's **Speech / OCR** cards poll only local `/health.components`:
 `available` means dependency/weight files exist, not verified inference;
 `ready` means the last component request succeeded; `unready` shows missing
 assets or a backend error. Invalid/legacy health is unknown, and a stopped helper
@@ -270,11 +275,11 @@ from request/authorization correctness.
 
 ## RustDesk: one command, then open the client
 
-Phone Desk observes SCM state and the installed service's live server child;
+Remote Dashboard observes SCM state and the installed service's live server child;
 it does not run RustDesk's administrator-only option query. If the kernel cannot
 inspect the server, the card keeps **running** and explains the unavailable
 observation instead of hiding known service state or claiming **ready**.
-An observed server is not an end-to-end remote connection test. Phone Desk's
+An observed server is not an end-to-end remote connection test. Remote Dashboard's
 Tailscale transport authentication still requires the strict process-owner check.
 
 The remote command is the same on either phone platform:
@@ -348,7 +353,9 @@ so a late starter cannot survive merely because its maintenance parent exited.
 Heal records `start:<service>` only after a requested start is observed Running;
 permission failures, missing services and readiness timeouts are not successes.
 
-## Native Shortcut API (separate from Phone Desk)
+<a id="native-shortcut-api-separate-from-phone-desk"></a>
+
+## Native Shortcut API (separate from Remote Dashboard)
 
 The authenticated tailnet listener remains on the PC's private address,
 port `8083`. Every route there requires
@@ -358,7 +365,7 @@ Tailscale encrypts the tailnet transport. Do not put the token in a browser
 URL or publish an exported shortcut.
 
 Useful existing reads include `/api/last`, `/api/pending`, `/api/last-edit`,
-`/api/events`, `/api/chain` and `/api/heal`. Prefer Phone Desk for passive
+`/api/events`, `/api/chain` and `/api/heal`. Prefer Remote Dashboard for passive
 service polling; legacy `/api/status` and `/api/brief` can start llama.
 
 An idea button can POST JSON `{"text":"My note","sector":"idea"}` to
@@ -370,7 +377,7 @@ exposed on this listener; call the loopback chat door via explicit SSH.
 
 ## Recovery limits and evidence
 
-Phone Desk depends on the kernel and Tailscale. SSH can recover a dead
+Remote Dashboard depends on the kernel and Tailscale. SSH can recover a dead
 kernel when sshd and the network path still work; it cannot recover its own
 dead SSH transport. Neither a domain name nor an exit node makes an offline
 PC reachable. Independent outbound recovery and health-aware Ethernet/Wi-Fi
@@ -392,7 +399,7 @@ Scoped checks: `scripts\Test-PhoneDesk.ps1` (`-Live` for passive host checks),
 `scripts\Test-Cs2Controls.ps1`, `scripts\Test-AfkWatch.ps1`.
 For speech/OCR, run `python -B -m unittest discover -s .\scripts -p test_voice_door.py`
 and `python -B .\scripts\voice_door.py --self-test` in the configured Python
-environment. Native Phone Desk checks require VS x64 C++ tools; browser
+environment. Native Remote Dashboard checks require VS x64 C++ tools; browser
 checks reuse the pinned Playwright dependency in `godbrain_core\skill_lab`
 (`npm ci --prefix .\godbrain_core\skill_lab` if it is not installed) and an
 installed Brave/Edge browser on Windows. These offline checks do not perform

@@ -1,4 +1,8 @@
-# Native Desk control panel
+# Command Center
+
+**Workstation & AI control.** The read-only mobile surface is **Remote
+Dashboard**. Launcher filenames, API paths and internal service names remain
+unchanged; this is not a GodBrain-wide rename.
 
 Run `.\scripts\Show-DeskMenu.ps1` from PowerShell. It returns the caller's
 shell and opens a separate hidden STA WinForms host. X hides the panel;
@@ -451,7 +455,7 @@ The helper exposes `/health`, `/v1/audio/transcriptions`,
 means local dependencies/weights exist, not that inference was verified.
 A successful request reports `ready`; a backend failure reports `unready`
 with its error until a later successful request. Health polling itself never
-loads weights or generates. Phone Desk shows these passive states and errors.
+loads weights or generates. Remote Dashboard shows these passive states and errors.
 Public backend errors are sanitized; detailed errors stay in the authenticated
 POST response. STT checks the local tokenizer/model/config before initialization
 and does not fetch missing assets.
@@ -463,7 +467,7 @@ process to ten seconds without passing flags to `up`. Its errors
 are labeled Tailscale, not CS2; no Steam or game process is required.
 
 The Status page also has a separate **Serve** row. Tailscale Start preserves
-an existing private HTTPS mapping to Phone Desk on `127.0.0.1:8085`; with no
+an existing private HTTPS mapping to Remote Dashboard on `127.0.0.1:8085`; with no
 Serve configuration it installs that mapping using `serve --bg --https=443`.
 An unrelated mapping or Funnel configuration is left unchanged and reported.
 The CLI's unconfigured JSON `null` is accepted; blank, malformed or other
@@ -479,9 +483,11 @@ tailnet-only binding or TLS endpoint. The panel does not create firewall
 rules or configure remote exposure. This is separate from the C++ kernel's
 `GODBRAIN_API_TOKEN` boundary.
 
-## Phone Desk authorization
+<a id="phone-desk-authorization"></a>
 
-Phone Desk runs unelevated. Owner-only requests must arrive over the actual
+## Remote Dashboard authorization
+
+Remote Dashboard runs unelevated. Owner-only requests must arrive over the actual
 private Serve TCP connection, owned by the running LocalSystem Tailscale service
 or its immediate session-0 worker. The kernel checks the configured service
 executable and native process names, ancestry and creation times, then rechecks
@@ -622,6 +628,13 @@ Build the native helper once with `.\scripts\Build-DeskMonitor.ps1`.
 The Monitor page uses User32/Dxva2 directly for the Dell S2522HG: brightness,
 contrast and advertised color presets have hardware readback verification.
 No DDM installation, SDK or background monitor poller is required.
+Command Center keeps its existing native helper on a private stdin/stdout
+connection while the window is open. Repeated Apply operations reuse the
+expensive capability discovery for at most 30 seconds; active display/device
+identities are checked each time, and topology changes or errors discard the
+cached handles. Hardware writes and complete readback still run serially.
+There is no artificial unlock delay, queued write or premature success; controls
+unlock when the verified result arrives. Quitting closes the owned helper.
 Discovery checks all active monitor identities, ignoring stale records left
 by display-profile switches. Contrast writes are limited to **25-100** in the
 UI and both helper layers; brightness remains 0-100. If another program sets
@@ -632,7 +645,7 @@ Dark Stabilizer is a **Cycle (F9)** action beside the static
 **Disabled / Enabled level 1-3** legend. The legend is not current status:
 this monitor does not expose usable absolute-level readback. Each button/key
 press sends one E3=`10` command; no automatic retry, fake counter or queued
-busy press. F9 works while Desk is hidden, including before opening Monitor.
+busy press. F9 works while Command Center is hidden, including before opening Monitor.
 An existing owner is reported; exit it and use Claim F9. Quitting unregisters
 the hotkey. There are no mouse hooks or additional hotkey services.
 
@@ -748,6 +761,6 @@ restore action. Do not use it for routine PR or RAG-ingestion validation.
 layouts. `Test-AirPlay.ps1 -Live` and `Test-DeskMenu.ps1 -UiSmoke -AirPlayLive`
 exercise the receiver lifecycle and require it initially stopped; they do not
 test discovery or audio playback.
-Phone Desk's browser checks use the existing Playwright dependency from
+Remote Dashboard's browser checks use the existing Playwright dependency from
 `godbrain_core\skill_lab`; see the phone guide for scoped setup and optional
 passive live checks.

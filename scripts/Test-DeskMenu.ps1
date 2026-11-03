@@ -341,7 +341,7 @@ $script:ports = @()
     Assert-Equal (Get-DeskServeMapping $script:serveConfig).Configured $true
     $script:serveConfig = $null
     $script:serveCommands = @()
-    Assert-Equal (Get-TailscaleServeLine) "Phone Desk not configured"
+    Assert-Equal (Get-TailscaleServeLine) "Remote Dashboard not configured"
     if (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) {
         throw "Polling configured an empty Serve mapping."
     }
@@ -1094,13 +1094,19 @@ if ($UiSmoke) {
     $source = [System.Collections.Generic.List[string]]::new()
     foreach ($statement in $ast.EndBlock.Statements) {
         if ($statement.Extent.Text -eq '$f.Show()') { break }
-        if ($statement.Extent.Text -in @('Update-Status', '$timer.Start()')) { continue }
+        if ($statement.Extent.Text -in @(
+            'Update-Status', '$timer.Start()',
+            'if (-not $CaptureView) { Update-Status }',
+            'if (-not $CaptureView) { $timer.Start() }'
+        )) { continue }
         $source.Add($statement.Extent.Text)
     }
     $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null; $MonitorRequest = $null; $DisplayRequest = $null; $AirPlayRequest = $null
     $panelPath = "'" + (Join-Path $PSScriptRoot "Show-DeskMenu.ps1").Replace("'", "''") + "'"
     try {
         . ([scriptblock]::Create(($source -join "`n").Replace('$PSScriptRoot', '$script:uiScriptsRoot').Replace('$PSCommandPath', $panelPath)))
+        Assert-Equal $f.Text 'Command Center'
+        Assert-Equal $script:ni.Text 'GodBrain Command Center'
         if ($afkGym.Parent -ne $pageStatus -or $afkGym.Bounds.Bottom -gt $pageStatus.ClientSize.Height) {
             throw "AFK option is outside the Status page."
         }
