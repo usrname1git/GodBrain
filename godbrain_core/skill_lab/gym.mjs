@@ -231,6 +231,7 @@ Passing exercises become local gym lessons without /verify; they grant no host a
   const tasks = values.task ? TASKS.filter(task => task.id === values.task) : TASKS;
   if (!tasks.length) throw new Error(`Unknown exercise: ${values.task}`);
   const { evaluateCandidate, EVALUATOR_VERSION } = await import('./browser.mjs');
+  const { evaluateProjectCandidate } = await import('./project-browser.mjs');
   const evaluatorHash = createHash('sha256');
   for (const file of [
     'browser.mjs', 'curriculum.mjs', 'competencies.mjs', 'course-factory.mjs',
@@ -374,7 +375,9 @@ Passing exercises become local gym lessons without /verify; they grant no host a
         console.log(`${new Date().toISOString()} ${result.taskId} ${result.passed ? 'PASS' : 'RETRY'} | ${degree.filter(course => course.status === 'mastered').length}/${degree.length} courses | attempts=${result.stats.attempts} examples=${result.lessonCount} | ${result.runId}`);
       },
     }, {
-      tasks, evaluate: evaluateCandidate, evaluatorVersion: evidenceVersion,
+      tasks, evaluate: options => options.task?.clientProjectIds?.length
+        ? evaluateProjectCandidate({ ...options, workDir })
+        : evaluateCandidate(options), evaluatorVersion: evidenceVersion,
       documentation: createDocumentationReader(workDir, { offline: values['offline-docs'] }),
     });
   } finally {

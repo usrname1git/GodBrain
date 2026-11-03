@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { cancelObjective, enqueueObjective, listObjectives } from './objectives.mjs';
 import { readJson, writeJson } from './gym-core.mjs';
+import { loadProjectCatalog, projectIds } from './project-assets.mjs';
 
 const SITE_TYPES = new Set([
   'business', 'storefront', 'portfolio', 'documentation',
@@ -80,6 +81,7 @@ export function validateClientBrief(input) {
   const features = [...new Set(Array.isArray(input.features) ? input.features.map(String) : [])];
   if (features.some(feature => !FEATURE_NAMES.has(feature))) throw new Error('Unknown client feature.');
   if (features.length > FEATURE_NAMES.size) throw new Error('Too many client features.');
+  const projects = projectIds(input.projectIds);
   return {
     name: text(input.name, 'Project name', 120, true),
     siteType,
@@ -88,7 +90,13 @@ export function validateClientBrief(input) {
     features,
     styleReference: text(input.styleReference, 'Style reference', 1200),
     brandNotes: text(input.brandNotes, 'Brand notes', 1600),
+    ...(projects.length ? { projectIds: projects } : {}),
   };
+}
+
+function projectBrief(brief) {
+  if (!brief.projectIds?.length) return '';
+  return `Use the supplied projects prop for ${brief.projectIds.join(', ')}. Each project has id,title,description,url,sourceUrl,cover,images:[{id,url,width,height,description,captureKind}]. Render each cover as <img src={image.url}> from these props, not hardcoded paths or values. Do not fetch images or use CSS image URLs. Preserve the capture disclaimers.`;
 }
 
 function campaignPrompt(brief, contractTitle) {
@@ -107,6 +115,7 @@ function assemblyShellPrompt(campaign) {
   const limitations = campaign.capabilities.filter(item => item.outcome !== 'passed');
   return objectivePrompt([
     `Build a compact but complete first-pass client frontend "${brief.name}".`,
+    projectBrief(brief),
     `Site type: ${brief.siteType}.`,
     `Client brief: ${brief.brief}`,
     brief.pages ? `Pages or sections: ${brief.pages}` : '',
@@ -126,6 +135,7 @@ function assemblyPolishPrompt(campaign) {
   const brief = campaign.brief;
   return objectivePrompt([
     `Polish and integrate the existing source for "${brief.name}" without replacing it with an unrelated design.`,
+    projectBrief(brief),
     `Client brief: ${brief.brief}`,
     brief.pages ? `Required pages or sections: ${brief.pages}` : '',
     brief.brandNotes ? `Brand direction: ${brief.brandNotes}` : '',
@@ -135,6 +145,13 @@ function assemblyPolishPrompt(campaign) {
 
 export function alternativePrompt(campaign, variant, stage, retry = 0) {
   const brief = campaign.brief;
+  if (brief.projectIds?.length) {
+    return objectivePrompt([
+      `Restyle the existing client site "${brief.name}" as "${variant.title}".`,
+      projectBrief(brief), variant.direction,
+      'Change only CSS; preserve the existing React structure, catalog-driven images, navigation and interactions. No CSS image URLs.',
+    ]);
+  }
   const common = [
     `Create the "${variant.title}" alternative for ${brief.name}.`,
     variant.direction,
@@ -263,18 +280,19 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
           let styles = objectives.find(item => item.stableKey === stableKey);
           if (!styles) {
             styles = await enqueueObjective(workDir, {
-              mode: 'qualify',
+              mode: campaign.brief.projectIds?.length ? 'explore' : 'qualify',
               title: `${campaign.brief.name}: ${variant.title} visual system${generation > 1 ? ` (rerun ${generation})` : ''}`,
               prompt: alternativePrompt(campaign, variant, 'styles', retry),
               styleReference: campaign.brief.styleReference,
-              contractTaskId: 'event-platform-showcase-v1',
+              contractTaskId: campaign.brief.projectIds?.length ? undefined : 'event-platform-showcase-v1',
             }, trustedTasks, {
               stableKey,
               campaignId: campaign.id,
               campaignStage: 'alternative-styles',
               maxTokens: 4096,
-              initialRunId: variant.appRunId ?? null,
-              templateTaskId: variant.appRunId ? null : 'event-platform-showcase-v1',
+              initialRunId: variant.appRunId ?? (campaign.brief.projectIds?.length ? campaign.previewRunId : null),
+              templateTaskId: variant.appRunId || campaign.brief.projectIds?.length ? null : 'event-platform-showcase-v1',
+              clientProjectIds: campaign.brief.projectIds,
               fileMode: 'styles',
               evaluationProfile: 'full',
               variantId: variant.id,
@@ -381,6 +399,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
             stableKey,
             campaignId: campaign.id,
             campaignStage: 'assembly-shell',
+            clientProjectIds: campaign.brief.projectIds,
             maxTokens: 4096,
           });
           objectives.push(assembly);
@@ -421,6 +440,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
               stableKey,
               campaignId: campaign.id,
               campaignStage: 'assembly-polish',
+              clientProjectIds: campaign.brief.projectIds,
               maxTokens: 4096,
               initialRunId,
             });
@@ -450,6 +470,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
               stableKey,
               campaignId: campaign.id,
               campaignStage: 'assembly-shell-recovery',
+              clientProjectIds: campaign.brief.projectIds,
               maxTokens: 4096,
             });
             objectives.push(recovery);
@@ -479,6 +500,7 @@ async function reconcileCampaigns(workDir, campaigns, trustedTasks) {
 
 export async function createCampaign(workDir, input, trustedTasks) {
   const brief = validateClientBrief(input);
+  if (brief.projectIds?.length) await loadProjectCatalog(workDir, brief.projectIds);
   return transaction(async () => {
     const campaigns = await readCampaigns(workDir);
     if (campaigns.version !== 1 || !Array.isArray(campaigns.items)) throw new Error('Campaign store is damaged.');
@@ -565,6 +587,9 @@ export async function requestCampaignAlternatives(workDir, campaignId, trustedTa
     const campaigns = await readCampaigns(workDir);
     const campaign = campaigns.items.find(item => item.id === campaignId);
     if (!campaign) throw new Error(`Unknown campaign ${campaignId}.`);
+    if (campaign.brief.projectIds?.length && !campaign.previewRunId) {
+      throw new Error('Project-image alternatives require an existing browser-checked site to restyle.');
+    }
     const terminalWithoutAlternatives = ['blocked', 'delivered', 'delivered_limited'].includes(campaign.status);
     const terminalWithAlternatives = ['alternatives_ready', 'alternatives_limited'].includes(campaign.status);
     if ((!campaign.alternatives?.length && !terminalWithoutAlternatives) ||

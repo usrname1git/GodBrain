@@ -341,7 +341,7 @@ $script:ports = @()
     Assert-Equal (Get-DeskServeMapping $script:serveConfig).Configured $true
     $script:serveConfig = $null
     $script:serveCommands = @()
-    Assert-Equal (Get-TailscaleServeLine) "Phone Desk not configured"
+    Assert-Equal (Get-TailscaleServeLine) "Remote Dashboard not configured"
     if (@($script:serveCommands | Where-Object { $_[1] -eq "--bg" }).Count) {
         throw "Polling configured an empty Serve mapping."
     }
@@ -1097,13 +1097,19 @@ if ($UiSmoke) {
     $source = [System.Collections.Generic.List[string]]::new()
     foreach ($statement in $ast.EndBlock.Statements) {
         if ($statement.Extent.Text -eq '$f.Show()') { break }
-        if ($statement.Extent.Text -in @('Update-Status', '$timer.Start()')) { continue }
+        if ($statement.Extent.Text -in @(
+            'Update-Status', '$timer.Start()',
+            'if (-not $CaptureView) { Update-Status }',
+            'if (-not $CaptureView) { $timer.Start() }'
+        )) { continue }
         $source.Add($statement.Extent.Text)
     }
     $ControlPanelHost = $true; $Status = $false; $StatusSnapshot = $false; $AskRequest = $null; $MonitorRequest = $null; $DisplayRequest = $null; $AirPlayRequest = $null
     $panelPath = "'" + (Join-Path $PSScriptRoot "Show-DeskMenu.ps1").Replace("'", "''") + "'"
     try {
         . ([scriptblock]::Create(($source -join "`n").Replace('$PSScriptRoot', '$script:uiScriptsRoot').Replace('$PSCommandPath', $panelPath)))
+        Assert-Equal $f.Text 'Command Center'
+        Assert-Equal $script:ni.Text 'GodBrain Command Center'
         if ($afkGym.Parent -ne $pageStatus -or $afkGym.Bounds.Bottom -gt $pageStatus.ClientSize.Height) {
             throw "AFK option is outside the Status page."
         }
@@ -1872,6 +1878,34 @@ public static class DisplayHotkeyFixtureMessage {
         Write-Output "PASS: Layouts navigation, bounds, async capture/preview, direct Apply/hotkey receipts, no-queue switching, hidden Ctrl+Alt+F24 collision/reclaim/release, failure and recovery; synthetic profiles only."
         Show-Page "Status"
         Write-Output "PASS: Monitor icon/page bounds, slow-I/O UI timer responsiveness, readback display and disconnected fail-closed controls; no real monitor probes or writes."
+        & {
+            $captureFixture = Join-Path $Repo ('logs\capture-test-' + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($captureFixture)
+            try {
+                $privateSettings = Join-Path $captureFixture 'private-settings.json'
+                [IO.File]::WriteAllText($privateSettings, '{"version":0,"profiles":{}}')
+                try { Read-DeskModelProfiles $privateSettings; throw 'Invalid settings were accepted.' }
+                catch { $script:modelSettingsError = $_.Exception.Message }
+                if (-not $script:modelSettingsError.Contains($privateSettings)) { throw 'Fixture did not reproduce the private-path diagnostic.' }
+                $script:modelSettingsHint.Text = $script:modelSettingsError
+                $CaptureView = 'Model'; $CapturePng = Join-Path $captureFixture 'model.png'
+                $captureProbes = [pscustomobject]@{ Count = 0 }
+                function Get-DeskSnapshot { $captureProbes.Count++; return @{ Rows = @{} } }
+                $capture = $ast.EndBlock.Statements | Where-Object {
+                    $_ -is [Management.Automation.Language.IfStatementAst] -and
+                    $_.Clauses[0].Item1.Extent.Text -eq '$CaptureView'
+                }
+                if (@($capture).Count -ne 1) { throw 'Capture branch not found.' }
+                $body = $capture.Clauses[0].Item2.Statements[0].Body.Statements.Extent.Text -join "`n"
+                & ([scriptblock]::Create($body)) | Out-Null
+                Assert-Equal $captureProbes.Count 1
+                Assert-Equal $script:modelSettingsHint.Text 'Saved model settings are invalid; private diagnostic details omitted.'
+                $image = [Drawing.Image]::FromFile($CapturePng)
+                try { if ($image.Width -lt 600 -or $image.Height -lt 700) { throw 'Capture was not rendered.' } }
+                finally { $image.Dispose() }
+                Write-Output 'PASS: actual offscreen Model capture with invalid saved settings omits the private diagnostic; mocked status only.'
+            } finally { Remove-Item -LiteralPath $captureFixture -Recurse -Force }
+        }
         if ($AirPlayLive) {
             Write-Output 'PASS: native STA desk construction/render and bounds; only explicitly selected AirPlay controls exercised.'
         } else {

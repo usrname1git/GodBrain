@@ -198,7 +198,53 @@ struct Target {
     bool selected = false; // Dxva2 handles are opaque; zero can be valid.
     Capabilities caps;
     std::string display;
+    std::wstring topology;
+    ULONGLONG discovered_at = 0;
+    mutable bool read_failed = false;
 };
+
+static std::wstring topology_signature() {
+    std::vector<HMONITOR> screens;
+    if (!EnumDisplayMonitors(nullptr, nullptr, collect_monitor, reinterpret_cast<LPARAM>(&screens)))
+        throw std::runtime_error(win_error("Display enumeration"));
+    std::vector<std::wstring> identities;
+    for (const auto screen : screens) {
+        MONITORINFOEXW info{};
+        info.cbSize = sizeof(info);
+        if (!GetMonitorInfoW(screen, reinterpret_cast<MONITORINFO*>(&info)))
+            throw std::runtime_error(win_error("Display identity"));
+        std::wstring identity = std::to_wstring(reinterpret_cast<uintptr_t>(screen)) + L":" + info.szDevice;
+        bool complete = false;
+        for (DWORD index = 0; index < 32; ++index) {
+            DISPLAY_DEVICEW device{};
+            device.cb = sizeof(device);
+            if (!EnumDisplayDevicesW(info.szDevice, index, &device, 0)) { complete = true; break; }
+            if (device.StateFlags & DISPLAY_DEVICE_ACTIVE) {
+                identity += L"|" + std::wstring(device.DeviceID) + L"|" + device.DeviceKey;
+            }
+        }
+        if (!complete) throw std::runtime_error("Monitor identity enumeration exceeds its limit");
+        identities.push_back(std::move(identity));
+    }
+    std::sort(identities.begin(), identities.end());
+    std::wstring result;
+    for (const auto& identity : identities) result += identity + L"\n";
+    return result;
+}
+
+template <typename Discover>
+static Target& session_target(std::unique_ptr<Target>& cached, const std::wstring& topology,
+                              ULONGLONG now, Discover discover) {
+    if (!cached || cached->read_failed || cached->topology != topology || now - cached->discovered_at >= 30000) {
+        if (cached && cached->owner) cached->owner->close();
+        cached.reset();
+        auto target = discover();
+        target.topology = topology;
+        target.discovered_at = now;
+        cached = std::make_unique<Target>(std::move(target));
+    }
+    return *cached;
+}
 
 static bool match_physical_target(Target& target, HANDLE handle, Capabilities caps, const wchar_t* display) {
     if (caps.model != "S2522HG") return false;
@@ -283,18 +329,20 @@ static DWORD read_dark(HANDLE monitor) {
     return dark_level(read_value(monitor, 0xF4));
 }
 
-static json feature(const Target& target, BYTE code, bool continuous) {
+template <typename Read = decltype(&read_value)>
+static json feature(const Target& target, BYTE code, bool continuous, Read read = read_value) {
     if (code == 0xF4 && !supports_dark(target.caps))
         return {{"supported", false}, {"error", "Absolute Dark Stabilizer levels are not advertised. The separate cycle action does not report a current level."}};
     if (!target.caps.has(code)) return {{"supported", false}, {"error", "Control is not advertised by this monitor"}};
     try {
         DWORD maximum = 0;
-        const DWORD value = code == 0xF4 ? read_dark(target.handle) : read_value(target.handle, code, &maximum);
+        const DWORD value = code == 0xF4 ? read_dark(target.handle) : read(target.handle, code, &maximum);
         if (continuous && (maximum != 100 || value > maximum))
             throw std::runtime_error("Unexpected brightness/contrast range");
         return {{"supported", true}, {"current", value},
             {"maximum", continuous ? maximum : (code == 0xF4 ? 3u : 255u)}};
     } catch (const std::runtime_error& error) {
+        target.read_failed = true;
         return {{"supported", false}, {"error", error.what()}};
     }
 }
@@ -455,7 +503,102 @@ static json self_test() {
         });
     });
     check(writes == 1 && changed);
+    std::unique_ptr<Target> cached;
+    unsigned discoveries = 0;
+    auto discover = [&]() { ++discoveries; return Target{}; };
+    session_target(cached, L"first", 100, discover);
+    session_target(cached, L"first", 200, discover);
+    check(discoveries == 1);
+    session_target(cached, L"changed", 300, discover);
+    check(discoveries == 2);
+    session_target(cached, L"changed", 30300, discover);
+    check(discoveries == 3);
+    cached.reset();
+    session_target(cached, L"changed", 30400, discover);
+    check(discoveries == 4);
+    cached->caps = legacy;
+    unsigned reads = 0;
+    const auto failed = feature(*cached, 0x10, true, [&](HANDLE, BYTE, DWORD*) -> DWORD {
+        ++reads;
+        throw std::runtime_error("Fixture advertised VCP read failed");
+    });
+    check(failed["supported"] == false && failed["error"] == "Fixture advertised VCP read failed");
+    if (!cached->read_failed) throw std::runtime_error("Advertised read failure left cached target reusable");
+    session_target(cached, L"changed", 30401, discover);
+    check(discoveries == 5 && !cached->read_failed);
+    cached->caps = legacy;
+    const auto unreadable = feature(*cached, 0xF4, false, [&](HANDLE, BYTE, DWORD*) -> DWORD {
+        ++reads; return 0;
+    });
+    check(unreadable["supported"] == false && reads == 1 && !cached->read_failed);
+    const auto readable = feature(*cached, 0x12, true, [&](HANDLE, BYTE, DWORD* maximum) -> DWORD {
+        ++reads; *maximum = 100; return 75;
+    });
+    check(readable["supported"] == true && readable["current"] == 75 && !cached->read_failed);
+    session_target(cached, L"changed", 30402, discover);
+    check(discoveries == 5 && reads == 2);
     return {{"schema_version", 1}, {"ok", true}, {"self_test", "passed"}};
+}
+
+static json operate(Target& target, const std::string& control, const std::string& value,
+                    bool& may_have_changed) {
+    const bool write = control != "read" && control != "dark_stabilizer_cycle";
+    if (write) apply_change(target, control, value, may_have_changed);
+    if (control == "dark_stabilizer_cycle")
+        cycle_dark(target.caps, target.handle, may_have_changed, SetVCPFeature);
+    auto result = snapshot(target);
+    if (control == "dark_stabilizer_cycle") {
+        result["action"] = {{"control", control}, {"command_accepted", true},
+            {"state_verified", false}, {"current", nullptr}, {"vcp_code", 0xE3},
+            {"value", 0x10}, {"write_count", 1}};
+    }
+    if (write) {
+        if (result[control]["supported"] != true)
+            throw std::runtime_error("The post-write snapshot could not read the changed control");
+        const DWORD expected = control == "preset" ? find_preset(value).readback : number(value);
+        if (result[control]["current"] != expected)
+            throw std::runtime_error("The monitor value changed again before confirmation; refresh");
+        result["changed"] = {{"control", control}, {"requested", value}, {"verified", true}};
+    }
+    return result;
+}
+
+static int serve() {
+    std::unique_ptr<Target> cached;
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        bool may_have_changed = false;
+        try {
+            if (line.size() > 1024) throw std::runtime_error("Monitor request is too large");
+            const auto request = json::parse(line);
+            if (!request.is_object() || !request.contains("control") ||
+                !request["control"].is_string() || request.size() > 2 ||
+                (request.size() == 2 && !request.contains("value")))
+                throw std::runtime_error("Invalid monitor session request");
+            const auto control = request["control"].get<std::string>();
+            const auto value = request.value("value", std::string{});
+            if (control == "read" || control == "dark_stabilizer_cycle") {
+                if (!value.empty()) throw std::runtime_error("Read/cycle takes no value");
+            } else validate_change(control, value);
+            OperationLock lock;
+            const auto topology = topology_signature();
+            auto& target = session_target(cached, topology, GetTickCount64(), [&]() {
+                auto found = select_target();
+                if (topology_signature() != topology)
+                    throw std::runtime_error("Display topology changed during discovery; refresh");
+                return found;
+            });
+            const auto result = operate(target, control, value, may_have_changed);
+            if (target.read_failed) cached.reset();
+            std::cout << result.dump() << '\n' << std::flush;
+        } catch (const std::exception& error) {
+            cached.reset();
+            std::cout << json{{"schema_version", 1}, {"ok", false}, {"error", error.what()},
+                {"may_have_changed", may_have_changed}}.dump() << '\n' << std::flush;
+        }
+    }
+    if (cached && cached->owner) cached->owner->close();
+    return 0;
 }
 
 int main(int argc, char** argv) {
@@ -464,30 +607,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "--self-test") {
             std::cout << self_test().dump() << '\n'; return 0;
         }
+        if (argc == 2 && std::string(argv[1]) == "--serve") return serve();
         const bool write = argc == 4 && std::string(argv[1]) == "--set";
         const bool cycle = argc == 2 && std::string(argv[1]) == "--cycle-dark";
         if (!write && !cycle && !(argc == 2 && std::string(argv[1]) == "--read"))
-            throw std::runtime_error("Usage: desk-monitor --read | --cycle-dark | --set brightness|contrast|preset|dark_stabilizer VALUE | --self-test");
+            throw std::runtime_error("Usage: desk-monitor --read | --cycle-dark | --set brightness|contrast|preset|dark_stabilizer VALUE | --serve | --self-test");
         if (write) validate_change(argv[2], argv[3]);
         OperationLock lock;
         auto target = select_target();
-        if (write) apply_change(target, argv[2], argv[3], may_have_changed);
-        if (cycle) cycle_dark(target.caps, target.handle, may_have_changed, SetVCPFeature);
-        auto result = snapshot(target);
-        if (cycle) {
-            result["action"] = {{"control", "dark_stabilizer_cycle"}, {"command_accepted", true},
-                {"state_verified", false}, {"current", nullptr}, {"vcp_code", 0xE3},
-                {"value", 0x10}, {"write_count", 1}};
-        }
-        if (write) {
-            if (result[argv[2]]["supported"] != true)
-                throw std::runtime_error("The post-write snapshot could not read the changed control");
-            const DWORD expected = std::string(argv[2]) == "preset" ?
-                find_preset(argv[3]).readback : number(argv[3]);
-            if (result[argv[2]]["current"] != expected)
-                throw std::runtime_error("The monitor value changed again before confirmation; refresh");
-            result["changed"] = {{"control", argv[2]}, {"requested", argv[3]}, {"verified", true}};
-        }
+        auto result = operate(target, write ? argv[2] : cycle ? "dark_stabilizer_cycle" : "read",
+                              write ? argv[3] : "", may_have_changed);
         target.owner->close();
         std::cout << result.dump() << '\n';
         return 0;

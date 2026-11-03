@@ -287,6 +287,26 @@ $('trainingStopQwen').addEventListener('click',async()=>{
   }
 });
 $('coachForm').addEventListener('submit',event=>event.preventDefault());
+async function refreshProjectCatalog(){
+  const selected=new Set([...document.querySelectorAll('#projectChecks input:checked')].map(input=>input.value));
+  try{
+    const response=await fetch('/api/project-catalog',{cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok) throw new Error(data.error||'Project catalog unavailable');
+    $('projectChecks').replaceChildren();
+    for(const project of data.projects){
+      const label=document.createElement('label'),input=document.createElement('input');
+      input.type='checkbox';input.value=project.id;input.checked=selected.has(project.id);
+      label.append(input,document.createTextNode(`${project.title} (${project.images.length} images)`));
+      $('projectChecks').append(label);
+    }
+    $('projectCatalogStatus').textContent=data.configured
+      ? 'Curated local images only. Updating the catalog refreshes saved previews without regeneration.'
+      : 'No catalog configured. Run scripts\\Refresh-Showcase.ps1 to prepare sanitized project images.';
+  }catch(error){$('projectCatalogStatus').textContent=`Catalog failed: ${error.message}`;}
+}
+$('refreshProjectCatalog').addEventListener('click',refreshProjectCatalog);
+refreshProjectCatalog();
 $('coachForm').addEventListener('keydown',event=>{
   if(event.key==='Enter') event.preventDefault();
 });
@@ -302,12 +322,14 @@ $('startCampaign').addEventListener('pointerup',async event=>{
       name:$('clientName').value,siteType:$('siteType').value,brief:$('clientBrief').value,
       pages:$('pages').value,brandNotes:$('brandNotes').value,styleReference:$('coachStyleReference').value,
       features:[...document.querySelectorAll('#featureChecks input:checked')].map(input=>input.value),
+      projectIds:[...document.querySelectorAll('#projectChecks input:checked')].map(input=>input.value),
     })});
     const body=await response.json();
     $('coachResult').textContent=response.ok?`Website ${body.id} queued. This generation runs once; regeneration is manual.`:`Failed: ${body.error}`;
     if(response.ok){
       for(const id of ['clientName','clientBrief','pages','brandNotes','coachStyleReference']) $(id).value='';
       document.querySelectorAll('#featureChecks input:checked').forEach(input=>{input.checked=false});
+      document.querySelectorAll('#projectChecks input:checked').forEach(input=>{input.checked=false});
     }
     refresh();
   }catch(error){

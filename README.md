@@ -27,7 +27,7 @@ The shortcut uses authenticated SSH over Tailscale to run
 [`scripts\Start-RustDesk.ps1`](scripts/Start-RustDesk.ps1), verifies the actual
 remote-desktop backend, and reports success before you connect. RustDesk does
 not have to be running beforehand; neither does the GodBrain kernel or a model.
-This is full desktop access, not just the read-only Phone Desk dashboard.
+This is full desktop access, not just the read-only Remote Dashboard.
 
 The PC must be awake with Tailscale/SSH reachable, RustDesk installed, and an
 authorized administrative SSH account; the existing CS2 pause is respected.
@@ -88,7 +88,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
 | [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v13) | Standalone Windows optimization/repair kit; explicit operator actions |
-| Desk panel (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
+| Command Center (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
 | Lyrics loop (`scripts/lyrics_loop.py`) | daily-driver | CPU Whisper. Audio and `state.json` stay in `C:\nvme\stt\lyrics`. Door: `scripts\Invoke-LyricsLoop.ps1` |
 | [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder + React God + visual God (seeded canvas, anti-generic) | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; C++ Carmack is a later GO |
 | [local_ingestion](godbrain_core/local_ingestion/README.md) | source implemented | adapter; no Mongo writes from Python |
@@ -167,7 +167,7 @@ matches `GODBRAIN_API_TOKEN`. Ordinary loopback GET glances stay
 unauthenticated. Chat writes fail closed until `GODBRAIN_API_TOKEN` is set.
 Every route on the
 existing Tailscale shortcuts listener needs the bearer, including GETs.
-The separate read-only Phone Desk accepts the exact device-owner identity
+The separate read-only Remote Dashboard accepts the exact device-owner identity
 from its authenticated Tailscale service/worker TCP connection; spoofed local
 headers are denied. It exposes no chat/control routes.
 
@@ -198,11 +198,11 @@ Shipped on this desk, not slideware:
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
 - **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
-- **Desk panel** — `scripts\Show-DeskMenu.ps1` returns the caller's shell and opens its own hidden STA GUI host. Status and Ask run asynchronously without overlapping requests. The panel resizes/maximizes, keeps reply line breaks and expands the Ask area. Picture Ask uses thinking off, temperature zero and a 2,048-token response ceiling. Pick text/vision on `:8888` or Qwen-Image-2.1 on `:8871`; image editing uses a bounded, final-handle-jail-checked input file. Progress shows real diffusion steps and saved request-specific receipts. Disposable image workers exit before completion so Windows releases native RAM/VRAM. Saved context/KV/MTP/vision profiles apply only on explicit Start; complete-file review stays read-only and candidate. Native Dell S2522HG controls and global F9 replace DDM; Dark Stabilizer cycles without claiming a current level. The separate Serve row reports the private background Phone Desk mapping; explicit Tailscale Start preserves it or creates it only when entirely unconfigured. Existing file/folder Ask stays available. X hides; the power glyph quits. See [Desk guide](docs/desk-menu.md) and the [DDM command map](docs/ddm-monitor-command-map.md).
+- **Command Center** — `scripts\Show-DeskMenu.ps1` returns the caller's shell and opens its own hidden STA GUI host. Status and Ask run asynchronously without overlapping requests. The panel resizes/maximizes, keeps reply line breaks and expands the Ask area. Picture Ask uses thinking off, temperature zero and a 2,048-token response ceiling. Pick text/vision on `:8888` or Qwen-Image-2.1 on `:8871`; image editing uses a bounded, final-handle-jail-checked input file. Progress shows real diffusion steps and saved request-specific receipts. Disposable image workers exit before completion so Windows releases native RAM/VRAM. Saved context/KV/MTP/vision profiles apply only on explicit Start; complete-file review stays read-only and candidate. Native Dell S2522HG controls and global F9 replace DDM; Dark Stabilizer cycles without claiming a current level. The separate Serve row reports the private background Remote Dashboard mapping; explicit Tailscale Start preserves it or creates it only when entirely unconfigured. Existing file/folder Ask stays available. X hides; the power glyph quits. See [Command Center guide](docs/desk-menu.md) and the [DDM command map](docs/ddm-monitor-command-map.md).
 - **Read-only research** — Ask defaults to Research, with visible Answer/Research/Fix modes. Research retains bounded tool evidence, supports native ACL and Microsoft documentation reads, and cannot widen permissions through YOLO or Continue. Incomplete answers get one bounded recovery, not a silently accepted partial report.
 - **Mixed attachments** — Compare multiple text files and screenshots with strict decoding, CPU OCR, complete source-window coverage and hash-bound candidate receipts. No tools or edits run during analysis; original attachments are not archived by a shared-memory handoff.
 - **Shared continuity** — Native working shelves keep discussion/research separate from verified Golden Records and isolate personal scope. Authenticated `index` refreshes the target-host map without a model; Desk and `scripts\Invoke-LocalLLM.ps1` retrieve bounded context before inference and report failed saves explicitly. `-NoSharedMemory` keeps the PowerShell client stateless. This is not yet a durable autonomous long-task runner.
-- **Phone Desk** — A small read-only iPhone/Android overview: model/profile, global VRAM, RustDesk, Tailscale, SSH, core listeners and passive STT/TTS/CPU OCR health. One static page and a separate `127.0.0.1:8085` listener inside the C++ kernel, privately proxied by Tailscale Serve. Speech cards distinguish available local assets, successful requests and backend errors. Refresh never loads weights, generates, starts or repairs anything; stale/error data cannot look ready. No Node production backend, phone app build, browser token or public Funnel.
+- **Remote Dashboard** — A small read-only iPhone/Android overview: model/profile, global VRAM, RustDesk, Tailscale, SSH, core listeners and passive STT/TTS/CPU OCR health. One static page and a separate `127.0.0.1:8085` listener inside the C++ kernel, privately proxied by Tailscale Serve. Speech cards distinguish available local assets, successful requests and backend errors. Refresh never loads weights, generates, starts or repairs anything; stale/error data cannot look ready. No Node production backend, phone app build, browser token or public Funnel.
 - **RustDesk phone button** — `scripts\Start-RustDesk.ps1` explicitly restores a missing installed service entry (LocalSystem, Manual), starts it and verifies the enabled SYSTEM `--server` child. Existing startup settings are preserved. It avoids the native installer's logon shortcut and image-name kills. iOS Shortcuts or an Android SSH client can invoke it; open RustDesk only after the success receipt, then select the PC.
 - **Manual CS2 / AFK policy** — CS2 releases the identified model slot, pauses gym/automation, disconnects Tailscale, launches Steam and returns; no automatic post-game resume. AFK Watch is operator-enabled, host-only by default, with optional Qwen/gym recovery behind the same loop and crash/CUDA latches. Explicit Stop holds are preserved; no new service ACLs or task elevation.
 - **Lyrics** — `scripts\lyrics_loop.py` through `scripts\Invoke-LyricsLoop.ps1`. Two CPU Whisper passes, lock the lines that agree, redo only the draft. Recordings stay on `C:\nvme\stt\lyrics`. The 4080 is not used.
@@ -220,7 +220,7 @@ and RustDesk supplies the full interactive desktop when you need it.
 
 | From your phone | Door |
 |---|---|
-| Glance at model/profile, VRAM and service readiness | Read-only Phone Desk over private Serve HTTPS |
+| Glance at model/profile, VRAM and service readiness | Read-only Remote Dashboard over private Serve HTTPS |
 | Extract image text, transcribe audio or synthesize speech | Optional `:8001` helper, native HTTP Shortcut/client with a separate API key |
 | Start RustDesk's actual remote-desktop backend | One SSH command / iOS Shortcut, then the mobile RustDesk client |
 | Bring back only the kernel or RAG listener | SSH + `Start-GodBrain.ps1 -Only kernel` / `-Only rag` |

@@ -10,6 +10,7 @@ import { checkBuilderDatabase } from './builder-db.mjs';
 import { syncSharedLessons } from './shared-lessons.mjs';
 import { masterySnapshot } from './scheduler.mjs';
 import { listUniversityTasks, readUniversity, universitySummary } from './course-factory.mjs';
+import { createProjectCatalogLoader, projectAssetRequest } from './project-assets.mjs';
 
 const RUN_ID = /^[0-9]{8}-[a-f0-9]{12}$/;
 const STATIC_FILES = new Map([
@@ -222,6 +223,7 @@ export async function startDashboard({
   if (host !== '127.0.0.1') throw new Error('Frontend gym dashboard must remain on literal loopback.');
   const staticRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
   const previewCache = new Map();
+  const loadProjects = createProjectCatalogLoader(workDir);
   let origin;
   const server = http.createServer(async (request, response) => {
     try {
@@ -241,6 +243,11 @@ export async function startDashboard({
       }
       if (request.method === 'GET' && url.pathname === '/api/snapshot') {
         json(response, 200, await snapshot(workDir, trustedTasks));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/api/project-catalog' && !url.search) {
+        const catalog = await loadProjects();
+        json(response, 200, { configured: Boolean(catalog), projects: catalog?.projects ?? [], catalogHash: catalog?.catalogHash ?? null });
         return;
       }
       if (request.method === 'POST' && url.pathname === '/api/objectives') {
@@ -373,7 +380,21 @@ export async function startDashboard({
         response.end(await fs.readFile(file));
         return;
       }
-      const previewMatch = /^\/preview\/([^/]+)(?:\/(bundle\.js|bundle\.css|props\.js))?$/.exec(url.pathname);
+      const projectMatch = /^\/preview\/([0-9]{8}-[a-f0-9]{12})(\/project-assets\/[a-z][a-z0-9-]{0,47}\/[A-Z][A-Z0-9_]{0,47}\.(?:png|webp))$/.exec(url.pathname);
+      if (request.method === 'GET' && projectMatch) {
+        const runReceipt = await receipt(workDir, projectMatch[1]);
+        if (runReceipt?.objectiveMode === 'explore' && runReceipt.clientProjectIds?.length) {
+          const catalog = await loadProjects(runReceipt.clientProjectIds);
+          const asset = projectAssetRequest(catalog, `${projectMatch[2]}${url.search}`);
+          if (asset) {
+            response.writeHead(200, { 'Content-Type': asset.type, 'Cache-Control': 'no-store' });
+            response.end(asset.bytes);
+            return;
+          }
+        }
+        response.writeHead(404); response.end('Project image is not in this run selection.'); return;
+      }
+      const previewMatch = /^\/preview\/([^/]+)\/?(?:\/(bundle\.js|bundle\.css|props\.js))?$/.exec(url.pathname);
       if (request.method === 'GET' && previewMatch && RUN_ID.test(previewMatch[1])) {
         const runId = previewMatch[1];
         let built = previewCache.get(runId);
@@ -387,11 +408,16 @@ export async function startDashboard({
           if (!runReceipt.objectiveMode || runReceipt.objectiveMode === 'qualify') {
             props = taskProps(contractId, runReceipt.seeds?.[0] ?? 1);
           }
-          built = { js: outputText(bundle, '.js'), css: outputText(bundle, '.css'), props };
+          built = { js: outputText(bundle, '.js'), css: outputText(bundle, '.css'), props,
+            clientProjectIds: runReceipt.objectiveMode === 'explore' ? runReceipt.clientProjectIds ?? [] : [] };
           previewCache.set(runId, built);
           if (previewCache.size > 12) previewCache.delete(previewCache.keys().next().value);
         }
         const asset = previewMatch[2];
+        if (built.clientProjectIds.length && !asset && !url.pathname.endsWith('/')) {
+          response.writeHead(302, { Location: `/preview/${runId}/`, 'Cache-Control': 'no-store' });
+          response.end(); return;
+        }
         response.setHeader('Cache-Control', 'no-store');
         response.setHeader('Content-Security-Policy',
           "default-src 'none'; connect-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'");
@@ -403,7 +429,10 @@ export async function startDashboard({
           response.end(built.css);
         } else if (asset === 'props.js') {
           response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-          response.end(`window.__GODBRAIN_TASK_PROPS__=${JSON.stringify(built.props).replace(/</g, '\\u003c')};`);
+          const props = built.clientProjectIds.length
+            ? { ...built.props, projects: (await loadProjects(built.clientProjectIds)).projects }
+            : built.props;
+          response.end(`window.__GODBRAIN_TASK_PROPS__=${JSON.stringify(props).replace(/</g, '\\u003c')};`);
         } else {
           response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/preview/${runId}/bundle.css"></head><body><div id="root"></div><script src="/preview/${runId}/props.js"></script><script src="/preview/${runId}/bundle.js"></script></body></html>`);
