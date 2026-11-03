@@ -120,6 +120,7 @@ jobs:
           .\scripts\Build-DeskMonitor.ps1
           .\scripts\Test-DeskMonitor.ps1
           .\scripts\Build-Showcase.ps1
+          .\scripts\Test-Showcase.ps1
           .\scripts\Test-PhoneDesk.ps1
       - name: Desk payload and native UI smoke
         run: |

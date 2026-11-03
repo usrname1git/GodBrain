@@ -25,6 +25,13 @@ function Get-ShowcaseDigest([string]$Text) {
     $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
+function Save-ShowcaseReview($Value) {
+    $temporary = $publishReview + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 8))
+        [IO.File]::Move($temporary, $publishReview, $true)
+    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
+}
 function Assert-ShowcaseFile([string]$Root, [string]$Relative, [string]$Hash) {
     if ($Relative -cnotmatch '^(?:index\.html|gallery\.(?:js|css)|catalog\.json|assets/[a-z][a-z0-9-]{0,47}/[A-Z][A-Z0-9_]{0,47}\.webp)$' -or
         $Hash -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid publishing manifest entry.' }
@@ -57,12 +64,16 @@ foreach ($required in @('index.html','gallery.js','gallery.css','catalog.json'))
 $module = ([Uri](Join-Path (Split-Path $PSScriptRoot -Parent) 'godbrain_core\skill_lab\project-assets.mjs')).AbsoluteUri
 & node -e 'import(process.argv[1]).then(async m=>{const c=await m.readProjectCatalogDirectory(process.argv[2]);if(!c)throw Error("Catalog missing")})' $module $site
 if ($LASTEXITCODE) { throw 'The public catalog/images failed canonical asset validation.' }
-foreach ($arguments in @(@('remote','get-url','origin'), @('remote','get-url','--push','origin'))) {
-    $origin = (Invoke-ShowcaseGit $arguments | Select-Object -First 1).Trim()
-    if ($origin -notmatch '^(?:https://github\.com/|git@github\.com:)autom8edIT/autom8edIT\.github\.io(?:\.git)?$') {
-        throw 'Publishing is restricted to the dedicated autom8edIT/autom8edIT.github.io checkout.'
+function Assert-ShowcaseOrigin {
+    foreach ($arguments in @(@('remote','get-url','--all','origin'), @('remote','get-url','--push','--all','origin'))) {
+        $origins = @(Invoke-ShowcaseGit $arguments)
+        if ($origins.Count -ne 1 -or
+            $origins[0].Trim() -notmatch '^(?:https://github\.com/|git@github\.com:)autom8edIT/autom8edIT\.github\.io(?:\.git)?$') {
+            throw 'Publishing is restricted to one fetch and one push URL for the dedicated autom8edIT/autom8edIT.github.io checkout.'
+        }
     }
 }
+Assert-ShowcaseOrigin
 $top = [IO.Path]::GetFullPath((Invoke-ShowcaseGit @('rev-parse','--show-toplevel') | Select-Object -First 1))
 if ($top.TrimEnd('\') -ine $PublishingCheckout.TrimEnd('\')) {
     throw 'PublishingCheckout must be the dedicated Git repository root.'
@@ -71,38 +82,72 @@ if ((Invoke-ShowcaseGit @('branch','--show-current') | Select-Object -First 1) -
     throw 'Use the dedicated main-branch publishing checkout; no branch switching or force-push is performed.'
 }
 $head = (Invoke-ShowcaseGit @('rev-parse','HEAD') | Select-Object -First 1).Trim()
+$saved = if (Test-Path -LiteralPath $publishReview) { Get-Content -LiteralPath $publishReview -Raw | ConvertFrom-Json } else { $null }
 if ($Publish) {
-    $saved = Get-Content -LiteralPath $publishReview -Raw | ConvertFrom-Json
     if ($ApprovedReview -cnotmatch '^[a-f0-9]{64}$' -or $ApprovedReview -cne $saved.review_sha256 -or
-        $saved.batch_sha256 -cne $review.batch_sha256 -or $saved.base_commit -cne $head -or
+        $saved.batch_sha256 -cne $review.batch_sha256 -or
         $saved.checkout -cne $PublishingCheckout) { throw 'Approve the exact current publishing-review hash after inspecting its sanitized preview.' }
+    if ($saved.publication_commit -and $saved.publication_commit -cne $head) {
+        throw 'The current commit is no longer the approved publication commit.'
+    }
+    $resuming = $saved.base_commit -cne $head
+    if ($resuming) {
+        $tree = (Invoke-ShowcaseGit @('rev-parse','HEAD^{tree}') | Select-Object -First 1).Trim()
+        $parent = (Invoke-ShowcaseGit @('rev-parse','HEAD^') | Select-Object -First 1).Trim()
+        if ($tree -cne $saved.approved_tree -or $parent -cne $saved.base_commit) {
+            throw 'The current commit does not match the approved publication tree/base.'
+        }
+        if (@(Invoke-ShowcaseGit @('diff','--cached','--name-only','--')).Count) { throw 'Unreviewed staged changes block publication retry.' }
+        $actual = @(Invoke-ShowcaseGit @('diff','--name-only',$saved.base_commit,$head,'--'))
+    } else {
+        $actual = @(Invoke-ShowcaseGit @('diff','--cached','--name-only','--'))
+    }
     $expected = @($saved.files | ForEach-Object path)
-    $actual = @(Invoke-ShowcaseGit @('diff','--cached','--name-only','--'))
     if ((($actual | Sort-Object) -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw 'The staged file set changed after review.' }
     if (@(Invoke-ShowcaseGit @('diff','--name-only','--')).Count -or
         @(Invoke-ShowcaseGit @('ls-files','--others','--exclude-standard')).Count) { throw 'Unreviewed working-tree changes block publication.' }
-    $publishBinding = "$head`n$($review.batch_sha256)`n"
+    $publishBinding = "$($saved.base_commit)`n$($review.batch_sha256)`n"
     foreach ($file in $saved.files) {
         $path = Join-Path $PublishingCheckout $file.path
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) { throw "Reviewed publication changed: $($file.path)" }
-        $indexHash = (Invoke-ShowcaseGit @('rev-parse',":$($file.path)") | Select-Object -First 1).Trim()
+        $revision = if ($resuming) { "${head}:$($file.path)" } else { ":$($file.path)" }
+        $indexHash = (Invoke-ShowcaseGit @('rev-parse',$revision) | Select-Object -First 1).Trim()
         if ($indexHash -cne $file.git_blob) { throw 'Staged bytes changed after review.' }
         $publishBinding += "$($file.path)`n$($file.sha256)`n$indexHash`n"
     }
     if ((Get-ShowcaseDigest $publishBinding) -cne $ApprovedReview) { throw 'Publishing review binding mismatch.' }
-    $tree = (Invoke-ShowcaseGit @('write-tree') | Select-Object -First 1).Trim()
-    Invoke-ShowcaseGit @('commit','-m',"Refresh curated project showcase`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>") | Write-Output
-    $commit = (Invoke-ShowcaseGit @('rev-parse','HEAD') | Select-Object -First 1).Trim()
-    $committedTree = (Invoke-ShowcaseGit @('rev-parse','HEAD^{tree}') | Select-Object -First 1).Trim()
-    $parent = (Invoke-ShowcaseGit @('rev-parse','HEAD^') | Select-Object -First 1).Trim()
-    if ($tree -cne $committedTree -or $parent -cne $head) { throw 'The commit no longer matches the reviewed tree/base; nothing pushed.' }
-    Invoke-ShowcaseGit @('push','origin','HEAD:main') | Write-Output
+    if (-not $resuming) {
+        $tree = (Invoke-ShowcaseGit @('write-tree') | Select-Object -First 1).Trim()
+        $saved | Add-Member -NotePropertyName approved_tree -NotePropertyValue $tree -Force
+        Save-ShowcaseReview $saved
+        Invoke-ShowcaseGit @('commit','-m',"Refresh curated project showcase`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>") | Write-Output
+        $head = (Invoke-ShowcaseGit @('rev-parse','HEAD') | Select-Object -First 1).Trim()
+        $committedTree = (Invoke-ShowcaseGit @('rev-parse','HEAD^{tree}') | Select-Object -First 1).Trim()
+        $parent = (Invoke-ShowcaseGit @('rev-parse','HEAD^') | Select-Object -First 1).Trim()
+        if ($tree -cne $committedTree -or $parent -cne $saved.base_commit) { throw 'The commit no longer matches the reviewed tree/base; nothing pushed.' }
+    }
+    $commit = $head
+    $saved | Add-Member -NotePropertyName publication_commit -NotePropertyValue $commit -Force
+    Save-ShowcaseReview $saved
+    Assert-ShowcaseOrigin
+    $confirmed = $false
+    if ($resuming) {
+        $remote = (Invoke-ShowcaseGit @('ls-remote','origin','refs/heads/main') | Select-Object -First 1) -split '\s+'
+        $confirmed = $remote[0] -ceq $commit
+    }
+    if (-not $confirmed) {
+        Assert-ShowcaseOrigin
+        Invoke-ShowcaseGit @('push','origin',"${commit}:refs/heads/main") | Write-Output
+    }
     $remote = (Invoke-ShowcaseGit @('ls-remote','origin','refs/heads/main') | Select-Object -First 1) -split '\s+'
     if ($remote[0] -cne $commit) { throw 'Push returned but the remote main commit could not be confirmed.' }
     $saved.published = $true
     $saved | Add-Member -NotePropertyName published_commit -NotePropertyValue $commit -Force
-    $saved | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $publishReview -Encoding utf8
+    Save-ShowcaseReview $saved
     return
+}
+if ($saved -and $saved.approved_tree -and $saved.published -ne $true) {
+    throw 'Publication is pending. Retry -Publish with the original ApprovedReview hash; do not restage or create another commit.'
 }
 if (@(Invoke-ShowcaseGit @('status','--porcelain')).Count) { throw 'Staging requires a clean dedicated publishing checkout.' }
 $target = Join-Path $PublishingCheckout 'projects'
