@@ -115,7 +115,20 @@ try {
     [IO.File]::WriteAllText((Join-Path $checkout 'index.md'), "# Test portfolio`n")
     [void][IO.Directory]::CreateDirectory((Join-Path $checkout 'assets\js'))
     [IO.File]::WriteAllText((Join-Path $checkout 'assets\js\theme.js'), '// Local fixture theme')
-    Invoke-TestGit @('-C',$checkout,'add','--','index.md','assets/js/theme.js')
+    Copy-Item -LiteralPath (Join-Path $batch 'site') -Destination (Join-Path $checkout 'projects') -Recurse
+    $priorCatalog = Get-Content -LiteralPath (Join-Path $checkout 'projects\catalog.json') -Raw | ConvertFrom-Json
+    $priorProject = $priorCatalog.projects[0]
+    $obsolete = $priorProject.images[0] | ConvertTo-Json | ConvertFrom-Json
+    $obsolete.id = 'OBSOLETE_FIXTURE'
+    $obsolete.path = "assets/$($priorProject.id)/OBSOLETE_FIXTURE.webp"
+    $obsoletePath = 'projects/' + $obsolete.path
+    $obsoleteFile = Join-Path $checkout $obsoletePath
+    Copy-Item -LiteralPath (Join-Path (Join-Path $checkout 'projects') $priorProject.images[0].path) -Destination $obsoleteFile
+    $priorProject.images = @($priorProject.images) + @($obsolete)
+    $priorCatalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $checkout 'projects\catalog.json') -Encoding utf8
+    $unmanaged = Join-Path $checkout 'projects\assets\unmanaged.webp'
+    [IO.File]::WriteAllText($unmanaged, 'Unrelated tracked portfolio content')
+    Invoke-TestGit @('-C',$checkout,'add','--','index.md','assets/js/theme.js','projects')
     Invoke-TestGit @('-C',$checkout,'commit','-m',"Create local publication fixture`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
     $publisher = Join-Path $PSScriptRoot 'Publish-Showcase.ps1'
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout } 'unapproved empty remote bootstrap' '*remote main*'
@@ -159,11 +172,24 @@ try {
     }
     & $publisher -BatchDirectory $batch -PublishingCheckout $checkout | Out-Null
     $review = Get-Content -LiteralPath (Join-Path $batch 'publishing-review.json') -Raw | ConvertFrom-Json
+    $deletion = @($review.files | Where-Object { $_.path -ceq $obsoletePath -and $_.action -ceq 'delete' })
+    if ((Test-Path -LiteralPath $obsoleteFile) -or $deletion.Count -ne 1 -or $deletion[0].sha256 -cne $obsolete.sha256) {
+        throw 'Obsolete managed screenshot was not removed with an explicit hash-bound review entry.'
+    }
+    if ([IO.File]::ReadAllText($unmanaged) -cne 'Unrelated tracked portfolio content') { throw 'Unmanaged portfolio content was changed.' }
     if (-not $review.files.Count -or $pushes.Count) { throw 'Staging pushed or produced no review.' }
     if (-not (Test-Path -LiteralPath (Join-Path $batch 'preview\assets\js\theme.js')) -or
         (Get-FileHash -LiteralPath (Join-Path $batch 'preview\projects\catalog.json') -Algorithm SHA256).Hash -cne $originalCatalog) {
         throw 'Public-only preview did not preserve the approved catalog/theme.'
     }
+    $originalReview = [IO.File]::ReadAllText((Join-Path $batch 'publishing-review.json'))
+    $deletion[0].sha256 = '0' * 64
+    $review | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $batch 'publishing-review.json') -Encoding utf8
+    Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'deleted-source hash tampering' '*binding mismatch*'
+    [IO.File]::WriteAllText((Join-Path $batch 'publishing-review.json'), $originalReview)
+    Copy-Item -LiteralPath (Join-Path (Join-Path $batch 'site') $priorProject.images[0].path) -Destination $obsoleteFile
+    Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'restored reviewed deletion'
+    Remove-Item -LiteralPath $obsoleteFile
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish } 'missing approval'
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview ('0' * 64) } 'wrong approval'
     $css = Join-Path $checkout 'projects\gallery.css'
@@ -218,6 +244,10 @@ try {
     if ((& $nativeGit --git-dir $fixtureRemote rev-parse refs/heads/main).Trim() -cne $approvedCommit) {
         throw 'Readback failure was not exercised after the approved commit reached the remote.'
     }
+    if (@(& $nativeGit --git-dir $fixtureRemote ls-tree --name-only $approvedCommit -- $obsoletePath).Count -or
+        -not @(& $nativeGit --git-dir $fixtureRemote ls-tree --name-only $approvedCommit -- 'projects/assets/unmanaged.webp').Count) {
+        throw 'Published tree retained a removed screenshot or lost unmanaged portfolio content.'
+    }
     & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 | Out-Null
     if ((& $nativeGit -C $checkout rev-parse HEAD).Trim() -cne $approvedCommit -or $pushes.Count -ne 2) {
         throw 'Retry changed the approved commit or did not publish exactly that commit.'
@@ -240,7 +270,7 @@ try {
     Invoke-TestGit @('-C',$checkout,'add','--','index.md')
     Invoke-TestGit @('-C',$checkout,'commit','-m',"Subsequent local fixture change`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'stale HEAD approval'
-    Write-Output 'PASS: failed capture/encoder preserve the catalog; every destination, existing remote base, no unapproved history/tags, exact approval/tree/base, tampering, interrupted commit, failed push/readback recovery, exact-commit confirmation, trailer and unchanged no-op. Local bare Git only; no GitHub publication.'
+    Write-Output 'PASS: failed capture/encoder preserve the catalog; every destination, existing remote base, no unapproved history/tags, explicit hash-bound obsolete deletions with unmanaged-file preservation, exact approval/tree/base, tampering, interrupted commit, failed push/readback recovery, exact-commit confirmation, trailer and unchanged no-op. Local bare Git only; no GitHub publication.'
 } finally {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }

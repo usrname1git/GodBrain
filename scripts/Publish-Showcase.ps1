@@ -117,6 +117,16 @@ if ($Publish) {
     $publishBinding = "$($saved.base_commit)`n$($review.batch_sha256)`n"
     foreach ($file in $saved.files) {
         $path = Join-Path $PublishingCheckout $file.path
+        if ($file.action -ceq 'delete') {
+            $remaining = if ($resuming) {
+                @(Invoke-ShowcaseGit @('ls-tree','--name-only',$head,'--',$file.path))
+            } else { @(Invoke-ShowcaseGit @('ls-files','--',$file.path)) }
+            if ($remaining.Count -or (Test-Path -LiteralPath $path)) { throw 'A reviewed deletion was restored; nothing published.' }
+            $baseBlob = (Invoke-ShowcaseGit @('rev-parse',"$($saved.base_commit):$($file.path)") | Select-Object -First 1).Trim()
+            if ($baseBlob -cne $file.git_blob) { throw 'The reviewed deleted source no longer matches the original base.' }
+            $publishBinding += "delete`n$($file.path)`n$($file.sha256)`n$baseBlob`n"
+            continue
+        }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) { throw "Reviewed publication changed: $($file.path)" }
         $revision = if ($resuming) { "${head}:$($file.path)" } else { ":$($file.path)" }
         $indexHash = (Invoke-ShowcaseGit @('rev-parse',$revision) | Select-Object -First 1).Trim()
@@ -163,6 +173,20 @@ if ((Test-Path -LiteralPath $target) -and
     ((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
     throw 'Cannot publish through a linked projects directory.'
 }
+$deletions = @{}
+if (Test-Path -LiteralPath (Join-Path $target 'catalog.json')) {
+    Invoke-ShowcaseGit @('ls-files','--error-unmatch','--','projects/catalog.json') | Out-Null
+    $priorJson = & node -e 'import(process.argv[1]).then(async m=>{const c=await m.readProjectCatalogDirectory(process.argv[2]);if(!c)throw Error("Previous catalog missing");console.log(JSON.stringify(c.projects.flatMap(p=>p.images.map(i=>({path:i.path,sha256:i.sha256})))));})' $module $target
+    if ($LASTEXITCODE) { throw 'The prior managed catalog failed validation; nothing deleted.' }
+    foreach ($old in @($priorJson | ConvertFrom-Json)) {
+        if (-not $seen.ContainsKey([string]$old.path)) {
+            Assert-ShowcaseFile $target $old.path $old.sha256
+            $path = 'projects/' + $old.path
+            $blob = (Invoke-ShowcaseGit @('rev-parse',"${head}:$path") | Select-Object -First 1).Trim()
+            $deletions[$path] = [pscustomobject]@{ path=$path; sha256=$old.sha256; git_blob=$blob; action='delete' }
+        }
+    }
+}
 [void][IO.Directory]::CreateDirectory($target)
 foreach ($file in $review.files) {
     $destination = Join-Path $target $file.path
@@ -187,8 +211,11 @@ $text = [IO.File]::ReadAllText($index)
 if ($text -notmatch '<!-- godbrain-project-showcase -->') {
     [IO.File]::WriteAllText($index, $text.TrimEnd() + "`n`n<!-- godbrain-project-showcase -->`n[Explore the project showcase](./projects/) - Command Center, Reclaim11 and Remote Dashboard.`n", [Text.UTF8Encoding]::new($false))
 }
-$allowed = @('index.md') + @($review.files | ForEach-Object { 'projects/' + $_.path })
-Invoke-ShowcaseGit (@('add','--') + $allowed) | Out-Null
+if ($deletions.Count) {
+    Invoke-ShowcaseGit (@('rm','--') + @($deletions.Keys)) | Write-Output
+}
+$allowed = @('index.md') + @($review.files | ForEach-Object { 'projects/' + $_.path }) + @($deletions.Keys)
+Invoke-ShowcaseGit (@('add','--') + @('index.md') + @($review.files | ForEach-Object { 'projects/' + $_.path })) | Out-Null
 $paths = @(Invoke-ShowcaseGit @('diff','--cached','--name-only','--'))
 if (-not $paths.Count) {
     Write-Output 'Unchanged showcase: no commit or push needed.'
@@ -198,6 +225,12 @@ $files = @()
 $publishBinding = "$head`n$($review.batch_sha256)`n"
 foreach ($path in $paths) {
     if ($allowed -cnotcontains $path) { throw 'Unexpected staged publishing path.' }
+    if ($deletions.ContainsKey($path)) {
+        $file = $deletions[$path]
+        $files += $file
+        $publishBinding += "delete`n$path`n$($file.sha256)`n$($file.git_blob)`n"
+        continue
+    }
     $hash = (Get-FileHash -LiteralPath (Join-Path $PublishingCheckout $path) -Algorithm SHA256).Hash.ToLowerInvariant()
     $blob = (Invoke-ShowcaseGit @('rev-parse',":$path") | Select-Object -First 1).Trim()
     $files += [pscustomobject]@{ path=$path; sha256=$hash; git_blob=$blob }
