@@ -1015,6 +1015,15 @@ export async function runPractice(options, dependencies) {
   let monitor;
   let monitorBusy = false;
   let roundCount = 0;
+  async function currentSavedTask(saved) {
+    if (!saved?.customTask || await taskIsCurrent(saved.customTask)) return saved;
+    await appendEvent(workDir, {
+      type: 'course_definition_replaced',
+      taskId: saved.taskId,
+      message: 'The saved attempt used an obsolete generated-course definition and was safely restarted.',
+    });
+    return null;
+  }
   try {
     state = await loadState(workDir);
     const priorEvaluatorVersion = state.evaluatorVersion;
@@ -1067,14 +1076,7 @@ export async function runPractice(options, dependencies) {
     if (state.active && !state.active.customTask && !tasks.some(task => task.id === state.active.taskId)) {
       throw new Error('The resumed task is absent from this curriculum. Resume with the original course.');
     }
-    if (state.active?.customTask && !await taskIsCurrent(state.active.customTask)) {
-      await appendEvent(workDir, {
-        type: 'course_definition_replaced',
-        taskId: state.active.taskId,
-        message: 'The saved attempt used an obsolete generated-course definition and was safely restarted.',
-      });
-      state.active = null;
-    }
+    state.active = await currentSavedTask(state.active);
     await prepareState(state);
     await saveState(workDir, state);
     await appendEvent(workDir, { type: 'worker_started', pid: process.pid, resumed: Boolean(state.active) });
@@ -1099,7 +1101,7 @@ export async function runPractice(options, dependencies) {
       }
       if (!state.active) {
         if (!queuedTask && autoplay && state.suspendedCourse) {
-          state.active = state.suspendedCourse;
+          state.active = await currentSavedTask(state.suspendedCourse);
           state.suspendedCourse = null;
         }
         if (!state.active) {

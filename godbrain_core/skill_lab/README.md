@@ -306,6 +306,8 @@ Source and receipt content use insert-only storage. Durable local and shared
 invalidation keys bind task, source hash and exact evaluator version; a later
 failure blocks older or new run IDs for that same evidence identity. An older
 reader cannot revive it, while a different evaluator must qualify it anew.
+Checkpoint syncs cache remote invalidations for at most 30 seconds even when
+the local library is unchanged; unchanged source uploads remain cached separately.
 Mongo outages produce an explicit pending receipt
 while preserving the local evidence.
 
