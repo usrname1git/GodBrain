@@ -118,10 +118,15 @@ jobs:
           .\scripts\Test-KernelReplies.ps1 2>&1 | Tee-Object -FilePath logs\ci-native.log
       - name: Desk payload and native UI smoke
         run: |
-          .\scripts\Test-DeskMenu.ps1 -UiSmoke 2>&1 | Tee-Object -FilePath logs\ci-desk.log
-          .\scripts\Test-DeskModel.ps1
-          .\scripts\Test-DeskAttachments.ps1
-          .\scripts\Test-ClipShare.ps1
+          try {
+            .\scripts\Test-DeskMenu.ps1 -UiSmoke 2>&1 | Tee-Object -FilePath logs\ci-desk.log
+            .\scripts\Test-DeskModel.ps1
+            .\scripts\Test-DeskAttachments.ps1
+            .\scripts\Test-ClipShare.ps1
+          } catch {
+            Write-Host $_.ScriptStackTrace
+            throw
+          }
       - name: Stop only the disposable Mongo process
         if: always()
         run: |
