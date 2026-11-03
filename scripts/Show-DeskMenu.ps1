@@ -3152,6 +3152,9 @@ if ($CaptureView) {
             $entry.Value.Text = $text
         }
         $script:modelLive.Text = 'Public UI capture; live diagnostic details omitted'
+        if ($script:modelSettingsError) {
+            $script:modelSettingsHint.Text = 'Saved model settings are invalid; private diagnostic details omitted.'
+        }
         $f.ClientSize = [Drawing.Size]::new(660, 740)
         Show-Page $CaptureView
         $notice = [Windows.Forms.Label]::new()
