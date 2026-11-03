@@ -20,10 +20,12 @@ function git {
     foreach ($operation in @('push','ls-remote')) {
         $position = [Array]::IndexOf($forward, $operation)
         if ($position -ge 0) {
-            if ($forward[$position + 1] -cne 'origin' -or $forward[2] -cne $checkout) {
+            $destination = $position + 1
+            if ($operation -eq 'push' -and $forward[$destination] -ceq '--no-follow-tags') { $destination++ }
+            if ($forward[$destination] -cne 'origin' -or $forward[2] -cne $checkout) {
                 throw 'Fixture attempted an unexpected remote operation.'
             }
-            $forward[$position + 1] = $fixtureRemote
+            $forward[$destination] = $fixtureRemote
             if ($operation -eq 'push') { $pushes.Add('local bare fixture only') }
             if (($operation -eq 'push' -and $faults.Push) -or
                 ($operation -eq 'ls-remote' -and $faults.Readback)) {
@@ -116,6 +118,26 @@ try {
     Invoke-TestGit @('-C',$checkout,'add','--','index.md','assets/js/theme.js')
     Invoke-TestGit @('-C',$checkout,'commit','-m',"Create local publication fixture`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
     $publisher = Join-Path $PSScriptRoot 'Publish-Showcase.ps1'
+    Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout } 'unapproved empty remote bootstrap' '*remote main*'
+    Invoke-TestGit @('-C',$checkout,'push',$fixtureRemote,'HEAD:refs/heads/main')
+    $ahead = Join-Path $fixture 'ahead-checkout'
+    Invoke-TestGit @('clone','--branch','main',$fixtureRemote,$ahead)
+    Invoke-TestGit @('-C',$ahead,'remote','set-url','origin','https://github.com/autom8edIT/autom8edIT.github.io.git')
+    Invoke-TestGit @('-C',$ahead,'config','user.name','Showcase fixture')
+    Invoke-TestGit @('-C',$ahead,'config','user.email','fixture@example.invalid')
+    [IO.File]::WriteAllText((Join-Path $ahead 'unapproved.txt'), 'Must not be published with the batch')
+    Invoke-TestGit @('-C',$ahead,'add','--','unapproved.txt')
+    Invoke-TestGit @('-C',$ahead,'commit','-m',"Unapproved local fixture history`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
+    $aheadCommit = (& $nativeGit -C $ahead rev-parse HEAD).Trim()
+    & {
+        $checkout = $ahead
+        Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout } 'unapproved local history' '*remote main*'
+        if (@(& $nativeGit -C $checkout status --porcelain).Count -or $pushes.Count) {
+            throw 'Rejected ahead-of-remote checkout was modified or pushed.'
+        }
+    }
+    Invoke-TestGit @('-C',$checkout,'config','push.followTags','true')
+    Invoke-TestGit @('-C',$checkout,'tag','-a','private-fixture-tag','-m','Must not accompany the approved main update')
     foreach ($kind in @('url', 'pushurl')) {
         foreach ($extra in @('https://github.com/autom8edIT/autom8edIT.github.io.git', 'https://example.invalid/unapproved.git')) {
             if ($kind -eq 'pushurl') {
@@ -161,6 +183,13 @@ try {
             throw 'An invalid publication destination committed or attempted a push.'
         }
     } finally { Invoke-TestGit @('-C',$checkout,'config','--unset-all','remote.origin.pushurl') }
+    Invoke-TestGit @('--git-dir',$fixtureRemote,'fetch',$ahead,$aheadCommit)
+    Invoke-TestGit @('--git-dir',$fixtureRemote,'update-ref','refs/heads/main',$aheadCommit,$review.base_commit)
+    Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'remote changed after staging' '*remote main*'
+    if ((& $nativeGit -C $checkout rev-parse HEAD).Trim() -cne $review.base_commit -or $pushes.Count) {
+        throw 'Remote divergence committed or pushed the staged batch.'
+    }
+    Invoke-TestGit @('--git-dir',$fixtureRemote,'update-ref','refs/heads/main',$review.base_commit,$aheadCommit)
     $faults.AfterCommit = $true
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'interrupted commit receipt' 'Git failed: commit'
     $faults.AfterCommit = $false
@@ -198,16 +227,20 @@ try {
         throw 'Remote confirmation did not persist the published commit.'
     }
     $message = & $nativeGit -C $checkout log -1 --format=%B
+    if (@(& $nativeGit --git-dir $fixtureRemote tag --list).Count) { throw 'Publication pushed unapproved annotated tags.' }
     if (($message -join "`n") -notmatch 'Co-authored-by: Copilot') { throw 'Commit trailer missing.' }
     $again = & $publisher -BatchDirectory $batch -PublishingCheckout $checkout
     if (($again -join "`n") -notmatch 'Unchanged showcase' -or $pushes.Count -ne 2) { throw 'Unchanged refresh did not stay a no-op.' }
     & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 | Out-Null
     if ($pushes.Count -ne 2) { throw 'Confirmed publication was pushed again.' }
+    Invoke-TestGit @('--git-dir',$fixtureRemote,'update-ref','refs/heads/main',$aheadCommit,$approvedCommit)
+    Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'remote no longer base or approved commit' '*remote main*'
+    if ($pushes.Count -ne 2) { throw 'Remote divergence attempted an unapproved history push.' }
     [IO.File]::AppendAllText((Join-Path $checkout 'index.md'), "`nUnrelated subsequent change`n")
     Invoke-TestGit @('-C',$checkout,'add','--','index.md')
     Invoke-TestGit @('-C',$checkout,'commit','-m',"Subsequent local fixture change`n`nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
     Expect-Rejection { & $publisher -BatchDirectory $batch -PublishingCheckout $checkout -Publish -ApprovedReview $review.review_sha256 } 'stale HEAD approval'
-    Write-Output 'PASS: failed capture/encoder preserve the catalog; every destination, exact approval/tree/base, tampering, interrupted commit, failed push/readback recovery, exact-commit confirmation, trailer and unchanged no-op. Local bare Git only; no GitHub publication.'
+    Write-Output 'PASS: failed capture/encoder preserve the catalog; every destination, existing remote base, no unapproved history/tags, exact approval/tree/base, tampering, interrupted commit, failed push/readback recovery, exact-commit confirmation, trailer and unchanged no-op. Local bare Git only; no GitHub publication.'
 } finally {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }

@@ -74,6 +74,14 @@ function Assert-ShowcaseOrigin {
     }
 }
 Assert-ShowcaseOrigin
+function Get-ShowcaseRemoteHead {
+    Assert-ShowcaseOrigin
+    $refs = @(Invoke-ShowcaseGit @('ls-remote','origin','refs/heads/main'))
+    if ($refs.Count -ne 1 -or $refs[0] -cnotmatch '^([a-f0-9]{40,64})\s+refs/heads/main$') {
+        throw 'Publishing requires an existing remote main; bootstrap needs separate explicit approval outside this publisher.'
+    }
+    return ($refs[0] -split '\s+')[0]
+}
 $top = [IO.Path]::GetFullPath((Invoke-ShowcaseGit @('rev-parse','--show-toplevel') | Select-Object -First 1))
 if ($top.TrimEnd('\') -ine $PublishingCheckout.TrimEnd('\')) {
     throw 'PublishingCheckout must be the dedicated Git repository root.'
@@ -117,6 +125,7 @@ if ($Publish) {
     }
     if ((Get-ShowcaseDigest $publishBinding) -cne $ApprovedReview) { throw 'Publishing review binding mismatch.' }
     if (-not $resuming) {
+        if ((Get-ShowcaseRemoteHead) -cne $saved.base_commit) { throw 'Remote main no longer matches the approved base; nothing committed or pushed.' }
         $tree = (Invoke-ShowcaseGit @('write-tree') | Select-Object -First 1).Trim()
         $saved | Add-Member -NotePropertyName approved_tree -NotePropertyValue $tree -Force
         Save-ShowcaseReview $saved
@@ -129,18 +138,16 @@ if ($Publish) {
     $commit = $head
     $saved | Add-Member -NotePropertyName publication_commit -NotePropertyValue $commit -Force
     Save-ShowcaseReview $saved
-    Assert-ShowcaseOrigin
-    $confirmed = $false
-    if ($resuming) {
-        $remote = (Invoke-ShowcaseGit @('ls-remote','origin','refs/heads/main') | Select-Object -First 1) -split '\s+'
-        $confirmed = $remote[0] -ceq $commit
+    $remoteHead = Get-ShowcaseRemoteHead
+    if ($remoteHead -cne $saved.base_commit -and $remoteHead -cne $commit) {
+        throw 'Remote main is neither the approved base nor the exact publication commit; nothing pushed.'
     }
+    $confirmed = $remoteHead -ceq $commit
     if (-not $confirmed) {
         Assert-ShowcaseOrigin
-        Invoke-ShowcaseGit @('push','origin',"${commit}:refs/heads/main") | Write-Output
+        Invoke-ShowcaseGit @('push','--no-follow-tags','origin',"${commit}:refs/heads/main") | Write-Output
     }
-    $remote = (Invoke-ShowcaseGit @('ls-remote','origin','refs/heads/main') | Select-Object -First 1) -split '\s+'
-    if ($remote[0] -cne $commit) { throw 'Push returned but the remote main commit could not be confirmed.' }
+    if ((Get-ShowcaseRemoteHead) -cne $commit) { throw 'Push returned but the remote main commit could not be confirmed.' }
     $saved.published = $true
     $saved | Add-Member -NotePropertyName published_commit -NotePropertyValue $commit -Force
     Save-ShowcaseReview $saved
@@ -149,6 +156,7 @@ if ($Publish) {
 if ($saved -and $saved.approved_tree -and $saved.published -ne $true) {
     throw 'Publication is pending. Retry -Publish with the original ApprovedReview hash; do not restage or create another commit.'
 }
+if ((Get-ShowcaseRemoteHead) -cne $head) { throw 'Remote main must match the local review base before staging; unapproved local history cannot be published.' }
 if (@(Invoke-ShowcaseGit @('status','--porcelain')).Count) { throw 'Staging requires a clean dedicated publishing checkout.' }
 $target = Join-Path $PublishingCheckout 'projects'
 if ((Test-Path -LiteralPath $target) -and
