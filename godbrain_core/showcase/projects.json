@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "id": "command-center",
+      "title": "Command Center",
+      "description": "Workstation and AI control in one native Windows interface: model settings, core services, remote access, media and display controls. Screenshots are sanitized UI captures, not live readiness guarantees.",
+      "url": "https://github.com/usrname1git/GodBrain",
+      "source_url": "https://github.com/usrname1git/GodBrain",
+      "cover": "CMDSTATUS",
+      "images": [
+        {"id":"CMDSTATUS","description":"Workstation and AI control; private connection details omitted.","capture_kind":"live-sanitized-ui"},
+        {"id":"CMDMODELS","description":"Model configuration and request-scoped reasoning controls; no generation started.","capture_kind":"live-sanitized-ui"}
+      ]
+    },
+    {
+      "id": "reclaim11",
+      "title": "Reclaim11",
+      "description": "Windows maintenance with beginner and power-user entry points, preflight gates and explicit recovery paths. These source-rendered previews omit host inventory and do not demonstrate a repair run.",
+      "url": "https://github.com/usrname1git/GodBrain/tree/main/godbrain_core/reclaim11",
+      "source_url": "https://github.com/usrname1git/GodBrain/tree/main/godbrain_core/reclaim11",
+      "cover": "RECLAIM11_DOOR",
+      "images": [
+        {"id":"RECLAIM11_DOOR","description":"Entry-point chooser, rendered without collecting host inventory.","capture_kind":"sanitized-source-ui"},
+        {"id":"RECLAIM11_PRO","description":"Power-user interface; private inventory omitted and repair controls not connected.","capture_kind":"sanitized-source-ui"},
+        {"id":"RECLAIM11_BEGINNER","description":"Beginner interface; no host inventory or repair actions performed.","capture_kind":"sanitized-source-ui"}
+      ]
+    },
+    {
+      "id": "remote-dashboard",
+      "title": "Remote Dashboard",
+      "description": "A private, read-only mobile overview of the workstation. Refreshing never starts a model or repairs a service; operational controls remain in explicit remote tools.",
+      "url": "https://github.com/usrname1git/GodBrain",
+      "source_url": "https://github.com/usrname1git/GodBrain/blob/main/godbrain_core/frontend/phone.html",
+      "cover": "PHONEDASHBOARD",
+      "images": [
+        {"id":"PHONEDASHBOARD","description":"Mobile view of passive status; private diagnostic and connection details omitted.","capture_kind":"live-sanitized-source-ui"}
+      ]
+    }
+  ]
+}
