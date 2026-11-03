@@ -2,7 +2,6 @@ name: Desk and gym
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - '.github/workflows/desk-and-gym.yml'
       - 'godbrain_core/cpp_kernel/**'
@@ -116,6 +115,12 @@ jobs:
       - name: Native production link and reply fixtures
         run: |
           .\scripts\Test-KernelReplies.ps1 2>&1 | Tee-Object -FilePath logs\ci-native.log
+      - name: Offline monitor, showcase and Remote Dashboard checks
+        run: |
+          .\scripts\Build-DeskMonitor.ps1
+          .\scripts\Test-DeskMonitor.ps1
+          .\scripts\Build-Showcase.ps1
+          .\scripts\Test-PhoneDesk.ps1
       - name: Desk payload and native UI smoke
         run: |
           .\scripts\Test-DeskMenu.ps1 -UiSmoke 2>&1 | Tee-Object -FilePath logs\ci-desk.log
