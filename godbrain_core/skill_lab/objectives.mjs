@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readJson, writeJson } from './gym-core.mjs';
+import { projectIds } from './project-assets.mjs';
 import { getReference } from './references.mjs';
 
 const MAX_OBJECTIVES = 100;
@@ -91,6 +92,10 @@ export async function enqueueObjective(workDir, input, trustedTasks, metadata = 
     if (queue.items.length >= MAX_OBJECTIVES) {
       throw new Error(`Objective queue capacity (${MAX_OBJECTIVES}) reached; finish or archive existing work first.`);
     }
+    const clientProjectIds = projectIds(metadata.clientProjectIds);
+    if (clientProjectIds.length && objective.mode !== 'explore') {
+      throw new Error('Project image builds cannot qualify course lessons.');
+    }
     const item = {
       id: randomUUID().replaceAll('-', '').slice(0, 12),
       ...objective,
@@ -103,6 +108,7 @@ export async function enqueueObjective(workDir, input, trustedTasks, metadata = 
       fileMode,
       evaluationProfile,
       variantId: metadata.variantId ?? null,
+      ...(clientProjectIds.length ? { clientProjectIds } : {}),
       status: 'queued',
       createdAt: new Date().toISOString(),
       startedAt: null,
@@ -135,6 +141,10 @@ export async function claimObjective(workDir, trustedTasks) {
       queue.items.find(candidate => candidate.status === 'queued');
     if (!item) return null;
     const valid = validateObjective(item, trustedTasks);
+    const selectedProjects = projectIds(item.clientProjectIds);
+    if (selectedProjects.length && valid.mode !== 'explore') {
+      throw new Error('Project image objectives cannot qualify course lessons.');
+    }
     if (item.status === 'queued') {
       item.status = 'running';
       item.startedAt = new Date().toISOString();
@@ -163,6 +173,7 @@ export async function claimObjective(workDir, trustedTasks) {
       baseTaskId: base?.id ?? null,
       qualityProfile: base?.qualityProfile ?? null,
       objectiveMode: valid.mode,
+      clientProjectIds: selectedProjects,
       retainLesson: valid.mode === 'qualify' && item.evaluationProfile !== 'structure-draft',
       // The local Qwen endpoint has an 8K total context; leave room for the
       // brief, repair feedback, and the previous malformed response.

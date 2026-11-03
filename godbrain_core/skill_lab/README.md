@@ -217,6 +217,29 @@ of prerequisite training exercises. **REGENERATE** explicitly creates a new
 version from the same brief; it never overwrites the preceding passing version.
 Duplicate active requests are rejected.
 
+The optional curated **project images** selection uses the hash-checked local
+`<workDir>\showcase\catalog.json`. **REFRESH IMAGE CATALOG** reloads those choices;
+it never queues a model request. `scripts\Refresh-Showcase.ps1` captures named
+views, CPU-encodes lossless WebP and transactionally replaces this local catalog.
+Existing saved previews reload current image props and content-versioned URLs
+without regenerating source. Only explicitly selected, exact-hash local PNG/WebP
+assets are served; arbitrary paths, external images and stale URLs are denied.
+
+Image clients use the independent `client-project-assets-v1` browser profile,
+not the course verifier. Two URL-input variants reject hardcoded screenshots;
+desktop/mobile layouts, visible covers and network isolation are checked.
+These explorations cannot qualify or publish course/shared lessons, including
+after a queue reload. The protected course fingerprint and old receipts remain
+unchanged. Image-client alternatives restyle their passing source rather than
+substituting the event-platform training scaffold.
+
+For static delivery, run `node .\godbrain_core\skill_lab\export-project-site.mjs
+--work-dir <workDir> --run-id <passingRunId> --output <newDirectory>` from the
+repository root. Export binds the receipt's exact source, rechecks both current
+asset variants without inference, and copies the same image bytes used by the
+saved preview. It does not publish. See [Task1111](../../docs/Task1111.md) for
+the separately reviewed portfolio workflow.
+
 A bounded, compact shell establishes
 the complete navigation and requested sections; a second integration/polish
 stage starts from that browser-qualified source instead of regenerating from

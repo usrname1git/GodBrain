@@ -1305,6 +1305,10 @@ export async function runPractice(options, dependencies) {
           passed, candidateError: candidateError ?? null, evidence: results,
           objectiveId: task.objectiveId ?? null, objectiveMode: task.objectiveMode ?? null,
           contractTaskId: task.baseTaskId ?? null,
+          ...(task.clientProjectIds?.length ? {
+            clientProjectIds: task.clientProjectIds,
+            clientAssetProfile: 'client-project-assets-v1',
+          } : {}),
           lessonReused: task.retainedLessonRunId ?? lessonContextResult.lesson?.runId ?? null,
           novelty,
           timings: { ...timings, totalMs: Date.now() - attemptStartedAt },

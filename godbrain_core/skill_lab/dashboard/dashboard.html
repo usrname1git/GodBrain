@@ -78,6 +78,10 @@
         <label class="wide">Brand direction<textarea id="brandNotes" maxlength="1600" placeholder="Charcoal, warm copper, technical typography, large product photography."></textarea></label>
         <label class="wide">Style reference<textarea id="coachStyleReference" maxlength="1200" placeholder="https://example.com&#10;Premium Scandinavian B2B SaaS, spacious editorial layout, restrained motion."></textarea></label>
         <fieldset class="wide"><legend>Website requirements</legend><div id="featureChecks" class="checks"></div></fieldset>
+        <fieldset class="wide"><legend>Local project images (optional)</legend><div id="projectChecks" class="checks"></div>
+          <p id="projectCatalogStatus" class="meta">Loading the curated local catalog...</p>
+          <button id="refreshProjectCatalog" type="button">REFRESH IMAGE CATALOG</button>
+        </fieldset>
         <button id="startCampaign" type="button">START GENERATION</button><p id="coachResult"></p>
       </form>
       <p class="meta">No automatic client reruns or prerequisite training drills. Previous passing versions remain available.</p>
