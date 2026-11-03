@@ -221,6 +221,44 @@ test('saved previews reload replaced image bytes and props without queuing a mod
   assert.deepEqual(queued[0].clientProjectIds, ['alpha']);
 });
 
+test('dashboard image requests reuse one validated snapshot and invalidate changed assets', async t => {
+  const workDir = await workspace(t);
+  const input = await fixture(workDir);
+  await receipt(workDir);
+  const image = input.projects[0].images[0];
+  const source = path.join(workDir, 'showcase', image.path);
+  const originalRead = fs.readFile;
+  let reads = 0;
+  t.mock.method(fs, 'readFile', async (file, ...args) => {
+    if (String(file).startsWith(path.join(workDir, 'showcase')) && String(file).endsWith('.png')) reads++;
+    return originalRead(file, ...args);
+  });
+  const server = await startDashboard({ workDir, tasks: [], port: 0 });
+  t.after(() => server.close());
+  const imageUrl = hash => `${server.origin}/preview/${runId}/project-assets/alpha/COVER.png?v=${hash}`;
+  const replies = await Promise.all(Array.from({ length: 6 }, () => fetch(imageUrl(image.sha256))));
+  assert.ok(replies.every(reply => reply.status === 200));
+  assert.ok(reads <= 4, `Six concurrent requests reread the entire catalog: ${reads} image reads`);
+  const initialReads = reads;
+  assert.equal((await fetch(imageUrl(image.sha256))).status, 200);
+  assert.equal((await fetch(`${server.origin}/api/project-catalog`)).status, 200);
+  assert.equal(reads, initialReads, 'Unchanged image/catalog requests reread asset bytes.');
+  const stat = await fs.stat(source);
+  const damaged = Buffer.from(await originalRead(source));
+  damaged[damaged.length - 1] ^= 1;
+  await fs.writeFile(source, damaged);
+  await fs.utimes(source, stat.atime, stat.mtime);
+  assert.equal((await fetch(imageUrl(image.sha256))).status, 500, 'Changed bytes reused a stale validated snapshot.');
+  const updated = await fixture(workDir, 15);
+  assert.equal((await fetch(imageUrl(image.sha256))).status, 404);
+  const currentUrl = imageUrl(updated.projects[0].images[0].sha256);
+  assert.equal((await fetch(currentUrl)).status, 200);
+  const real = path.join(workDir, 'real-alpha');
+  await fs.rename(path.dirname(source), real);
+  await fs.symlink(real, path.dirname(source), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal((await fetch(currentUrl)).status, 500, 'A junction replacement reused cached bytes.');
+});
+
 test('client browser uses two asset inputs and rejects hardcoded image URLs and external requests', { timeout: 90000 }, async t => {
   const workDir = await workspace(t);
   await fixture(workDir);

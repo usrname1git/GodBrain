@@ -143,6 +143,52 @@ export async function readProjectCatalogDirectory(root, selectedIds = null) {
 export const loadProjectCatalog = (workDir, selectedIds = null) =>
   readProjectCatalogDirectory(path.join(workDir, 'showcase'), selectedIds);
 
+export function createProjectCatalogLoader(workDir) {
+  const root = path.join(workDir, 'showcase');
+  let cached = null, pending = null;
+  const version = async paths => (await Promise.all(paths.map(async file => {
+    const stat = await fs.lstat(file, { bigint: true });
+    if (stat.isSymbolicLink()) throw new Error('Project assets cannot use links or junctions.');
+    return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+  }))).join('\n');
+  const refresh = async () => {
+    const previous = cached;
+    cached = null;
+    if (previous && await version(previous.paths) === previous.version) {
+      cached = previous;
+      return previous.catalog;
+    }
+    const candidate = await loadProjectCatalog(workDir);
+    if (!candidate) return null;
+    const files = new Set([root, path.join(root, 'catalog.json')]);
+    for (const project of candidate.projects) for (const image of project.images) {
+      let file = root;
+      for (const part of image.path.split('/')) { file = path.join(file, part); files.add(file); }
+    }
+    const paths = [...files], before = await version(paths);
+    // Revalidate bytes between metadata reads before caching a new filesystem version.
+    const catalog = await loadProjectCatalog(workDir);
+    if (!catalog || catalog.catalogHash !== candidate.catalogHash || before !== await version(paths)) {
+      throw new Error('Project catalog changed during snapshot validation; retry.');
+    }
+    cached = { catalog, paths, version: before };
+    return catalog;
+  };
+  return async (selectedIds = null) => {
+    const selected = selectedIds == null ? null : projectIds(selectedIds);
+    pending ??= refresh().finally(() => { pending = null; });
+    const catalog = await pending;
+    if (selected == null) return catalog;
+    if (selected.some(id => !catalog?.projects.some(project => project.id === id))) {
+      throw new Error('A selected project is missing from the catalog.');
+    }
+    if (!catalog) return null;
+    const projects = catalog.projects.filter(project => selected.includes(project.id));
+    const urls = new Set(projects.flatMap(project => project.images.map(image => image.url.slice(1))));
+    return { ...catalog, projects, assets: new Map([...catalog.assets].filter(([url]) => urls.has(url))) };
+  };
+}
+
 export function projectAssetRequest(catalog, relativeUrl) {
   if (!catalog || /[\r\n\\#]/.test(relativeUrl)) return null;
   return catalog.assets.get(relativeUrl) ?? null;

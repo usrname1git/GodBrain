@@ -10,7 +10,7 @@ import { checkBuilderDatabase } from './builder-db.mjs';
 import { syncSharedLessons } from './shared-lessons.mjs';
 import { masterySnapshot } from './scheduler.mjs';
 import { listUniversityTasks, readUniversity, universitySummary } from './course-factory.mjs';
-import { loadProjectCatalog, projectAssetRequest } from './project-assets.mjs';
+import { createProjectCatalogLoader, projectAssetRequest } from './project-assets.mjs';
 
 const RUN_ID = /^[0-9]{8}-[a-f0-9]{12}$/;
 const STATIC_FILES = new Map([
@@ -223,6 +223,7 @@ export async function startDashboard({
   if (host !== '127.0.0.1') throw new Error('Frontend gym dashboard must remain on literal loopback.');
   const staticRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dashboard');
   const previewCache = new Map();
+  const loadProjects = createProjectCatalogLoader(workDir);
   let origin;
   const server = http.createServer(async (request, response) => {
     try {
@@ -245,7 +246,7 @@ export async function startDashboard({
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/project-catalog' && !url.search) {
-        const catalog = await loadProjectCatalog(workDir);
+        const catalog = await loadProjects();
         json(response, 200, { configured: Boolean(catalog), projects: catalog?.projects ?? [], catalogHash: catalog?.catalogHash ?? null });
         return;
       }
@@ -383,7 +384,7 @@ export async function startDashboard({
       if (request.method === 'GET' && projectMatch) {
         const runReceipt = await receipt(workDir, projectMatch[1]);
         if (runReceipt?.objectiveMode === 'explore' && runReceipt.clientProjectIds?.length) {
-          const catalog = await loadProjectCatalog(workDir, runReceipt.clientProjectIds);
+          const catalog = await loadProjects(runReceipt.clientProjectIds);
           const asset = projectAssetRequest(catalog, `${projectMatch[2]}${url.search}`);
           if (asset) {
             response.writeHead(200, { 'Content-Type': asset.type, 'Cache-Control': 'no-store' });
@@ -429,7 +430,7 @@ export async function startDashboard({
         } else if (asset === 'props.js') {
           response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
           const props = built.clientProjectIds.length
-            ? { ...built.props, projects: (await loadProjectCatalog(workDir, built.clientProjectIds)).projects }
+            ? { ...built.props, projects: (await loadProjects(built.clientProjectIds)).projects }
             : built.props;
           response.end(`window.__GODBRAIN_TASK_PROPS__=${JSON.stringify(props).replace(/</g, '\\u003c')};`);
         } else {

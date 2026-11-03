@@ -224,6 +224,11 @@ views, CPU-encodes lossless WebP and transactionally replaces this local catalog
 Existing saved previews reload current image props and content-versioned URLs
 without regenerating source. Only explicitly selected, exact-hash local PNG/WebP
 assets are served; arbitrary paths, external images and stale URLs are denied.
+The dashboard shares one bounded validated catalog snapshot across concurrent
+image/props/catalog requests. Every request checks file/directory identity,
+size and nanosecond change/write times; changes or missing/linked paths invalidate
+it. Refresh validates complete bytes between metadata reads before reuse.
+Evaluation and export still perform their own uncached admission checks.
 
 Image clients use the independent `client-project-assets-v1` browser profile,
 not the course verifier. Each seed has its own URL namespace, including the
