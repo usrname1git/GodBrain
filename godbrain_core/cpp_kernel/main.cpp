@@ -69,6 +69,20 @@ static std::string g_frontend_dir;
 // Tick when this kernel process started the in-flight serve generate.
 // /status reads it from another httplib thread so busy stops looking dead.
 static std::atomic<DWORD> g_coli_job_started_ms{0};
+struct GenerateSlot {
+    bool acquired;
+    GenerateSlot() {
+        DWORD expected = 0;
+        const DWORD now = GetTickCount();
+        acquired = g_coli_job_started_ms.compare_exchange_strong(
+            expected, now == 0 ? 1 : now, std::memory_order_acq_rel);
+    }
+    ~GenerateSlot() {
+        if (acquired) g_coli_job_started_ms.store(0, std::memory_order_release);
+    }
+    GenerateSlot(const GenerateSlot&) = delete;
+    GenerateSlot& operator=(const GenerateSlot&) = delete;
+};
 static std::mutex g_research_qualification_mu;
 static json g_research_qualification = {{"state", "not_run"}, {"pass", false}};
 
@@ -357,10 +371,20 @@ static bool mark_oracle_status(const std::string& id, const std::string& to) {
     return hit;
 }
 
+static std::vector<std::thread> g_oracle_workers;
+struct OracleWorkerDrain {
+    ~OracleWorkerDrain() {
+        for (auto& worker : g_oracle_workers) {
+            if (worker.joinable()) worker.join();
+        }
+        g_oracle_workers.clear();
+    }
+};
+
 static void store_oracle_turn_async(
     const std::string& question, const std::string& answer) {
     const auto save = g_oracle_save;
-    std::thread([question, answer, save]() {
+    g_oracle_workers.emplace_back([question, answer, save]() {
         try {
             const json receipt = save(
                 {{"content", oracle_turn_body(question, answer)},
@@ -372,7 +396,7 @@ static void store_oracle_turn_async(
             std::cerr << "[MEMORY] oracle turn not stored: " << error.what()
                       << std::endl;
         }
-    }).detach();
+    });
 }
 
 static std::string ensure_last_oracle_id() {
@@ -944,6 +968,47 @@ static bool write_authorized(const httplib::Request& req, httplib::Response& res
         json({{"error", "bearer token required for this write"}}).dump(),
         "application/json");
     return false;
+}
+
+static bool privileged_payload_authorized(
+    const json& payload, const httplib::Request& req, httplib::Response& res) {
+    if (!requests_privileged_dispatch(payload)) return true;
+    std::string message;
+    if (g_api_token.empty()) {
+        res.status = 403;
+        message = "Privileged commands are disabled: server has no API token configured";
+    } else {
+        const auto token = extract_bearer_token(req);
+        if (token_matches(token)) return true;
+        res.status = token.empty() ? 401 : 403;
+        message = token.empty() ? "Missing bearer token for privileged command" : "Invalid bearer token";
+    }
+    res.set_content(json({{"status", "error"}, {"message", message}}).dump(), "application/json");
+    return false;
+}
+
+static bool save_discussion_receipt(
+    json& response, const std::string& question, const std::string& answer) {
+    try {
+        const std::string text = "Operator:\n" + question + "\n\nAssistant:\n" + answer;
+        const auto saved = memory::working_shelf({
+            {"action", "post"}, {"shelf", "discussion"}, {"scope", "technical"},
+            {"thread_id", "desk"}, {"speaker", "desk-turn"},
+            {"title", godbrain_rag::utf8_prefix(question, 160)}, {"text", text}
+        });
+        if (saved.at("trust") != "untrusted" || saved.at("promoted") != false ||
+            saved.at("record").at("text") != text) {
+            throw std::runtime_error("Discussion receipt does not match the completed turn");
+        }
+        response["shared_saved"] = true;
+        response["shared_record_id"] = saved.at("record").at("_id");
+        return true;
+    } catch (const std::exception& error) {
+        std::cerr << "[MEMORY] Discussion save failed: " << error.what() << std::endl;
+        response["shared_saved"] = false;
+        response["memory_error"] = error.what();
+        return false;
+    }
 }
 
 bool colibri_serve_up();
@@ -3834,7 +3899,15 @@ std::string run_colibri_serve(
     const godbrain_rag::Client* skill_client = nullptr,
     local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
     json* request_receipt = nullptr,
-    bool protected_reads_authorized = false) {
+    bool protected_reads_authorized = false,
+    const local_tools::RequestScope* memory_scope = nullptr) {
+    const auto load_chain = [&]() { return memory_scope ? json::object() : ::load_chain(); };
+    const auto save_chain = [&](const auto&... args) {
+        if (!memory_scope) ::save_chain(args...);
+    };
+    const auto chain_is_cancelled = [&](const std::string& goal) {
+        return !memory_scope && ::chain_is_cancelled(goal);
+    };
     const std::string chain_goal = tool_hint.empty() ? user : tool_hint;
     if (tool_mode == local_tools::ToolMode::Legacy || is_continue_command(chain_goal)) {
         const json previous = load_chain();
@@ -3854,10 +3927,12 @@ std::string run_colibri_serve(
     receipt = {{"tool_mode", local_tools::tool_mode_name(tool_mode)},
                {"tool_attempts", json::array()}, {"answer_retry", false},
                {"output_requests", json::array()}, {"verification", "not_run"}};
-    local_tools::RequestScope scope;
+    local_tools::RequestScope scope = memory_scope ? *memory_scope : local_tools::RequestScope{};
     scope.mode = tool_mode;
     scope.operator_text = chain_goal;
     scope.protected_reads_authorized = protected_reads_authorized;
+    scope.privileged_tools_authorized = protected_reads_authorized;
+    scope.is_cancelled = [&] { return chain_is_cancelled(chain_goal); };
     httplib::Client client(serve_host, serve_port);
     client.set_connection_timeout(0, 500000);
     client.set_write_timeout(15, 0);
@@ -3888,7 +3963,7 @@ std::string run_colibri_serve(
     // EXL3 on :8888 is the tool mouth while Gemma is paused. Same flatten
     // loop as llama. Do not recycle llama-server between hops.
     const bool tool_mouth = llama_mouth || exl3_mouth;
-    const auto thinking = load_thinking_preference();
+    const auto thinking = memory_scope ? ThinkingPreference{false, "", ""} : load_thinking_preference();
     json reasoning_models;
     const std::string apply_src = tool_hint.empty() ? user : tool_hint;
     const bool apply_cont = wants_apply_continue(system, apply_src);
@@ -3929,7 +4004,7 @@ std::string run_colibri_serve(
     const bool fix_job = native_tools && !read_only &&
                          looks_like_fix_job(chain_goal);
     int max_tool_rounds =
-        native_tools ? (tool_mode == local_tools::ToolMode::Research ? 8 :
+        native_tools ? ((scope.shared_memory_authorized || tool_mode == local_tools::ToolMode::Research) ? 8 :
                         ((local_tools::yolo_active() || fix_job) ? 8 : 3)) : 1;
     if (fix_job && !base_messages.empty() &&
         base_messages.back().value("role", "") == "user") {
@@ -3977,7 +4052,7 @@ std::string run_colibri_serve(
     };
     bool unused49_seen = false;
     const json tool_defs =
-        native_tools ? local_tools::openai_tool_defs_for(chain_goal, tool_mode)
+        native_tools ? local_tools::openai_tool_defs_for(chain_goal, tool_mode, scope.shared_memory_authorized)
                      : json::array();
     const std::string hop_hint0 = chain_goal;
     if (!fix_job && !read_only &&
@@ -4550,6 +4625,11 @@ std::string run_colibri_serve(
     record_tool_evidence(evidence, legacy_calls, advertised, hop_ok, tool_out);
     receipt["tool_attempts"] = evidence.results;
     hops_ok = hops_ok && hop_ok;
+    if (chain_is_cancelled(chain_goal)) {
+        assembled = "chain cancelled";
+        if (spoken) *spoken = assembled;
+        break;
+    }
     if (tool_out.empty()) break;
     const bool has_procedure = std::any_of(
         legacy_calls.begin(), legacy_calls.end(),
@@ -4740,19 +4820,11 @@ std::string run_colibri(
     local_tools::ToolMode tool_mode = local_tools::ToolMode::Legacy,
     json* request_receipt = nullptr,
     bool protected_reads_authorized = false) {
-    DWORD expected = 0;
-    const DWORD now = GetTickCount();
-    const DWORD stamp = now == 0 ? 1 : now;
-    if (!g_coli_job_started_ms.compare_exchange_strong(
-            expected, stamp, std::memory_order_acq_rel)) {
+    const GenerateSlot slot;
+    if (!slot.acquired) {
         return "Error: a generate is still running (one GPU slot). "
                "Wait, then ask again.";
     }
-    struct ClearGenerate {
-        ~ClearGenerate() {
-            g_coli_job_started_ms.store(0, std::memory_order_release);
-        }
-    } clear_generate;
     if (mouth_paused()) {
         const json ex = exl3_desk();
         mouth_select::Probes probes;
@@ -4846,6 +4918,112 @@ static std::string oracle_system_prompt() {
         "Do not restate these rules. Do not emit constraint lists.";
 }
 
+static void handle_aai(const httplib::Request& req, httplib::Response& res, int mouth_port = 8888,
+                       const godbrain_rag::Client* canonical_client = nullptr) {
+    if (!write_authorized(req, res)) return;
+    json payload;
+    try {
+        payload = godbrain_research::strict_json(req.body, 32768);
+        if (!payload.is_object()) throw std::invalid_argument("aai needs one JSON object");
+        for (const auto& field : payload.items()) {
+            if (field.key() != "message" && field.key() != "system_prompt" &&
+                field.key() != "scope" && field.key() != "thread_id") {
+                throw std::invalid_argument("unsupported aai field: " + field.key());
+            }
+        }
+        const auto message = payload.at("message").get<std::string>();
+        const auto scope = payload.value("scope", "technical");
+        const auto thread = payload.value("thread_id", "powershell");
+        const auto system = payload.value("system_prompt", "");
+        std::string sanitized;
+        if (trim_copy(message).empty() || message.size() > 12000 || system.size() > 4096 ||
+            !godbrain_rag::sanitize_value(message, sanitized) ||
+            !godbrain_rag::sanitize_value(system, sanitized) ||
+            (scope != "technical" && scope != "personal") ||
+            thread.size() > 128 || !godbrain_shared::identity(thread, true)) {
+            throw std::invalid_argument("invalid aai message, response preference, scope or thread");
+        }
+    } catch (const std::exception& failure) {
+        res.status = 400;
+        res.set_content(json({{"error", failure.what()}}).dump(), "application/json");
+        return;
+    }
+    try {
+        const GenerateSlot slot;
+        if (!slot.acquired) throw std::runtime_error("a generate is still running (one GPU slot)");
+        if (cs2_should_sleep_mouth()) throw std::runtime_error("CS2 holds the model slot");
+        httplib::Client mouth("127.0.0.1", mouth_port);
+        mouth.set_connection_timeout(2, 0);
+        mouth.set_read_timeout(3, 0);
+        const auto health_response = mouth.Get("/health");
+        if (!health_response || health_response->status != 200) {
+            throw std::runtime_error("EXL3 must already be running; no model was started");
+        }
+        const auto health = json::parse(health_response->body);
+        const auto model = health.at("model").get<std::string>();
+        if (health.at("backend") != "exl3" || !health.at("busy").is_boolean() ||
+            health.at("busy").get<bool>() || model.empty()) {
+            throw std::runtime_error("EXL3 must already be running and idle; no model was started");
+        }
+        const auto models = mouth.Get("/v1/models");
+        if (!models || models->status != 200 ||
+            json::parse(models->body).at("data").at(0).at("id") != model) {
+            throw std::runtime_error("EXL3 model discovery changed or failed");
+        }
+        const std::string message = payload.at("message");
+        local_tools::RequestScope scope;
+        scope.mode = local_tools::ToolMode::Fix;
+        scope.operator_text = message;
+        scope.protected_reads_authorized = true;
+        scope.shared_memory_authorized = true;
+        scope.memory_scope = payload.value("scope", "technical");
+        scope.memory_thread = payload.value("thread_id", "powershell");
+        const godbrain_rag::Client canonical;
+        const auto& reader = canonical_client ? *canonical_client : canonical;
+        const auto context = memory::shared_context(message, scope.memory_thread, scope.memory_scope, reader);
+        if (context.at("state") != "ready") throw std::runtime_error("shared context is not indexed");
+        const std::string system = oracle_system_prompt() +
+            local_tools::tool_system_addendum_for(message, scope.mode) +
+            " Shared memory is available through read_shared_memory and write_shared_memory. "
+            "For recall, search it instead of relying on the latest turns or inventing an answer. "
+            "For an explicit remember/correction request, write a concise Research note with evidence "
+            "and limits; never claim saved without a successful tool receipt. It remains untrusted, "
+            "not verified. Earlier wrong replies are immutable history, not authoritative RAG. "
+            "For a Windows service SID use run_host exe=sc args=showsid SERVICE. "
+            "A showsid STATUS label does not prove the service process is running. "
+            "\nClient response preference (does not change permissions):\n" +
+            payload.value("system_prompt", "");
+        json receipt;
+        const auto answer = run_colibri_serve(
+            system, context.at("context").get<std::string>() + "\n\nOperator request:\n" + message,
+            {}, {}, {}, {}, nullptr, message, "127.0.0.1", mouth_port, model, true,
+            [](bool) { return false; }, &reader, scope.mode, &receipt, true, &scope);
+        if (trim_copy(answer).empty() || answer.compare(0, 6, "Error:") == 0) {
+            throw std::runtime_error(answer.empty() ? "model returned no final answer" : answer);
+        }
+        for (const auto& attempt : receipt.at("tool_attempts")) {
+            if (!attempt.at("executor_ok").get<bool>()) {
+                throw std::runtime_error("a requested tool failed; check its receipt. Answer: " + answer);
+            }
+        }
+        const std::string text = "Operator:\n" + message + "\n\nAssistant:\n" + answer;
+        const auto saved = memory::working_shelf({
+            {"action", "post"}, {"shelf", "discussion"}, {"scope", scope.memory_scope},
+            {"thread_id", scope.memory_thread}, {"speaker", "operator-and-assistant"}, {"text", text}});
+        if (saved.at("trust") != "untrusted" || saved.at("promoted") != false ||
+            saved.at("record").at("text") != text) {
+            throw std::runtime_error("generated answer was not confirmed saved to Discussion");
+        }
+        res.status = 200;
+        res.set_content(json({{"response", answer}, {"shared_saved", true},
+            {"shared_record_id", saved.at("record").at("_id")}, {"request_receipt", receipt},
+            {"scope", scope.memory_scope}, {"thread_id", scope.memory_thread}}).dump(), "application/json");
+    } catch (const std::exception& failure) {
+        res.status = 503;
+        res.set_content(json({{"error", failure.what()}}).dump(), "application/json");
+    }
+}
+
 int main() {
     if (const auto helper = local_tools::protected_read_entry()) return *helper;
     if (read_env("GODBRAIN_SHOW_CONSOLE") != "1") {
@@ -4881,6 +5059,7 @@ int main() {
     });
 
     g_frontend_dir = resolve_frontend_dir();
+    OracleWorkerDrain oracle_worker_drain;
     load_oracle_turns();
     retry_unstored_oracle_turns();
     godbrain_rag::Client rag_client;
@@ -4946,19 +5125,23 @@ int main() {
     });
 
     svr.Get("/", [&](const httplib::Request&, httplib::Response& res) {
-        res.set_redirect("/galaxy");
+        res.set_redirect("/workspace");
     });
 
-    svr.Get("/galaxy", [&](const httplib::Request&, httplib::Response& res) {
-        std::ifstream file(g_frontend_dir + "/galaxy.html");
+    svr.Get("/workspace", [&](const httplib::Request&, httplib::Response& res) {
+        std::ifstream file(g_frontend_dir + "/workspace.html");
         if (file) {
             std::stringstream buffer;
             buffer << file.rdbuf();
             res.set_content(buffer.str(), "text/html");
         } else {
             res.status = 404;
-            res.set_content("Galaxy UI not found.", "text/plain");
+            res.set_content("Workspace UI not found.", "text/plain");
         }
+    });
+
+    svr.Get("/galaxy", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_redirect("/workspace");
     });
 
     svr.set_mount_point("/frontend", g_frontend_dir);
@@ -5131,10 +5314,15 @@ int main() {
         handle_observe(req, res);
     });
 
+    svr.Post("/api/aai", [&](const httplib::Request& req, httplib::Response& res) {
+        set_cors(req, res);
+        handle_aai(req, res);
+    });
     svr.Post("/api/chat", [&](const httplib::Request& req, httplib::Response& res) {
         set_cors(req, res);
         try {
             json payload = json::parse(req.body);
+            if (!privileged_payload_authorized(payload, req, res)) return;
             std::string user_msg = payload.value("message", "");
             const bool protected_reads_authorized = !g_api_token.empty() &&
                 token_matches(extract_bearer_token(req));
@@ -5955,24 +6143,6 @@ int main() {
             }
 
             if (requests_privileged_dispatch(payload)) {
-                if (g_api_token.empty()) {
-                    std::cerr << "[KERNEL SECURITY] Rejected privileged command: GODBRAIN_API_TOKEN is not configured." << std::endl;
-                    res.status = 403;
-                    res.set_content("{\"status\":\"error\",\"message\":\"Privileged commands are disabled: server has no API token configured\"}", "application/json");
-                    return;
-                }
-                std::string provided = extract_bearer_token(req);
-                if (provided.empty()) {
-                    res.status = 401;
-                    res.set_content("{\"status\":\"error\",\"message\":\"Missing bearer token for privileged command\"}", "application/json");
-                    return;
-                }
-                if (!token_matches(provided)) {
-                    std::cerr << "[KERNEL SECURITY] Rejected privileged command: invalid bearer token." << std::endl;
-                    res.status = 403;
-                    res.set_content("{\"status\":\"error\",\"message\":\"Invalid bearer token\"}", "application/json");
-                    return;
-                }
                 std::string cmd_type = payload["command_type"];
                 json k_res = kernel_hub.dispatch(cmd_type, payload);
                 res.set_content(k_res.dump(), "application/json");
@@ -6384,7 +6554,8 @@ int main() {
                 res.set_chunked_content_provider(
                     "text/event-stream",
                     [sys, usr, asked_q, tool_hint, hist_q, hist_a,
-                     stitch_continue, local_fs_ask, no_tools_ask, tool_mode, protected_reads_authorized](
+                     stitch_continue, local_fs_ask, no_tools_ask, tool_mode,
+                     protected_reads_authorized, shared_memory_active](
                         size_t, httplib::DataSink& sink) {
                         auto emit = [&](const json& ev) {
                             const std::string line = "data: " + ev.dump() + "\n\n";
@@ -6509,8 +6680,15 @@ int main() {
                         } else {
                             // Stream already showed new tokens. Do not replace
                             // the bubble with the stitched prior+new dump.
-                            emit({{"type", "done"}, {"response", chunk},
-                                  {"request_receipt", request_receipt}});
+                            json done = {{"type", "done"}, {"response", chunk},
+                                         {"request_receipt", request_receipt}};
+                            if (shared_memory_active &&
+                                !save_discussion_receipt(done, asked_q, final_answer)) {
+                                done["type"] = "error";
+                                done["text"] = chunk + "\n\nDiscussion was not saved: " +
+                                    done.at("memory_error").get<std::string>();
+                            }
+                            emit(done);
                         }
                         sink.done();
                         return true;
@@ -6601,21 +6779,20 @@ int main() {
             json resp;
             resp["response"] = continue_cmd ? chunk : final_answer;
             resp["request_receipt"] = request_receipt;
-            if (shared_memory_active) {
-                try {
-                    const auto saved = memory::save_working_turn(asked, final_answer);
-                    resp["shared_saved"] = true;
-                    resp["shared_record_id"] = saved.at("record").at("_id");
-                } catch (const std::exception& error) {
-                    res.status = 503;
-                    resp["shared_saved"] = false;
-                    resp["memory_error"] = error.what();
-                }
+            if (shared_memory_active && combined.compare(0, 6, "Error:") != 0 &&
+                !save_discussion_receipt(resp, asked, final_answer)) {
+                res.status = 503;
             }
             res.set_content(resp.dump(), "application/json");
-        } catch (...) {
+        } catch (const json::exception& error) {
+            std::cerr << "[CHAT] Invalid request data: " << error.what() << std::endl;
             res.status = 400;
-            res.set_content("{\"response\":\"Parse error\"}", "application/json");
+            res.set_content("{\"response\":\"Invalid chat request data\"}", "application/json");
+        } catch (const std::exception& error) {
+            std::cerr << "[CHAT] Request failed: " << error.what() << std::endl;
+            res.status = 503;
+            res.set_content(json({{"response", std::string("Chat failed: ") + error.what()}}).dump(),
+                            "application/json");
         }
     });
 

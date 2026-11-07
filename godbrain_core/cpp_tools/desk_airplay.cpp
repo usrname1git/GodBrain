@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <sddl.h>
 #include <iphlpapi.h>
 #include <objbase.h>
 #include <UIAutomation.h>
@@ -48,6 +49,17 @@ struct ProcessCloser {
     void operator()(void* value) const { if (value) ::CloseHandle(value); }
 };
 using ProcessHandle = std::unique_ptr<void, ProcessCloser>;
+
+struct WindowsError : std::runtime_error {
+    DWORD code;
+    WindowsError(const char* operation, DWORD value)
+        : std::runtime_error(std::string(operation) + " (Windows error " +
+            std::to_string(value) + ")"), code(value) {}
+};
+
+struct LocalCloser {
+    void operator()(void* value) const { if (value) LocalFree(value); }
+};
 
 struct FreeBstr {
     void operator()(wchar_t* value) const { SysFreeString(value); }
@@ -116,9 +128,10 @@ static BOOL CALLBACK find_window(HWND window, LPARAM parameter) {
     return TRUE;
 }
 
-static ProcessHandle open_receiver(DWORD pid, std::uint64_t created) {
-    ProcessHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid));
-    if (!process) throw std::runtime_error("Could not inspect the receiver process");
+static ProcessHandle open_receiver(DWORD pid, std::uint64_t created, DWORD extra_access = 0) {
+    ProcessHandle process(OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | extra_access, FALSE, pid));
+    if (!process) throw WindowsError("Could not open the receiver process", GetLastError());
     std::array<wchar_t, 32768> path{};
     DWORD length = static_cast<DWORD>(path.size());
     if (!QueryFullProcessImageNameW(process.get(), 0, path.data(), &length) ||
@@ -139,6 +152,49 @@ static ProcessHandle open_receiver(DWORD pid, std::uint64_t created) {
     if (WaitForSingleObject(process.get(), 0) != WAIT_TIMEOUT)
         throw std::runtime_error("Receiver process has exited");
     return process;
+}
+
+static void assert_owner(HANDLE process, const std::wstring& expected) {
+    PSID sid = nullptr;
+    if (!ConvertStringSidToSidW(expected.c_str(), &sid))
+        throw std::runtime_error("Invalid receiver owner SID");
+    const std::unique_ptr<void, LocalCloser> sid_cleanup(sid);
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token))
+        throw WindowsError("Could not inspect receiver ownership", GetLastError());
+    const ProcessHandle token(raw_token);
+    DWORD bytes = 0;
+    if (GetTokenInformation(token.get(), TokenUser, nullptr, 0, &bytes) ||
+        GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes > 65536) {
+        throw std::runtime_error("Receiver ownership size is unavailable");
+    }
+    std::vector<BYTE> storage(bytes);
+    if (!GetTokenInformation(token.get(), TokenUser, storage.data(), bytes, &bytes))
+        throw WindowsError("Could not read receiver ownership", GetLastError());
+    if (!EqualSid(reinterpret_cast<TOKEN_USER*>(storage.data())->User.Sid, sid))
+        throw std::runtime_error("Receiver owner does not match the requesting user");
+}
+
+static void assert_deadline(std::uint64_t deadline) {
+    FILETIME now{};
+    GetSystemTimeAsFileTime(&now);
+    const auto current = (static_cast<std::uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+    if (deadline <= current || deadline - current > 15ULL * 10000000ULL)
+        throw std::runtime_error("Receiver termination request expired or has an invalid deadline");
+}
+
+static json terminate_receiver(DWORD pid, std::uint64_t created,
+        const std::wstring& owner, std::uint64_t deadline) {
+    assert_deadline(deadline);
+    auto process = open_receiver(pid, created, PROCESS_TERMINATE);
+    assert_owner(process.get(), owner);
+    assert_deadline(deadline);
+    if (!TerminateProcess(process.get(), 1))
+        throw WindowsError("Could not terminate the receiver", GetLastError());
+    if (WaitForSingleObject(process.get(), 2000) != WAIT_OBJECT_0)
+        throw std::runtime_error("Receiver did not exit after termination");
+    return {{"schema_version", 1}, {"ok", true}, {"pid", pid},
+        {"created", std::to_string(created)}, {"state", "stopped"}};
 }
 
 static ComPtr<IUIAutomationCondition> property_condition(IUIAutomation* automation,
@@ -346,6 +402,9 @@ static void self_test() {
     require(number(L"18446744073709551615") == std::numeric_limits<std::uint64_t>::max());
     for (const auto* invalid : {L"", L"-1", L"+1", L"12x", L" 12", L"18446744073709551616"})
         rejects([&] { number(invalid); });
+    rejects([] { assert_owner(GetCurrentProcess(), L"not-a-sid"); });
+    rejects([] { assert_deadline(0); });
+    rejects([] { assert_deadline(std::numeric_limits<std::uint64_t>::max()); });
     std::cout << json({{"ok", true}, {"self_test", "pass"}}).dump() << '\n';
 }
 
@@ -356,12 +415,23 @@ int wmain(int argc, wchar_t* argv[]) {
             self_test();
             return 0;
         }
-        if (argc != 5 || std::wstring(argv[1]) != L"--pid" || std::wstring(argv[3]) != L"--created")
-            throw std::runtime_error("Usage: desk-airplay --pid PID --created FILETIME");
-        const auto pid = number(argv[2]);
-        const auto created = number(argv[4]);
+        const bool terminate = argc == 10 && std::wstring(argv[1]) == L"--terminate" &&
+            std::wstring(argv[2]) == L"--pid" && std::wstring(argv[4]) == L"--created" &&
+            std::wstring(argv[6]) == L"--owner" && std::wstring(argv[8]) == L"--deadline";
+        const bool inspect = argc == 5 && std::wstring(argv[1]) == L"--pid" &&
+            std::wstring(argv[3]) == L"--created";
+        if (!terminate && !inspect)
+            throw std::runtime_error("Usage: desk-airplay [--terminate] --pid PID --created FILETIME"
+                " [--owner SID --deadline FILETIME]");
+        const auto pid = number(argv[terminate ? 3 : 2]);
+        const auto created = number(argv[terminate ? 5 : 4]);
         if (pid == 0 || pid > std::numeric_limits<DWORD>::max() || created == 0)
             throw std::runtime_error("Invalid receiver process identity");
+        if (terminate) {
+            std::cout << terminate_receiver(static_cast<DWORD>(pid), created, argv[7],
+                number(argv[9])).dump() << '\n';
+            return 0;
+        }
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         com_initialized = true;
         const auto result = read_receiver(static_cast<DWORD>(pid), created);
@@ -369,6 +439,11 @@ int wmain(int argc, wchar_t* argv[]) {
         com_initialized = false;
         std::cout << result.dump() << '\n';
         return 0;
+    } catch (const WindowsError& error) {
+        if (com_initialized) winrt::uninit_apartment();
+        std::cout << json({{"schema_version", 1}, {"ok", false},
+            {"error", error.what()}, {"win32_error", error.code}}).dump() << '\n';
+        return error.code == ERROR_ACCESS_DENIED ? ERROR_ACCESS_DENIED : 1;
     } catch (const std::exception& error) {
         if (com_initialized) winrt::uninit_apartment();
         std::cout << json({{"schema_version", 1}, {"ok", false}, {"error", error.what()}}).dump() << '\n';

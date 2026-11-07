@@ -3,6 +3,36 @@ function Get-GodBrainClipShareRoot {
     return Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'ClipShare'
 }
 
+function Start-GodBrainClipShareSend {
+    param([Parameter(Mandatory)][string[]]$Files)
+    if ($Files.Count -lt 1 -or $Files.Count -gt 128) { throw 'Select 1-128 completed image/audio/video files.' }
+    $root = Get-GodBrainClipShareRoot
+    $exe = Join-Path $root 'build\Release\clipshare-send.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'ClipShare native sender is not installed.' }
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $exe
+    $info.WorkingDirectory = $root
+    $info.UseShellExecute = $false
+    foreach ($argument in @('--root', $root) + $Files) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    if (-not $process) { throw 'ClipShare native sender did not start.' }
+    $process.Dispose()
+    return 'Native Share window opened. Select a ready image and Copy link for direct PNG bytes.'
+}
+
+function Show-GodBrainClipShareFilePicker {
+    $picker = [Windows.Forms.OpenFileDialog]::new()
+    $picker.Title = 'Share images, audio or video with ClipShare'
+    $picker.Multiselect = $true
+    $picker.CheckFileExists = $true
+    $picker.Filter = 'Supported images/audio/video|*.png;*.jpg;*.jpeg;*.webp;*.mkv;*.mp4;*.webm;*.mov;*.ogg;*.opus;*.mp3;*.m4a;*.wav;*.flac|Images (PNG, JPEG, WebP)|*.png;*.jpg;*.jpeg;*.webp'
+    try {
+        if ($picker.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+            return Start-GodBrainClipShareSend -Files $picker.FileNames
+        }
+    } finally { $picker.Dispose() }
+}
+
 function Invoke-GodBrainClipShareCommand {
     param([ValidateSet('status', 'start', 'stop', 'inbox', 'library', 'copy', 'login')][string]$Command,
         [switch]$Ingress)

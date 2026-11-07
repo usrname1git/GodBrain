@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="GodBrain Workspace: local knowledge, evidence, research and assistant controls.">
+  <title>GodBrain Workspace</title>
+  <link rel="icon" href="/frontend/tidal.svg">
+  <link rel="stylesheet" href="/frontend/workspace.css">
+  <script src="/frontend/workspace.js" defer></script>
+</head>
+<body data-wallpaper="tidal">
+  <div class="backdrop" aria-hidden="true"></div>
+  <div class="app">
+    <header class="masthead">
+      <a class="brand" href="/workspace" aria-label="GodBrain Workspace home">
+        <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M10 12 29 9 30 29 12 30Z M10 12 30 29 M29 9 12 30"/><circle cx="10" cy="12" r="4"/><circle cx="29" cy="9" r="4"/><circle cx="30" cy="29" r="4"/><circle cx="12" cy="30" r="4"/></svg>
+        <span>GodBrain<small>WORKSPACE</small></span>
+      </a>
+      <form id="search-form" class="search-bar" role="search">
+        <label class="sr-only" for="search">Search the selected shelf</label>
+        <span class="search-symbol" aria-hidden="true">&#9906;</span>
+        <input id="search" type="search" maxlength="128" placeholder="Search your knowledge..." autocomplete="off">
+        <kbd aria-hidden="true">/</kbd>
+        <button id="ask-search" type="button">Ask assistant <span aria-hidden="true">&#8599;</span></button>
+      </form>
+      <button id="connect" class="connection-badge" type="button">LOCAL WORKSPACE <span id="connection-label">Connecting to knowledge...</span></button>
+    </header>
+    <nav id="shelves" class="shelf-rail" aria-label="Knowledge shelves"></nav>
+    <main>
+      <div class="workspace-heading">
+        <div><p class="eyebrow">EXPLORE YOUR KNOWLEDGE</p><h1 id="shelf-title">SRE Library</h1><p id="shelf-description" class="subtitle"></p></div>
+        <div class="view-switch" role="group" aria-label="View">
+          <button id="map-view" type="button" aria-pressed="true">Mind map</button>
+          <button id="list-view" type="button" aria-pressed="false">List</button>
+        </div>
+      </div>
+      <div class="workspace-grid">
+        <section class="explorer panel" aria-label="Shelf explorer">
+          <div class="explorer-toolbar">
+            <span id="result-count" aria-live="polite">Loading...</span>
+            <div class="explorer-options">
+              <button id="refresh-shelf" type="button" aria-label="Refresh selected shelf">Refresh</button>
+              <button id="add-note" type="button" hidden>Add note</button>
+              <label class="status-filter">Show <select id="status-filter"><option value="all">All loaded records</option><option value="verified">Verified records</option><option value="review">Needs review</option></select></label>
+            </div>
+          </div>
+          <div id="map-region" class="map-region">
+            <div id="map-viewport" class="map-viewport" tabindex="0" aria-label="Mind map. Drag empty space to pan or use the zoom buttons."><svg id="mind-map" viewBox="0 0 1080 720" aria-label="Records and declared links"></svg></div>
+            <div class="map-controls" role="group" aria-label="Map controls"><button id="zoom-out" type="button" aria-label="Zoom out">&#8722;</button><output id="zoom-level">100%</output><button id="zoom-in" type="button" aria-label="Zoom in">+</button><button id="fit-map" type="button">Fit map</button><button id="map-prev" type="button" aria-label="Previous map page">&#8592;</button><span id="map-page"></span><button id="map-next" type="button" aria-label="Next map page">&#8594;</button></div>
+            <div class="map-legend"><span><i class="membership-key"></i> Shelf membership</span><span><i class="citation-key"></i> Declared record link</span></div>
+          </div>
+          <div id="list-region" class="list-region" hidden></div>
+          <div id="empty-state" class="empty-state" hidden><span class="empty-icon" aria-hidden="true">&#9783;</span><h2 id="empty-title"></h2><p id="empty-description"></p><button id="clear-search" type="button">Clear search and filters</button></div>
+          <div class="explorer-footnote"><span class="small-dot" aria-hidden="true"></span><span id="load-notice">Real records only. Unavailable services are not replaced with sample data.</span></div>
+        </section>
+        <aside id="reader" class="reader panel" aria-label="Selected record">
+          <div class="reader-topline"><span>RECORD DETAILS</span><span id="record-origin" class="origin-tag">LIVE SOURCE</span></div>
+          <div id="record-heading"></div>
+          <div class="reader-tabs" role="tablist" aria-label="Record details"><button id="tab-record" role="tab" aria-selected="true" aria-controls="record-content" type="button">Record</button><button id="tab-evidence" role="tab" aria-selected="false" aria-controls="record-content" type="button">Evidence</button><button id="tab-history" role="tab" aria-selected="false" aria-controls="record-content" type="button">Activity</button></div>
+          <div id="record-content" class="record-content" role="tabpanel" aria-labelledby="tab-record"></div>
+          <div id="record-actions" class="record-actions"></div>
+        </aside>
+      </div>
+    </main>
+    <footer class="status-strip">
+      <span class="connection-status"><span class="connection-dot" aria-hidden="true"></span><span id="footer-state">Local kernel / source-bound knowledge</span></span>
+      <div class="footer-actions"><button id="wallpaper" type="button">Wallpaper: Tidal</button><a href="https://autom8ed.me/projects/" target="_blank" rel="noopener noreferrer">Gallery &#8599;</a><button id="system" type="button">System</button><button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-controls="assistant-panel">Assistant <span aria-hidden="true">+</span></button></div>
+    </footer>
+  </div>
+  <aside id="assistant-panel" class="assistant-panel panel" aria-label="Local assistant" hidden>
+    <div class="assistant-header"><div><strong>Assistant</strong><small>Local inference / current kernel permissions</small></div><button id="assistant-close" type="button" aria-label="Close assistant">&#215;</button></div>
+    <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite"><p class="assistant-message">Research is read-only. Fix is an explicit mode; existing authorization and host holds still apply. No model is started by opening this panel.</p></div>
+    <form id="assistant-form">
+      <div class="assistant-controls"><label for="assistant-mode">Mode</label><select id="assistant-mode"><option value="research" selected>Research / read-only</option><option value="answer">Answer / read-only</option><option value="fix">Fix / explicit changes</option></select><button id="review-reply" type="button" hidden>Review answer</button></div>
+      <label class="sr-only" for="assistant-input">Message for the local assistant</label><textarea id="assistant-input" rows="2" maxlength="12000" placeholder="Ask about this record, or use a /command..."></textarea><button id="assistant-send" type="submit">Send &#8593;</button>
+    </form>
+  </aside>
+  <dialog id="auth-dialog">
+    <form id="auth-form"><p class="eyebrow">LOCAL AUTHORIZATION</p><h2>Connect protected shelves</h2><p>Use your configured GodBrain bearer token for working shelves, Environment and record writes. It stays in this browser tab's session storage; it is never embedded in the page.</p><label for="auth-token">API token</label><input id="auth-token" type="password" autocomplete="off" required><p id="auth-error" class="dialog-error" role="alert"></p><div class="dialog-actions"><button id="auth-cancel" type="button">Cancel</button><button id="auth-forget" type="button">Forget token</button><button class="primary" type="submit">Connect</button></div></form>
+  </dialog>
+  <dialog id="review-dialog">
+    <form id="review-form">
+      <p class="eyebrow">OPERATOR REVIEW</p><h2 id="review-title"></h2><p id="review-explanation"></p>
+      <label for="review-destination">Decision</label><select id="review-destination"><option value="evaluation">Correct answer / retain in Model Evaluations</option><option value="verified">Verify canonical record / admit to manual</option><option value="rejected">Reject canonical claim</option></select>
+      <label for="review-model">Model / runner (optional, your attribution)</label><input id="review-model" maxlength="160" placeholder="Exact model and quantization, if you tested it">
+      <label for="review-reason">Reason and evidence</label><textarea id="review-reason" required minlength="8" maxlength="2000" rows="4" placeholder="What was checked, and what does it establish?"></textarea>
+      <p class="dialog-notice">Answer assessment appends an untrusted Research record. Only an explicit canonical judgment changes RAG status. Original sources are not rewritten.</p>
+      <p id="review-error" class="dialog-error" role="alert"></p><div class="dialog-actions"><button id="review-cancel" type="button">Cancel</button><button id="review-confirm" class="primary" type="submit">Save decision</button></div>
+    </form>
+  </dialog>
+  <dialog id="note-dialog">
+    <form id="note-form"><p class="eyebrow">WORKING MEMORY</p><h2 id="note-heading">Add a note</h2><label for="note-title">Title</label><input id="note-title" maxlength="128" required><label for="note-text">Note</label><textarea id="note-text" rows="7" maxlength="16000" required></textarea><p class="dialog-notice">A new immutable working record, not a Golden Record or permission to run tools. Personal scope stays isolated.</p><p id="note-error" class="dialog-error" role="alert"></p><div class="dialog-actions"><button id="note-cancel" type="button">Cancel</button><button id="note-save" class="primary" type="submit">Save note</button></div></form>
+  </dialog>
+  <dialog id="system-dialog">
+    <div class="system-dialog-content"><p class="eyebrow">SYSTEM / PASSIVE GLANCE</p><h2>This host</h2><p>Opening this view reads snapshots only. Model/service recovery remains an explicit Desk action.</p><div id="system-summary"></div><div class="system-buttons"><button id="desk-btn" type="button">Desk health check</button><button id="pending-btn" type="button" data-door="pending">Pending records</button><button id="last-edit-btn" type="button" data-door="last-edit">Last edit</button><button id="sre-btn" type="button" data-door="sre">SRE diagnosis</button><button type="button" data-door="chain">Task chain</button><button type="button" data-door="events">Event history</button><button type="button" data-door="doors">Connection doors</button><button id="environment-refresh" type="button">Refresh Environment index</button></div><pre id="system-output"></pre><p class="dialog-notice">Environment refresh is a manual, authenticated capability-map refresh. It grants no new permissions and does not rebuild the full vault.</p><button id="system-close" class="primary" type="button">Close</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript><p class="noscript">Workspace needs JavaScript to retrieve local records. No static sample knowledge is presented.</p></noscript>
+</body>
+</html>

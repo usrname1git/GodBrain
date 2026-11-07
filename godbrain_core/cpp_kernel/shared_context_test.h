@@ -23,18 +23,45 @@ inline int shared_fixture_store() {
         shared_fixture_check(request.at("command") == "shelf", "Unexpected fixture store command");
         json result = {{"schema_version", "working-shelf-v1"}, {"trust", "untrusted"},
                        {"promoted", false}, {"shelf", request.at("shelf")}};
+        const auto fixture_path = std::filesystem::path(read_env("GODBRAIN_REPLY_TEST_ROOT")) /
+            "logs" / "aai-fixture-notes.json";
         if (request.at("action") == "post") {
             shared_fixture_check(request.at("text").get<std::string>().size() <= 32768,
                                  "Working shelf fixture rejected oversized text");
+            if (request.value("thread_id", "") == "aai-fixture-fail") {
+                throw std::runtime_error("Synthetic shared write failure");
+            }
             auto record = shared_fixture_record(request.at("text"));
             for (const auto& field : request.items()) record[field.key()] = field.value();
             result["record"] = record;
+            if (read_env("GODBRAIN_REPLY_TEST_BAD_TEXT") == "1") {
+                result["record"]["text"] = "Mismatched fixture receipt";
+            }
+            if (request.at("shelf") == "research" && request.value("thread_id", "") == "aai-fixture") {
+                json rows = json::array();
+                std::ifstream previous(fixture_path);
+                if (previous) rows = json::parse(previous);
+                rows.push_back(record);
+                std::ofstream(fixture_path) << rows.dump();
+            }
         } else {
             const auto scope = request.value("scope", "technical");
             const auto shelf = request.at("shelf");
             const std::string text = shelf == "discussion" ? "FRESH_DISCUSSION_NEEDLE" :
                 scope == "personal" ? "PERSONAL_ONLY_NEEDLE" : "TECHNICAL_RESEARCH_NEEDLE";
             result["records"] = json::array({shared_fixture_record(text)});
+            if (request.value("query", "") == "aai-fixture-remember") {
+                if (shelf == "research") {
+                    result["records"] = json::array();
+                    std::ifstream previous(fixture_path);
+                    if (previous) {
+                        for (const auto& record : json::parse(previous))
+                            if (record.at("scope") == scope) result["records"].push_back(record);
+                    }
+                } else {
+                    result["records"] = json::array({shared_fixture_record("OLDER_DISCUSSION_MEMORY_NEEDLE")});
+                }
+            }
         }
         std::cout << result.dump();
         return 0;

@@ -4,8 +4,8 @@ param(
     [string]$BuilderWorkDir = '',
     [string]$CaptureDirectory = '',
     [string]$BatchDirectory = '',
-    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD')]
-    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD'),
+    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW')]
+    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW'),
     [string]$Ffmpeg = 'C:\Tools\ffmpeg\ffmpeg.exe',
     [switch]$SkipCapture
 )
@@ -29,14 +29,32 @@ if (Test-Path -LiteralPath $logs) {
     }
 }
 try {
+    if (-not $SkipCapture) {
+        $previousCaptures = $CaptureDirectory
+        $CaptureDirectory = Join-Path $CaptureDirectory ('capture-' + [guid]::NewGuid().ToString('N'))
+    }
     [void][IO.Directory]::CreateDirectory($CaptureDirectory)
     if (-not $SkipCapture) {
+        $descriptor = Get-Content -LiteralPath (Join-Path $RepoRoot 'godbrain_core\showcase\projects.json') -Raw | ConvertFrom-Json
+        foreach ($id in $descriptor.projects.images.id | Where-Object { $_ -notin $Images }) {
+            foreach ($name in @("$id.png", "$id.png.receipt.json")) {
+                $source = Join-Path $previousCaptures $name
+                if (Test-Path -LiteralPath $source -PathType Leaf) {
+                    Copy-Item -LiteralPath $source -Destination (Join-Path $CaptureDirectory $name)
+                }
+            }
+        }
         foreach ($id in $Images) {
             $output = Join-Path $CaptureDirectory ($id + '.png')
             switch ($id) {
                 'CMDSTATUS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Status -CapturePng $output }
                 'CMDMODELS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Model -CapturePng $output }
                 'PHONEDASHBOARD' { & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-phone.mjs') --output $output }
+                'MONITORCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Monitor -CapturePng $output }
+                'AIRPLAYCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView AirPlay -CapturePng $output }
+                { $_ -in @('WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','IOSWORKFLOW') } {
+                    & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-workspace.mjs') --image $id --output $output
+                }
                 default {
                     $door = @{ RECLAIM11_DOOR='door'; RECLAIM11_PRO='expert'; RECLAIM11_BEGINNER='noob' }[$id]
                     & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Capture-Reclaim11Gui.ps1') -Door $door -OutPng $output -PublicPreview
@@ -71,6 +89,7 @@ try {
     if ($moved) { Remove-Item -LiteralPath $previous -Recurse -Force }
     [pscustomobject]@{
         batch = [IO.Path]::GetFullPath($BatchDirectory)
+        capture_directory = [IO.Path]::GetFullPath($CaptureDirectory)
         review = Join-Path ([IO.Path]::GetFullPath($BatchDirectory)) 'review.json'
         builder_catalog = $current
         publication = 'Not published. Review the sanitized batch, then approve its exact publishing hash.'

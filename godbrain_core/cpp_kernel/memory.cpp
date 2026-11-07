@@ -10,6 +10,7 @@
 #include "evidence_maintenance.h"
 #include "research_curation.h"
 #include "shared_context.h"
+#include "../cpp_tools/windows_process.h"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -625,105 +626,15 @@ json run_memory_store(const json& payload) {
             "memory-store.exe not found; set MONGO_STORE_PATH");
     }
 
-    SECURITY_ATTRIBUTES attributes{};
-    attributes.nLength = sizeof(attributes);
-    attributes.bInheritHandle = TRUE;
-
-    HANDLE out_read = nullptr;
-    HANDLE out_write = nullptr;
-    HANDLE in_read = nullptr;
-    HANDLE in_write = nullptr;
-    if (!CreatePipe(&out_read, &out_write, &attributes, 0)) {
-        throw std::runtime_error("failed to create memory-store stdout pipe");
-    }
-    SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
-    if (!CreatePipe(&in_read, &in_write, &attributes, 0)) {
-        CloseHandle(out_read);
-        CloseHandle(out_write);
-        throw std::runtime_error("failed to create memory-store stdin pipe");
-    }
-    SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOA startup{};
-    startup.cb = sizeof(startup);
-    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-    startup.hStdOutput = out_write;
-    startup.hStdInput = in_read;
-    startup.dwFlags |= STARTF_USESTDHANDLES;
-
-    PROCESS_INFORMATION process{};
-    std::string command = "\"" + exe + "\"";
-    std::vector<char> cmdline(command.begin(), command.end());
-    cmdline.push_back('\0');
-    const BOOL started = CreateProcessA(
-        nullptr,
-        cmdline.data(),
-        nullptr,
-        nullptr,
-        TRUE,
-        CREATE_NO_WINDOW,
-        nullptr,
-        nullptr,
-        &startup,
-        &process);
-    CloseHandle(out_write);
-    CloseHandle(in_read);
-    if (started == 0) {
-        CloseHandle(in_write);
-        CloseHandle(out_read);
-        throw std::runtime_error("failed to start memory-store.exe");
-    }
-
     const std::string body = payload.dump();
-    std::string output;
-    std::thread reader([&]() {
-        char buffer[4096];
-        DWORD read = 0;
-        while (ReadFile(out_read, buffer, sizeof(buffer), &read, nullptr) && read > 0) {
-            output.append(buffer, read);
-        }
-    });
-    std::thread writer([&]() {
-        DWORD written_total = 0;
-        while (written_total < body.size()) {
-            DWORD written = 0;
-            if (!WriteFile(
-                    in_write,
-                    body.data() + written_total,
-                    static_cast<DWORD>(body.size() - written_total),
-                    &written,
-                    nullptr)) {
-                break;
-            }
-            written_total += written;
-        }
-        CloseHandle(in_write);
-    });
-
-    const DWORD wait = WaitForSingleObject(process.hProcess, kStoreTimeoutMs);
-    if (wait == WAIT_TIMEOUT) {
-        TerminateProcess(process.hProcess, 1);
-        if (reader.joinable()) reader.join();
-        if (writer.joinable()) writer.join();
-        CloseHandle(process.hProcess);
-        CloseHandle(process.hThread);
-        CloseHandle(out_read);
-        throw std::runtime_error("memory-store.exe timed out");
-    }
-    if (reader.joinable()) reader.join();
-    if (writer.joinable()) writer.join();
-
-    DWORD exit_code = 1;
-    GetExitCodeProcess(process.hProcess, &exit_code);
-    CloseHandle(process.hProcess);
-    CloseHandle(process.hThread);
-    CloseHandle(out_read);
-    if (exit_code != 0) {
-        throw std::runtime_error(
-            "memory-store.exe failed: " + output);
-    }
+    godbrain_process::Options options;
+    options.timeout_ms = kStoreTimeoutMs;
+    const auto result = godbrain_process::run(exe, {}, body, options);
+    if (!result.error_output.empty()) std::cerr << result.error_output;
+    if (result.error_truncated) std::cerr << "\n[MEMORY] child stderr truncated at 65536 bytes\n";
+    if (result.exit_code != 0) throw std::runtime_error("memory-store.exe failed: " + result.output);
     try {
-        return json::parse(output);
+        return json::parse(result.output);
     } catch (const json::exception&) {
         throw std::runtime_error("memory-store.exe returned malformed JSON");
     }

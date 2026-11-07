@@ -400,23 +400,19 @@ if (-not $cs2sleep) {
     }
 }
 try {
-    $galaxy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
-    $html = [string]$galaxy.Content
-    if ($html -notmatch "GodBrain mouth") { $fails.Add("galaxy title missing GodBrain mouth") }
-    if ($html -match "Colibri RAG Uplink") { $fails.Add("galaxy still says Colibri RAG Uplink") }
-    if ($html -notmatch "desk_test") { $fails.Add("galaxy overlay missing desk_test") }
-    if ($html -notmatch "desk-btn") { $fails.Add("galaxy missing Desk button") }
-    if ($html -notmatch "pending-btn") { $fails.Add("galaxy missing Pending button") }
-    if ($html -notmatch "last-edit-btn") { $fails.Add("galaxy missing Last edit button") }
-    if ($html -notmatch "sre-btn") { $fails.Add("galaxy missing SRE button") }
-    if ($html -notmatch "pendingOverlayLines") { $fails.Add("galaxy overlay missing pending list") }
-    if ($html -notmatch "healAgeMinutes") { $fails.Add("galaxy overlay missing heal age") }
-    if ($html -notmatch "inboxOverlayLine") { $fails.Add("galaxy overlay missing inbox") }
-    if ($html -notmatch "brief\|vram\|doors\|heal\|sre\|last-edit\|last\|desk\|pending") {
-        $fails.Add("galaxy chat still sends /pending through generate")
+    $workspace = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/workspace")
+    $html = [string]$workspace.Content
+    if ($html -notmatch '<title>GodBrain Workspace</title>') { $fails.Add("Workspace title missing") }
+    foreach ($id in @('shelves','mind-map','record-content','desk-btn','pending-btn','last-edit-btn','sre-btn','review-destination','assistant-mode')) {
+        if ($html -notmatch ('id="' + $id + '"')) { $fails.Add("Workspace missing $id") }
     }
+    $js = [string](Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/frontend/workspace.js")).Content
+    if ($js -notmatch "tool_mode: mode") { $fails.Add("Workspace request mode missing") }
+    if ($js -notmatch "showDoor" -or $js -notmatch "/api/heal" -or $js -notmatch "/api/vram") { $fails.Add("Workspace passive System doors missing") }
+    $legacy = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 -Uri ($Base + "/galaxy")
+    if ($legacy.Content -notmatch '<title>GodBrain Workspace</title>') { $fails.Add("legacy Galaxy bookmark does not reach Workspace") }
 } catch {
-    $fails.Add("galaxy: $_")
+    $fails.Add("Workspace: $_")
 }
 
 $result = [ordered]@{

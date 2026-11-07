@@ -11,7 +11,7 @@
 param(
     [switch]$Status,
     [switch]$ControlPanelHost,
-    [ValidateSet('Status', 'Model')]
+    [ValidateSet('Status', 'Model', 'Monitor', 'AirPlay')]
     [string]$CaptureView,
     [string]$CapturePng,
     [switch]$StatusSnapshot,
@@ -1115,10 +1115,10 @@ function Start-ClipScan {
         Start-Door $StartVl
     }
     Start-Process -FilePath $Pwsh -ArgumentList @(
-        "-NoProfile", "-File", $scan, "-Limit", "0", "-NativeVideo"
+        "-NoProfile", "-File", $scan, "-Limit", "3", "-NativeVideo"
     ) -WorkingDirectory $Repo -WindowStyle Normal | Out-Null
     [System.Windows.Forms.MessageBox]::Show(
-        "Scanning new clips only. Files already in the deadtime index are skipped. Qwen-VL has to stay on :8888.",
+        "Scanning a bounded pilot of up to 3 clips. Only matching source/profile-bound v2 receipts are reused; the legacy index is untouched. Results are unqualified detections, not sanitized videos. Qwen-VL has to stay on :8888.",
         "Scan clips")
 }
 
@@ -1316,7 +1316,7 @@ function Stop-VoiceDoor {
 
 function Start-AirPlayOperation([string]$Action) {
     if ($script:airPlayJob) { return }
-    if ($Action -eq 'Stop' -and -not (Confirm-Stop 'Stop the AirPlay receiver? Playback from connected devices will end.' 'AirPlay')) { return }
+    if ($Action -eq 'Stop' -and -not (Confirm-Stop 'Stop the AirPlay receiver? Playback will end. If normal close fails, Command Center will force-stop this receiver, escalating through wsudo/Admin and TrustedInstaller only if access is denied.' 'AirPlay')) { return }
     $script:airPlayWorker.Commands.Clear()
     $script:airPlayWorker.Streams.Error.Clear()
     [void]$script:airPlayWorker.AddCommand($PSCommandPath).AddParameter('AirPlayRequest', $Action)
@@ -1599,11 +1599,13 @@ $fieldBg = [System.Drawing.Color]::FromArgb(7, 13, 22)
 $pill = [System.Drawing.Color]::FromArgb(191, 10, 48)
 
 function New-GodBrainIcon {
-    $bmp = New-Object System.Drawing.Bitmap 64, 64
+    param([ValidateSet(16,24,32,48,64,128,256)][int]$Size = 64)
+    $bmp = New-Object System.Drawing.Bitmap $Size, $Size
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $g.Clear([System.Drawing.Color]::Transparent)
+    $g.ScaleTransform([float]($Size / 64.0), [float]($Size / 64.0))
     $edge = [System.Drawing.Color]::FromArgb(255, 10, 17, 28)
     $crossBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 244, 246, 248))
     $crossPen = New-Object System.Drawing.Pen $edge, 2
@@ -1641,8 +1643,9 @@ function New-GodBrainIcon {
     $bw.Write([uint16]0)
     $bw.Write([uint16]1)
     $bw.Write([uint16]1)
-    $bw.Write([byte]64)
-    $bw.Write([byte]64)
+    $dimension = if ($Size -eq 256) { 0 } else { $Size }
+    $bw.Write([byte]$dimension)
+    $bw.Write([byte]$dimension)
     $bw.Write([byte]0)
     $bw.Write([byte]0)
     $bw.Write([uint16]1)
@@ -1745,7 +1748,7 @@ function Show-Page([string]$name) {
         $item.Button.ForeColor = $(if ($on) { $ink } else { $mute })
     }
     if ($name -eq "Model" -and $script:modelReasoning) { Show-DeskReasoningPreference }
-    if ($name -eq "Monitor" -and -not $script:monitorSnapshot -and -not $script:monitorJob) {
+    if (-not $CaptureView -and $name -eq "Monitor" -and -not $script:monitorSnapshot -and -not $script:monitorJob) {
         Start-MonitorOperation "read"
     }
     if ($name -eq "Layouts" -and -not $script:displaySnapshot -and -not $script:displayJob) {
@@ -1893,8 +1896,8 @@ function Style-Box([System.Windows.Forms.TextBox]$t) {
 }
 
 Add-Head $pageStatus "Workstation && AI control" 16
-Add-Button $pageStatus "Galaxy" ($script:pageW - 100) 8 84 { Start-Process "http://127.0.0.1:8083/" } $false
-($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Galaxy" }).Anchor = "Top, Right"
+Add-Button $pageStatus "Workspace" ($script:pageW - 110) 8 94 { Start-Process "http://127.0.0.1:8083/workspace" } $false
+($pageStatus.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq "Workspace" }).Anchor = "Top, Right"
 $rowModel = Add-Pair $pageStatus "Model" 48 { Start-SelectedModel } { Stop-ActiveModel }
 $rowGpu = Add-Row $pageStatus "GPU" 80
 $rowTok = Add-Row $pageStatus "Rate" 112
@@ -2050,7 +2053,8 @@ foreach ($item in @(
     @{Text='Inbox'; Action='Inbox'; X=20; Y=152},
     @{Text='Library'; Action='Library'; X=200; Y=152},
     @{Text='Copy link'; Action='Copy'; X=20; Y=200},
-    @{Text='Copy login'; Action='Login'; X=200; Y=200}
+    @{Text='Copy login'; Action='Login'; X=200; Y=200},
+    @{Text='Share files...'; Action='Send'; X=20; Y=248}
 )) {
     $button = New-Object System.Windows.Forms.Button
     $button.Text = $item.Text
@@ -2058,20 +2062,28 @@ foreach ($item in @(
     $button.Location = [Drawing.Point]::new($item.X, $item.Y)
     $button.Size = [Drawing.Size]::new(160, 34)
     Paint-Button $button ($item.Action -eq 'Start')
-    $button.Add_Click({ param($sender, $event); Start-ClipShareOperation ([string]$sender.Tag) })
+    $button.Add_Click({
+        param($sender, $event)
+        if ($sender.Tag -eq 'Send') {
+            try {
+                $message = Show-GodBrainClipShareFilePicker
+                if ($message) { $script:clipShareMessage.Text = $message }
+            } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'ClipShare') }
+        } else { Start-ClipShareOperation ([string]$sender.Tag) }
+    })
     $pageShare.Controls.Add($button)
     $script:clipShareButtons += $button
 }
 $script:clipShareMessage = New-Object System.Windows.Forms.Label
-$script:clipShareMessage.Location = [Drawing.Point]::new(20, 252)
+$script:clipShareMessage.Location = [Drawing.Point]::new(20, 300)
 $script:clipShareMessage.Size = [Drawing.Size]::new(($script:pageW - 40), 80)
-$script:clipShareMessage.Text = 'Drop downloaded clips/audio into Inbox. Copy link uses the latest completed share.'
+$script:clipShareMessage.Text = 'Share files opens the native per-file sender. For images, Copy link gives direct PNG bytes for Browser Bro; Open preview is a separate viewer. Inbox is also supported.'
 $pageShare.Controls.Add($script:clipShareMessage)
 $shareHint = New-Object System.Windows.Forms.Label
-$shareHint.Location = [Drawing.Point]::new(20, 348)
-$shareHint.Size = [Drawing.Size]::new(($script:pageW - 40), 180)
+$shareHint.Location = [Drawing.Point]::new(20, 396)
+$shareHint.Size = [Drawing.Size]::new(($script:pageW - 40), 150)
 $shareHint.ForeColor = $mute
-$shareHint.Text = "Background user app, not a Windows service. Closing Command Center leaves it running.`r`n`r`nLibrary login: owner (Copy login copies its password). Originals stay in Inbox. Conversion is serial, CPU-only.`r`n`r`nSharing uses the configured public HTTPS hostname; Library stays private. Copy link selects the newest active share, including manual and never-expiring shares. Imports default to 7 days; files are not auto-deleted."
+$shareHint.Text = "PNG/JPEG/WebP still images become metadata-stripped PNG (32 MiB input, 32 MP, 8192 px/side). Originals stay untouched. Serial CPU-only; no GPU.`r`n`r`nLibrary login: owner (Copy login). Sharing uses configured HTTPS; external Browser Bro access needs a separate outside-network check. Desk Copy link selects the newest live share; use the sender for an exact file. Default expiry: 7 days; files are not auto-deleted."
 $pageShare.Controls.Add($shareHint)
 
 Add-Head $pageModel "Model" 16
@@ -2631,12 +2643,12 @@ Add-Button $pageLyrics "Lock in" 20 262 180 {
 
 Add-Head $pageClips "Clips" 16
 $clipHint = New-Object System.Windows.Forms.Label
-$clipHint.Text = "Scans new CS2 clips with 8B vision on :8888. Files already in the deadtime index are skipped. One GPU slot."
+$clipHint.Text = "Three-clip CS2 pilot with 8B vision on :8888. Source/profile-bound cache; legacy results stay untouched. Detections are not sanitized videos. One GPU slot."
 $clipHint.ForeColor = $mute
 $clipHint.Location = New-Object System.Drawing.Point(20, 56)
 $clipHint.Size = New-Object System.Drawing.Size(($script:pageW - 40), 48)
 $pageClips.Controls.Add($clipHint)
-Add-Button $pageClips "Scan clips" 20 116 176 { Start-ClipScan } $true
+Add-Button $pageClips "Scan pilot (3)" 20 116 176 { Start-ClipScan } $true
 
 Add-Head $pageMonitor "Monitor" 16
 Add-Button $pageMonitor "Layouts" 456 12 112 { Show-Page "Layouts" } $false
@@ -3156,7 +3168,10 @@ if ($CaptureView) {
             $script:modelSettingsHint.Text = 'Saved model settings are invalid; private diagnostic details omitted.'
         }
         $f.ClientSize = [Drawing.Size]::new(660, 740)
-        Show-Page $CaptureView
+        Show-Page $(if ($CaptureView -eq 'AirPlay') { 'Status' } else { $CaptureView })
+        if ($CaptureView -eq 'Monitor') {
+            $script:monitorMessage.Text = 'Source-rendered controls. No monitor query or hardware apply was performed.'
+        }
         $notice = [Windows.Forms.Label]::new()
         $notice.Text = 'Sanitized read-only capture - not a host readiness certificate'
         $notice.Dock = 'Bottom'
@@ -3191,7 +3206,28 @@ public static class ShowcaseWindow {
         try {
             $f.DrawToBitmap($bitmap, [Drawing.Rectangle]::new(0, 0, $bitmap.Width, $bitmap.Height))
             [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
-            $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+            if ($CaptureView -eq 'AirPlay') {
+                $focused = [Drawing.Bitmap]::new(660, 320)
+                $graphics = [Drawing.Graphics]::FromImage($focused)
+                $titleFont = [Drawing.Font]::new('Segoe UI', 22, [Drawing.FontStyle]::Bold)
+                $bodyFont = [Drawing.Font]::new('Segoe UI', 10)
+                $brush = [Drawing.SolidBrush]::new($ink)
+                try {
+                    $graphics.Clear($bg)
+                    $graphics.DrawString('AirPlay on Windows', $titleFont, $brush, 24, 24)
+                    $graphics.DrawString('Command Center receiver controls / ShairportQt transport', $bodyFont, $brush, 24, 76)
+                    $point = $pageStatus.PointToScreen([Drawing.Point]::new(0, 555))
+                    $source = [Drawing.Rectangle]::new($point.X - $f.Left, $point.Y - $f.Top, $pageStatus.Width, 32)
+                    $target = [Drawing.Rectangle]::new(20, 122, $pageStatus.Width, 32)
+                    $graphics.DrawImage($bitmap, $target, $source, [Drawing.GraphicsUnit]::Pixel)
+                    $graphics.DrawString("Start / Stop / Open use the implemented receiver lifecycle.`nNo sender, track metadata, password or connection details captured.`nFocused source UI capture, not an audio-playback verification.", $bodyFont, $brush, [Drawing.RectangleF]::new(24, 206, 612, 90))
+                    $focused.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+                } finally {
+                    $brush.Dispose(); $bodyFont.Dispose(); $titleFont.Dispose(); $graphics.Dispose(); $focused.Dispose()
+                }
+            } else {
+                $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+            }
         } finally { $bitmap.Dispose() }
         Write-Output $path
     } finally {
