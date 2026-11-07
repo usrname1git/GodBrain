@@ -29,8 +29,21 @@ if (Test-Path -LiteralPath $logs) {
     }
 }
 try {
+    if (-not $SkipCapture) {
+        $previousCaptures = $CaptureDirectory
+        $CaptureDirectory = Join-Path $CaptureDirectory ('capture-' + [guid]::NewGuid().ToString('N'))
+    }
     [void][IO.Directory]::CreateDirectory($CaptureDirectory)
     if (-not $SkipCapture) {
+        $descriptor = Get-Content -LiteralPath (Join-Path $RepoRoot 'godbrain_core\showcase\projects.json') -Raw | ConvertFrom-Json
+        foreach ($id in $descriptor.projects.images.id | Where-Object { $_ -notin $Images }) {
+            foreach ($name in @("$id.png", "$id.png.receipt.json")) {
+                $source = Join-Path $previousCaptures $name
+                if (Test-Path -LiteralPath $source -PathType Leaf) {
+                    Copy-Item -LiteralPath $source -Destination (Join-Path $CaptureDirectory $name)
+                }
+            }
+        }
         foreach ($id in $Images) {
             $output = Join-Path $CaptureDirectory ($id + '.png')
             switch ($id) {
@@ -76,6 +89,7 @@ try {
     if ($moved) { Remove-Item -LiteralPath $previous -Recurse -Force }
     [pscustomobject]@{
         batch = [IO.Path]::GetFullPath($BatchDirectory)
+        capture_directory = [IO.Path]::GetFullPath($CaptureDirectory)
         review = Join-Path ([IO.Path]::GetFullPath($BatchDirectory)) 'review.json'
         builder_catalog = $current
         publication = 'Not published. Review the sanitized batch, then approve its exact publishing hash.'

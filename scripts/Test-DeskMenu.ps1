@@ -61,7 +61,10 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
         if ($_.Exception.Message -notlike $Expected) { throw }
         return
     }
+    throw "Expected failure: $Expected"
+}
 
+& {
     $script:pages = @{ Monitor = [pscustomobject]@{Visible=$false}; Status = [pscustomobject]@{Visible=$true} }
     $script:railMarks = @()
     $script:monitorSnapshot = $null
@@ -74,7 +77,7 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
     $script:CaptureView = $null
     Show-Page 'Monitor'
     Assert-Equal $script:monitorReads 1
-    throw "Expected failure: $Expected"
+    Write-Output 'PASS: Monitor capture suppresses automatic hardware reads; normal navigation still starts them.'
 }
 
 & {
