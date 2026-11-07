@@ -248,7 +248,7 @@ test('Workspace real-contract UI, trust boundaries and responsive interactions',
         await page.waitForFunction(() => document.getElementById('assistant-messages').textContent.includes('Completed UTF-8 result: \u00e9.'));
         assert.equal(await page.locator('#review-reply').isVisible(), true);
         data.chat = 'data: {"type":"token","text":"Interrupted partial answer"}\n\n';
-        await page.locator('#assistant-mode').selectOption('answer');
+        await page.locator('#assistant-mode').selectOption({label: 'Answer / read-only'});
         await page.locator('#assistant-input').fill('Another fixture question');
         await page.locator('#assistant-send').click();
         await page.waitForFunction(() => document.getElementById('assistant-messages').textContent.includes('without a completed answer'));

@@ -73,7 +73,7 @@
     <div class="assistant-header"><div><strong>Assistant</strong><small>Local inference / current kernel permissions</small></div><button id="assistant-close" type="button" aria-label="Close assistant">&#215;</button></div>
     <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite"><p class="assistant-message">Research is read-only. Fix is an explicit mode; existing authorization and host holds still apply. No model is started by opening this panel.</p></div>
     <form id="assistant-form">
-      <div class="assistant-controls"><label for="assistant-mode">Mode</label><select id="assistant-mode"><option value="research" selected>Research / read-only</option><option value="answer">Answer / no tools</option><option value="fix">Fix / explicit changes</option></select><button id="review-reply" type="button" hidden>Review answer</button></div>
+      <div class="assistant-controls"><label for="assistant-mode">Mode</label><select id="assistant-mode"><option value="research" selected>Research / read-only</option><option value="answer">Answer / read-only</option><option value="fix">Fix / explicit changes</option></select><button id="review-reply" type="button" hidden>Review answer</button></div>
       <label class="sr-only" for="assistant-input">Message for the local assistant</label><textarea id="assistant-input" rows="2" maxlength="12000" placeholder="Ask about this record, or use a /command..."></textarea><button id="assistant-send" type="submit">Send &#8593;</button>
     </form>
   </aside>
