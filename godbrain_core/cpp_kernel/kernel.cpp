@@ -35,11 +35,27 @@ json GodBrainKernel::dispatch(const std::string& command_type, const json& paylo
     }
 
     try {
-        if (command_type == "execute_godbrain_script" ||
-            command_type == "propose_sovereign_architect_change") {
-            const std::string script = command_type == "execute_godbrain_script"
-                                           ? payload.value("command", "")
-                                           : payload.value("proposal_script", "");
+        if (command_type == "propose_sovereign_architect_change") {
+            const std::string script = payload.value("proposal_script", "");
+            if (script.find_first_not_of(" \t\r\n") == std::string::npos) {
+                throw std::runtime_error("A nonblank proposal_script is required");
+            }
+            const std::string text = json({
+                {"reasoning", payload.at("reasoning")}, {"proposal_script", script}
+            }).dump();
+            if (text.size() > 32768) throw std::runtime_error("Proposal exceeds the 32768-byte Research limit");
+            const auto receipt = memory::working_shelf({
+                {"action", "post"}, {"shelf", "research"}, {"scope", "technical"},
+                {"thread_id", "architect-proposals"}, {"speaker", "operator-proposal"},
+                {"title", "Unexecuted architecture proposal"}, {"text", text}
+            });
+            if (receipt.at("record").at("text") != text) {
+                throw std::runtime_error("Stored proposal does not match the requested proposal");
+            }
+            return {{"status", "success"}, {"staged", true}, {"executed", false}, {"data", receipt}};
+        }
+        if (command_type == "execute_godbrain_script") {
+            const std::string script = payload.value("command", "");
             const surgery::Outcome outcome = surgery::execute_self_command(script);
             if (!outcome.ok) {
                 return {{"status", "error"},

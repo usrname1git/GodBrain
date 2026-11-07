@@ -4,8 +4,8 @@ param(
     [string]$BuilderWorkDir = '',
     [string]$CaptureDirectory = '',
     [string]$BatchDirectory = '',
-    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD')]
-    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD'),
+    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW')]
+    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW'),
     [string]$Ffmpeg = 'C:\Tools\ffmpeg\ffmpeg.exe',
     [switch]$SkipCapture
 )
@@ -37,6 +37,11 @@ try {
                 'CMDSTATUS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Status -CapturePng $output }
                 'CMDMODELS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Model -CapturePng $output }
                 'PHONEDASHBOARD' { & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-phone.mjs') --output $output }
+                'MONITORCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Monitor -CapturePng $output }
+                'AIRPLAYCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView AirPlay -CapturePng $output }
+                { $_ -in @('WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','IOSWORKFLOW') } {
+                    & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-workspace.mjs') --image $id --output $output
+                }
                 default {
                     $door = @{ RECLAIM11_DOOR='door'; RECLAIM11_PRO='expert'; RECLAIM11_BEGINNER='noob' }[$id]
                     & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Capture-Reclaim11Gui.ps1') -Door $door -OutPng $output -PublicPreview

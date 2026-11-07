@@ -122,6 +122,11 @@ function Invoke-CompiledTest([string]$Name, [string[]]$Sources, [string[]]$Argum
 }
 
 Invoke-CompiledTest "surgery_outcome_test" @("surgery_outcome_test.cpp", "surgery.cpp")
+Invoke-CompiledTest "windows_process_test" @("windows_process_test.cpp")
+Invoke-CompiledTest "local_process_test" @("local_process_test.cpp")
+Invoke-CompiledTest "local_path_test" @("local_path_test.cpp")
+Invoke-CompiledTest "kernel_dispatch_test" @("kernel_dispatch_test.cpp", "kernel.cpp")
+Invoke-CompiledTest "librarian_test" @("..\cpp_tools\librarian_test.cpp")
 Invoke-CompiledTest "jarvis_job_test" @("jarvis_job_test.cpp", "jarvis_job.cpp")
 Invoke-CompiledTest "mouth_select_test" @("mouth_select_test.cpp")
 Invoke-CompiledTest "local_tools_test" @("local_tools_test.cpp", "local_tools.cpp")

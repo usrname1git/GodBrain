@@ -6,6 +6,8 @@ on:
       - '.github/workflows/desk-and-gym.yml'
       - 'godbrain_core/cpp_kernel/**'
       - 'godbrain_core/cpp_tools/**'
+      - 'godbrain_core/frontend/**'
+      - 'godbrain_core/showcase/**'
       - 'godbrain_core/skill_lab/**'
       - 'scripts/**'
   push:
@@ -14,6 +16,8 @@ on:
       - '.github/workflows/desk-and-gym.yml'
       - 'godbrain_core/cpp_kernel/**'
       - 'godbrain_core/cpp_tools/**'
+      - 'godbrain_core/frontend/**'
+      - 'godbrain_core/showcase/**'
       - 'godbrain_core/skill_lab/**'
       - 'scripts/**'
   workflow_dispatch:
@@ -112,11 +116,16 @@ jobs:
             npm test 2>&1 | Tee-Object -FilePath ..\..\logs\ci-gym.log
             if ($LASTEXITCODE) { throw 'Frontend gym tests failed.' }
           } finally { Pop-Location }
-      - name: Native production link and reply fixtures
+      - name: Workspace browser regressions
         run: |
-          .\scripts\Test-KernelReplies.ps1 2>&1 | Tee-Object -FilePath logs\ci-native.log
+          node --test godbrain_core\frontend\workspace.test.mjs
+          if ($LASTEXITCODE) { throw 'Workspace browser tests failed.' }
+      - name: Offline native boundaries, production link and reply fixtures
+        run: |
+          .\scripts\Test-JarvisLoop.ps1 2>&1 | Tee-Object -FilePath logs\ci-native.log
       - name: Offline monitor, showcase and Remote Dashboard checks
         run: |
+          .\scripts\Build-DeskAirPlay.ps1
           .\scripts\Build-DeskMonitor.ps1
           .\scripts\Test-DeskMonitor.ps1
           .\scripts\Build-Showcase.ps1
@@ -129,6 +138,10 @@ jobs:
             .\scripts\Test-DeskModel.ps1
             .\scripts\Test-DeskAttachments.ps1
             .\scripts\Test-ClipShare.ps1
+            foreach ($test in @('Test-SharedMemory.ps1','Test-Cs2Deadtime.ps1','Test-AirPlay.ps1')) {
+              & pwsh -NoLogo -NoProfile -File (Join-Path .\scripts $test)
+              if ($LASTEXITCODE) { throw "Offline fixture failed: $test" }
+            }
           } catch {
             Write-Host $_.ScriptStackTrace
             throw

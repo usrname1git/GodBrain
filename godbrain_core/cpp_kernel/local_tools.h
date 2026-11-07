@@ -3,6 +3,7 @@
 #include "json.hpp"
 
 #include <string>
+#include <functional>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -33,11 +34,17 @@ struct RequestScope {
     std::string operator_text;
     std::unordered_set<std::string> document_urls;
     bool protected_reads_authorized = false;
+    bool privileged_tools_authorized = false;
+    std::function<bool()> is_cancelled;
+    bool shared_memory_authorized = false;
+    std::string memory_scope = "technical";
+    std::string memory_thread = "agent";
 };
 
 std::optional<int> protected_read_entry();
 bool research_call_allowed(const Call& call);
 std::vector<std::string> default_roots();
+// Advisory only; filesystem execution separately acquires pinned path/handle leases.
 bool path_is_granted(const std::string& path, std::string* err = nullptr);
 bool yolo_active();
 std::string set_yolo_minutes(int minutes);  // 0 clears
@@ -57,7 +64,8 @@ std::string tool_system_addendum_for(
 nlohmann::json openai_tool_defs();
 nlohmann::json openai_tool_defs(bool full);
 nlohmann::json openai_tool_defs_for(
-    const std::string& user_msg, ToolMode mode = ToolMode::Legacy);
+    const std::string& user_msg, ToolMode mode = ToolMode::Legacy,
+    bool shared_memory = false);
 bool looks_like_local_fs_ask(const std::string& msg);
 // True for list/ls/dir/r/w/jail. False for "what's wrong in this repo".
 bool looks_like_list_only_ask(const std::string& msg);

@@ -14,7 +14,7 @@ if ($errors.Count) { throw ($errors -join "`n") }
 $script:fixtureRoot = $PSScriptRoot
 foreach ($name in @("Get-ModelLine", "Get-TokLine", "Get-ImageRateLine", "Get-WhisperLine", "Get-ModelPickFile", "Start-SelectedModel", "Stop-ActiveModel",
     "Invoke-DeskTailscale", "Get-DeskServeMapping", "Read-DeskServeMapping", "Get-TailscaleServeLine", "Start-DeskPhoneServe",
-    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Read-DeskGrantedBytes", "Get-DeskImagePayload", "Wait-DeskImageResult", "Test-DeskWriteSlash", "Test-DeskVisionImage", "Test-DeskNeedsCompleteReview", "Invoke-DeskVisionAsk", "Invoke-DeskAsk")) {
+    "Get-DeskJailRoots", "ConvertTo-DeskAskPath", "Test-DeskGrantedPath", "Test-DeskPathToken", "Read-DeskGrantedBytes", "Get-DeskImagePayload", "Wait-DeskImageResult", "Test-DeskWriteSlash", "Test-DeskVisionImage", "Test-DeskNeedsCompleteReview", "Invoke-DeskVisionAsk", "Invoke-DeskAsk", "Show-Page")) {
     $definition = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -61,7 +61,45 @@ function Assert-Throws([scriptblock]$Action, [string]$Expected) {
         if ($_.Exception.Message -notlike $Expected) { throw }
         return
     }
+
+    $script:pages = @{ Monitor = [pscustomobject]@{Visible=$false}; Status = [pscustomobject]@{Visible=$true} }
+    $script:railMarks = @()
+    $script:monitorSnapshot = $null
+    $script:monitorJob = $null
+    $script:monitorReads = 0
+    function Start-MonitorOperation([string]$Control) { $script:monitorReads++ }
+    $script:CaptureView = 'Monitor'
+    Show-Page 'Monitor'
+    Assert-Equal $script:monitorReads 0
+    $script:CaptureView = $null
+    Show-Page 'Monitor'
+    Assert-Equal $script:monitorReads 1
     throw "Expected failure: $Expected"
+}
+
+& {
+    Add-Type -AssemblyName System.Drawing
+    $definition = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-GodBrainIcon'
+    }, $true)
+    . ([scriptblock]::Create($definition.Extent.Text))
+    foreach ($size in @(16,24,32,48,64,128,256)) {
+        $icon = New-GodBrainIcon -Size $size
+        try {
+            Assert-Equal $icon.Width $size
+            Assert-Equal $icon.Height $size
+            $bitmap = $icon.ToBitmap()
+            try {
+                Assert-Equal $bitmap.GetPixel(0,0).A 0
+                if ($bitmap.GetPixel([int]($size / 2),[int]($size / 4)).A -eq 0) {
+                    throw 'Command Center icon artwork is missing.'
+                }
+            } finally { $bitmap.Dispose() }
+        } finally {
+            $icon.Dispose()
+            $script:iconStream.Dispose()
+        }
+    }
 }
 
 & {

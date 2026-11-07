@@ -23,6 +23,7 @@
 #include "../cpp_kernel/httplib.h"
 // Include Keccak256 for source hashing
 #include "keccak256.hpp"
+#include "windows_process.h"
 
 using json = nlohmann::json;
 
@@ -405,6 +406,8 @@ public:
     }
 };
 
+static void validate_distillation_source(const DistillationResult&, const SourceEnvelope&);
+
 class LLMDistillationProvider : public DistillationProvider {
 private:
     LibrarianConfig config;
@@ -416,12 +419,11 @@ public:
         std::cout << "[LIBRARIAN] Executing LLM distillation (Provider: LLM-Native-1.0)..." << std::endl;
         
         // 1. Load Versioned Prompt Template
-        std::ifstream prompt_file(config.prompt_template_path);
+        std::ifstream prompt_file(config.prompt_template_path, std::ios::binary);
         if (!prompt_file.is_open()) {
             throw std::runtime_error("Failed to open prompt template file: " + config.prompt_template_path);
         }
         std::string prompt_file_content((std::istreambuf_iterator<char>(prompt_file)), std::istreambuf_iterator<char>());
-        std::string prompt_hash = keccak256(prompt_file_content);
         
         json prompt_config = json::parse(prompt_file_content);
         std::string prompt_version = prompt_config.value("prompt_version", "unknown");
@@ -449,7 +451,7 @@ public:
                 
                 // Mouth path: short extract prompt. The full Hermes skill
                 // bible is ~2k tokens and IMA'd Gemma 12B Q4 on this 4080.
-                const std::string system =
+                std::string system =
                     "You are Librarian-CPP. Extract at most 6 specific claims "
                     "from the transcript. Output one JSON object only. "
                     "schema_version 1.0, extractor Librarian-CPP, "
@@ -458,19 +460,24 @@ public:
                     "claims[{claim_id, type factual|architecture|"
                     "contradiction|open_question, content, confidence, "
                     "evidence_spans}], core_concepts[], opsec_candidates[], "
+                    "evidence_spans are [start:end] UTF-8 byte offsets into the exact transcript. "
                     "skills_extracted[{name, content, task_kind, "
                     "verification_profile, procedure[], evidence_spans}]. "
                     "Empty arrays if none. At most 8 skills. "
                     "opsec_candidates only for secrets/credentials/tokens "
                     "in the source, never Golden Record ids or file paths. "
                     "Close every brace. No markdown. No thinking.";
+                if (!last_error.empty()) {
+                    system += "\nPrevious validation failed: " + last_error +
+                              "\nCorrect the JSON and source byte spans; do not add commentary.";
+                }
                 const std::string user =
                     std::string("Transcript (raw, immutable). First character "
                                 "must be '{'.\n\n") +
                     envelope.content;
                 return execute_llm_call(
                     envelope, system, user, llm_input.dump(), prompt_version,
-                    prompt_hash);
+                    keccak256(llm_input.dump()));
             } catch (const std::exception& e) {
                 last_error = e.what();
                 std::cerr << "[LIBRARIAN WARN] LLM Extraction attempt " << (attempt + 1) << " failed: " << last_error << std::endl;
@@ -493,6 +500,8 @@ private:
         const std::string& prompt_version,
         const std::string& prompt_hash) {
         std::string output;
+        std::string executed_hash;
+        std::string executed_version;
         if (mouth_http_up(config.mouth_host, config.mouth_port)) {
             std::cout << "[LIBRARIAN] Distilling via mouth HTTP "
                       << config.mouth_host << ":" << config.mouth_port
@@ -500,6 +509,10 @@ private:
             output = chat_complete(
                 config.mouth_host, config.mouth_port, config.model_id, system,
                 user, config.llm_temperature);
+            executed_hash = keccak256(json::array({
+                {{"role", "system"}, {"content", system}},
+                {{"role", "user"}, {"content", user}}}).dump());
+            executed_version = "librarian-http-v2";
         } else if (!spawn_colibri_allowed()) {
             throw std::runtime_error(
                 "mouth is down on " + config.mouth_host + ":" +
@@ -507,167 +520,30 @@ private:
                 ". Will not cold-spawn Colibri. Start llama-server or coli serve.");
         } else {
             output = execute_colibri_spawn(framed_json);
+            executed_hash = prompt_hash;
+            executed_version = "colibri-framed-v2/" + prompt_version;
         }
-        return parse_distillation(envelope, output, prompt_version, prompt_hash);
+        auto result = parse_distillation(envelope, output, executed_version, executed_hash);
+        validate_distillation_source(result, envelope);
+        return result;
     }
 
     std::string execute_colibri_spawn(const std::string& input_json) {
-        SECURITY_ATTRIBUTES saAttr; 
-        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 
-        saAttr.bInheritHandle = TRUE; 
-        saAttr.lpSecurityDescriptor = NULL; 
-
-        HANDLE hOutRd = NULL, hOutWr = NULL;
-        HANDLE hInRd = NULL, hInWr = NULL;
-
-        if (!CreatePipe(&hOutRd, &hOutWr, &saAttr, 0)) throw std::runtime_error("Failed to create stdout pipe");
-        SetHandleInformation(hOutRd, HANDLE_FLAG_INHERIT, 0);
-        
-        if (!CreatePipe(&hInRd, &hInWr, &saAttr, 0)) {
-            CloseHandle(hOutRd); CloseHandle(hOutWr);
-            throw std::runtime_error("Failed to create stdin pipe");
-        }
-        SetHandleInformation(hInWr, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOA si;
-        ZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si); 
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE); // Keep stderr separate to avoid JSON corruption
-        si.hStdOutput = hOutWr;
-        si.hStdInput = hInRd;
-        si.dwFlags |= STARTF_USESTDHANDLES;
-
-        PROCESS_INFORMATION pi;
-        ZeroMemory(&pi, sizeof(pi));
-
-        // Create Job Object to kill the ENTIRE process tree on timeout
-        HANDLE hJob = CreateJobObjectA(NULL, NULL);
-        if (hJob) {
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
-            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
-        }
-
-        // Enable the legacy framed protocol only for the Colibri child.
         std::vector<char> child_environment = child_environment_with("SERVE", "1");
-
-        // CREATE_SUSPENDED ensures no rogue children are spawned before the job object is attached
-        std::string cmdline_str = "\"" + config.llm_executable_path + "\"";
-        std::vector<char> cmdline(cmdline_str.begin(), cmdline_str.end());
-        cmdline.push_back('\0');
-
-        BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, child_environment.data(), NULL, &si, &pi);
-        
-        if (!success) {
-            CloseHandle(hInWr); CloseHandle(hOutRd); CloseHandle(hOutWr); CloseHandle(hInRd);
-            if (hJob) CloseHandle(hJob);
-            throw std::runtime_error("Failed to start LLM executable");
-        }
-
-        if (hJob) {
-            if (!AssignProcessToJobObject(hJob, pi.hProcess)) {
-                TerminateProcess(pi.hProcess, 1);
-                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-                CloseHandle(hInWr); CloseHandle(hOutRd); CloseHandle(hOutWr); CloseHandle(hInRd);
-                CloseHandle(hJob);
-                throw std::runtime_error("Failed to assign LLM process to Job Object");
-            }
-        }
-        
-        ResumeThread(pi.hThread);
-        
-        CloseHandle(hOutWr);
-        CloseHandle(hInRd);
-
-        // Use Colibri Legacy Framed Protocol: \x02PROMPT <bytes> <max_tokens> <temperature> <top_p>\n<prompt>\n
         std::stringstream req;
         req << "\x02PROMPT " << input_json.length() << " 4096 " << config.llm_temperature << " 0.9 0\n" << input_json << "\n";
-        std::string framed_payload = req.str();
-
-        // Read stdout and stderr in a separate thread BEFORE writing to prevent pipe deadlock
-        std::string output = "";
-        std::mutex output_mutex;
-        std::condition_variable ready_cv;
-        bool is_ready = false;
-        
-        std::thread reader([&]() {
-            DWORD read; 
-            CHAR buf[4096]; 
-            while(ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
-                buf[read] = '\0';
-                {
-                    std::lock_guard<std::mutex> lock(output_mutex);
-                    output.append(buf, read);
-                    if (!is_ready && output.find("READY") != std::string::npos) {
-                        is_ready = true;
-                        ready_cv.notify_one();
-                    }
-                }
-            }
-        });
-
-        // Wait for READY
-        {
-            std::unique_lock<std::mutex> lock(output_mutex);
-            if (!ready_cv.wait_for(lock, std::chrono::seconds(30), [&]{ return is_ready; })) {
-                lock.unlock(); // Prevent deadlock with reader thread
-                if (hJob) CloseHandle(hJob); else TerminateProcess(pi.hProcess, 1);
-                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-                if (reader.joinable()) reader.join();
-                CloseHandle(hOutRd); CloseHandle(hInWr);
-                throw std::runtime_error("LLM timed out waiting for READY.");
-            }
+        godbrain_process::Options options;
+        options.timeout_ms = 150000;
+        options.ready_marker = "READY";
+        options.stdout_limit = 1024 * 1024;
+        options.environment = child_environment.data();
+        const auto result = godbrain_process::run(config.llm_executable_path, {}, req.str(), options);
+        if (!result.error_output.empty()) std::cerr << result.error_output;
+        if (result.error_truncated) std::cerr << "\n[LIBRARIAN] child stderr truncated\n";
+        if (result.exit_code != 0) {
+            throw std::runtime_error("LLM failed with exit code " + std::to_string(result.exit_code));
         }
-
-        // Write full prompt to stdin in a separate thread to prevent deadlocking if process hangs on boot
-        std::thread writer([&]() {
-            DWORD totalWritten = 0;
-            DWORD toWrite = framed_payload.length();
-            const char* ptr = framed_payload.c_str();
-            while (totalWritten < toWrite) {
-                DWORD written = 0;
-                if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
-                    break;
-                }
-                totalWritten += written;
-            }
-            CloseHandle(hInWr);
-        });
-
-        // 4. Timeout constraint (Max 120s for LLM processing)
-        DWORD waitRes = WaitForSingleObject(pi.hProcess, 120000);
-        if (waitRes == WAIT_TIMEOUT) {
-            if (hJob) CloseHandle(hJob); // Kills the entire process tree automatically
-            else TerminateProcess(pi.hProcess, 1);
-            
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-            
-            if (reader.joinable()) reader.join(); // Join before closing hOutRd
-            CloseHandle(hOutRd);
-            
-            if (writer.joinable()) {
-                CancelSynchronousIo(writer.native_handle()); // Abort WriteFile if stuck
-                writer.join();
-            }
-            
-            throw std::runtime_error("LLM timed out after 120s.");
-        }
-
-        DWORD exitCode;
-        GetExitCodeProcess(pi.hProcess, &exitCode);
-        if (hJob) CloseHandle(hJob); // Clean up job object
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        
-        if (reader.joinable()) reader.join(); // Join before closing hOutRd
-        CloseHandle(hOutRd);
-        
-        if (writer.joinable()) writer.join();
-
-        if (exitCode != 0) {
-            throw std::runtime_error("LLM failed with exit code " + std::to_string(exitCode) + ". Output: " + output);
-        }
-        return output;
+        return result.output;
     }
 
     static std::string json_as_string(const json& value) {
@@ -687,8 +563,8 @@ private:
         json extracted_json;
         try {
             extracted_json = json::parse(output);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to parse LLM JSON: " + std::string(e.what()) + "\nOutput: " + output);
+        } catch (const json::parse_error& error) {
+            throw std::runtime_error("Failed to parse LLM JSON at byte " + std::to_string(error.byte));
         }
 
         AlexandriaPayload alexandria_payload;
@@ -786,7 +662,7 @@ private:
         };
 
         std::string full_extractor_version =
-            "Librarian-CPP-1.0 (Prompt: " + prompt_version + ")";
+            "Librarian-CPP-1.1 (Prompt: " + prompt_version + ")";
         
         return DistillationResult{
             full_extractor_version,
@@ -839,6 +715,9 @@ public:
             if (skill.name.empty() || skill.content.empty()) {
                 throw std::runtime_error("Schema validation failed: Skill name or content is empty.");
             }
+            if (!std::isfinite(skill.confidence) || skill.confidence < 0.0 || skill.confidence > 1.0) {
+                throw std::runtime_error("Schema validation failed: Skill confidence out of bounds or NaN.");
+            }
             require_evidence_spans(skill.evidence_spans);
         }
         for (const auto& claim : result.payload.claims) {
@@ -853,6 +732,26 @@ public:
         std::cout << "[LIBRARIAN] Schema validation passed." << std::endl;
     }
 };
+
+static void validate_distillation_source(const DistillationResult& result, const SourceEnvelope& source) {
+    StrictSchemaValidator{}.validate(result);
+    const auto validate = [&](const std::vector<std::string>& spans) {
+        for (const auto& span : spans) {
+            int begin = 0, end = 0;
+            if (!parse_evidence_span(span, begin, end) || static_cast<size_t>(end) > source.content.size()) {
+                throw std::runtime_error("Evidence span exceeds immutable source byte bounds");
+            }
+            for (int offset : {begin, end}) {
+                if (static_cast<size_t>(offset) < source.content.size() &&
+                    (static_cast<unsigned char>(source.content[static_cast<size_t>(offset)]) & 0xc0) == 0x80) {
+                    throw std::runtime_error("Evidence span splits a source UTF-8 character");
+                }
+            }
+        }
+    };
+    for (const auto& claim : result.payload.claims) validate(claim.evidence_spans);
+    for (const auto& skill : result.payload.skills_extracted) validate(skill.evidence_spans);
+}
 
 class InMemoryMemoryStore : public MemoryStore {
 public:
@@ -869,58 +768,14 @@ public:
     }
 };
 
-class GoSubprocessMemoryStore : public MemoryStore {
+class SubprocessMemoryStore : public MemoryStore {
 private:
-    std::string go_executable_path;
+    std::string executable_path;
 public:
-    GoSubprocessMemoryStore(const std::string& path) : go_executable_path(path) {}
+    SubprocessMemoryStore(const std::string& path) : executable_path(path) {}
 
     StoreReceipt upsert(const SourceEnvelope& envelope, const DistillationResult& result) override {
-        std::cout << "[LIBRARIAN] Sending payload to Go Memory Store..." << std::endl;
-        
-        SECURITY_ATTRIBUTES saAttr; 
-        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 
-        saAttr.bInheritHandle = TRUE; 
-        saAttr.lpSecurityDescriptor = NULL; 
-
-        HANDLE hOutRd = NULL, hOutWr = NULL;
-        HANDLE hInRd = NULL, hInWr = NULL;
-
-        if (!CreatePipe(&hOutRd, &hOutWr, &saAttr, 0)) throw std::runtime_error("Failed to create stdout pipe");
-        SetHandleInformation(hOutRd, HANDLE_FLAG_INHERIT, 0);
-        
-        if (!CreatePipe(&hInRd, &hInWr, &saAttr, 0)) {
-            CloseHandle(hOutRd); CloseHandle(hOutWr);
-            throw std::runtime_error("Failed to create stdin pipe");
-        }
-        SetHandleInformation(hInWr, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOA si;
-        ZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si); 
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE); // Let Go write stderr to our stderr
-        si.hStdOutput = hOutWr;
-        si.hStdInput = hInRd;
-        si.dwFlags |= STARTF_USESTDHANDLES;
-
-        PROCESS_INFORMATION pi;
-        ZeroMemory(&pi, sizeof(pi));
-
-        std::string go_cmdline_str = "\"" + go_executable_path + "\"";
-        std::vector<char> cmdline(go_cmdline_str.begin(), go_cmdline_str.end());
-        cmdline.push_back('\0');
-
-        BOOL success = CreateProcessA(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-
-        CloseHandle(hOutWr);
-        CloseHandle(hInRd);
-
-        if (!success) {
-            CloseHandle(hInWr); CloseHandle(hOutRd);
-            throw std::runtime_error("Failed to start Go memory-store executable");
-        }
-
-        // Build DistillationPayload JSON matching Go's expected input
+        std::cout << "[LIBRARIAN] Sending candidate to Memory Store..." << std::endl;
         json full_payload = {
             {"extractor_id", "Librarian-CPP"},
             {"extractor_version", result.extractor_version},
@@ -930,75 +785,35 @@ public:
             {"raw_transcript", envelope.content}
         };
 
-        std::string payload_str = full_payload.dump();
-        
-        std::string output = "";
-        
-        std::thread reader([&]() {
-            DWORD read; 
-            CHAR buf[4096]; 
-            while(ReadFile(hOutRd, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
-                buf[read] = '\0';
-                output.append(buf, read);
-            }
-        });
-
-        std::thread writer([&]() {
-            DWORD totalWritten = 0;
-            DWORD toWrite = payload_str.length();
-            const char* ptr = payload_str.c_str();
-            while (totalWritten < toWrite) {
-                DWORD written = 0;
-                if (!WriteFile(hInWr, ptr + totalWritten, toWrite - totalWritten, &written, NULL)) {
-                    std::cerr << "[LIBRARIAN ERR] Failed to write to Go process pipe." << std::endl;
-                    break;
-                }
-                totalWritten += written;
-            }
-            CloseHandle(hInWr); // Send EOF to Go
-        });
-
-        DWORD waitRes = WaitForSingleObject(pi.hProcess, 35000); // Wait slightly longer than Go's 30s context
-        if (waitRes == WAIT_TIMEOUT) {
-            TerminateProcess(pi.hProcess, 1);
-            if (reader.joinable()) reader.join();
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread); CloseHandle(hOutRd);
-            if (writer.joinable()) {
-                CancelSynchronousIo(writer.native_handle());
-                writer.join();
-            }
-            throw std::runtime_error("Go memory-store timed out.");
-        }
-        
-        if (reader.joinable()) {
-            reader.join();
-        }
-        if (writer.joinable()) {
-            writer.join();
-        }
-        
-        DWORD exitCode;
-        GetExitCodeProcess(pi.hProcess, &exitCode);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        CloseHandle(hOutRd);
-
-        if (exitCode != 0) {
-            // It failed. Output might contain ErrorEnvelope.
-            throw std::runtime_error("Go memory-store failed with exit code " + std::to_string(exitCode) + ". Output: " + output);
-        }
-
-        // Parse Receipt
+        const auto process_result = godbrain_process::run(executable_path, {}, full_payload.dump());
+        if (!process_result.error_output.empty()) std::cerr << process_result.error_output;
+        if (process_result.error_truncated) std::cerr << "\n[LIBRARIAN] memory-store stderr truncated\n";
+        if (process_result.exit_code != 0) throw std::runtime_error("memory-store failed with exit code " + std::to_string(process_result.exit_code));
         try {
-            json receipt_json = json::parse(output);
+            json receipt_json = json::parse(process_result.output);
+            if (!receipt_json.is_object() || receipt_json.size() != 8 ||
+                (receipt_json.at("status") != "committed" && receipt_json.at("status") != "idempotent_noop") ||
+                receipt_json.at("schema_version") != full_payload.at("schema_version")) {
+                throw std::runtime_error("Invalid committed Memory Store receipt");
+            }
+            for (const char* field : {"run_id", "record_id", "version", "timestamp"}) {
+                if (!receipt_json.at(field).is_string() || receipt_json.at(field).get_ref<const std::string&>().empty()) {
+                    throw std::runtime_error("Incomplete committed Memory Store receipt");
+                }
+            }
+            for (const char* field : {"insert_count", "update_count"}) {
+                if (!receipt_json.at(field).is_number_integer() || receipt_json.at(field).get<int64_t>() < 0) {
+                    throw std::runtime_error("Invalid committed Memory Store counts");
+                }
+            }
             return StoreReceipt{
-                receipt_json.value("record_id", ""),
-                receipt_json.value("version", ""),
-                false, // not tracking created_new directly here for now
-                receipt_json.value("timestamp", "")
+                receipt_json.at("record_id"),
+                receipt_json.at("version"),
+                receipt_json.at("insert_count").get<int64_t>() > 0,
+                receipt_json.at("timestamp")
             };
         } catch (const std::exception& e) {
-            throw std::runtime_error("Failed to parse StoreReceipt from Go output: " + std::string(e.what()) + "\nOutput was: " + output);
+            throw std::runtime_error("Invalid Memory Store receipt: " + std::string(e.what()));
         }
     }
 };
@@ -1196,7 +1011,7 @@ int main(int argc, char* argv[]) {
     if (config.dry_run) {
         store = std::make_unique<InMemoryMemoryStore>();
     } else {
-        store = std::make_unique<GoSubprocessMemoryStore>(config.mongo_store_path);
+        store = std::make_unique<SubprocessMemoryStore>(config.mongo_store_path);
     }
 
     bool success = commit_to_brain(session_id, transcript, std::move(store), config);

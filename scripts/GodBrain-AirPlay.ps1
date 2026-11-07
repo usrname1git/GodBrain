@@ -40,8 +40,12 @@ function Get-GodBrainAirPlayProcess {
     return $null
 }
 
-function Invoke-GodBrainAirPlayProbe {
-    param([Diagnostics.ProcessStartInfo]$StartInfo, [ValidateRange(1, 4000)][int]$TimeoutMilliseconds = 3000)
+function Invoke-GodBrainAirPlayChild {
+    param(
+        [Diagnostics.ProcessStartInfo]$StartInfo,
+        [ValidateRange(1, 12000)][int]$TimeoutMilliseconds = 3000,
+        [string]$Label = 'AirPlay state probe'
+    )
     $probe = [Diagnostics.Process]::new()
     $probe.StartInfo = $StartInfo
     $probe.StartInfo.UseShellExecute = $false
@@ -49,37 +53,88 @@ function Invoke-GodBrainAirPlayProbe {
     $probe.StartInfo.RedirectStandardOutput = $true
     $probe.StartInfo.RedirectStandardError = $true
     try {
-        if (-not $probe.Start()) { throw 'Could not start the AirPlay state probe.' }
+        if (-not $probe.Start()) { throw "Could not start the $Label." }
         $stdout = $probe.StandardOutput.ReadToEndAsync()
         $stderr = $probe.StandardError.ReadToEndAsync()
         if (-not $probe.WaitForExit($TimeoutMilliseconds)) {
             $probe.Kill()
-            if (-not $probe.WaitForExit(1000)) { throw 'AirPlay state probe timed out and did not exit.' }
-            throw 'AirPlay state probe timed out.'
+            if (-not $probe.WaitForExit(1000)) { throw "$Label timed out and did not exit." }
+            throw "$Label timed out."
         }
         if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 1000)) {
-            throw 'AirPlay state probe output timed out.'
+            throw "$Label output timed out."
         }
         $output = $stdout.GetAwaiter().GetResult()
         $errorText = $stderr.GetAwaiter().GetResult()
-        if ($output.Length -gt 16384 -or $errorText.Length -gt 16384 -or $errorText.Trim()) {
-            throw 'Invalid AirPlay state probe output.'
+        if ($output.Length -gt 16384 -or $errorText.Length -gt 16384) {
+            throw "Invalid $Label output."
         }
-        $result = $output | ConvertFrom-Json -NoEnumerate -Depth 8 -ErrorAction Stop
-        if ($result -is [array] -or $result -isnot [pscustomobject] -or
-            $result.schema_version -ne 1 -or $result.ok -isnot [bool]) {
-            throw 'Invalid AirPlay state probe receipt.'
-        }
-        if (-not $result.ok) {
-            if ($result.error -isnot [string] -or [string]::IsNullOrWhiteSpace($result.error) -or
-                $result.error.Length -gt 300 -or $result.error -match '[\r\n]') {
-                throw 'Invalid AirPlay state probe error.'
-            }
-            throw "AirPlay state probe failed: $($result.error)"
-        }
-        if ($probe.ExitCode -ne 0) { throw 'AirPlay state probe exited unsuccessfully.' }
-        return $result
+        return [pscustomobject]@{ ExitCode = $probe.ExitCode; Output = $output; ErrorText = $errorText }
     } finally { $probe.Dispose() }
+}
+
+function Invoke-GodBrainAirPlayProbe {
+    param([Diagnostics.ProcessStartInfo]$StartInfo, [ValidateRange(1, 4000)][int]$TimeoutMilliseconds = 3000)
+    $child = Invoke-GodBrainAirPlayChild $StartInfo -TimeoutMilliseconds $TimeoutMilliseconds
+    if ($child.ErrorText.Trim()) { throw 'Invalid AirPlay state probe output.' }
+    $result = $child.Output | ConvertFrom-Json -NoEnumerate -Depth 8 -ErrorAction Stop
+    if ($result -is [array] -or $result -isnot [pscustomobject] -or
+        $result.schema_version -ne 1 -or $result.ok -isnot [bool]) {
+        throw 'Invalid AirPlay state probe receipt.'
+    }
+    if (-not $result.ok) {
+        if ($result.error -isnot [string] -or [string]::IsNullOrWhiteSpace($result.error) -or
+            $result.error.Length -gt 300 -or $result.error -match '[\r\n]') {
+            throw 'Invalid AirPlay state probe error.'
+        }
+        throw "AirPlay state probe failed: $($result.error)"
+    }
+    if ($child.ExitCode -ne 0) { throw 'AirPlay state probe exited unsuccessfully.' }
+    return $result
+}
+
+function Request-GodBrainAirPlayClose([uint32]$ProcessId) {
+    Initialize-GodBrainAirPlayWindow
+    try { $window = [GodBrain.AirPlayWindow]::Find($ProcessId) }
+    catch [InvalidOperationException] { return $false }
+    return [GodBrain.AirPlayWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+}
+
+function Stop-GodBrainAirPlayProcess($Process, $Handle) {
+    if ($Handle.WaitForExit(0)) { return 'stopped (user app)' }
+    Assert-GodBrainAirPlayProcess $Process $Handle
+    $exe = Join-Path (Split-Path $PSScriptRoot -Parent) 'godbrain_core\cpp_tools\desk-airplay.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        throw 'AirPlay termination helper is missing; run scripts\Build-DeskAirPlay.ps1 once.'
+    }
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $created = $Handle.CreationTimeUtc.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)
+    foreach ($level in @('user', '-A', '-T')) {
+        if ($Handle.WaitForExit(0)) { return 'stopped (user app)' }
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        if ($level -eq 'user') { $info.FileName = $exe }
+        else {
+            $info.FileName = 'C:\Tools\TeamM2\wsudo.exe'
+            if (-not (Test-Path -LiteralPath $info.FileName -PathType Leaf)) {
+                throw 'AirPlay termination needs C:\Tools\TeamM2\wsudo.exe; the receiver is still running.'
+            }
+            foreach ($argument in @($level, '-w', $exe)) { $info.ArgumentList.Add($argument) }
+        }
+        # A late UAC/TI child cannot act after its parent has timed out.
+        $deadline = [datetime]::UtcNow.AddSeconds(10).ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)
+        foreach ($argument in @('--terminate', '--pid', [string]$Process.ProcessId, '--created', $created,
+                '--owner', $owner, '--deadline', $deadline)) {
+            $info.ArgumentList.Add($argument)
+        }
+        $child = Invoke-GodBrainAirPlayChild $info -TimeoutMilliseconds 12000 -Label 'AirPlay termination helper'
+        if ($Handle.WaitForExit(1000)) {
+            $method = switch ($level) { 'user' { 'user' }; '-A' { 'wsudo/Admin' }; '-T' { 'wsudo/TI' } }
+            return "stopped (user app; forced via $method)"
+        }
+        if ($child.ExitCode -eq 5 -and $level -ne '-T') { continue }
+        $detail = ($child.Output + ' ' + $child.ErrorText).Trim()
+        throw "AirPlay termination failed at $level (exit $($child.ExitCode)); receiver PID $($Process.ProcessId) has not exited. $detail"
+    }
 }
 
 function Get-GodBrainAirPlayReceiverState($Process, [ref]$Source) {
@@ -251,16 +306,15 @@ function Invoke-GodBrainAirPlay {
         }
         $handle = Open-GodBrainAirPlayHandle $process.ProcessId
         Assert-GodBrainAirPlayProcess $process $handle
+        if ($Action -eq 'Stop') {
+            if ($handle.WaitForExit(0) -or
+                ((Request-GodBrainAirPlayClose ([uint32]$process.ProcessId)) -and $handle.WaitForExit(3000))) {
+                return 'stopped (user app)'
+            }
+            return Stop-GodBrainAirPlayProcess $process $handle
+        }
         Initialize-GodBrainAirPlayWindow
         $window = [GodBrain.AirPlayWindow]::Find([uint32]$process.ProcessId)
-        if ($Action -eq 'Stop') {
-            if (-not [GodBrain.AirPlayWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
-                $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                throw "AirPlay did not accept its normal close request (Windows error $code). If the receiver is elevated, close it from its own window and start it normally."
-            }
-            if (-not $handle.WaitForExit(10000)) { throw 'AirPlay has not exited; no force kill was performed.' }
-            return 'stopped (user app)'
-        }
         $command = if ($Action -eq 'Open') { 9 } else { 6 }
         if (-not [GodBrain.AirPlayWindow]::ShowWindowAsync($window, $command)) {
             $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()

@@ -129,7 +129,15 @@ turn. `/verify <12-char prefix> <why>` resolves against `/pending`.
 | `observe_godbrain_host` | Windows inventory + `os_pin`; auto-verified sensor |
 | `promote_godbrain_claim` | `POST /api/truth` host_fact / doc_fact / playbook |
 | `execute_godbrain_script` | PowerShell; requires reasoning + bearer |
-| `propose_sovereign_architect_change` | PowerShell; requires reasoning + bearer |
+| `propose_sovereign_architect_change` | Stage exact untrusted Research proposal, no execution; requires reasoning + bearer |
+
+YOLO-only tools require both an active timer and a fresh authenticated request,
+including aliases, registry FLAGS and event-manifest installation. Continue never
+restores authorization. Research/Answer remain read-only. Native store/PowerShell
+children require Job containment, restrict inherited handles, bound captured
+output and deadlines, and reject incomplete stdin transfer. Librarian provenance
+binds its executed HTTP messages or Colibri frame; validation feedback, source-byte
+bounds and UTF-8 boundaries are checked before candidate persistence.
 
 ## Golden Record RAG (`127.0.0.1:8084`)
 

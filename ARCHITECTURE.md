@@ -58,7 +58,7 @@ node was costume.
 ```mermaid
 flowchart LR
     Operator[Operator]
-    UI[Galaxy UI / Brave extension]
+    UI[Workspace / Brave extension]
     Kernel[C++ Kernel API :8083]
     Mongo[(MongoDB :27017)]
     Librarian[Native Librarian]

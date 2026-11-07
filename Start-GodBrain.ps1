@@ -513,11 +513,11 @@ if (Test-Path -LiteralPath $desk) {
 }
 
 Write-Log "GodBrain logon start finished"
-Write-Log "Galaxy: http://127.0.0.1:8083/galaxy"
+Write-Log "Workspace: http://127.0.0.1:8083/workspace"
 Write-Log "Doors: GET http://127.0.0.1:8083/api/doors"
 Write-Log "Pending: GET http://127.0.0.1:8083/api/pending"
 Write-Log "Shortcuts remember: POST http://127.0.0.1:8083/api/remember {`"text`":`"idea`"}"
-Write-Log "Ask without Galaxy: .\scripts\Ask-GodBrain.ps1 your question"
+Write-Log "Ask without Workspace: .\scripts\Ask-GodBrain.ps1 your question"
 Write-Log "Store idea: .\scripts\Ask-GodBrain.ps1 -Idea `"thought`"  or  /idea in chat"
 Write-Log "Judge: POST http://127.0.0.1:8083/api/judge {`"id`":`"stable_id`",`"status`":`"verified`",`"reasoning`":`"why`"}"
 }

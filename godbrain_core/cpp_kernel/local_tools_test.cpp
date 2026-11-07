@@ -16,6 +16,13 @@
 #endif
 
 namespace memory {
+json working_shelf(const json&) {
+    throw std::runtime_error("Live working shelves are disabled in offline local tool tests.");
+}
+json shared_context(const std::string&, const std::string&, const std::string&,
+                    const godbrain_rag::Client&) {
+    throw std::runtime_error("Live shared context is disabled in offline local tool tests.");
+}
 json research_document(const std::string&, bool) {
     throw std::runtime_error("Live documentation lookup is disabled in offline local tool tests.");
 }
