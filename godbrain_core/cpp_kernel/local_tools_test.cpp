@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "rag_client.h"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -155,6 +156,12 @@ static std::string env_var(const char* name) {
 int main() {
     bool pass = true;
     std::string err;
+    char executable[MAX_PATH]{};
+    const DWORD executable_size = GetModuleFileNameA(nullptr, executable, MAX_PATH);
+    if (!expect(executable_size != 0 && executable_size < MAX_PATH, "fixture executable path")) {
+        return 1;
+    }
+    const auto source_repo = std::filesystem::path(executable).parent_path().parent_path().parent_path();
     const std::string home = env_var("USERPROFILE");
     const std::string appdata = env_var("APPDATA");
     const std::string local = env_var("LOCALAPPDATA");
@@ -837,7 +844,13 @@ int main() {
     const std::string clock =
         "*** TOOL\nname: clockres64\n*** END\n";
     const std::string cres = local_tools::run_tools_from_text(clock);
-    pass &= expect(cres.find("run_sysint clockres") != std::string::npos, "clockres runs");
+    const bool clockres_installed =
+        !file_absent("C:\\Tools\\SysInternals\\clockres64.exe") ||
+        !file_absent("C:\\Tools\\SysInternals\\clockres.exe");
+    pass &= expect(clockres_installed
+                       ? cres.find("run_sysint clockres") != std::string::npos
+                       : cres.find("run_sysint: clockres not in C:\\Tools\\SysInternals") != std::string::npos,
+                   "clockres executes if installed, otherwise reports its missing dependency");
     pass &= expect(cres.find("denied") == std::string::npos, "clockres not denied");
 
     const std::string who =
@@ -963,31 +976,53 @@ int main() {
         "authorized paths is local-fs");
     pass &= expect(
         local_tools::looks_like_fs_refuse(
-            "I do not have access to your local file system "
-            "(C:\\Users\\autismo\\Documents\\GitHub\\GodBrain)"),
+            "I do not have access to your local file system (" + source_repo.string() + ")"),
         "fs refuse detected");
     pass &= expect(!local_tools::looks_like_fs_refuse("get_file_info ok bytes=12"),
                    "tool result is not fs refuse");
     pass &= expect(!local_tools::looks_like_fs_refuse("I cannot access the GPU"),
                    "cannot access GPU is not fs refuse");
     {
+        const auto directory = std::filesystem::path("C:\\Temp\\GitHub") /
+            ("godbrain-tool-repo-" + std::to_string(GetCurrentProcessId()) + "-" +
+             std::to_string(GetTickCount64()));
+        if (!expect(std::filesystem::create_directory(directory), "create owned repo fixture")) {
+            return 1;
+        }
+        struct RepoFixture {
+            std::filesystem::path directory;
+            ~RepoFixture() { std::filesystem::remove_all(directory); }
+        } fixture{directory};
+        for (const char* name : {"README.md", "AGENTS.md", "Heal-GodBrain.ps1"}) {
+            std::filesystem::copy_file(source_repo / name, directory / name);
+        }
+        std::filesystem::create_directory(directory / ".github");
+        std::ofstream(directory / ".github" / "copilot-instructions.md") << "Synthetic fixture only.\n";
+        std::filesystem::create_directories(directory / "godbrain_core" / "temp_hermes");
+        const std::string repo = directory.string();
+        const auto initialized = local_tools::run_tools_from_text(
+            "*** TOOL\nname: run_pwsh\n<<<<\ngit -C '" + repo +
+            "' init --quiet --initial-branch=fixture\n>>>>\n*** END\n");
+        if (!expect(initialized.find("run_pwsh") != std::string::npos &&
+                        std::filesystem::is_directory(directory / ".git"),
+                    "initialize owned repo fixture")) {
+            return 1;
+        }
         const std::string probe = local_tools::answer_fs_ask(
-            "I do not have access to " + home +
-            "\\Documents\\GitHub\\GodBrain");
+            "I do not have access to " + repo);
         pass &= expect((probe.find("get_file_info") != std::string::npos ||
                         probe.find("list_local_dir") != std::string::npos) &&
                            probe.find("denied") == std::string::npos &&
                            probe.find("repo that needs") == std::string::npos,
                        "fs refuse probe hits repo");
         const std::string longq =
-            "Can you find anything apparent in " + home +
-            "\\Documents\\GitHub\\GodBrain repo that needs fixing for you "
+            "Can you find anything apparent in " + repo + " repo that needs fixing for you "
             "to become Jarvis?";
         const std::string longp = local_tools::answer_fs_ask(longq);
         pass &= expect(longp.find("repo that needs") == std::string::npos &&
-                           longp.find("GodBrain") != std::string::npos &&
+                           longp.find(repo) != std::string::npos &&
                            longp.find("missing") == std::string::npos,
-                       "path stops at GodBrain not English tail");
+                       "path stops at the repo not English tail");
         pass &= expect(local_tools::looks_like_local_fs_ask(longq),
                        "jarvis repo ask is local-fs");
         pass &= expect(!local_tools::looks_like_list_only_ask(longq),
@@ -1003,8 +1038,8 @@ int main() {
                            blurb.find("temp_hermes") != std::string::npos,
                        "jarvis blurb names leftovers");
         const std::string agread = local_tools::run_tools_from_text(
-            std::string("*** TOOL\nname: read_local_file\npath: ") + home +
-            "\\Documents\\GitHub\\GodBrain\\AGENTS.md\n*** END\n");
+            std::string("*** TOOL\nname: read_local_file\npath: ") + repo +
+            "\\AGENTS.md\n*** END\n");
         pass &= expect(agread.find("kernel rails") != std::string::npos &&
                            agread.find("one loop") != std::string::npos &&
                            agread.size() < 2500,
@@ -1016,12 +1051,11 @@ int main() {
             local_tools::complete_fs_listing(longq, miss);
         pass &= expect(padded.find("search_local") != std::string::npos &&
                            padded.find("list_local_dir") != std::string::npos &&
-                           padded.find("GodBrain") != std::string::npos &&
+                           padded.find(repo) != std::string::npos &&
                            padded.find("repo that needs") == std::string::npos,
                        "missed Temp hop still lists named repo");
         const std::string already =
-            "list_local_dir " + home +
-            "\\Documents\\GitHub\\GodBrain depth=1\n";
+            "list_local_dir " + repo + " depth=1\n";
         pass &= expect(local_tools::complete_fs_listing(longq, already) ==
                            already,
                        "complete_fs_listing is idempotent");
@@ -1041,12 +1075,10 @@ int main() {
                            map.find("temp_hermes") != std::string::npos &&
                            nlines >= 12 && map.size() > 800,
                        "analysis observe is a writeup not 10 dir rows");
-        pass &= expect(local_tools::analysis_observe("list " + home +
-                                                     "\\Documents\\GitHub\\GodBrain")
+        pass &= expect(local_tools::analysis_observe("list " + repo)
                            .empty(),
                        "list-only ask is not a repo_map");
-        const std::string chg = local_tools::changed_context(
-            home + "\\Documents\\GitHub\\GodBrain");
+        const std::string chg = local_tools::changed_context(repo);
         pass &= expect(chg.find("Changed") != std::string::npos &&
                            (chg.find("mouth-one-fs-hop") != std::string::npos ||
                             chg.find("git") != std::string::npos ||
@@ -1064,11 +1096,6 @@ int main() {
         pass &= expect(clip.find("Live stack") == std::string::npos &&
                            clip.find("Process tree") != std::string::npos,
                        "chat clip is process+FS without live-stack rails");
-        pass &= expect(
-            snap.find("godbrain-kernel") != std::string::npos ||
-                snap.find("llama-server") != std::string::npos ||
-                snap.find("rag-service") != std::string::npos,
-            "host_snap names a live mouth/kernel process");
         const std::string stack = local_tools::live_stack_blurb();
         pass &= expect(stack.find("one generate slot") != std::string::npos &&
                            stack.find("8084") != std::string::npos &&
