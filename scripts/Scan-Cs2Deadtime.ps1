@@ -1,14 +1,16 @@
 # CS2 DVR dead-time scan. Contact sheet is an operator receipt only (tiny tiles).
-# VL sees POV JPEGs at 1440x1080 (native DVR). Server image cap is 1.55 MP so they are not downscaled.
-# Scene-change picks the frames; even spacing fills if the clip is quiet.
-# Does not keep the mp4 on C:.
+# JPEG evidence is extracted at 1440x1080; the running server's pixel cap may downscale it.
+# JPEG mode uses uniformly spaced samples, not scene-change detection.
+# Originals and legacy outputs are never modified. New receipts are unqualified detections.
 [CmdletBinding()]
 param(
-    [int]$Limit = 3,
+    [ValidateRange(0, 1000000)][int]$Limit = 3,
     [string]$Match = "",
     [switch]$Force,
     [switch]$NativeVideo,
-    [int]$Parts = 4,
+    [switch]$UseGoldHints,
+    [string[]]$InputFile = @(),
+    [ValidateRange(1, 32)][int]$Parts = 4,
     [string]$Remote = "iCloud:CS2 ",
     [string]$OutDir = "C:\nvme\cs-clips\out\deadtime",
     [string]$Endpoint = "http://127.0.0.1:8888/v1/chat/completions",
@@ -17,33 +19,37 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-$scratch = Join-Path $OutDir "scratch"
-New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+$scannerSourcePath = $PSCommandPath
+$scratch = Join-Path $OutDir "scratch-v2"
 $instructionsPath = Join-Path $OutDir "instructions.md"
-$indexPath = Join-Path $OutDir "index.json"
+$indexPath = Join-Path $OutDir "index-v2.json"
+$responseDir = ""
 
 function Get-ModelsUrl {
     $uri = [Uri]$Endpoint
-    $port = if ($uri.Port -gt 0) { ":$($uri.Port)" } else { "" }
-    return "{0}://{1}{2}/v1/models" -f $uri.Scheme, $uri.Host, $port
+    if (-not $uri.IsLoopback -or $uri.Scheme -cne "http" -or $uri.UserInfo -or
+        $uri.Query -or $uri.Fragment -or $uri.AbsolutePath -cne "/v1/chat/completions") {
+        throw "Clip inference requires a plain HTTP loopback /v1/chat/completions endpoint."
+    }
+    return $uri.GetLeftPart([UriPartial]::Authority) + "/v1/models"
 }
 
 function Wait-Vl {
     $modelsUrl = Get-ModelsUrl
     $deadline = (Get-Date).AddMinutes(8)
+    $detail = "No matching model advertised."
     while ((Get-Date) -lt $deadline) {
         try {
             $r = Invoke-RestMethod -UseBasicParsing -TimeoutSec 3 $modelsUrl
             $hit = @($r.data) | Where-Object { [string]$_.id -eq $Model } | Select-Object -First 1
             if ($hit) {
                 $mods = @($hit.architecture.input_modalities)
-                if ($mods.Count -eq 0 -or ($mods -contains "video")) { return }
+                if ($mods -contains $(if ($NativeVideo) { "video" } else { "image" })) { return $hit }
             }
-        } catch {}
+        } catch { $detail = $_.Exception.Message }
         Start-Sleep -Seconds 3
     }
-    throw "Model $Model with video input is not ready at $modelsUrl."
+    throw "Model $Model with the requested input is not ready at ${modelsUrl}: $detail"
 }
 
 function Get-ClipNames {
@@ -67,6 +73,77 @@ function Get-ArtifactKey([string]$Name) {
     ([BitConverter]::ToString($hash) -replace "-", "").ToLowerInvariant().Substring(0, 16)
 }
 
+function Get-TextHash([string]$Text) {
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($Text))).ToLowerInvariant()
+}
+
+function Write-ScanJson($Value, [string]$Path) {
+    $tmp = $Path + "." + [guid]::NewGuid().ToString("N") + ".tmp"
+    $bytes = [Text.UTF8Encoding]::new($false, $true).GetBytes(
+        (ConvertTo-Json -InputObject $Value -Depth 16))
+    $file = [IO.File]::Open($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) }
+    finally { $file.Dispose() }
+    [IO.File]::Move($tmp, $Path, $true)
+}
+
+function Get-ScanRuntime {
+    $null = Get-ModelsUrl
+    $uri = [Uri]$Endpoint
+    $health = Invoke-RestMethod -Uri ($uri.GetLeftPart([UriPartial]::Authority) + "/health") -TimeoutSec 3
+    if ($health.model -cne $Model -or $health.vision -ne $true -or $health.busy -ne $false) {
+        throw "The requested vision model must already be running and idle; no model was started."
+    }
+    $owners = @(Get-NetTCPConnection -LocalPort $uri.Port -State Listen -ErrorAction Stop |
+        Where-Object { $_.LocalAddress -in @("127.0.0.1", "::1") } |
+        Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($owners.Count -ne 1) { throw "Cannot bind the vision endpoint to one local process." }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($owners[0])" -ErrorAction Stop
+    if (-not $process.CreationDate -or [string]::IsNullOrWhiteSpace($process.CommandLine)) {
+        throw "Vision process identity/configuration could not be read; cache reuse is unsafe."
+    }
+    [ordered]@{
+        pid = $owners[0]; created = $process.CreationDate.ToUniversalTime().ToString("o")
+        command_sha256 = Get-TextHash $process.CommandLine
+        context_length = $health.context_length; cache_quant = $health.cache_quant
+        video_max_frames = $health.video_max_frames; video_max_pixels = $health.video_max_pixels
+        video_zoom = $health.video_zoom
+    }
+}
+
+function Get-ScanProfile($Runtime) {
+    $rules = if ($UseGoldHints -and (Test-Path -LiteralPath $instructionsPath)) {
+        Get-Content -LiteralPath $instructionsPath -Raw
+    } else { Get-InstructionBlock "__no_gold__" }
+    $profile = [ordered]@{
+        schema_version = "cs2-deadtime-v2"; scanner_sha256 = (Get-FileHash -LiteralPath $scannerSourcePath).Hash
+        rules_sha256 = Get-TextHash $rules; model = $Model; endpoint = $Endpoint
+        native_video = [bool]$NativeVideo; parts = $Parts; gold_hints = [bool]$UseGoldHints; runtime = $Runtime
+    }
+    [pscustomobject]@{ hash = Get-TextHash ($profile | ConvertTo-Json -Depth 8 -Compress); profile = $profile }
+}
+
+function Test-ScanCache($Entry, [string]$SourceHash, [string]$ProfileHash) {
+    if (-not $Entry -or $Entry.schema_version -cne "cs2-deadtime-v2" -or
+        $Entry.source_sha256 -cne $SourceHash -or $Entry.profile_sha256 -cne $ProfileHash -or
+        $Entry.state -notin @("complete", "needs_review")) { return $false }
+    $path = [IO.Path]::GetFullPath([string]$Entry.json)
+    $root = [IO.Path]::GetFullPath($OutDir).TrimEnd('\') + "\"
+    if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Cached receipt path is invalid or missing." }
+    if ((Get-FileHash -LiteralPath $path).Hash -cne $Entry.result_sha256) {
+        throw "Cached receipt content changed; preserve it and rerun with -Force."
+    }
+    $receipt = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($receipt.schema_version -cne "cs2-deadtime-v2" -or $receipt.file -cne $Entry.file -or
+        $receipt.state -cne $Entry.state -or $receipt.source_sha256 -cne $SourceHash -or
+        $receipt.profile_sha256 -cne $ProfileHash -or $receipt.sanitized -ne $false) {
+        throw "Cached receipt identity or state is invalid."
+    }
+    return $true
+}
+
 function New-ContactSheet([string]$Mp4, [string]$Sheet) {
     $vf = "fps=1,scale=160:-1:flags=fast_bilinear,drawtext=fontfile=C\\:/Windows/Fonts/consola.ttf:text='%{eif\:n\:d}s':x=4:y=4:fontsize=14:fontcolor=white:box=1:boxcolor=black@0.7,tile=10x12,scale=1280:-1"
     & $Ffmpeg -hide_banner -loglevel error -y -i $Mp4 -vf $vf -frames:v 1 $Sheet
@@ -76,23 +153,22 @@ function New-ContactSheet([string]$Mp4, [string]$Sheet) {
 }
 
 function New-PovFrames([string]$Mp4, [string]$Prefix, [double]$Duration) {
-    $dir = Split-Path $Prefix
-    $leaf = Split-Path $Prefix -Leaf
-    Get-ChildItem -LiteralPath $dir -Filter "$leaf.p*.jpg" -ErrorAction SilentlyContinue | Remove-Item -Force
     $n = 24
+    $frames = @()
     for ($i = 0; $i -lt $n; $i++) {
-        $t = [math]::Round($i * ($Duration - 0.25) / [math]::Max(1, $n - 1), 1)
+        $t = [math]::Round($i * [math]::Max(0, $Duration - 0.05) / [math]::Max(1, $n - 1), 3)
+        $label = $t.ToString("0.###", [Globalization.CultureInfo]::InvariantCulture)
         $out = "{0}.p{1:000}.jpg" -f $Prefix, $i
-        $draw = "scale=1440:1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile=C\\:/Windows/Fonts/consola.ttf:text='${t}s':x=24:y=24:fontsize=48:fontcolor=white:box=1:boxcolor=black@0.75"
-        & $Ffmpeg -hide_banner -loglevel error -y -ss $t -i $Mp4 -frames:v 1 -vf $draw -q:v 3 $out
-        if ($LASTEXITCODE -ne 0) { throw "ffmpeg POV frame failed at ${t}s" }
+        $draw = "scale=1440:1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile=C\\:/Windows/Fonts/consola.ttf:text='${label}s':x=24:y=24:fontsize=48:fontcolor=white:box=1:boxcolor=black@0.75"
+        & $Ffmpeg -hide_banner -loglevel error -n -ss $label -i $Mp4 -frames:v 1 -vf $draw -q:v 3 $out
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw "ffmpeg POV frame failed at ${t}s" }
+        $frames += [pscustomobject]@{ FullName = $out; second = $t }
     }
-    $frames = @(Get-ChildItem -LiteralPath $dir -Filter "$leaf.p*.jpg" | Sort-Object Name)
     if ($frames.Count -lt 1) { throw "no POV frames for $Mp4" }
     $frames
 }
 
-function Coalesce-Ranges($items, [double]$Gap = 2) {
+function Coalesce-Ranges($items, [double]$Gap = 0) {
     $sorted = @($items | Where-Object { $_ } | Sort-Object { [double]$_.in })
     if ($sorted.Count -eq 0) { return @() }
     $out = @()
@@ -113,8 +189,8 @@ function Coalesce-Ranges($items, [double]$Gap = 2) {
     $out += $cur
     $out | ForEach-Object {
         [pscustomobject]@{
-            in = [math]::Round($_.in, 2)
-            out = [math]::Round($_.out, 2)
+            in = $_.in
+            out = $_.out
             why = $_.why
         }
     }
@@ -124,35 +200,39 @@ function Shift-Ranges($items, [double]$Offset) {
     @($items | ForEach-Object {
         if (-not $_) { return }
         [pscustomobject]@{
-            in = [math]::Round(([double]$_.in) + $Offset, 2)
-            out = [math]::Round(([double]$_.out) + $Offset, 2)
+            in = ([double]$_.in) + $Offset
+            out = ([double]$_.out) + $Offset
             why = $_.why
         }
     })
 }
 
-function Split-CopyParts([string]$Src, [string]$Prefix, [int]$PartCount, [double]$Duration) {
-    $seg = [math]::Max(1, [math]::Floor($Duration / $PartCount))
+function New-ExactVideoPart([string]$Src, [string]$Out, [double]$Start, [double]$Length) {
+    $ss = $Start.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
+    $span = $Length.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
+    & $Ffmpeg -hide_banner -loglevel error -n -ss $ss -i $Src -t $span -map 0:v:0 -an `
+        -vf "setpts=PTS-STARTPTS" -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p -fps_mode passthrough $Out
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Out)) {
+        throw "ffmpeg exact analysis-part extraction failed at ${ss}s."
+    }
+    if ([math]::Abs((Read-StartSeconds $Out)) -gt 0.05) { throw "Analysis part does not start at timestamp zero." }
+}
+
+function Split-ExactParts([string]$Src, [string]$Prefix, [int]$PartCount, [double]$Duration) {
+    if ($Duration -le 0 -or $PartCount -lt 1) { throw "Invalid analysis split bounds." }
+    $seg = $Duration / $PartCount
     $parts = @()
     for ($i = 1; $i -le $PartCount; $i++) {
         $out = "{0}_part{1}.mp4" -f $Prefix, $i
         $ss = ($i - 1) * $seg
-        if ($i -eq $PartCount) {
-            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -i $Src -c copy -copyts $out
-        } else {
-            & $Ffmpeg -hide_banner -loglevel error -y -ss $ss -t $seg -i $Src -c copy -copyts $out
-        }
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $out)) {
-            throw "ffmpeg -c copy split failed for part $i"
-        }
+        New-ExactVideoPart $Src $out $ss $seg
         $dur = Read-Duration $out
-        $start = Read-StartSeconds $out
-        if ($ss -ge 1 -and $start -lt 0.5) { $start = [math]::Round($ss, 2) }
+        if ([math]::Abs($dur - $seg) -gt 0.1) { throw "Analysis part duration differs from the requested span." }
         $parts += [pscustomobject]@{
             index = $i
             path = $out
-            offset_s = $start
-            duration_s = $dur
+            offset_s = $ss
+            duration_s = [math]::Min($dur, $seg)
         }
     }
     $parts
@@ -164,8 +244,8 @@ function Read-Duration([string]$Mp4) {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) {
         throw "ffprobe duration failed for $Mp4"
     }
-    $dur = [math]::Round([double](([string]$raw).Trim()), 1)
-    if ($dur -le 0) { throw "ffprobe duration is $dur for $Mp4" }
+    $dur = [double]::Parse(([string]$raw).Trim(), [Globalization.CultureInfo]::InvariantCulture)
+    if ([double]::IsNaN($dur) -or [double]::IsInfinity($dur) -or $dur -le 0) { throw "ffprobe duration is invalid for $Mp4" }
     $dur
 }
 
@@ -176,10 +256,10 @@ function Read-StartSeconds([string]$Mp4) {
         throw "ffprobe start time failed for $Mp4"
     }
     $line = ([string]$raw).Trim().Split([char]10)[0].Trim()
-    [math]::Round([double]$line, 2)
+    [double]::Parse($line, [Globalization.CultureInfo]::InvariantCulture)
 }
 
-function Get-InstructionBlock([string]$Name) {
+function Get-InstructionBlock([string]$Name, [switch]$IncludeGold) {
     if (-not (Test-Path -LiteralPath $instructionsPath)) { return "" }
     $text = Get-Content -LiteralPath $instructionsPath -Raw
     if ([string]::IsNullOrWhiteSpace($text)) { return "" }
@@ -192,34 +272,136 @@ function Get-InstructionBlock([string]$Name) {
         foreach ($part in ($gold -split '(?m)^### ')) {
             if (-not $part) { continue }
             $heading = (($part -split "`r?`n", 2)[0]).Trim()
-            if ([string]::Equals($heading, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+            $heading = $heading -replace '\s+\(~?\d+(?:\.\d+)?s\)$', ''
+            if ($IncludeGold -and [string]::Equals($heading, $Name, [StringComparison]::OrdinalIgnoreCase)) {
                 $block = '### ' + $part.Trim()
                 break
             }
         }
         if ($block) { $rules = $rules + "`n`nGOLD FOR THIS FILE ONLY:`n" + $block }
     }
+    if (-not $IncludeGold) { $rules = (($rules -split '\r?\n') | Where-Object { $_ -notmatch '\bgold\b' }) -join "`n" }
     return "OPERATOR LAW:`n$rules"
 }
 
-function Invoke-Vl([object[]]$Frames, [string]$Name, [double]$Duration) {
-    $notes = Get-InstructionBlock $Name
+function Assert-JsonKeys($Element, [string[]]$Expected) {
+    if ($Element.ValueKind -ne [Text.Json.JsonValueKind]::Object) { throw "VL JSON must contain objects." }
+    $keys = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($property in $Element.EnumerateObject()) {
+        if (-not $keys.Add($property.Name) -or $property.Name -cnotin $Expected) {
+            throw "VL JSON has a duplicate or unexpected field: $($property.Name)"
+        }
+    }
+    if ($keys.Count -ne $Expected.Count) { throw "VL JSON is missing required fields." }
+}
+
+function Read-JsonNumber($Element) {
+    if ($Element.ValueKind -ne [Text.Json.JsonValueKind]::Number) { throw "VL times must be JSON numbers." }
+    $value = $Element.GetDouble()
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) { throw "VL times must be finite." }
+    return $value
+}
+
+function ConvertFrom-VlCompletion($Response, [string]$Name, [double]$Duration,
+    [double]$WindowStart = 0, [double]$WindowEnd = -1) {
+    if ($WindowEnd -lt 0) { $WindowEnd = $Duration }
+    if ($Response.error -or $Response.model -cne $Model -or @($Response.choices).Count -ne 1 -or
+        $Response.choices[0].finish_reason -cne "stop" -or $Response.choices[0].message.tool_calls -or
+        $Response.choices[0].message.content -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($Response.choices[0].message.content)) {
+        throw "VL completion failed, was truncated, changed model, or returned no plain-text answer."
+    }
+    $document = [Text.Json.JsonDocument]::Parse([string]$Response.choices[0].message.content)
+    try {
+        $root = $document.RootElement
+        Assert-JsonKeys $root @("file", "duration_s", "keep", "drop")
+        if ($root.GetProperty("file").ValueKind -ne [Text.Json.JsonValueKind]::String -or
+            $root.GetProperty("file").GetString() -cne $Name -or
+            [math]::Abs((Read-JsonNumber $root.GetProperty("duration_s")) - $Duration) -gt 0.05) {
+            throw "VL result identity or duration does not match the evidence."
+        }
+        $result = [ordered]@{ file = $Name; duration_s = $Duration; keep = @(); drop = @() }
+        foreach ($kind in @("keep", "drop")) {
+            $ranges = $root.GetProperty($kind)
+            if ($ranges.ValueKind -ne [Text.Json.JsonValueKind]::Array) { throw "VL keep/drop must be arrays." }
+            foreach ($range in $ranges.EnumerateArray()) {
+                Assert-JsonKeys $range @("in", "out", "why")
+                $a = Read-JsonNumber $range.GetProperty("in")
+                $b = Read-JsonNumber $range.GetProperty("out")
+                if ($a -lt $WindowStart -or $b -gt $WindowEnd -or $a -ge $b -or
+                    $range.GetProperty("why").ValueKind -ne [Text.Json.JsonValueKind]::String -or
+                    [string]::IsNullOrWhiteSpace($range.GetProperty("why").GetString()) -or
+                    $range.GetProperty("why").GetString().Length -gt 512) {
+                    throw "VL interval is invalid, outside supplied evidence, or has an invalid reason."
+                }
+                $result[$kind] += [pscustomobject]@{ in = $a; out = $b; why = $range.GetProperty("why").GetString() }
+            }
+        }
+        return [pscustomobject]$result
+    } finally { $document.Dispose() }
+}
+
+function Resolve-ClipRanges($Keep, $Drop, [double]$Duration) {
+    $kept = @(Coalesce-Ranges $Keep)
+    $dropped = @(); $conflicts = @()
+    foreach ($range in @(Coalesce-Ranges $Drop)) {
+        $cursor = [double]$range.in
+        foreach ($fight in $kept) {
+            $a = [math]::Max($cursor, [double]$fight.in)
+            $b = [math]::Min([double]$range.out, [double]$fight.out)
+            if ($a -ge $b) { continue }
+            if ($cursor -lt $a) { $dropped += [pscustomobject]@{ in = $cursor; out = $a; why = $range.why } }
+            $conflicts += [pscustomobject]@{ in = $a; out = $b; why = "KEEP/DROP conflict; retained" }
+            $cursor = $b
+        }
+        if ($cursor -lt $range.out) {
+            $dropped += [pscustomobject]@{ in = $cursor; out = [double]$range.out; why = $range.why }
+        }
+    }
+    $unknown = @(); $cursor = 0.0
+    foreach ($range in @(Coalesce-Ranges @($kept + $dropped))) {
+        if ($cursor -lt $range.in) {
+            $unknown += [pscustomobject]@{ in = $cursor; out = [double]$range.in; why = "Unclassified; retained" }
+        }
+        $cursor = [math]::Max($cursor, [double]$range.out)
+    }
+    if ($cursor -lt $Duration) { $unknown += [pscustomobject]@{ in = $cursor; out = $Duration; why = "Unclassified; retained" } }
+    [pscustomobject]@{
+        keep = $kept; drop = $dropped; uncertain = $unknown; conflicts = $conflicts
+        retain = @(Coalesce-Ranges @($kept + $unknown))
+        state = $(if ($unknown.Count -or $conflicts.Count) { "needs_review" } else { "complete" })
+    }
+}
+
+function Save-VlResponse($Response) {
+    if ($responseDir) {
+        Write-ScanJson $Response (Join-Path $responseDir ("response-" + [guid]::NewGuid().ToString("N") + ".json"))
+    }
+}
+
+function Invoke-Vl([object[]]$Frames, [string]$Name, [double]$Duration, [double]$Offset = 0) {
+    $notes = Get-InstructionBlock $Name -IncludeGold:$UseGoldHints
+    $windowStart = [double]$Frames[0].second
+    $windowEnd = [math]::Min($Duration, [double]$Frames[-1].second + [math]::Max(0.05, $Duration / 23))
+    $durationText = $Duration.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
     $prompt = @"
 Mark KEEP vs DROP on this Counter-Strike 2 Shadowplay DVR.
 
 File: $Name
-Duration: ${Duration}s (usually ~120s / 2:00).
+Duration: ${durationText}s. Local zero is original time $Offset.
+Only report intervals within local $windowStart..$windowEnd, the supplied sample window.
+Any hinted original-file times must have $Offset subtracted; ignore hints outside this window.
 
 You get $($Frames.Count) POV frames at 1440x1080 (same as the DVR). Each frame is labeled with seconds. The tiny contact sheet is NOT your evidence.
 
-Do not reuse times from another file. Gold below applies only if the filename matches.
+Do not reuse times from another file.
 
 Rules:
 - Kill feed is not evidence. Only gunfire, blood, or a body you can SEE in the local POV.
 - After local death the POV is black ~3s. Drop that.
 - Full-white flash POV is drop until the world is visible again.
 - Freeze time (buy, orange bar, black map, killed-you panel) is drop.
-- KEEP is 1-5 seconds per visible fight. Many fights => many keeps.
+- Preserve the full visible engagement. Do not shorten useful action to meet a fixed KEEP duration or quota.
 - Opening spray while spectating still counts if it is on screen.
 - Falling body with no shot on screen: keep or drop both OK.
 - Metronome keeps are a fail.
@@ -227,7 +409,8 @@ Rules:
 $notes
 
 Return ONLY JSON. keep is an array of {in,out,why} in seconds. If there is no visible fight, keep is []. Never copy example numbers — there are none. Shape:
-{"file":"$Name","duration_s":$Duration,"keep":[],"drop":[]}
+Use continuous intervals with out > in, never single-second points. Keep each why brief.
+{"file":"$Name","duration_s":$durationText,"keep":[],"drop":[]}
 "@
     $content = New-Object System.Collections.Generic.List[object]
     [void]$content.Add(@{ type = "text"; text = $prompt })
@@ -239,49 +422,48 @@ Return ONLY JSON. keep is an array of {in,out,why} in seconds. If there is no vi
         model = $Model
         temperature = 0.2
         max_tokens = 800
+        chat_template_kwargs = @{ enable_thinking = $false }
         messages = @(
             @{ role = "user"; content = $content }
         )
     } | ConvertTo-Json -Depth 8 -Compress
     $resp = Invoke-RestMethod -Method Post -Uri $Endpoint -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 240
-    $text = [string]$resp.choices[0].message.content
-    $start = $text.IndexOf('{')
-    $end = $text.LastIndexOf('}')
-    if ($start -lt 0 -or $end -le $start) { throw "VL did not return JSON: $text" }
-    $text.Substring($start, $end - $start + 1) | ConvertFrom-Json
+    Save-VlResponse $resp
+    ConvertFrom-VlCompletion $resp $Name $Duration $windowStart $windowEnd
 }
 
 function Invoke-VlVideo([string]$LocalMp4, [string]$Name, [double]$Duration, [double]$Offset = 0, [int]$PartIndex = 0, [int]$PartCount = 1) {
-    $notes = Get-InstructionBlock $Name
+    $notes = Get-InstructionBlock $Name -IncludeGold:$UseGoldHints
+    $durationText = $Duration.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
     $uri = "file:///" + ($LocalMp4 -replace '\\', '/')
     $origEnd = [math]::Round($Offset + $Duration, 1)
     $chunkNote = if ($PartCount -gt 1 -and $PartIndex -gt 0) {
         @"
-You are watching PART $PartIndex of $PartCount of the SAME original DVR (stream-copy split at ~$([int]$Duration)s, keyframe-aligned).
+You are watching PART $PartIndex of $PartCount of the SAME original DVR (accurately sought, timestamp-zeroed analysis part).
 Original file: $Name
 This part duration: ${Duration}s. Local t=0 is original t=$Offset. Local t=$Duration is original t=$origEnd.
 A duel may start at the end of this part and continue in the next part — mark only what is VISIBLE here. Do not invent the rest of the round. Do not reuse keep times from other parts.
 Report in/out in LOCAL seconds (0..$Duration). If gold is in original-file seconds, subtract $Offset. Ignore gold outside $Offset..$origEnd.
-CRITICAL: Freeze or buy-menu at the START of this part does not make the whole part DROP. Watch every labeled frame through local t=$Duration. keep=[] is only allowed if none of the frames show a fight. If gold has a KEEP in $Offset..$origEnd, you MUST output it (local = original - $Offset).
+CRITICAL: Freeze or buy-menu at the START of this part does not make the whole part DROP. Watch every labeled frame through local t=$Duration.
 "@
     } else { "This is the full clip." }
     $prompt = @"
 Mark KEEP vs DROP on this Counter-Strike 2 Shadowplay DVR.
 
 File: $Name
-Duration: ${Duration}s
+Duration: ${durationText}s
 $chunkNote
 
-The server sampled this local mp4 (file://) at its configured fps, capped at 60 frames, each ~0.3 MP, seconds painted on the frame. This is native video ingest, not a contact sheet. If zoom>1 the frames are a VLC-style CENTER CROP scaled back to the same 0.3 MP (minimap / outer HUD may be out of frame). Scoreboard filling the shot is still freeze = DROP. A teammate's back filling the frame is not a fight unless you also see shots or a body drop.
+The server decodes this local mp4 into timestamp-labelled image samples at its configured fps and pixel cap; it is not continuous video/audio evidence. If zoom>1 the frames are center-cropped (outer HUD may be absent). Do not infer the contents of unseen time from one sampled frame.
 
-Do not reuse times from another file. Gold below applies only if the filename matches.
+Do not reuse times from another file.
 
 Rules:
 - Kill feed names are not evidence. HUD money IS: +$ / neutralizing / ammo dropping / muzzle flash / silhouette in a scoped AWP circle = KEEP even if the enemy is a speck or already gone.
 - After local death the POV is black ~3s. Drop that.
 - Full-white flash POV is drop until the world is visible again.
 - Freeze time (buy, orange bar, black map, killed-you panel, ROUND WON) is drop.
-- KEEP is 1-5 seconds per visible fight. Many fights => many keeps.
+- Preserve the full visible engagement. Do not shorten useful action to meet a fixed KEEP duration or quota.
 - Opening spray while spectating still counts if it is on screen.
 - Falling body with no shot on screen: keep or drop both OK.
 - Metronome keeps are a fail.
@@ -290,12 +472,14 @@ Rules:
 $notes
 
 Return ONLY JSON. keep is an array of {in,out,why} in seconds. If there is no visible fight, keep is []. Never invent times from a template. Shape:
-{"file":"$Name","duration_s":$Duration,"keep":[],"drop":[]}
+Use continuous intervals with out > in. Keep each why brief. Uncertain time may remain unclassified.
+{"file":"$Name","duration_s":$durationText,"keep":[],"drop":[]}
 "@
     $body = @{
         model = $Model
         temperature = 0.2
         max_tokens = 800
+        chat_template_kwargs = @{ enable_thinking = $false }
         messages = @(
             @{
                 role = "user"
@@ -307,145 +491,180 @@ Return ONLY JSON. keep is an array of {in,out,why} in seconds. If there is no vi
         )
     } | ConvertTo-Json -Depth 8 -Compress
     $resp = Invoke-RestMethod -Method Post -Uri $Endpoint -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 300
-    $text = [string]$resp.choices[0].message.content
-    $start = $text.IndexOf('{')
-    $end = $text.LastIndexOf('}')
-    if ($start -lt 0 -or $end -le $start) { throw "VL did not return JSON: $text" }
-    $text.Substring($start, $end - $start + 1) | ConvertFrom-Json
+    Save-VlResponse $resp
+    ConvertFrom-VlCompletion $resp $Name $Duration
 }
 
-function Invoke-VlWindowed([object[]]$Frames, [string]$Name, [double]$Duration) {
+function Invoke-VlWindowed([object[]]$Frames, [string]$Name, [double]$Duration, [double]$Offset = 0) {
     $keeps = @(); $drops = @()
     for ($i = 0; $i -lt $Frames.Count; $i += 3) {
         $chunk = @($Frames | Select-Object -Skip $i -First 3)
         Write-Host ("  VL chunk {0}-{1}" -f $i, ($i + $chunk.Count - 1))
-        $part = Invoke-Vl $chunk $Name $Duration
+        $part = Invoke-Vl $chunk $Name $Duration $Offset
         $keeps += @($part.keep)
         $drops += @($part.drop)
     }
     [pscustomobject]@{
         file = $Name
         duration_s = $Duration
-        keep = @($keeps | Where-Object { $_ -and ([double]$_.out -gt [double]$_.in) })
-        drop = @($drops | Where-Object { $_ -and ([double]$_.out -gt [double]$_.in) })
+        keep = @($keeps)
+        drop = @($drops)
     }
 }
 
-Wait-Vl
-$all = @(Get-ClipNames)
-if ($Match) { $all = @($all | Where-Object { $_ -like "*$Match*" }) }
-$index = @()
-if (Test-Path -LiteralPath $indexPath) {
-    try { $index = @(Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json) } catch { $index = @() }
-}
-if ($Force -and $Match) {
-    $index = @($index | Where-Object { $_.file -notlike "*$Match*" })
-}
-$done = [System.Collections.Generic.HashSet[string]]::new([string[]]@($index | ForEach-Object { $_.file }))
-if (-not $Force) { $all = @($all | Where-Object { -not $done.Contains($_) }) }
-if ($Limit -gt 0) { $all = $all | Select-Object -First $Limit }
-
-Write-Output "VL ready. clips=$($all.Count). POV frames ~1152x864. sheet is receipt only."
-
-foreach ($name in $all) {
-    if (-not $Force -and $done.Contains($name)) { Write-Output "skip $name"; continue }
-    $safe = Get-ArtifactKey $name
-    $local = Join-Path $scratch $safe
-    $sheet = Join-Path $OutDir "$safe.sheet.jpg"
-    $prefix = Join-Path $OutDir $safe
-    $jsonPath = Join-Path $OutDir "$safe.json"
-    $existing = Join-Path $OutDir $name
-    $copied = $false
-    if (Test-Path -LiteralPath $existing) {
-        $local = $existing
-        Write-Output "local $local"
-    } else {
-        Write-Output "copy $name"
-        rclone copyto ($Remote + "/" + $name) $local --ignore-checksum
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $local)) {
-            Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
-            throw "rclone copyto failed ($LASTEXITCODE) for $name"
-        }
-        $copied = $true
-    }
+function Invoke-Cs2DeadtimeScan {
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+    $lock = [IO.File]::Open((Join-Path $OutDir "scan-v2.lock"),
+        [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try {
-        $duration = Read-Duration $local
-        New-ContactSheet $local $sheet
-        $nParts = $Parts
-        if ($duration -lt 80) { $nParts = 1 }
-        $keepAll = @()
-        $dropAll = @()
-        $partMeta = @()
-        $partFiles = @()
-        if ($nParts -gt 1) {
-            $split = @(Split-CopyParts $local $prefix $nParts $duration)
-            foreach ($p in $split) {
-                Write-Output ("part {0} offset={1}s dur={2}s" -f $p.index, $p.offset_s, $p.duration_s)
-                if ($NativeVideo) {
-                    $partResult = Invoke-VlVideo $p.path $name $p.duration_s $p.offset_s $p.index $nParts
-                } else {
-                    $partPrefix = "{0}_part{1}" -f $prefix, $p.index
-                    $partFrames = @(New-PovFrames $p.path $partPrefix $p.duration_s)
-                    $partResult = Invoke-VlWindowed $partFrames $name $p.duration_s
+        $index = @()
+        if (Test-Path -LiteralPath $indexPath) {
+            $raw = Get-Content -LiteralPath $indexPath -Raw
+            $doc = [Text.Json.JsonDocument]::Parse([string]$raw)
+            try {
+                if ($doc.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Array) {
+                    throw "Scan index must be an array; it was not reset or overwritten."
                 }
-                $partJson = [pscustomobject]@{
-                    file = $name
-                    part = $p.index
-                    offset_s = $p.offset_s
-                    duration_s = $p.duration_s
-                    keep = @($partResult.keep)
-                    drop = @($partResult.drop)
+            } finally { $doc.Dispose() }
+            $index = @($raw | ConvertFrom-Json)
+            foreach ($entry in $index) {
+                if ($entry.schema_version -cne "cs2-deadtime-v2" -or $entry.file -isnot [string]) {
+                    throw "Scan index contains invalid entries; it was not reset or overwritten."
                 }
-                $partPath = "{0}.part{1}.json" -f $prefix, $p.index
-                $partJson | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $partPath -Encoding utf8
-                $partFiles += $partPath
-                $keepAll += Shift-Ranges $partResult.keep $p.offset_s
-                $dropAll += Shift-Ranges $partResult.drop $p.offset_s
-                $partMeta += [pscustomobject]@{
-                    part = $p.index
-                    offset_s = $p.offset_s
-                    duration_s = $p.duration_s
-                    json = $partPath
-                }
-                Remove-Item -LiteralPath $p.path -Force -ErrorAction SilentlyContinue
             }
-            $result = [pscustomobject]@{
-                file = $name
-                duration_s = $duration
-                parts = $partMeta
-                keep = @(Coalesce-Ranges $keepAll 2)
-                drop = @(Coalesce-Ranges $dropAll 2)
-            }
-        } elseif ($NativeVideo) {
-            Write-Output "native video_url file:// ($local)"
-            $result = Invoke-VlVideo $local $name $duration
+        }
+        $all = if ($InputFile.Count) {
+            @($InputFile | ForEach-Object {
+                $item = Get-Item -LiteralPath $_ -ErrorAction Stop
+                if ($item.PSIsContainer -or $item.Extension -ine ".mp4") { throw "Local input must be an MP4 file." }
+                [pscustomobject]@{ name = $item.Name; local = $item.FullName }
+            })
         } else {
-            $frames = @(New-PovFrames $local $prefix $duration)
-            Write-Output ("pov frames={0}" -f $frames.Count)
-            $result = Invoke-VlWindowed $frames $name $duration
+            @(Get-ClipNames | ForEach-Object {
+                if ($_ -ne [IO.Path]::GetFileName($_)) { throw "Remote listing contains a non-leaf filename." }
+                [pscustomobject]@{ name = $_; local = "" }
+            })
         }
-        $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $jsonPath -Encoding utf8
-        $index = @($index | Where-Object { $_.file -ne $name })
-        $index += [pscustomobject]@{
-            file = $name
-            duration_s = $duration
-            json = $jsonPath
-            parts = $partFiles
-            sheet = $sheet
-            drop = @($result.drop)
-            keep = @($result.keep)
-            at = (Get-Date).ToUniversalTime().ToString("o")
+        if ($Match) { $all = @($all | Where-Object { $_.name -like "*$Match*" }) }
+        if ($Limit -gt 0) { $all = @($all | Select-Object -First $Limit) }
+        if (-not $all.Count) { Write-Output "No matching MP4 inputs."; return }
+        $null = Wait-Vl
+        $runtime = Get-ScanRuntime
+        $runtimeHash = Get-TextHash ($runtime | ConvertTo-Json -Depth 8 -Compress)
+        $profile = Get-ScanProfile $runtime
+        $failed = 0
+        Write-Output "clips=$($all.Count); detections are unqualified, not sanitized videos."
+        foreach ($source in $all) {
+            $name = $source.name
+            $runId = [guid]::NewGuid().ToString("N")
+            $runDir = Join-Path $OutDir ("runs\" + $runId)
+            $local = ""; $copied = $false; $sourceHash = ""; $partPaths = @(); $stage = "source"
+            try {
+                $existing = if ($source.local) { $source.local } else { Join-Path $OutDir $name }
+                if (Test-Path -LiteralPath $existing -PathType Leaf) { $local = $existing }
+                else {
+                    if ($source.local) { throw "Explicit local input disappeared; no remote substitute was downloaded." }
+                    $local = Join-Path $scratch ($runId + ".mp4")
+                    if (Test-Path -LiteralPath $local) { throw "Owned download destination already exists." }
+                    $copied = $true
+                    & rclone copyto ($Remote + "/" + $name) $local
+                    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $local -PathType Leaf)) {
+                        throw "rclone copyto failed for $name."
+                    }
+                }
+                $sourceHash = (Get-FileHash -LiteralPath $local).Hash
+                $stage = "cache"
+                if ((Get-TextHash ((Get-ScanRuntime) | ConvertTo-Json -Depth 8 -Compress)) -cne $runtimeHash -or
+                    (Get-ScanProfile $runtime).hash -cne $profile.hash) {
+                    throw "Vision runtime or scan instructions changed during this batch; restart the scan."
+                }
+                $previous = @($index | Where-Object file -CEQ $name)
+                if ($previous.Count -gt 1) { throw "Duplicate source entries in the scan index." }
+                if (-not $Force -and (Test-ScanCache ($previous | Select-Object -First 1) $sourceHash $profile.hash)) {
+                    Write-Output "cached $name state=$($previous[0].state); not a sanitation verdict"
+                    continue
+                }
+                $stage = "analysis"
+                New-Item -ItemType Directory -Path $runDir -ErrorAction Stop | Out-Null
+                $responseDir = $runDir
+                $prefix = Join-Path $runDir (Get-ArtifactKey $name)
+                $sheet = $prefix + ".sheet.jpg"
+                $duration = Read-Duration $local
+                New-ContactSheet $local $sheet
+                $nParts = if ($duration -lt 80) { 1 } else { $Parts }
+                $keepAll = @(); $dropAll = @(); $partMeta = @()
+                $split = if ($nParts -gt 1) {
+                    $partPaths = @(1..$nParts | ForEach-Object { "${prefix}_part$_.mp4" })
+                    @(Split-ExactParts $local $prefix $nParts $duration)
+                } else {
+                    @([pscustomobject]@{ index = 1; path = $local; offset_s = 0.0; duration_s = $duration })
+                }
+                foreach ($part in $split) {
+                    $prediction = if ($NativeVideo) {
+                        Invoke-VlVideo $part.path $name $part.duration_s $part.offset_s $part.index $nParts
+                    } else {
+                        $frames = @(New-PovFrames $part.path ("${prefix}_part" + $part.index) $part.duration_s)
+                        Invoke-VlWindowed $frames $name $part.duration_s $part.offset_s
+                    }
+                    $partPath = "$prefix.part$($part.index).json"
+                    Write-ScanJson $prediction $partPath
+                    $keepAll += Shift-Ranges $prediction.keep $part.offset_s
+                    $dropAll += Shift-Ranges $prediction.drop $part.offset_s
+                    $partMeta += [pscustomobject]@{
+                        part = $part.index; offset_s = $part.offset_s; duration_s = $part.duration_s; json = $partPath
+                    }
+                }
+                if ((Get-FileHash -LiteralPath $local).Hash -cne $sourceHash -or
+                    (Get-TextHash ((Get-ScanRuntime) | ConvertTo-Json -Depth 8 -Compress)) -cne $runtimeHash -or
+                    (Get-ScanProfile $runtime).hash -cne $profile.hash) {
+                    throw "Source bytes, vision runtime or scan instructions changed during analysis."
+                }
+                $resolved = Resolve-ClipRanges $keepAll $dropAll $duration
+                $result = [ordered]@{
+                    schema_version = "cs2-deadtime-v2"; file = $name; source_sha256 = $sourceHash
+                    profile_sha256 = $profile.hash; profile = $profile.profile; duration_s = $duration
+                    state = $resolved.state; model_qualified = $false; sanitized = $false
+                    blind_evaluation_eligible = -not [bool]$UseGoldHints
+                    parts = $partMeta; sheet = $sheet
+                    keep = $resolved.keep; drop = $resolved.drop; uncertain = $resolved.uncertain
+                    conflicts = $resolved.conflicts; retain = $resolved.retain
+                }
+                $jsonPath = Join-Path $runDir "result.json"
+                Write-ScanJson $result $jsonPath
+                $entry = [pscustomobject]@{
+                    schema_version = "cs2-deadtime-v2"; file = $name; source_sha256 = $sourceHash
+                    profile_sha256 = $profile.hash; state = $resolved.state; json = $jsonPath
+                    result_sha256 = (Get-FileHash -LiteralPath $jsonPath).Hash
+                    at = [DateTime]::UtcNow.ToString("o")
+                }
+                Write-Output "$($resolved.state) $name keep=$($resolved.keep.Count) uncertain=$($resolved.uncertain.Count) conflicts=$($resolved.conflicts.Count)"
+            } catch {
+                $failed++
+                if (-not (Test-Path -LiteralPath $runDir)) { New-Item -ItemType Directory -Path $runDir | Out-Null }
+                $jsonPath = Join-Path $runDir "failed.json"
+                $failure = [ordered]@{
+                    schema_version = "cs2-deadtime-v2"; file = $name; state = "failed"; stage = $stage
+                    source_sha256 = $sourceHash; profile_sha256 = $profile.hash
+                    sanitized = $false; error = $_.Exception.Message
+                }
+                Write-ScanJson $failure $jsonPath
+                $entry = [pscustomobject]@{
+                    schema_version = "cs2-deadtime-v2"; file = $name; state = "failed"
+                    source_sha256 = $sourceHash; profile_sha256 = $profile.hash; json = $jsonPath
+                    result_sha256 = (Get-FileHash -LiteralPath $jsonPath).Hash; at = [DateTime]::UtcNow.ToString("o")
+                }
+                Write-Warning "FAILED $name at ${stage}: $($failure.error)"
+            } finally {
+                foreach ($path in $partPaths) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
+                if ($copied -and (Test-Path -LiteralPath $local)) { Remove-Item -LiteralPath $local -Force }
+            }
+            $index = @($index | Where-Object file -CNE $name) + @($entry)
+            Write-ScanJson @($index) $indexPath
         }
-        $index | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $indexPath -Encoding utf8
-        Write-Output ("ok {0} parts={1} drop={2} keep={3}" -f $name, $nParts, @($result.drop).Count, @($result.keep).Count)
-    } finally {
-        Get-ChildItem -LiteralPath $OutDir -Filter "${safe}_part*.mp4" -ErrorAction SilentlyContinue |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-        if ($copied) {
-            Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
-        }
-    }
+        if ($failed) { throw "$failed clip(s) failed. Failures are retained in $indexPath; no failed clip is sanitized." }
+        Write-Output "DONE: $indexPath contains unqualified detections, not finished edits."
+    } finally { $lock.Dispose() }
 }
 
-Write-Output "DONE review $OutDir\index.json and the .sheet.jpg files"
-Write-Output "Write misses into $instructionsPath then rerun (already-done names are skipped)"
+if ($MyInvocation.InvocationName -ne ".") { Invoke-Cs2DeadtimeScan }

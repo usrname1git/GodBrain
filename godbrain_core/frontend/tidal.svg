@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1200" viewBox="0 0 1920 1200">
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#153744"/><stop offset="1" stop-color="#81a29b"/></linearGradient>
+    <linearGradient id="sea" x2="0.3" y2="1"><stop stop-color="#86b7b2"/><stop offset=".4" stop-color="#317d8b"/><stop offset="1" stop-color="#0d354b"/></linearGradient>
+    <linearGradient id="stone" x2=".7" y2="1"><stop stop-color="#aaad97"/><stop offset=".5" stop-color="#506b61"/><stop offset="1" stop-color="#283e3c"/></linearGradient>
+    <linearGradient id="headland" x2=".9" y2="1"><stop stop-color="#376458"/><stop offset=".6" stop-color="#1c4946"/><stop offset="1" stop-color="#142c32"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#c2d4b7" stop-opacity=".55"/><stop offset="1" stop-color="#b7dbbc" stop-opacity="0"/></radialGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h1920v1200H0z"/>
+  <ellipse fill="url(#glow)" cx="1460" cy="180" rx="740" ry="390"/>
+  <path fill="#1b404c" opacity=".28" d="M0 245 180 205 380 226 570 190 800 215 1000 185 1240 220 1480 177 1720 230 1920 206v994H0z"/>
+  <path fill="url(#sea)" d="M0 295Q440 260 905 309T1920 275v925H0z"/>
+  <g fill="none" stroke="#c6e0d6" opacity=".22">
+    <path d="M340 380Q910 358 1560 400"/><path d="M650 418Q1040 399 1820 430"/>
+    <path d="M220 496Q700 471 1310 524"/><path d="M880 574Q1210 550 1860 608"/>
+    <path d="M480 708Q1040 669 1640 737"/><path d="M1040 835Q1500 801 1920 871"/>
+    <path d="M230 1000Q890 946 1640 1040"/><path d="M1160 1090Q1500 1055 1890 1130"/>
+  </g>
+  <path fill="url(#stone)" d="M0 277 86 340 134 434 275 473 386 577 442 751 568 858 475 955 552 1076 775 1200H0z"/>
+  <path fill="url(#headland)" d="M0 128 174 167 245 283 223 397 338 458 361 571 407 679 358 827 458 915 365 1037 504 1200H0z"/>
+  <path fill="#7c9990" opacity=".35" d="M100 312 143 428 274 476 308 580 286 709 357 826 322 971 260 886 235 736 212 619 142 559 75 419z"/>
+  <path fill="#284e47" d="M0 778 104 746 174 817 200 955 295 1034 319 1200H0z"/>
+  <g fill="none" stroke="#daf0dd" opacity=".5">
+    <path d="M386 578q93 48 72 150t112 134"/><path d="M450 935q30 47 12 71t111 99"/>
+    <path d="M86 345q44 58 42 83t94 54"/>
+  </g>
+  <path fill="#bed9ce" opacity=".6" d="m1370 660 11-3 7 11-6 6z"/>
+  <path fill="#e6e9ce" opacity=".55" d="m1740 437 9-4 11 8-9 6z"/>
+  <path fill="#183d45" opacity=".5" d="M1920 805 1820 860 1737 967 1789 1060 1690 1200h230z"/>
+</svg>

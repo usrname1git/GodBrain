@@ -4,13 +4,15 @@
     {
       "id": "command-center",
       "title": "Command Center",
-      "description": "Workstation and AI control in one native Windows interface: model settings, core services, remote access, media and display controls. Screenshots are sanitized UI captures, not live readiness guarantees.",
+      "description": "Workstation and AI control in one native Windows interface: model settings, core services, remote access, AirPlay receiver lifecycle and Dell hardware display controls. All Command Center pages are collected here. Screenshots are sanitized UI captures, not live readiness or playback guarantees.",
       "url": "https://github.com/usrname1git/GodBrain",
       "source_url": "https://github.com/usrname1git/GodBrain",
       "cover": "CMDSTATUS",
       "images": [
         {"id":"CMDSTATUS","description":"Workstation and AI control; private connection details omitted.","capture_kind":"live-sanitized-ui"},
-        {"id":"CMDMODELS","description":"Model configuration and request-scoped reasoning controls; no generation started.","capture_kind":"live-sanitized-ui"}
+        {"id":"CMDMODELS","description":"Model configuration and request-scoped reasoning controls; no generation started.","capture_kind":"live-sanitized-ui"},
+        {"id":"AIRPLAYCONTROLS","description":"AirPlay on Windows: implemented asynchronous Start/Stop/Open and exact-process ownership controls. ShairportQt supplies the receiver and AirPlay transport. Private sender details omitted; no receiver action or audible-delivery test performed.","capture_kind":"sanitized-source-ui"},
+        {"id":"MONITORCONTROLS","description":"Dell S2522HG brightness, contrast, color-preset and Dark Stabilizer controls. Production native Monitor page rendered without DDC queries or hardware changes; initial inputs are UI defaults, not measurements.","capture_kind":"sanitized-source-ui"}
       ]
     },
     {
@@ -24,6 +26,30 @@
         {"id":"RECLAIM11_DOOR","description":"Entry-point chooser, rendered without collecting host inventory.","capture_kind":"sanitized-source-ui"},
         {"id":"RECLAIM11_PRO","description":"Power-user interface; private inventory omitted and repair controls not connected.","capture_kind":"sanitized-source-ui"},
         {"id":"RECLAIM11_BEGINNER","description":"Beginner interface; no host inventory or repair actions performed.","capture_kind":"sanitized-source-ui"}
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "GodBrain Workspace",
+      "description": "A practical knowledge workspace: seven shelves, a readable mind map/list, source-bound records and a local assistant. Correct-answer assessments stay separate from SRE admission. Public captures redact actual record content, identifiers and host values.",
+      "url": "https://github.com/usrname1git/GodBrain",
+      "source_url": "https://github.com/usrname1git/GodBrain",
+      "cover": "WORKSPACEMAP",
+      "images": [
+        {"id":"WORKSPACEMAP","description":"Live canonical graph rendered by the production Workspace UI; record titles, content and identifiers redacted. Statuses are a capture-time snapshot, not current readiness.","capture_kind":"live-sanitized-source-ui"},
+        {"id":"WORKSPACEENV","description":"Existing bounded Environment context; private host values and work continuity omitted. Not a full software inventory or readiness certificate.","capture_kind":"live-sanitized-source-ui"},
+        {"id":"WORKSPACEEVAL","description":"The separate Model Evaluations shelf; actual working record content and identifiers redacted. These notes are untrusted, not promoted domain knowledge.","capture_kind":"live-sanitized-source-ui"}
+      ]
+    },
+    {
+      "id": "ios-shortcuts",
+      "title": "iOS Shortcut Workflows",
+      "description": "Start a stopped RustDesk backend from an authenticated SSH Shortcut, verify it, then open the mobile client. A separate private read-only dashboard shows the stack. These are documented existing Windows bridges, not a new phone runtime or public control endpoint.",
+      "url": "https://github.com/usrname1git/GodBrain",
+      "source_url": "https://github.com/usrname1git/GodBrain",
+      "cover": "IOSWORKFLOW",
+      "images": [
+        {"id":"IOSWORKFLOW","description":"Source-bound workflow illustration from phone-control.md and Start-RustDesk.ps1, not a captured iPhone screen. No keys, usernames, private addresses or live connection claims.","capture_kind":"source-workflow-illustration"}
       ]
     },
     {

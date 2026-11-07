@@ -107,8 +107,27 @@ search/edit/move/mkdir/info/tail), SysInternals console `*64`,
 `run_python` / `run_node`. Mutate and `run_elevate` need `/yolo`. No Mongo
 shell, no process kill, no Remote MCP. Mouth text is not a general shell.
 
-Galaxy: graph, chat, This host vs Pending, SRE button. Brave extension talks to
-the same loopback API.
+Filesystem execution resolves the requested spelling, pins every canonical
+ancestor against deletion, opens child components relative to retained handles,
+rejects substituted reparse components, and validates the actual leaf handle.
+Reads consume that handle; mutations,
+directory enumeration, repo observation and script launches retain their pins
+through use. Explicit in-jail junction paths still work, while recursive native
+list/content search skips reparse children and revalidates each opened child.
+Content search uses the bounded native matcher, not an unchecked `rg` traversal.
+Atomic file writes use random exclusive `CREATE_NEW` staging files, checked
+bounded writes/flush, handle-based rename, and handle-only owned-file cleanup.
+Unsupported namespaces (including UNC/ADS), oversized paths, sharing conflicts
+and failed identity checks fail explicitly rather than reopening unchecked names.
+This binds the tool target; always-on interpreters retain OS-user capabilities
+and are not a sandbox or a new YOLO-only capability.
+`local_path_test.cpp` covers deterministic junction/ancestor substitution,
+hard-link staging attacks, ordinary filesystem operations and baseline scripts.
+
+Workspace: canonical SRE records, untrusted Research/Model Evaluations/Discussions,
+Sources, isolated Personal notes, and bounded Environment context. The assistant
+uses the existing chat API; the System glance uses passive snapshots. Root and
+legacy Galaxy URLs redirect to Workspace. Brave talks to the same loopback API.
 
 `GET /api/status` `host_record` is the Windows host inventory card (`os_pin=`
 present, not a Playbook).
@@ -497,7 +516,7 @@ an old-text hunk that is not in that excerpt (wrong site, e.g. overlay vs
 host-card). A first-pass hunk that misses still gets the second GPU pass. A complete
 hunk in the `/edit` message is applied if the mouth
 truncates; LF hunks match CRLF files. The second pass uses that same operator-hint excerpt
-(including `galaxy.html`) and does not replay the truncated first answer
+(including `workspace.html`) and does not replay the truncated first answer
 (wrong-site sludge). It is logged under `SECOND` in
 `logs/last-edit-plan.txt`. Writes only root `.ps1` / `.cmd` / `.md`, top-level `scripts\*.ps1`,
 `docs\*.md`, or `godbrain_core\` (not build / vendor / LLM / archive). Never
@@ -505,7 +524,8 @@ git push from the mouth. Apply
 records `local-edit-apply-v1` in `logs/last-edit-result.json` and is **not**
 enough to promote a skill. A path-selected bounded check
 (`powershell-parse-v1`, `kernel-compile-v1`, `memory-store-go-v1`,
-`galaxy-html-static-v1`, `librarian-self-test-v1`) may run after apply;
+`workspace-frontend-static-v1`, legacy `galaxy-html-static-v1`,
+`librarian-self-test-v1`) may run after apply;
 `check_ok` is recorded separately and still cannot promote.
 The kernel profile compiles and links the actual production sources with the
 Windows subsystem and `mainCRTStartup` entry point,
@@ -534,7 +554,7 @@ dashboard fixture (`frontend-spa-v1`). `scripts\Verify-SkillLab.ps1` runs
 `npm ci` off the GPU under `skill_lab/fixtures`, fails without a lockfile
 or README (Brief, Stack, Run, Check, Not Galaxy), and does not mark the
 skill promotable. Stack pick is `stack-policy.json` (SPA → Vite; GodBrain
-UI stays `galaxy.html`). Not a kernel factory.
+UI is the native-served static Workspace). Not a kernel factory.
 
 `Start-CS2.ps1` persists a manual hold, pauses gym training, disables
 Watch/Logon/CS2-backup, stops identified EXL3/image/legacy model runtimes

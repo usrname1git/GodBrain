@@ -9,7 +9,7 @@ function imageUrl(project,image){
   return `./${image.path}?v=${image.sha256}`;
 }
 function render(){
-  const query=document.getElementById('search').value.toLowerCase().trim(),visible=projects.filter(p=>`${p.title} ${p.description}`.toLowerCase().includes(query));
+  const query=document.getElementById('search').value.toLowerCase().trim(),visible=projects.filter(p=>`${p.title} ${p.description} ${p.images.map(image=>image.description).join(' ')}`.toLowerCase().includes(query));
   container.replaceChildren();
   for(const project of visible){
     const article=node('article');article.append(node('h2',project.title),node('p',project.description));

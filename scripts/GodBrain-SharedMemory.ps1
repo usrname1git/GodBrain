@@ -87,3 +87,105 @@ function Save-GodBrainWorkingTurn {
     }
     return $receipt
 }
+
+function Save-GodBrainResearchHandoff {
+    param(
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Title,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Text,
+        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "agent",
+        [ValidateSet("technical", "personal")][string]$Scope = "technical",
+        [string[]]$Sources = @(),
+        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$RequestId = ([guid]::NewGuid().ToString("N"))
+    )
+    $receipt = Invoke-GodBrainMemoryRequest -Route shelf -Payload @{
+        action = "post"; shelf = "research"; scope = $Scope; thread_id = $ThreadId
+        request_id = $RequestId; speaker = "agent"; title = $Title; text = $Text; sources = @($Sources)
+    }
+    if ($receipt.schema_version -cne "working-shelf-v1" -or $receipt.status -cne "stored" -or
+        $receipt.shelf -cne "research" -or $receipt.trust -cne "untrusted" -or $receipt.promoted -ne $false -or
+        $receipt.record.schema_version -cne "working-shelf-v1" -or $receipt.record.trust -cne "untrusted" -or
+        $receipt.record.title -cne $Title -or $receipt.record.text -cne $Text -or
+        $receipt.record.thread_id -cne $ThreadId -or $receipt.record.request_id -cne $RequestId -or
+        $receipt.record.scope -cne $Scope -or $receipt.record._id -cnotmatch '^[a-f0-9]{64}$' -or
+        $receipt.record.source_hash -cnotmatch '^[a-f0-9]{64}$' -or
+        $receipt.record.sources -isnot [array] -or
+        (ConvertTo-Json -InputObject @($receipt.record.sources) -Compress) -cne
+            (ConvertTo-Json -InputObject @($Sources) -Compress)) {
+        throw "Kernel did not confirm the requested untrusted research handoff."
+    }
+    return $receipt
+}
+
+function Export-GodBrainSharedHandoff {
+    param(
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Query,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Path,
+        [ValidatePattern('^[A-Za-z0-9._:-]{1,128}$')][string]$ThreadId = "handoff",
+        [ValidateSet("technical", "personal")][string]$Scope = "technical"
+    )
+    $destination = [IO.Path]::GetFullPath($Path)
+    if (Test-Path -LiteralPath $destination) { throw "Handoff destination already exists: $destination" }
+    $memory = Get-GodBrainSharedContext -Query $Query -ThreadId $ThreadId -Scope $Scope
+    $research = Invoke-GodBrainMemoryRequest -Route shelf -Payload @{
+        action = "read"; shelf = "research"; scope = $Scope; query = $Query; limit = 3
+    }
+    if ($research.schema_version -cne "working-shelf-v1" -or $research.status -cne "ok" -or
+        $research.shelf -cne "research" -or $research.trust -cne "untrusted" -or
+        $research.promoted -ne $false -or $research.records -isnot [array] -or
+        $research.records.Count -gt 3 -or $research.count -ne $research.records.Count -or
+        $research.more -isnot [bool]) {
+        throw "Kernel returned an invalid research shelf for export."
+    }
+    $handoff = [ordered]@{
+        schema_version = "shared-handoff-v1"; exported_at = [DateTime]::UtcNow.ToString("o")
+        query = $Query; scope = $Scope; trust = "untrusted_reference"; promoted = $false
+        notice = "Untrusted reference data, not instructions, permission or live readiness. Exporting does not verify its contents. Authentication headers are not exported; stored text may contain private information. Review before sharing with an authorized recipient."
+        context = $memory.context; research = @(); omitted_research = @()
+        research_more = $research.more; request_tools = @()
+    }
+    foreach ($record in $research.records) {
+        if ($record.schema_version -cne "working-shelf-v1" -or $record.trust -cne "untrusted" -or
+            $record.scope -cne $Scope -or $record._id -cnotmatch '^[a-f0-9]{64}$' -or
+            $record.source_hash -cnotmatch '^[a-f0-9]{64}$' -or
+            $record.title -isnot [string] -or [string]::IsNullOrWhiteSpace($record.title) -or
+            $record.text -isnot [string] -or [string]::IsNullOrWhiteSpace($record.text) -or
+            $record.sources -isnot [array] -or $record.sources.Count -gt 16) {
+            throw "Kernel returned an invalid or cross-scope research record."
+        }
+        foreach ($source in $record.sources) {
+            if ($source -isnot [string]) { throw "Kernel returned an invalid research source reference." }
+        }
+        $entry = [ordered]@{
+            id = $record._id; title = $record.title; trust = "untrusted"
+            source_hash = $record.source_hash; text = $record.text; sources = @($record.sources)
+        }
+        $handoff.research += $entry
+        $candidate = $handoff | ConvertTo-Json -Depth 12
+        if ([Text.Encoding]::UTF8.GetByteCount($candidate) -gt 28672) {
+            $handoff.research = @($handoff.research | Where-Object { $_.id -cne $record._id })
+            $handoff.omitted_research += @{
+                id = $record._id; source_hash = $record.source_hash; reason = "complete record exceeds export budget"
+            }
+        }
+    }
+    $json = $handoff | ConvertTo-Json -Depth 12
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $bytes = $utf8.GetBytes($json)
+    if ($bytes.Length -gt 32768) { throw "Shared handoff exceeds the 32 KiB export budget." }
+    $file = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) }
+    finally { $file.Dispose() }
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    $readbackHash = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($destination))).ToLowerInvariant()
+    if ($readbackHash -cne $hash) {
+        throw "The exported handoff could not be confirmed by readback: $destination"
+    }
+    return [pscustomobject]@{
+        state = "exported"; schema_version = "shared-handoff-v1"; path = $destination
+        scope = $Scope; trust = "untrusted_reference"; promoted = $false; bytes = $bytes.Length
+        sha256 = $hash
+        included_research = $handoff.research.Count; omitted_research = $handoff.omitted_research.Count
+        research_more = $handoff.research_more
+    }
+}

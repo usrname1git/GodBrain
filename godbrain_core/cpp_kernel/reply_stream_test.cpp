@@ -49,6 +49,9 @@ int main() {
     std::mutex mutex;
     std::vector<MockCompletion> completions;
     std::vector<json> requests;
+    server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
+        response.set_content(R"({"backend":"exl3","model":"fixture","busy":false})", "application/json");
+    });
     server.Get("/v1/models", [](const httplib::Request&, httplib::Response& response) {
         response.set_content(
             R"({"data":[{"id":"fixture","max_model_len":32768,"supported_reasoning_efforts":["low","medium","xhigh"]}]})",
@@ -185,6 +188,149 @@ int main() {
     int result = 0;
     try {
         run_shared_context_fixtures(root);
+        {
+            const json command = {{"message", "/status"}, {"command_type", "get_system_telemetry"}};
+            httplib::Request request;
+            g_api_token.clear();
+            httplib::Response disabled;
+            check(!privileged_payload_authorized(command, request, disabled) && disabled.status == 403,
+                  "slash handling bypassed unconfigured command_type authorization");
+            g_api_token = "fixture-command-token";
+            httplib::Response missing;
+            check(!privileged_payload_authorized(command, request, missing) && missing.status == 401,
+                  "mixed slash/command payload accepted a missing bearer");
+            request.headers.emplace("Authorization", "Bearer fixture-command-token");
+            httplib::Response authorized;
+            check(privileged_payload_authorized(command, request, authorized),
+                  "authenticated command payload was rejected");
+            g_api_token.clear();
+        }
+        {
+            httplib::Request request;
+            request.body = R"({"message":"remember fixture"})";
+            g_api_token.clear();
+            httplib::Response unconfigured;
+            handle_aai(request, unconfigured, port);
+            check(unconfigured.status == 401, "aai accepted an unconfigured token");
+            g_api_token = "fixture-aai-token";
+            httplib::Response missing;
+            handle_aai(request, missing, port);
+            check(missing.status == 401, "aai accepted a missing token");
+            request.headers.emplace("Authorization", "Bearer wrong-aai-token");
+            httplib::Response wrong;
+            handle_aai(request, wrong, port);
+            check(wrong.status == 403, "aai accepted a wrong token");
+            request.headers.clear();
+            request.headers.emplace("Authorization", "Bearer fixture-aai-token");
+            request.body = R"({"message":"x","trust":"verified"})";
+            httplib::Response forged;
+            handle_aai(request, forged, port);
+            check(forged.status == 400, "aai accepted caller-selected trust");
+            g_api_token.clear();
+        }
+        if (read_env("GODBRAIN_REPLY_TEST_MISSING_PIN") != "1") {
+            char executable[MAX_PATH]{};
+            check(GetModuleFileNameA(nullptr, executable, MAX_PATH) != 0, "aai fixture executable missing");
+            const auto previous_store = read_env("MONGO_STORE_PATH");
+            const auto previous_mode = read_env("GODBRAIN_REPLY_TEST_STORE");
+            _putenv_s("MONGO_STORE_PATH", executable);
+            _putenv_s("GODBRAIN_REPLY_TEST_STORE", "1");
+            {
+                json terminal = {{"type", "done"}};
+                check(save_discussion_receipt(terminal, "Fixture stream question", "Fixture complete reply.") &&
+                      terminal.at("shared_saved") == true && terminal.contains("shared_record_id"),
+                      "completed turn did not receive a confirmed Discussion receipt");
+                _putenv_s("GODBRAIN_REPLY_TEST_BAD_TEXT", "1");
+                json rejected;
+                check(!save_discussion_receipt(rejected, "Fixture question", "Fixture answer.") &&
+                      rejected.at("shared_saved") == false && rejected.contains("memory_error"),
+                      "mismatched Discussion receipt claimed saved");
+                _putenv_s("GODBRAIN_REPLY_TEST_BAD_TEXT", "");
+            }
+            std::ifstream contract_file("contracts\\rag_search_v2_fixture.json");
+            check(static_cast<bool>(contract_file), "shared RAG contract fixture missing");
+            auto empty_response = json::parse(contract_file).at("response");
+            empty_response["results"] = json::array();
+            empty_response["context_bytes_used"] = 0;
+            int canonical_queries = 0;
+            const godbrain_rag::Client reader([&](const std::string& body) {
+                ++canonical_queries;
+                auto response = empty_response;
+                response["query"] = json::parse(body).at("query");
+                response["normalized_query"] = response["query"];
+                return godbrain_rag::HttpResult{true, 200, "application/json", response.dump()};
+            });
+            g_api_token = "fixture-aai-token";
+            const auto tool = [](const char* name, const json& args) {
+                MockCompletion reply;
+                reply.finish = "tool_calls";
+                reply.deltas = {{{"tool_calls", json::array({{
+                    {"index", 0}, {"id", "aai-tool"}, {"type", "function"},
+                    {"function", {{"name", name}, {"arguments", args.dump()}}}
+                }})}}};
+                return reply;
+            };
+            const auto invoke = [&](std::vector<MockCompletion> replies, const char* scope,
+                                    const char* thread = "aai-fixture") {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    completions = std::move(replies);
+                    requests.clear();
+                }
+                httplib::Request request;
+                request.headers.emplace("Authorization", "Bearer fixture-aai-token");
+                request.body = json({{"message", "aai-fixture-remember"}, {"scope", scope},
+                                     {"thread_id", thread}, {"system_prompt", "Be concise."}}).dump();
+                httplib::Response response;
+                handle_aai(request, response, port, &reader);
+                return response;
+            };
+            std::ifstream ledger_before(logs / "last-chain.json", std::ios::binary);
+            const std::string original_ledger((std::istreambuf_iterator<char>(ledger_before)), {});
+            const auto saved = invoke({
+                tool("write_shared_memory", {{"args", "aai fixture"}, {"content", "CORRECT_MEMORY_NEEDLE"}}),
+                completion("", "Saved as untrusted Research.")
+            }, "technical");
+            if (saved.status != 200 || json::parse(saved.body).at("shared_saved") != true) {
+                throw std::runtime_error("aai memory write did not return confirmed persistence: " + saved.body);
+            }
+            check(requests[0].at("chat_template_kwargs").at("enable_thinking") == false,
+                  "aai changed the caller's thinking-off behavior");
+            const auto recalled = invoke({
+                tool("read_shared_memory", {{"args", "aai-fixture-remember"}}),
+                completion("", "Recalled CORRECT_MEMORY_NEEDLE.")
+            }, "technical", "fresh-aai");
+            check(recalled.status == 200 &&
+                  requests.back().dump().find("CORRECT_MEMORY_NEEDLE") != std::string::npos &&
+                  requests.back().dump().find("OLDER_DISCUSSION_MEMORY_NEEDLE") != std::string::npos,
+                  "aai fresh recall lost Research or older Discussion matches");
+            const int before_personal = canonical_queries;
+            const auto personal = invoke({
+                tool("write_shared_memory", {{"args", "private fixture"}, {"content", "PRIVATE_MEMORY_NEEDLE"},
+                                             {"scope", "technical"}, {"trust", "verified"}}),
+                completion("", "Saved untrusted personal note.")
+            }, "personal");
+            check(personal.status == 200 && canonical_queries == before_personal,
+                  "aai personal request consulted technical RAG");
+            const auto technical_again = invoke({completion("", "Technical answer.")}, "technical");
+            check(technical_again.status == 200 &&
+                  requests[0].dump().find("PRIVATE_MEMORY_NEEDLE") == std::string::npos,
+                  "personal memory leaked into a technical request");
+            const auto failed = invoke({
+                tool("write_shared_memory", {{"args", "failure"}, {"content", "Do not claim saved."}}),
+                completion("", "Saved successfully.")
+            }, "technical", "aai-fixture-fail");
+            check(failed.status == 503 && json::parse(failed.body).at("error").get<std::string>().find(
+                      "tool failed") != std::string::npos,
+                  "aai hid a failed write behind model-generated success");
+            std::ifstream ledger_after(logs / "last-chain.json", std::ios::binary);
+            check(std::string((std::istreambuf_iterator<char>(ledger_after)), {}) == original_ledger,
+                  "aai overwrote the Workspace ledger or exposed personal continuity");
+            check(g_coli_job_started_ms.load() == 0, "aai did not release its generate slot");
+            _putenv_s("MONGO_STORE_PATH", previous_store.c_str());
+            _putenv_s("GODBRAIN_REPLY_TEST_STORE", previous_mode.c_str());
+            g_api_token.clear();
+        }
         {
             httplib::Request request;
             request.body = R"({"class":"doc_fact","text":"unrelated caller prose","learn_url":"https://example.invalid/","quote":"An unrelated documentation quote."})";
@@ -442,6 +588,46 @@ int main() {
             scope.mode = local_tools::ToolMode::Research;
             scope.operator_text = "Research Windows services";
             local_tools::set_yolo_minutes(1);
+            {
+                local_tools::RequestScope untrusted;
+                untrusted.mode = local_tools::ToolMode::Fix;
+                for (const auto& spec : std::vector<std::pair<std::string, std::string>>{
+                         {"reg", "delete"},
+                         {"reg.exe", "FLAGS HKLM\\Software\\NeverRun SET DONT_VIRTUALIZE"},
+                         {"regedit", "FLAGS HKLM\\Software\\NeverRun SET DONT_SILENT_FAIL"},
+                         {"wevtutil", "im"}, {"logman", "start"},
+                         {"schtasks", "/Run"}, {"sc", "start"}, {"ipconfig", "/flushdns"},
+                         {"acl_takeover", ""}, {"acl_release", ""}, {"elevate", ""}}) {
+                    local_tools::Call call;
+                    call.name = spec.first; call.args = spec.second;
+                    bool ok = true;
+                    const auto denied = local_tools::execute_calls({call}, &ok, nullptr, "", nullptr, &untrusted);
+                    check(!ok && denied.find("current authenticated request required") != std::string::npos,
+                          "unauthenticated Fix inherited the process-global YOLO timer");
+                }
+                untrusted.privileged_tools_authorized = true;
+                local_tools::Call incomplete;
+                incomplete.name = "acl_takeover";
+                bool ok = true;
+                const auto denied_args = local_tools::execute_calls({incomplete}, &ok, nullptr, "", nullptr, &untrusted);
+                check(!ok && denied_args.find("current authenticated request required") == std::string::npos,
+                      "fresh authorization was ignored by the YOLO gate");
+            }
+            {
+                local_tools::RequestScope cancelled;
+                cancelled.mode = local_tools::ToolMode::Fix;
+                unsigned visits = 0;
+                cancelled.is_cancelled = [&] { return visits++ != 0; };
+                const auto first = logs / "cancel-first.txt", second = logs / "cancel-second.txt";
+                local_tools::Call write;
+                write.name = "write_local_file"; write.path = first.string(); write.content = "first";
+                auto later = write; later.path = second.string(); later.content = "must not run";
+                bool ok = true;
+                const auto output = local_tools::execute_calls({write, later}, &ok, nullptr, "", nullptr, &cancelled);
+                check(!ok && output.find("chain cancelled") != std::string::npos &&
+                      std::filesystem::exists(first) && !std::filesystem::exists(second),
+                      "legacy tool batch ran a subsequent mutation after cancellation");
+            }
             for (const auto& spec : std::vector<std::pair<std::string, std::string>>{
                      {"reg", "delete HKCU\\Software\\NeverRun /f"},
                      {"wevtutil", "im nonexistent.xml"},
@@ -874,9 +1060,60 @@ int main() {
                   "native ACL reader bypassed advertised-schema authorization");
         }
         {
+            struct ProtectedFixture {
+                std::filesystem::path directory, file;
+                HANDLE handle = INVALID_HANDLE_VALUE;
+                PSECURITY_DESCRIPTOR original = nullptr;
+                ~ProtectedFixture() {
+                    if (original && handle != INVALID_HANDLE_VALUE) {
+                        BOOL present = FALSE, defaulted = FALSE;
+                        PACL acl = nullptr;
+                        GetSecurityDescriptorDacl(original, &present, &acl, &defaulted);
+                        SetSecurityInfo(handle, SE_FILE_OBJECT,
+                            DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                            nullptr, nullptr, acl, nullptr);
+                    }
+                    if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+                    if (original) LocalFree(original);
+                    if (!file.empty()) std::filesystem::remove(file);
+                    if (!directory.empty()) std::filesystem::remove(directory);
+                }
+            } fixture;
+            fixture.directory = root / "protected-read-fixture";
+            fixture.file = fixture.directory / "names-only.txt";
+            std::filesystem::create_directory(fixture.directory);
+            const std::string secret = "FILE_CONTENT_MUST_NOT_ENTER_PROTECTED_METADATA";
+            std::ofstream(fixture.file, std::ios::binary) << secret;
+            fixture.handle = CreateFileW(fixture.directory.c_str(), READ_CONTROL | WRITE_DAC,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            check(fixture.handle != INVALID_HANDLE_VALUE &&
+                      GetSecurityInfo(fixture.handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                          nullptr, nullptr, nullptr, nullptr, &fixture.original) == ERROR_SUCCESS,
+                  "cannot retain disposable ACL fixture for exact rollback");
+            PSECURITY_DESCRIPTOR deny = nullptr;
+            check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                      L"D:P(D;OICI;FR;;;WD)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &deny, nullptr) != FALSE,
+                  "cannot construct disposable deny fixture");
+            PACL acl = nullptr;
+            BOOL present = FALSE, defaulted = FALSE;
+            GetSecurityDescriptorDacl(deny, &present, &acl, &defaulted);
+            const auto set = SetSecurityInfo(fixture.handle, SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                nullptr, nullptr, acl, nullptr);
+            LocalFree(deny);
+            check(set == ERROR_SUCCESS, "cannot apply disposable deny fixture");
+            const auto ordinary_denied = [&]() {
+                HANDLE handle = CreateFileW(fixture.directory.c_str(), FILE_LIST_DIRECTORY,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+                if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+                return handle == INVALID_HANDLE_VALUE;
+            };
+            check(ordinary_denied(), "fixture did not deny ordinary directory reads");
             local_tools::RequestScope scope;
             scope.mode = local_tools::ToolMode::Research;
-            const auto directory = root / "protected-read-fixture";
+            const auto directory = fixture.directory;
             scope.operator_text = "Inspect " + directory.string();
             local_tools::Call call;
             call.name = "inspect_protected_directory";
@@ -897,6 +1134,13 @@ int main() {
                       "protected read widened a keyword or another named directory to Active");
             }
             call.path = directory.string();
+            scope.operator_text = "Inspect \"" + fixture.directory.string() + "\".";
+            const auto observed = local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope);
+            check(ok && observed.find("names-only.txt") != std::string::npos &&
+                      observed.find(secret) == std::string::npos &&
+                      observed.find("\"acl_changed\":false") != std::string::npos &&
+                      observed.find("\"sddl\":") != std::string::npos && ordinary_denied(),
+                  ("native protected read failed, leaked content, or changed effective permissions: " + observed).c_str());
             scope.operator_text = "Inspect a different target.";
             check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
                       "explicitly named") != std::string::npos && !ok,
@@ -908,6 +1152,26 @@ int main() {
                   "protected read accepted an operator path prefix");
             call.path = directory.string();
             scope.operator_text = "Inspect " + directory.string();
+            const auto audit_size = std::filesystem::file_size(root / "logs" / "tool-audit.jsonl");
+            for (const auto& text : {
+                    "Inspect " + fixture.directory.string() + "\\public",
+                    "Inspect " + fixture.directory.string() + "-sibling",
+                    "Inspect " + fixture.directory.string() + ".sibling",
+                    "Inspect prefix" + fixture.directory.string()}) {
+                scope.operator_text = text;
+                const auto denied = local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope);
+                check(!ok && denied.find("explicitly named") != std::string::npos &&
+                          std::filesystem::file_size(root / "logs" / "tool-audit.jsonl") == audit_size,
+                      "protected directory prefix escaped exact request authorization or reached execution audit");
+            }
+            scope.operator_text = "Inspect CIPolicies";
+            call.path = "C:\\Windows\\System32\\CodeIntegrity\\CIPolicies\\Active";
+            const auto alias_denied = local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope);
+            check(!ok && alias_denied.find("explicitly named") != std::string::npos &&
+                      std::filesystem::file_size(root / "logs" / "tool-audit.jsonl") == audit_size,
+                  "protected directory keyword expanded into an operator-unnamed host path");
+            call.path = fixture.directory.string();
+            scope.operator_text = "Inspect " + fixture.directory.string();
             call.args = "anything";
             check(local_tools::execute_calls({call}, &ok, &advertised, "", nullptr, &scope).find(
                       "path only") != std::string::npos && !ok,
@@ -1439,6 +1703,20 @@ int main() {
                   last_oracle_json()["stable_id"] == oracle_id,
               "legacy migration retried automatic clutter or discarded existing candidate identity");
         g_oracle_save = memory::save_thought;
+        {
+            bool finished = false;
+            g_oracle_save = [&](const json&) {
+                Sleep(20);
+                finished = true;
+                return json{{"stable_id", oracle_id}};
+            };
+            {
+                OracleWorkerDrain drain;
+                store_oracle_turn_async("Fixture worker", "A completed retained fixture reply.");
+            }
+            check(finished && g_oracle_workers.empty(), "Oracle worker was not drained before teardown");
+            g_oracle_save = memory::save_thought;
+        }
 
         const auto edit = run({
             completion(private_text, "*** APPLY\npath: docs\\fixture.md\n<<<<\nold\n====\nnew", "length"),

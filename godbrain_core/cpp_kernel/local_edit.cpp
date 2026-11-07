@@ -112,6 +112,11 @@ std::string check_profile_for_impl(std::string rel) {
     if (rel == "godbrain_core\\frontend\\galaxy.html") {
         return "galaxy-html-static-v1";
     }
+    if (rel == "godbrain_core\\frontend\\workspace.html" ||
+        rel == "godbrain_core\\frontend\\workspace.js" ||
+        rel == "godbrain_core\\frontend\\workspace.css") {
+        return "workspace-frontend-static-v1";
+    }
     if (rel.rfind("godbrain_core\\memory_store\\", 0) == 0 && ends_with(rel, ".go")) {
         return "memory-store-go-v1";
     }

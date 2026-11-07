@@ -31,8 +31,12 @@ normal user, not administrator; no execution-policy bypass is needed.
 This launches the existing WinForms host directly without occupying another
 terminal. It is not a native executable or a Linux/macOS port.
 
+For **Change Icon**, select `<repo>\godbrain_core\frontend\command-center.ico`.
+It uses the panel's tray artwork with transparent 16, 24, 32, 48, 64, 128 and
+256-pixel frames, rather than the PowerShell executable icon.
+
 The panel can be resized or maximized; its original size is the minimum.
-Status values expand with the window, and Open/Start/Stop plus Galaxy stay
+Status values expand with the window, and Open/Start/Stop plus Workspace stay
 aligned to the right edge. Button captions retain their usable size rather
 than becoming stretched bars. At the minimum size, unusually long statuses
 still use ellipsis; hover shows the complete status. The Share page's status
@@ -44,6 +48,19 @@ Replies that exceed the available screen space still scroll.
 Drag the horizontal divider below the complete-file review checkbox to resize
 the prompt and answer panes. The prompt grows with that divider; both panes
 retain a usable minimum size when resizing or maximizing the window.
+
+## CS2 dead-time pilot
+
+Clips > **Scan pilot (3)** launches the connected scanner for at most three
+inputs, not the whole backlog. It needs the existing VL model; the scanner
+does not start or replace one. New v2 receipts bind source bytes, instructions
+and runtime identity; the legacy index is preserved and not trusted as cache.
+Malformed/truncated replies are failures, KEEP wins conflicts, and unknown
+time is retained. These are **unqualified detections**, not finished or
+sanitized videos. Per-file Gold answers are excluded unless explicitly enabled
+for diagnostics. See [the reliability work and completion plan](cs2-deadtime-plan.md)
+for local-file usage, tests, held-out qualification and the separate trimmed
+library target.
 
 ## Model profiles
 
@@ -249,8 +266,10 @@ There is no separate 11 KiB per-result ceiling: a complete 15.6 KiB task brief
 fits the existing ledger and is delivered to the next model round.
 `inspect_protected_directory` requires a fresh authenticated request and an
 operator-named directory. It returns names and complete owner/group/DACL SDDL
-only, at depth one with an explicit 80-entry bound. An isolated native helper
-uses backup-read privilege; if unavailable it can launch that exact helper
+only, at depth one with an explicit 80-entry bound. Directory authorization
+matches complete path boundaries: naming a child or similarly prefixed sibling
+does not authorize its parent, and a bare `CIPolicies` keyword is not a path.
+An isolated native helper uses backup-read privilege; if unavailable it can launch that exact helper
 through the existing administrator launcher. It never uses a TI shell,
 takes ownership, edits ACLs, reads file contents or inherits authorization
 from a saved chain. The directory must remain in the file jail or be the
@@ -260,6 +279,12 @@ reported as evidence, not silently removed.
 `read_local_file` decodes BOM-marked UTF-16LE/BE and UTF-8 before line slicing.
 The source-read and decoded-text bounds remain 256 KiB; clipped text is marked,
 malformed UTF-16 fails explicitly, and binary files remain rejected.
+Filesystem operations retain validated directory/file handles, open children
+without following reparses, and use handle-relative creation and rename.
+Replacement writes use exclusively created, unpredictable temporary files.
+Unsafe or unavailable path leases fail explicitly; lexical path checks alone
+are not permission. Inline interpreters still have the Windows user's
+capabilities: these controls are not an OS sandbox.
 Both modes can also
 search Microsoft Learn and read an exact documentation URL supplied by the
 operator or that request's search. Search terms must come from the operator
@@ -332,13 +357,58 @@ complete-text SHA-256 references. Failed persistence is explicit, never a
 claim that the work was saved or verified. Answer and leading `No tools`
 remain memory-free; image diffusion retains its separate path.
 
-`scripts\Invoke-LocalLLM.ps1` provides the same context/continuity to a fresh
-PowerShell invocation while keeping the existing custom system prompt,
-thinking-off plain-text completion and `tool_choice=none`. It requires an
-already-running idle EXL3 model and never starts one. `-NoSharedMemory` keeps
-the original stateless behavior; `-Scope personal` uses only the personal
-working shelf, not technical RAG. `Invoke-LocalLLM index` needs no model.
-This foundation is not an autonomous long-task runner or model-to-model loop.
+`aai` / `scripts\Invoke-LocalLLM.ps1` uses authenticated loopback `/api/aai`
+and the native bounded tool loop with an already-running idle EXL3 model.
+It never starts a model or enables YOLO. `read_shared_memory` searches shared
+references and older Discussion matches; `write_shared_memory` saves explicit
+corrections as untrusted Research, with a confirmed receipt. Neither tool
+promotes a Golden Record or rewrites old turns. Normal completed answers are
+also saved to Discussion. `run_host sc showsid SERVICE` can check a service SID.
+The custom response preference and thinking-off behavior are retained.
+`-NoSharedMemory` and leading `No tools` keep the original direct, tool-less
+behavior. `-Scope personal` fixes memory access to that shelf and never
+consults technical RAG. `Invoke-LocalLLM index` needs no model.
+These CLI rounds do not overwrite the Workspace task ledger or Oracle turn;
+this is not an autonomous long-task runner or model-to-model loop.
+
+### New agents and browser handoffs
+
+The loop is **retrieve relevant context -> do the task -> publish evidence and
+limits**. `AGENTS.md` provides the startup contract for repo-aware agents;
+the existing Desk/direct-LLM clients perform their own integration. External
+clients still need a trusted local caller, or an explicitly shared export.
+No new runtime, model training, public kernel listener or cloud upload is added.
+
+```powershell
+. .\scripts\GodBrain-SharedMemory.ps1
+$context = Get-GodBrainSharedContext -Query "CS2 clip highlights" -ThreadId "cs2-clips"
+# Supply $context.context as reference alongside the actual request.
+Save-GodBrainResearchHandoff -Title "CS2 clip assessment" -ThreadId "cs2-clips" `
+    -Text "Observed changes, checks actually run, findings and unresolved limits." `
+    -Sources @("report.txt SHA256 <complete-file hash>")
+Export-GodBrainSharedHandoff -Query "CS2 clip highlights" `
+    -Path ".\logs\cs2-browser-handoff.json"
+```
+
+The research helper checks the server's stored receipt against the requested
+text, title, thread, scope and references. Ingested research stays untrusted
+and unpromoted. It does not become verified because a model wrote it.
+
+The exporter needs the kernel and configured bearer but no running model. It
+writes a new UTF-8 JSON file, checks readback and returns its SHA-256. The file
+contains bounded context and up to three complete matching research records,
+within 32 KiB. Records that do not fit are identified as omitted, never silently
+truncated; `research_more` signals additional matches. Existing destinations
+are not overwritten. The exporter never fetches referenced files/URLs, includes
+authentication headers or uploads anything. Review the selected content before
+sharing; stored reference text can itself contain private information.
+
+Use `-Scope personal` only for an explicitly personal export. Context remains
+an untrusted reference, cached inventory is not live readiness, and exports
+cannot grant tools. A client with no local connector must receive this file;
+it cannot automatically access the vault or unpublished provider history.
+Use `Invoke-LocalLLM ... -ThreadId "cs2-clips"` to retain a chosen thread across
+fresh local invocations without mixing it with the default shared Desk thread.
 
 From the repository root:
 
@@ -507,7 +577,13 @@ Serve or start services.
 The Status page's **AirPlay** row controls the existing
 `C:\Tools\ShairportQt\ShairportQt.exe` desktop receiver. **Start** launches it
 minimized in the current user's session, **Open** restores its window, and
-**Stop** requests its normal close and waits for a clean exit. An existing
+**Stop** requests its normal close and waits up to three seconds for a clean exit.
+If the receiver hangs, minimizes instead of exiting, or refuses the close request,
+Desk force-stops that exact receiver: first as the current user, then through
+`wsudo -A`, then `wsudo -T` only when the preceding attempt reports access denied.
+The confirmation covers this escalation; cancellation and other errors do not
+trigger a higher privilege. Success requires the original pinned process handle
+to confirm exit, not merely a successful helper exit code. An existing
 instance is reused; unknown paths/owners or multiple instances fail explicitly.
 Controls run asynchronously so receiver startup/shutdown does not freeze Desk.
 Completed operation receipts are consumed before any modal error dialog, so a
@@ -518,9 +594,13 @@ Process verification reads the executable and creation time through a pinned
 query-limited native handle, then checks the current session and user ownership.
 It does not depend on WMI exposing `ExecutablePath` or on reading process modules:
 those can be hidden when a normal-user Desk inspects an elevated receiver.
-This does not grant elevated window-control rights. If Windows refuses an
-operation across UAC, Desk reports the failure once; close the receiver from its
-own window and start it normally rather than elevating the whole panel.
+Start/Open do not gain elevated window-control rights. Stop alone can invoke the
+existing `C:\Tools\TeamM2\wsudo.exe` for the native termination helper, never the
+whole panel. Each termination checks the executable, PID, creation time, current
+session and original user's SID again before acting; mismatches fail closed.
+Helpers have a twelve-second wait bound and a ten-second request expiry, so a
+delayed UAC/TI launch cannot later terminate a receiver after the operation times
+out. No process-name-wide kill, ACL changes or automatic receiver restart occurs.
 No global terminal-host or PowerShell elevation settings are changed.
 
 ShairportQt is not a Windows SCM service. No service wrapper, autostart task,
@@ -529,7 +609,7 @@ Closing Desk leaves AirPlay running; it ends at logout unless separately
 configured by the operator. Existing tray and receiver/password settings remain
 unchanged. Status distinguishes stopped, running without a listener, and the
 receiver-reported **ready**, **connected**, **playing** or **paused** state.
-The read-only C++ helper `desk-airplay.exe` reads ShairportQt's accessible
+The C++ helper `desk-airplay.exe` normally reads ShairportQt's accessible
 connection label and Play/Pause button name. These describe receiver state,
 not speaker output: **Pause** means ShairportQt reports playing; **Play** means
 it reports paused. A connected receiver without an enabled playback control
@@ -554,15 +634,20 @@ audio to this receiver and confirmation of playback on the intended Windows
 output. An audio session or nonzero meter is useful diagnostic evidence, not
 proof of audible delivery. The current row does not persist an audio-verification
 receipt or turn a successful listener probe into an audio pass.
-`scripts\Test-AirPlay.ps1` runs offline process-identity/status/probe fixtures;
+`scripts\Test-AirPlay.ps1` runs offline process-identity/status/probe and
+force-stop escalation fixtures;
 `-ReadOnlyLive` passively inspects an already-running receiver without changing
 its window or playback. `-Live` explicitly exercises the installed receiver's
-Start/Open/Stop lifecycle and refuses when a receiver is already running.
+Start/Open/Stop lifecycle plus exact-receiver forced termination and refuses when
+a receiver is already running. Mocked access-denial tests cover Admin/TI routing;
+a same-user live stop does not prove that elevated paths ran on this host.
 
 ## ClipShare media links
 
 The Status **ClipShare** row provides Start/Stop. The **Share** rail page adds
-**Inbox**, **Library**, **Copy link**, and **Copy login**. These call the sibling
+**Inbox**, **Library**, **Copy link**, **Copy login**, and **Share files...**.
+The last button opens a file picker and the existing native per-file sender;
+it does not create another upload/server path. The lifecycle buttons call the sibling
 `ClipShare\build\Release\clipshare.exe` (override with
 `GODBRAIN_CLIPSHARE_ROOT`); no Python service logic lives in Desk.
 Operations use a serialized asynchronous worker. Status checks the native
@@ -585,11 +670,52 @@ shared AppData/cache files on normal-user startup. No global directory ACLs or
 environment settings are changed. A native-ingress credential failure is still
 reported separately and is not disguised as successful public readiness.
 
-Drop local video/audio files into Inbox. Originals remain untouched. Published
-H.264/AAC MP4 or MP3 files get seven-day read-only share links; the source library
+Drop local images/video/audio into Inbox, or choose **Share files...**.
+Originals remain untouched. Published PNG, H.264/AAC MP4 or MP3 files get
+seven-day read-only share links; the source library
 requires login as `owner` (Copy login copies the generated password).
-Copy link selects the newest active readable owner share from the live Copyparty
-database, including manually created and never-expiring shares, not a cached
+Explorer's **Send to > ClipShare** is an alternative after installing the sibling
+project's `scripts\Install-SendTo.ps1` shortcut. It launches `clipshare-send.exe`,
+a compact native per-request window, not Desk or an Explorer DLL. Selected
+image/audio/video files are copied without overwriting originals or Inbox entries;
+queued processing reuses the existing CPU pipeline and saved ingress preference.
+Ready rows offer **Copy link** and **Open preview** for that exact hash-bound
+import and its current live share, never a "newest share" guess. Neither button
+runs automatically. Closing the window leaves already queued imports/backend
+running. The shortcut adds no registry edits or global watcher.
+The ready-file picker also offers **Temporary (random)** with minutes,
+**Permanent (random)** and **Permanent (named)**. **Create link** adds a new
+selected link without replacing older URLs; Copy/Open then use that exact link.
+New random links retain 192-bit randomness in 32 URL-safe characters and use
+the short `/s/key/` URL for audio/video. Image **Copy link** returns
+`/s/key/media.png`: actual anonymous `image/png` bytes, suitable to paste into
+Browser Bro without a login, JavaScript or CAPTCHA. **Open preview** opens the
+separate minimal image viewer. Existing long URLs remain usable. Named links are
+guessable and reject collisions.
+
+Still PNG/JPEG/WebP inputs are validated and strictly decoded on CPU, then
+normalized to 8-bit RGBA PNG without source EXIF/GPS/IPTC/XMP/comments/ICC.
+Transparency and dimensions are retained (orientation may swap dimensions);
+profile-dependent color/high-bit-depth archival fidelity is not promised.
+Original source/Inbox bytes and metadata remain unchanged. Limits: 32 MiB input,
+8192 pixels/side, 32 million pixels, 128 MiB published PNG, 60-second encode.
+Animated PNG/WebP, concatenated JPEG, SVG/HTML and other unsupported formats
+cannot publish through this image path. Existing storage, quota, ingress,
+receipts, expiry/revocation and read-only rights are reused. The newest-share
+Desk Copy action also recognizes exact two-file image shares and copies their
+direct image URL. Local HTTP/TLS success does not prove outside-network or
+Browser Bro access; test that separately with a disposable synthetic image.
+
+**Manage files** opens the owner Library with read/write/move/delete (not general
+admin); public access remains read-only and Inbox originals are separate.
+**Manage links** opens `http://127.0.0.1:3923/?shares` for owner expiry extension
+and revocation. Converting an existing key to never-expiring is unsupported by
+the pinned API: create a separate permanent link instead. Native Copy/Open
+asynchronously recheck published hashes and current live expiry; owner edits
+cannot silently rebind an old source receipt.
+
+The Desk Share page's **Copy link** selects the newest active readable owner share
+from the live Copyparty database, including manually created and never-expiring shares, not a cached
 import receipt. Expired/revoked shares cannot be selected. Links are bearer
 access and forwardable. Expiration revokes access, not storage.
 The backend and owner Library stay on `http://127.0.0.1:3923`; native sharing

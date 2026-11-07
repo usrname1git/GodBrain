@@ -22,6 +22,14 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
   assert.ok(batch && checkout, 'Set GODBRAIN_SHOWCASE_BATCH and GODBRAIN_PORTFOLIO_CHECKOUT to the reviewed local batch and dedicated checkout.');
   const site = path.join(batch, 'site');
   const catalog = await readProjectCatalogDirectory(site);
+  const summary = projects => `${projects.length} project${projects.length === 1 ? '' : 's'} / ${projects.reduce((sum, project) => sum + project.images.length, 0)} images`;
+  const searchable = project => `${project.title} ${project.description} ${project.images.map(image => image.description).join(' ')}`.toLowerCase();
+  const reclaimed = catalog.projects.filter(project => searchable(project).includes('reclaim11'));
+  assert.ok(reclaimed.length, 'Reviewed batch must include Reclaim11');
+  const imageDescription = catalog.projects.flatMap(project => project.images).map(image => image.description)
+    .find(description => !catalog.projects.some(project => `${project.title} ${project.description}`.toLowerCase().includes(description.toLowerCase())));
+  assert.ok(imageDescription, 'Reviewed batch needs an image-only description to exercise screenshot search');
+  const detailed = catalog.projects.filter(project => searchable(project).includes(imageDescription.toLowerCase()));
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, 'http://127.0.0.1');
@@ -52,8 +60,8 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/projects/`);
-    await page.getByText('3 projects / 6 images', { exact: true }).waitFor();
-    assert.equal(await page.locator('#projects article').count(), 3);
+    await page.getByText(summary(catalog.projects), { exact: true }).waitFor();
+    assert.equal(await page.locator('#projects article').count(), catalog.projects.length);
     for (const image of await page.locator('figure img').all()) {
       await image.scrollIntoViewIfNeeded();
       await image.evaluate(img => img.decode());
@@ -63,11 +71,14 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     await page.getByLabel('Find a project').fill('Reclaim11');
-    await page.getByText('1 project / 3 images', { exact: true }).waitFor();
+    await page.getByText(summary(reclaimed), { exact: true }).waitFor();
     await page.locator('figure button').first().click();
     assert.equal(await page.locator('dialog').evaluate(dialog => dialog.open), true);
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('dialog').evaluate(dialog => dialog.open), false);
+    await page.getByLabel('Find a project').fill(imageDescription);
+    await page.getByText(summary(detailed), { exact: true }).waitFor();
+    assert.equal(await page.locator('#projects article').count(), detailed.length);
     await page.getByLabel('Find a project').fill('');
     const toggle = page.locator('[data-theme-toggle]');
     await toggle.click();
@@ -83,5 +94,5 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
     }
   }
   assert.deepEqual(errors, []);
-  assert.equal(catalog.assets.size, 6);
+  assert.equal(catalog.assets.size, catalog.projects.reduce((sum, project) => sum + project.images.length, 0));
 });

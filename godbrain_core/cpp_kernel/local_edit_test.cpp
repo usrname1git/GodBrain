@@ -59,34 +59,26 @@ int main() {
 
     {
         const std::string primed = local_edit::edit_user_with_excerpt(
-            "/edit godbrain_core/frontend/galaxy.html after Inbox: none "
-            "add a GPU line");
-        if (!expect(primed.find("Inbox: none") != std::string::npos,
-                    "excerpt includes Inbox glance") ||
+            "/edit godbrain_core/frontend/workspace.html around search-form "
+            "adjust the search label");
+        if (!expect(primed.find("id=\"search-form\"") != std::string::npos,
+                    "excerpt includes Workspace search") ||
             !expect(primed.find("GODBRAIN_RAG_UNTRUSTED") == std::string::npos,
-                    "edit prompt has no RAG jail notice") ||
-            !expect(primed.find("Heal: none") != std::string::npos,
-                    "excerpt window includes Heal glance")) {
+                    "edit prompt has no RAG jail notice")) {
             return 1;
         }
-        const std::string gpu_hint = local_edit::edit_user_with_excerpt(
-            "/edit godbrain_core/frontend/galaxy.html after GPU: none "
-            "add a Judge line");
-        const size_t gpu_ex = gpu_hint.find("excerpt:");
+        const std::string assistant_hint = local_edit::edit_user_with_excerpt(
+            "/edit godbrain_core/frontend/workspace.html around assistant-mode "
+            "adjust the mode label");
+        const size_t assistant_ex = assistant_hint.find("excerpt:");
         const size_t in_ex = primed.find("excerpt:");
-        const size_t gpu_at_gpu = gpu_hint.find("GPU: none", gpu_ex);
-        const size_t gpu_at_inbox = primed.find("GPU: none", in_ex);
-        if (!expect(gpu_ex != std::string::npos && in_ex != std::string::npos,
+        if (!expect(assistant_ex != std::string::npos && in_ex != std::string::npos,
                     "both excerpts marked") ||
-            !expect(gpu_at_gpu != std::string::npos,
-                    "GPU hint excerpt contains GPU: none") ||
-            !expect(gpu_at_inbox != std::string::npos,
-                    "Inbox hint excerpt still reaches GPU") ||
-            !expect((gpu_at_gpu - gpu_ex) < (gpu_at_inbox - in_ex),
-                    "GPU hint windows closer to GPU than Inbox hint")) {
-            std::cerr << "gpu_ex=" << gpu_ex << " in_ex=" << in_ex
-                      << " gpu_at_gpu=" << gpu_at_gpu
-                      << " gpu_at_inbox=" << gpu_at_inbox << std::endl;
+            !expect(assistant_hint.find("id=\"assistant-mode\"", assistant_ex) != std::string::npos,
+                    "assistant hint excerpt contains mode control") ||
+            !expect(primed.find("id=\"assistant-mode\"", in_ex) == std::string::npos &&
+                        assistant_hint.find("id=\"search-form\"", assistant_ex) == std::string::npos,
+                    "Workspace hints select separate bounded source windows")) {
             return 1;
         }
     }
@@ -251,7 +243,7 @@ int main() {
     }
     std::string second_user;
     result = local_edit::maybe_apply(
-        "/edit godbrain_core/frontend/galaxy.html add inbox glance",
+        "/edit godbrain_core/frontend/workspace.html adjust search",
         "I will patch the host card.\n",
         [&](const std::string&, const std::string& usr) {
             second_user = usr;
@@ -273,8 +265,8 @@ int main() {
         std::ofstream out(fixture, std::ios::binary | std::ios::trunc);
         out << "EDIT_FIXTURE=old\n";
     }
-    if (!expect(second_user.find("galaxy.html") != std::string::npos,
-                "second pass names galaxy.html") ||
+    if (!expect(second_user.find("workspace.html") != std::string::npos,
+                "second pass names Workspace") ||
         !expect(result.applied, "second pass wrote") ||
         !expect(body == "EDIT_FIXTURE=from-second\n",
                 "fixture from second pass")) {
@@ -319,43 +311,30 @@ int main() {
         return 1;
     }
 
-    result = local_edit::maybe_apply(
-        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+    const std::string wrong_window_plan =
         "*** APPLY\n"
-        "path: godbrain_core/frontend/galaxy.html\n"
+        "path: godbrain_core/frontend/workspace.html\n"
         "<<<<\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
+        "    <form id=\"assistant-form\">\n"
         "====\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
+        "    <form id=\"assistant-form\">\n"
         ">>>>\n"
-        "*** END\n",
+        "*** END\n";
+    result = local_edit::maybe_apply(
+        "/edit godbrain_core/frontend/workspace.html around search-form adjust label",
+        wrong_window_plan,
         {});
-    if (!expect(result.attempted, "overlay hunk attempted") ||
-        !expect(!result.applied, "overlay hunk not in host-card excerpt") ||
+    if (!expect(result.attempted, "out-of-window hunk attempted") ||
+        !expect(!result.applied, "assistant hunk not in search excerpt") ||
         !expect(result.report.find("not in excerpt") != std::string::npos,
-                "overlay skip says not in excerpt")) {
-        std::cerr << "overlay report=" << result.report << std::endl;
+                "skip says not in excerpt")) {
+        std::cerr << "window report=" << result.report << std::endl;
         return 1;
     }
 
     result = local_edit::maybe_apply(
-        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
-        "*** APPLY\n"
-        "path: godbrain_core/frontend/galaxy.html\n"
-        "<<<<\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
-        "====\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
-        ">>>>\n"
-        "*** END\n",
+        "/edit godbrain_core/frontend/workspace.html around search-form adjust label",
+        wrong_window_plan,
         [&](const std::string&, const std::string&) { return std::string(); });
     if (!expect(!result.applied, "empty second after miss") ||
         !expect(result.report.find("not in excerpt") != std::string::npos,
@@ -375,19 +354,8 @@ int main() {
     }
     bool retried = false;
     result = local_edit::maybe_apply(
-        "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
-        "*** APPLY\n"
-        "path: godbrain_core/frontend/galaxy.html\n"
-        "<<<<\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
-        "====\n"
-        "            const inboxLine = inboxOverlayLine(status);\n"
-        "            if (inboxLine) lines.push(inboxLine);\n"
-        "            const cs2 = (status && status.cs2) || {};\n"
-        ">>>>\n"
-        "*** END\n",
+        "/edit godbrain_core/frontend/workspace.html around search-form adjust label",
+        wrong_window_plan,
         [&](const std::string&, const std::string&) {
             retried = true;
             return "*** APPLY\n"
@@ -420,25 +388,24 @@ int main() {
     {
         std::string second_excerpt_user;
         result = local_edit::maybe_apply(
-            "/edit godbrain_core/frontend/galaxy.html after Inbox: none add GPU",
+            "/edit godbrain_core/frontend/workspace.html around search-form adjust label",
             "*** APPLY\n"
-            "path: godbrain_core/frontend/galaxy.html\n"
+            "path: godbrain_core/frontend/workspace.html\n"
             "<<<<\n"
-            "            const inboxLine = inboxOverlayLine(status);\n"
-            "            if (inboxLine) lines.push(inboxLine);\n",
+            "    <form id=\"assistant-form\">\n",
             [&](const std::string&, const std::string& usr) {
                 second_excerpt_user = usr;
                 return std::string();
             });
         const size_t ex = second_excerpt_user.find("excerpt:");
         if (!expect(ex != std::string::npos, "second pass has excerpt") ||
-            !expect(second_excerpt_user.find("Inbox: none", ex) !=
+            !expect(second_excerpt_user.find("id=\"search-form\"", ex) !=
                         std::string::npos,
-                    "second pass excerpt stays on host-card") ||
+                    "second pass excerpt stays on search") ||
             !expect(second_excerpt_user.find(
-                        "if (inboxLine) lines.push(inboxLine)") ==
+                        "    <form id=\"assistant-form\">") ==
                         std::string::npos,
-                    "truncated overlay plan is not fed to second pass")) {
+                    "truncated out-of-window plan is not fed to second pass")) {
             std::cerr << "second excerpt usr size=" << second_excerpt_user.size()
                       << std::endl;
             return 1;

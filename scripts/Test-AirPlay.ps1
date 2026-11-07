@@ -161,7 +161,119 @@ try {
     Assert-Equal ($native.WaitForExit(0)) $false
     Assert-Throws { $native.WaitForExit(-1) } '*milliseconds*'
 } finally { $native.Dispose() }
+Assert-Equal (Request-GodBrainAirPlayClose ([uint32]$PID)) $false
 Write-Host 'PASS: AirPlay native limited-rights path/time handle, hidden CIM paths, exact identity/owner, ambiguity and fail-loud fixtures'
+
+& {
+    $script:stopCreated = [datetime]::UtcNow
+    $script:stopProcess = [pscustomobject]@{ ProcessId = 7 }
+    $script:stopHandle = [pscustomobject]@{ CreationTimeUtc = $script:stopCreated }
+    $script:stopHandle | Add-Member ScriptMethod Dispose {}
+    $script:stopHandle | Add-Member ScriptMethod WaitForExit {
+        param($Milliseconds)
+        if ($Milliseconds -eq 3000 -and $script:stopGracefulExit) { $script:stopExited = $true }
+        return $script:stopExited
+    }
+    function Get-GodBrainAirPlayProcess { return $script:stopProcess }
+    function Open-GodBrainAirPlayHandle { param($ProcessId); return $script:stopHandle }
+    function Assert-GodBrainAirPlayProcess {
+        param($Process, $Handle)
+        if ($script:stopIdentityFails) { throw 'Fixture identity changed.' }
+    }
+    function Request-GodBrainAirPlayClose { param($ProcessId); return $script:stopCloseAccepted }
+    function Test-Path {
+        param($LiteralPath, $PathType)
+        return $script:stopWsudoPresent -or $LiteralPath -ne 'C:\Tools\TeamM2\wsudo.exe'
+    }
+    function Reset-AirPlayStopFixture {
+        $script:stopExited = $false
+        $script:stopGracefulExit = $false
+        $script:stopCloseAccepted = $true
+        $script:stopIdentityFails = $false
+        $script:stopWsudoPresent = $true
+        $script:stopCalls = @()
+        $script:stopCodes = @{ user = 5; '-A' = 5; '-T' = 0 }
+        $script:stopExitAt = '-T'
+        $script:stopChildTimeout = $false
+    }
+    function Invoke-GodBrainAirPlayChild {
+        param($StartInfo, $TimeoutMilliseconds, $Label)
+        Assert-Equal $TimeoutMilliseconds 12000
+        Assert-Equal $Label 'AirPlay termination helper'
+        $arguments = @($StartInfo.ArgumentList)
+        $level = 'user'
+        if ($StartInfo.FileName -eq 'C:\Tools\TeamM2\wsudo.exe') {
+            $level = $arguments[0]
+            Assert-Equal $arguments[1] '-w'
+            if ($level -cnotin @('-A', '-T')) { throw 'Unexpected elevation.' }
+            if ($arguments[2] -notlike '*\godbrain_core\cpp_tools\desk-airplay.exe') { throw 'Wrong elevated helper.' }
+            $arguments = @($arguments | Select-Object -Skip 3)
+        } elseif ($StartInfo.FileName -notlike '*\godbrain_core\cpp_tools\desk-airplay.exe') {
+            throw 'Wrong user termination helper.'
+        }
+        Assert-Equal $arguments.Count 9
+        Assert-Equal ($arguments[0..2] -join ',') '--terminate,--pid,7'
+        Assert-Equal $arguments[3] '--created'
+        Assert-Equal $arguments[4] ([string]$script:stopCreated.ToFileTimeUtc())
+        Assert-Equal $arguments[5] '--owner'
+        Assert-Equal $arguments[6] ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        Assert-Equal $arguments[7] '--deadline'
+        $remaining = [datetime]::FromFileTimeUtc([long]$arguments[8]) - [datetime]::UtcNow
+        if ($remaining.TotalSeconds -le 0 -or $remaining.TotalSeconds -gt 10) { throw 'Unbounded stop request.' }
+        $script:stopCalls += $level
+        if ($script:stopChildTimeout) { throw 'AirPlay termination helper timed out.' }
+        if ($level -eq $script:stopExitAt) { $script:stopExited = $true }
+        return [pscustomobject]@{ ExitCode = $script:stopCodes[$level]; Output = ''; ErrorText = '' }
+    }
+    Reset-AirPlayStopFixture
+    $script:stopGracefulExit = $true
+    Assert-Equal (Invoke-GodBrainAirPlay Stop) 'stopped (user app)'
+    Assert-Equal $script:stopCalls.Count 0
+    foreach ($gracefulClose in @($true, $false)) {
+        Reset-AirPlayStopFixture
+        $script:stopCloseAccepted = $gracefulClose
+        $script:stopCodes.user = 0
+        $script:stopExitAt = 'user'
+        Assert-Equal (Invoke-GodBrainAirPlay Stop) 'stopped (user app; forced via user)'
+        Assert-Equal ($script:stopCalls -join ',') 'user'
+    }
+    Reset-AirPlayStopFixture
+    $script:stopCodes['-A'] = 0
+    $script:stopExitAt = '-A'
+    Assert-Equal (Invoke-GodBrainAirPlay Stop) 'stopped (user app; forced via wsudo/Admin)'
+    Assert-Equal ($script:stopCalls -join ',') 'user,-A'
+    Reset-AirPlayStopFixture
+    Assert-Equal (Invoke-GodBrainAirPlay Stop) 'stopped (user app; forced via wsudo/TI)'
+    Assert-Equal ($script:stopCalls -join ',') 'user,-A,-T'
+    foreach ($code in @(0, 1, 1223)) {
+        Reset-AirPlayStopFixture
+        $script:stopCodes.user = $code
+        Assert-Throws { Invoke-GodBrainAirPlay Stop } '*has not exited*'
+        Assert-Equal ($script:stopCalls -join ',') 'user'
+    }
+    Reset-AirPlayStopFixture
+    $script:stopCodes['-A'] = 1223
+    Assert-Throws { Invoke-GodBrainAirPlay Stop } '*at -A*'
+    Assert-Equal ($script:stopCalls -join ',') 'user,-A'
+    Reset-AirPlayStopFixture
+    $script:stopCodes['-T'] = 5
+    $script:stopExitAt = ''
+    Assert-Throws { Invoke-GodBrainAirPlay Stop } '*at -T*'
+    Assert-Equal ($script:stopCalls -join ',') 'user,-A,-T'
+    Reset-AirPlayStopFixture
+    $script:stopWsudoPresent = $false
+    Assert-Throws { Invoke-GodBrainAirPlay Stop } '*needs*wsudo.exe*'
+    Assert-Equal ($script:stopCalls -join ',') 'user'
+    Reset-AirPlayStopFixture
+    $script:stopChildTimeout = $true
+    Assert-Throws { Invoke-GodBrainAirPlay Stop } '*timed out*'
+    Assert-Equal ($script:stopCalls -join ',') 'user'
+    Reset-AirPlayStopFixture
+    $script:stopIdentityFails = $true
+    Assert-Throws { Invoke-GodBrainAirPlay Stop } '*identity changed*'
+    Assert-Equal $script:stopCalls.Count 0
+    Write-Host 'PASS: graceful/tray/hung Stop, exact typed identity, access-denial-only user/Admin/TI ladder, cancellation/timeout and false-success rejection'
+}
 
 function New-AirPlayProbeFixture([string]$Command) {
     $info = [Diagnostics.ProcessStartInfo]::new()
@@ -228,6 +340,16 @@ $wrongProcess = & $probeExe --pid $PID --created $ownCreated | ConvertFrom-Json
 if ($LASTEXITCODE -eq 0 -or $wrongProcess.ok -or $wrongProcess.error -ne 'Unexpected receiver executable') {
     throw 'Native AirPlay probe accepted a different executable.'
 }
+$ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$deadline = [string][datetime]::UtcNow.AddSeconds(10).ToFileTimeUtc()
+$wrongTermination = & $probeExe --terminate --pid $PID --created $ownCreated --owner $ownerSid --deadline $deadline | ConvertFrom-Json
+if ($LASTEXITCODE -eq 0 -or $wrongTermination.ok -or $wrongTermination.error -ne 'Unexpected receiver executable') {
+    throw 'Native AirPlay termination accepted a different executable.'
+}
+$expired = & $probeExe --terminate --pid $PID --created $ownCreated --owner $ownerSid --deadline 1 | ConvertFrom-Json
+if ($LASTEXITCODE -eq 0 -or $expired.ok -or $expired.error -notlike '*request expired*') {
+    throw 'Native AirPlay termination accepted an expired request.'
+}
 Write-Host 'PASS: receiver ready/connected/playing/paused, receipt identity, malformed/error/exit envelopes, bounded timeout and exact probe cleanup'
 
 if ($ReadOnlyLive) {
@@ -264,10 +386,32 @@ if ($Live) {
         } while ([datetime]::UtcNow -lt $deadline)
         if ($line -notmatch '^(ready|connected|playing|paused|listening) :') { throw "AirPlay never opened its receiver listener: $line" }
         Write-Host "PASS: Installed receiver reused PID $startedPid; $line"
-        Assert-Equal (Invoke-GodBrainAirPlay 'Stop') 'stopped (user app)'
+        $stop = Invoke-GodBrainAirPlay 'Stop'
+        if ($stop -notlike 'stopped (user app*') { throw "Invalid Stop result: $stop" }
         Assert-Equal (Get-GodBrainAirPlayProcess) $null
         $process = $null
         Write-Host 'PASS: AirPlay Start/Open/Stop, singleton, receiver listener and clean exit (audio not exercised)'
+        $null = Invoke-GodBrainAirPlay 'Start'
+        $process = Get-GodBrainAirPlayProcess
+        $handle = Open-GodBrainAirPlayHandle $process.ProcessId
+        try {
+            $created = [string]$handle.CreationTimeUtc.ToFileTimeUtc()
+            $deadline = [string][datetime]::UtcNow.AddSeconds(10).ToFileTimeUtc()
+            foreach ($mismatch in @(
+                @{ Created = [string]([long]$created + 1); Owner = $ownerSid; Error = '*identity changed*' },
+                @{ Created = $created; Owner = 'S-1-0-0'; Error = '*owner does not match*' }
+            )) {
+                $rejected = & $probeExe --terminate --pid $process.ProcessId --created $mismatch.Created --owner $mismatch.Owner --deadline $deadline | ConvertFrom-Json
+                if ($LASTEXITCODE -eq 0 -or $rejected.ok -or $rejected.error -notlike $mismatch.Error -or $handle.WaitForExit(0)) {
+                    throw 'Mismatched termination identity was not rejected with the receiver left alive.'
+                }
+            }
+            Assert-Equal (Stop-GodBrainAirPlayProcess $process $handle) 'stopped (user app; forced via user)'
+            if (-not $handle.WaitForExit(0)) { throw 'Forced receiver is still alive.' }
+        } finally { $handle.Dispose() }
+        Assert-Equal (Get-GodBrainAirPlayProcess) $null
+        $process = $null
+        Write-Host 'PASS: live exact-receiver forced termination, creation/SID mismatch refusal, pinned-handle exit; no privileged fallback needed'
     } finally {
         if ($process) {
             $current = Get-GodBrainAirPlayProcess

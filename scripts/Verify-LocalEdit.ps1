@@ -29,6 +29,9 @@ function Split-EditPathList([string]$List) {
 function Get-EditCheckProfile([string]$Rel) {
     $n = $Rel.Replace('/', '\').ToLowerInvariant().TrimStart('\')
     if ($n -eq 'godbrain_core\frontend\galaxy.html') { return 'galaxy-html-static-v1' }
+    if ($n -in @('godbrain_core\frontend\workspace.html','godbrain_core\frontend\workspace.js','godbrain_core\frontend\workspace.css')) {
+        return 'workspace-frontend-static-v1'
+    }
     if ($n.StartsWith('godbrain_core\memory_store\') -and $n.EndsWith('.go')) {
         return 'memory-store-go-v1'
     }
@@ -134,6 +137,7 @@ function Invoke-EditChecks([string[]]$Rels) {
             'powershell-parse-v1' { Test-PowerShellParse $full }
             'kernel-compile-v1' { Test-KernelFile $full }
             'galaxy-html-static-v1' { Test-GalaxyHtml $full }
+            'workspace-frontend-static-v1' { }
             'memory-store-go-v1' { }
             'librarian-self-test-v1' { }
             'local-edit-apply-v1' { }
@@ -143,6 +147,10 @@ function Invoke-EditChecks([string[]]$Rels) {
     if ($profiles -contains 'kernel-compile-v1') { Test-KernelCompile $Rels }
     if ($profiles -contains 'memory-store-go-v1') { Test-MemoryStoreGo }
     if ($profiles -contains 'librarian-self-test-v1') { Test-LibrarianSelfTest }
+    if ($profiles -contains 'workspace-frontend-static-v1') {
+        & node --test (Join-Path $RepoRoot 'godbrain_core\frontend\workspace.test.mjs')
+        if ($LASTEXITCODE -ne 0) { throw "Workspace browser checks failed: $LASTEXITCODE" }
+    }
     $joined = [string]::Join('+', $profiles)
     return @{ ok = $true; profile = $joined; detail = 'check passed' }
 }
@@ -178,7 +186,9 @@ if ($SelfTest) {
     try { Test-PowerShellParse $bad } catch { $threw = $true }
     Remove-Item -LiteralPath $bad -Force
     if (-not $threw) { throw "broken ps1 must fail parse" }
-    Test-GalaxyHtml (Join-Path $RepoRoot "godbrain_core\frontend\galaxy.html")
+    $legacyHtml = Join-Path $RepoRoot 'godbrain_core\frontend\galaxy.html'
+    if (Test-Path -LiteralPath $legacyHtml) { Test-GalaxyHtml $legacyHtml }
+    if ((Get-EditCheckProfile 'godbrain_core\frontend\workspace.html') -ne 'workspace-frontend-static-v1') { throw 'classify Workspace' }
     $alt = "id = 'host-card'`nCS2:idle`nHeal: none`nInbox:none"
     if ($alt -notmatch 'id\s*=\s*(["''])host-card\1') { throw "host-card single quote" }
     if ($alt -notmatch 'CS2:\s*idle') { throw "cs2 whitespace" }

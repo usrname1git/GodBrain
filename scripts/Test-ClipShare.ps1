@@ -55,7 +55,16 @@ foreach ($name in 'GodBrain-ClipShare.ps1','Show-DeskMenu.ps1','Test-ClipShare.p
     Assert ((Get-GodBrainClipShareLine) -like 'unread:*identity mismatch*') 'Identity/readiness errors were hidden.'
 }
 & {
-    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('GodBrain-ClipShareHistory-' + [guid]::NewGuid().ToString('N'))
+    function Test-Path { param($LiteralPath,$PathType); return $false }
+    foreach ($files in @(@('C:\synthetic.png'), @('x') * 129)) {
+        $failed = $false
+        try { $null = Start-GodBrainClipShareSend -Files $files }
+        catch { $failed = $true }
+        Assert $failed 'Invalid sender selection or missing native installation did not fail.'
+    }
+}
+& {
+    $fixture = Join-Path (Split-Path $PSScriptRoot -Parent) ('logs\clipshare-history-fixture-' + [guid]::NewGuid().ToString('N'))
     $files = [ordered]@{
         template_sha256 = 'Caddyfile.example'
         config_sha256 = 'local\ingress\Caddyfile'
@@ -161,9 +170,14 @@ if ($Ui) {
         $f.Show()
         [Windows.Forms.Application]::DoEvents()
         Assert $pageShare.Visible 'Share route is not visible.'
-        foreach($text in 'Start','Stop','Inbox','Library','Copy link','Copy login') {
+        foreach($text in 'Start','Stop','Inbox','Library','Copy link','Copy login','Share files...') {
             Assert (@($pageShare.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq $text }).Count -eq 1) "Missing Share control: $text"
         }
+        $script:clipPickerInvoked = $false
+        function Show-GodBrainClipShareFilePicker { $script:clipPickerInvoked = $true; return 'Synthetic sender opened.' }
+        $shareButton = $pageShare.Controls | Where-Object { $_ -is [Windows.Forms.Button] -and $_.Text -eq 'Share files...' }
+        $shareButton.PerformClick()
+        Assert ($script:clipPickerInvoked -and $script:clipShareMessage.Text -eq 'Synthetic sender opened.') 'Desk Share did not launch the file picker.'
         foreach($control in $pageShare.Controls) {
             Assert ($control.Bottom -le $pageShare.ClientSize.Height -and $control.Right -le $pageShare.ClientSize.Width) 'Share control is clipped at minimum size.'
         }

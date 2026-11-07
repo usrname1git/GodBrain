@@ -48,7 +48,7 @@ The GodBrain turns local models into a shared, sovereign cognitive system. The c
   see [shared memory and the local client](docs/desk-menu.md#shared-working-memory-and-index).
 
 - **🛠️ Tools the kernel runs** — All tools are built into the C++ kernel, so you don't need 40 different MCP servers.
-- Galaxy GUI chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
+- Workspace chat sends those tool rounds to the EXL3 on `:8888`. A pasted crash plus the word `fix` gets eight rounds and does not open elevate. `command_type`s (save/recall, skills, host observe, telemetry, privileged PowerShell) still need `GODBRAIN_API_TOKEN` plus a non-blank `reasoning`. Bounded `/edit` is a separate chat door, not a `command_type`.
 
 ## The Compute Cheat Code (vault ≠ GPU)
 
@@ -58,12 +58,27 @@ This machine has **one generate slot** (Qwen 3.8 27B EXL3 3.5bpw on the 16 GB ca
 Hybrid ingest is real: drop a source in `inbox\` or POST `/api/librarian`. The local mouth extracts **candidates**. You crown them.
 Cloud models cannot self-verify; they may execute an explicit operator judgment through the same authenticated status door. They do not get a Mongo shell or run `wsudo`. Privileged PowerShell still needs bearer + reasoning. Heal does not DISM, rewrite the registry, or patch a fleet.
 
-## See it running
+## GodBrain Workspace
 
-<p align="center">
-  <img src="docs/media/GodBrainUI.png" width="900" alt="GodBrain Sovereign Node Galaxy UI">
-</p>
-<p align="center"><em>Galaxy on this host: 3D graph, This host / Pending on the left, mouth and no-GPU glance buttons on the right.</em></p>
+Open **http://127.0.0.1:8083/workspace** or Command Center's **Workspace** button.
+The root and `/galaxy` bookmarks redirect here; the old Galaxy UI is retired.
+Seven shelves separate the canonical SRE manual, Research, Model Evaluations,
+Discussions, declared Sources, Personal notes and the bounded Environment map.
+Mind map/list, record reader and the local assistant use real native APIs.
+The assistant defaults to **Research / read-only**; opening it starts no model.
+
+**Correct answer is not RAG admission.** Answer assessment appends an immutable,
+untrusted Research record with a content hash, operator reason and optional
+operator-supplied model attribution. Canonical verification/rejection is a
+separate explicit decision. Personal content is never automatically attached
+to technical chat. Protected reads/writes require the configured bearer.
+
+Environment is an existing bounded, timestamped capability map, not a complete
+software inventory or current readiness certificate. System opens passive
+snapshots; index refresh is explicit. Source references are not a raw-vault
+editor. Unavailable services produce errors, never sample-data fallbacks.
+Offline UI checks: `node --test godbrain_core\frontend\workspace.test.mjs`.
+See the **[public project gallery](https://autom8ed.me/projects/)** for sanitized captures.
 
 ## How it works
 
@@ -71,7 +86,7 @@ GodBrain routes tool calls through a native C++ kernel instead of patching a spe
 The mouth must already be an OpenAI-compatible loopback server. Desk generate is currently EXL3 on `:8888`.
 `llama-server` on `:8000` stays paused. Colibri is the interchangeable alternative. This host does not call a commercial API, and `.vscode/mcp.json` is empty on purpose.
 
-- **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Galaxy chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
+- **[`godbrain_core/cpp_kernel/main.cpp`](godbrain_core/cpp_kernel/main.cpp)** hosts the HTTP API (bound to `127.0.0.1` only): Workspace chat, no-GPU glances, `/edit`, and privileged `command_type` JSON. `/edit` is a chat door with an allowlist, not a `command_type`.
 - **[`godbrain_core/cpp_kernel/kernel.cpp`](godbrain_core/cpp_kernel/kernel.cpp)** (`GodBrainKernel::dispatch` / `validate_sovereignty`) is the Circuit Breaker: it intercepts high-risk `command_type`s, requires a non-empty `reasoning` field plus a matching `GODBRAIN_API_TOKEN` bearer token, and only then dispatches the command.
 - **[`godbrain_core/cpp_memory_store`](godbrain_core/cpp_memory_store)** is the desk Alexandria write/retrieval path (`memory-store.exe` / `rag-service.exe` on `:8084`). Go [`godbrain_core/memory_store`](godbrain_core/memory_store) stays as rollback with the same doors.
 - **[`LLM/colibri_LLM`](LLM/colibri_LLM)** (Colibri, the C-engine) is one of the interchangeable local models GodBrain drives — it is not special-cased into the memory or execution layers.
@@ -152,7 +167,7 @@ These are the first-class commands the C++ kernel currently validates and dispat
 | `promote_godbrain_claim` | `POST /api/truth` host_fact / doc_fact / playbook |
 | `get_system_telemetry` | Hardware/system awareness |
 | `execute_godbrain_script` | PowerShell (requires `reasoning` + bearer) |
-| `propose_sovereign_architect_change` | PowerShell (requires `reasoning` + bearer) |
+| `propose_sovereign_architect_change` | Stage untrusted Research proposal only; never execute (requires `reasoning` + bearer) |
 
 `/edit` is not in this table. It is an allowlisted chat apply, recorded as
 `local-edit-apply-v1`, and cannot promote a skill.
@@ -196,12 +211,12 @@ Shipped on this desk, not slideware:
 - **Teachings in and out of Mongo** — Librarian → `memory-store` (candidate only, fail-closed JSON). Chat/Oracle retrieve through rag-service, never by giving the model a Mongo shell. Oracle search is verified-only.
 - **Judge** — `/verify` `/reject` for playbooks and fights. Host probes and Learn quotes auto-verify when the evidence actually matches. That is how the mouth is fostered: crowned option next time, not token-chase from weights (ASCII instead of a BIOS map, shiny instead of a click path).
 - **Bounded file work** — `/edit` writes root `.ps1` / `.cmd` / `.md`, `scripts\`, `docs\`, `godbrain_core\`. Not vendor/build/LLM/archive. Never `git push` from the mouth. Chat tools (OpenAI `tool_calls`, kernel executes) cover `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, `%ProgramData%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `C:\Tools`, and `C:\Temp\GitHub` the way Copilot Filesystem+Desktop Commander do in VS Code: list/read/write/search/edit, `run_pwsh`, console SysInternals / `reg query` / ETW / `schtasks /Query`. `/yolo N` adds mutate + MinSudo/`wsudo -A`. Not `--ti`, not pskill/PsExec, not MFIT, not a Mongo shell.
-- **Privileged PowerShell** — `execute_godbrain_script` / `propose_sovereign_architect_change` need bearer + a non-blank `reasoning`. That is `pwsh` via the kernel, not Visual Studio as a tool.
+- **Privileged PowerShell** — `execute_godbrain_script` needs bearer + nonblank `reasoning`. `propose_sovereign_architect_change` now stages the exact script/reasoning in untrusted technical Research and returns `executed=false`; execution remains a separate explicit request. YOLO mutations/elevation also require a fresh authenticated request, not just an active global timer.
 - **Operator glance** — `scripts\Show-SystemFlex.ps1` (`flex` on this desk). Host chrome, not `/brief`, not Heal.
 - **Command Center** — `scripts\Show-DeskMenu.ps1` returns the caller's shell and opens its own hidden STA GUI host. Status and Ask run asynchronously without overlapping requests. The panel resizes/maximizes, keeps reply line breaks and expands the Ask area. Picture Ask uses thinking off, temperature zero and a 2,048-token response ceiling. Pick text/vision on `:8888` or Qwen-Image-2.1 on `:8871`; image editing uses a bounded, final-handle-jail-checked input file. Progress shows real diffusion steps and saved request-specific receipts. Disposable image workers exit before completion so Windows releases native RAM/VRAM. Saved context/KV/MTP/vision profiles apply only on explicit Start; complete-file review stays read-only and candidate. Native Dell S2522HG controls and global F9 replace DDM; Dark Stabilizer cycles without claiming a current level. The separate Serve row reports the private background Remote Dashboard mapping; explicit Tailscale Start preserves it or creates it only when entirely unconfigured. Existing file/folder Ask stays available. X hides; the power glyph quits. See [Command Center guide](docs/desk-menu.md) and the [DDM command map](docs/ddm-monitor-command-map.md).
 - **Read-only research** — Ask defaults to Research, with visible Answer/Research/Fix modes. Research retains bounded tool evidence, supports native ACL and Microsoft documentation reads, and cannot widen permissions through YOLO or Continue. Incomplete answers get one bounded recovery, not a silently accepted partial report.
 - **Mixed attachments** — Compare multiple text files and screenshots with strict decoding, CPU OCR, complete source-window coverage and hash-bound candidate receipts. No tools or edits run during analysis; original attachments are not archived by a shared-memory handoff.
-- **Shared continuity** — Native working shelves keep discussion/research separate from verified Golden Records and isolate personal scope. Authenticated `index` refreshes the target-host map without a model; Desk and `scripts\Invoke-LocalLLM.ps1` retrieve bounded context before inference and report failed saves explicitly. `-NoSharedMemory` keeps the PowerShell client stateless. This is not yet a durable autonomous long-task runner.
+- **Shared continuity** — Native working shelves keep discussion/research separate from verified Golden Records and isolate personal scope. Authenticated `index` refreshes the target-host map without a model; Desk and `scripts\Invoke-LocalLLM.ps1` retrieve bounded context before inference and report failed saves explicitly. The local client uses the authenticated native tool loop; `-NoSharedMemory` keeps it stateless and tool-less. This is not yet a durable autonomous long-task runner.
 - **Remote Dashboard** — A small read-only iPhone/Android overview: model/profile, global VRAM, RustDesk, Tailscale, SSH, core listeners and passive STT/TTS/CPU OCR health. One static page and a separate `127.0.0.1:8085` listener inside the C++ kernel, privately proxied by Tailscale Serve. Speech cards distinguish available local assets, successful requests and backend errors. Refresh never loads weights, generates, starts or repairs anything; stale/error data cannot look ready. No Node production backend, phone app build, browser token or public Funnel.
 - **RustDesk phone button** — `scripts\Start-RustDesk.ps1` explicitly restores a missing installed service entry (LocalSystem, Manual), starts it and verifies the enabled SYSTEM `--server` child. Existing startup settings are preserved. It avoids the native installer's logon shortcut and image-name kills. iOS Shortcuts or an Android SSH client can invoke it; open RustDesk only after the success receipt, then select the PC.
 - **Manual CS2 / AFK policy** — CS2 releases the identified model slot, pauses gym/automation, disconnects Tailscale, launches Steam and returns; no automatic post-game resume. AFK Watch is operator-enabled, host-only by default, with optional Qwen/gym recovery behind the same loop and crash/CUDA latches. Explicit Stop holds are preserved; no new service ACLs or task elevation.

@@ -93,6 +93,47 @@ try {
     $captures = Join-Path $fixture 'empty-captures'
     [void][IO.Directory]::CreateDirectory($captures)
     $refresh = Join-Path $PSScriptRoot 'Refresh-Showcase.ps1'
+    & {
+        $captureRoot = Join-Path $fixture 'repeat-captures'
+        [void][IO.Directory]::CreateDirectory($captureRoot)
+        foreach ($name in @('CMDSTATUS.png', 'CMDSTATUS.png.receipt.json')) {
+            [IO.File]::WriteAllText((Join-Path $captureRoot $name), 'unchanged synthetic capture')
+        }
+        function node {
+            if ($args[0] -cne (Join-Path $repo 'godbrain_core\frontend\capture-workspace.mjs') -or
+                $args[1] -cne '--image' -or $args[2] -cne 'IOSWORKFLOW' -or $args[3] -cne '--output') {
+                throw 'Unexpected node call in capture fixture.'
+            }
+            $output = [string]$args[4]
+            foreach ($path in @($output, ($output + '.receipt.json'))) {
+                $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                try { $stream.WriteByte(0) } finally { $stream.Dispose() }
+            }
+            $global:LASTEXITCODE = 0
+        }
+        foreach ($attempt in @(1,2)) {
+            Expect-Rejection {
+                & $refresh -BuilderWorkDir $builder -CaptureDirectory $captureRoot -Images IOSWORKFLOW `
+                    -BatchDirectory (Join-Path $fixture "repeat-batch-$attempt") `
+                    -Ffmpeg (Join-Path $env:SystemRoot 'System32\where.exe')
+            } 'partial synthetic capture cannot publish' 'Showcase conversion failed.*'
+        }
+        $generations = @(Get-ChildItem -LiteralPath $captureRoot -Directory)
+        if ($generations.Count -ne 2) { throw 'Repeated refresh reused an immutable capture directory.' }
+        foreach ($generation in $generations) {
+            foreach ($name in @('IOSWORKFLOW.png','IOSWORKFLOW.png.receipt.json')) {
+                if (-not (Test-Path -LiteralPath (Join-Path $generation.FullName $name) -PathType Leaf)) {
+                    throw 'Repeated capture lost its PNG or source receipt.'
+                }
+            }
+            foreach ($name in @('CMDSTATUS.png','CMDSTATUS.png.receipt.json')) {
+                if ([IO.File]::ReadAllText((Join-Path $generation.FullName $name)) -cne 'unchanged synthetic capture' -or
+                    [IO.File]::ReadAllText((Join-Path $captureRoot $name)) -cne 'unchanged synthetic capture') {
+                    throw 'Partial refresh changed or omitted an unselected capture or receipt.'
+                }
+            }
+        }
+    }
     Expect-Rejection {
         & $refresh -BuilderWorkDir $builder -CaptureDirectory $captures -BatchDirectory (Join-Path $fixture 'missing-capture') `
             -Ffmpeg (Join-Path $env:SystemRoot 'System32\where.exe') -SkipCapture
