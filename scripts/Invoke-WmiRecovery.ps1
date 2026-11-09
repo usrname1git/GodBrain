@@ -64,11 +64,26 @@ function Test-WmiServiceQuery([int]$Timeout) {
     }
 }
 
+function Restore-WmiRunningService($Controller, [int]$TimeoutSec) {
+    $Controller.Refresh()
+    if ($Controller.Status -eq 'StopPending') {
+        $Controller.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds($TimeoutSec))
+        $Controller.Refresh()
+    }
+    if ($Controller.Status -eq 'Stopped') { $Controller.Start() }
+    $Controller.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds($TimeoutSec))
+}
+
 function Invoke-WmiRecovery {
     param([switch]$Restart, [int]$TimeoutSec = 10, [int]$ProbeTimeoutSec = 3, [string]$ReceiptPath)
     if (-not (Test-WmiRecoveryAdministrator)) {
         throw 'WMI recovery requires an administrative SSH session; no remote UAC prompt is attempted.'
     }
+    $provider = $null
+    $drive = $null
+    $ReceiptPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+        $ReceiptPath, [ref]$provider, [ref]$drive)
+    if ($provider.Name -ne 'FileSystem') { throw 'The recovery receipt must use a filesystem path.' }
     $receipt = @{
         at = [DateTimeOffset]::UtcNow.ToString('o')
         status = 'running'; action = 'check'; service_running = $null; query_verified = $false
@@ -105,16 +120,12 @@ function Invoke-WmiRecovery {
             } catch { $problems.Add("Restart failed: $($_.Exception.Message)") }
             finally {
                 try {
-                    $controller.Refresh()
-                    if ($controller.Status -eq 'Stopped') { $controller.Start() }
-                    $controller.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds($TimeoutSec))
+                    Restore-WmiRunningService $controller $TimeoutSec
                 } catch { $problems.Add("WMI restoration failed: $($_.Exception.Message)") }
                 for ($index = $dependents.Count - 1; $index -ge 0; $index--) {
                     $service = $dependents[$index]
                     try {
-                        $service.Refresh()
-                        if ($service.Status -eq 'Stopped') { $service.Start() }
-                        $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds($TimeoutSec))
+                        Restore-WmiRunningService $service $TimeoutSec
                         $receipt.restored_dependents += $service.ServiceName
                     } catch { $problems.Add("Restore $($service.ServiceName) failed: $($_.Exception.Message)") }
                 }

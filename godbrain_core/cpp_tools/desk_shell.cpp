@@ -12,7 +12,6 @@
 #include "../cpp_kernel/json.hpp"
 #include <algorithm>
 #include <cstring>
-#include <cwctype>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -81,9 +80,16 @@ struct Identity {
 static Identity identity(const std::wstring& path) {
     Identity result;
     result.root = full(path);
-    std::wstring normalized = result.root;
+    const int count = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, result.root.data(),
+        static_cast<int>(result.root.size()), nullptr, 0, nullptr, nullptr, 0);
+    win(count > 0, "Desk path case mapping size");
+    std::wstring normalized(static_cast<size_t>(count), L'\0');
+    win(LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, result.root.data(),
+        static_cast<int>(result.root.size()), normalized.data(), count, nullptr, nullptr, 0) == count,
+        "Desk path case mapping");
+    // Retain existing ASCII identities after Windows filesystem case mapping.
     std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-        [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+        [](wchar_t c) { return c >= L'A' && c <= L'Z' ? static_cast<wchar_t>(c + (L'a' - L'A')) : c; });
     BYTE digest[32]{};
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
@@ -119,17 +125,23 @@ static void property(IPropertyStore* store, const PROPERTYKEY& key, const std::w
     PropVariantClear(&item);
     com(hr, "Set shell property");
 }
-static void window_identity(const Identity& id, HWND window, bool secondary) {
+static std::wstring window_identity(const Identity& id, HWND window, bool secondary) {
     ComPtr<IPropertyStore> store;
     com(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&store)), "Window identity store");
     property(store.Get(), PKEY_AppUserModel_ID, id.app);
     property(store.Get(), PKEY_AppUserModel_RelaunchCommand,
-        quote(executable()) + L" launch " + quote(id.root) + L" --new-instance");
+        quote(executable()) + L" launch " + quote(id.root));
     property(store.Get(), PKEY_AppUserModel_RelaunchDisplayNameResource, L"GodBrain Desk");
     property(store.Get(), PKEY_AppUserModel_RelaunchIconResource,
         id.root + L"\\godbrain_core\\frontend\\command-center.ico,0");
     com(store->Commit(), "Commit window identity");
+    PROPVARIANT relaunch{};
+    com(store->GetValue(PKEY_AppUserModel_RelaunchCommand, &relaunch), "Read window relaunch command");
+    const std::wstring command = relaunch.vt == VT_LPWSTR && relaunch.pwszVal ? relaunch.pwszVal : L"";
+    PropVariantClear(&relaunch);
+    if (command.empty()) throw std::runtime_error("Window relaunch command was not retained");
     win(SetPropW(window, id.tag.c_str(), reinterpret_cast<HANDLE>(static_cast<uintptr_t>(secondary ? 2 : 1))) != FALSE, "Window tag");
+    return command;
 }
 static bool owns(HWND window, const Identity& id) {
     DWORD pid = 0;
@@ -332,8 +344,8 @@ int wmain(int argc, wchar_t** argv) {
             if (consumed != wcslen(argv[3])) throw std::runtime_error("Invalid window handle");
             const HWND window = reinterpret_cast<HWND>(static_cast<uintptr_t>(value));
             win(IsWindow(window) != FALSE && owns(window, id), "Desk window ownership");
-            window_identity(id, window, argc == 5);
-            result = {{"status", "attached"}, {"app_id", utf8(id.app)}};
+            const auto relaunch = window_identity(id, window, argc == 5);
+            result = {{"status", "attached"}, {"app_id", utf8(id.app)}, {"relaunch_command", utf8(relaunch)}};
         } else if (mode == L"install" && argc == 4) {
             install(id, full(argv[3]));
             result = {{"status", "installed"}, {"app_id", utf8(id.app)}};

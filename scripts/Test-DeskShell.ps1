@@ -28,8 +28,15 @@ try {
     $a = Native info
     $b = Invoke-DeskShell -Operation info -IdentityRoot $root.ToUpperInvariant()
     if ($a.app_id -cne $b.app_id) { throw 'Case-folded identity changed.' }
+    $unicodeRoot = Join-Path $root ('user-' + [char]0x00C5 + 'sa')
+    $upper = Invoke-DeskShell -Operation info -IdentityRoot $unicodeRoot.ToUpperInvariant()
+    $lower = Invoke-DeskShell -Operation info -IdentityRoot $unicodeRoot.ToLowerInvariant()
+    if ($upper.app_id -cne $lower.app_id) { throw 'Non-ASCII Windows path casing changed the Desk identity.' }
     if ((Native activate).status -ne 'absent') { throw 'Uncreated fixture was found.' }
-    $null = Native attach @($first.Handle.ToInt64().ToString())
+    $attached = Native attach @($first.Handle.ToInt64().ToString())
+    if ($attached.relaunch_command -notmatch ' launch ' -or $attached.relaunch_command -match ' --new-instance') {
+        throw 'The actual window relaunch property would bypass default instance reuse.'
+    }
     $null = Native attach @($second.Handle.ToInt64().ToString(), '--secondary')
     $first.Show()
     [Windows.Forms.Application]::DoEvents()
@@ -64,7 +71,7 @@ try {
         -not ([DeskFixtureWindow]::GetWindowLong($legacy.Handle, -20).ToInt64() -band 0x40000)) {
         throw 'Eventless legacy restoration did not retain the framework owner and restore its taskbar window.'
     }
-    'PASS: native owner-bound identity, case stability, hidden/repeated activation, secondary/default reuse and eventless legacy parking-owner preservation. Isolated Windows forms only; no pin/service/model changes.'
+    'PASS: native owner-bound identity, ASCII/Unicode case stability, window relaunch property, hidden/repeated activation, secondary/default reuse and eventless legacy parking-owner preservation. Isolated Windows forms only; no pin/service/model changes.'
 } finally {
     $first.Dispose()
     $second.Dispose()

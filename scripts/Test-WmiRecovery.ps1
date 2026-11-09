@@ -7,11 +7,13 @@ $script:probeFails = $false
 $script:probeCalls = 0
 $script:operations = [Collections.Generic.List[string]]::new()
 $script:lastReceipt = $null
+$script:lastReceiptPath = $null
 $script:receiptFails = $false
 function Test-WmiRecoveryAdministrator { $script:admin }
 function Write-WmiRecoveryReceipt($Receipt, $Path) {
     if ($script:receiptFails) { throw 'Fixture receipt persistence failure.' }
     $script:lastReceipt = $Receipt.Clone()
+    $script:lastReceiptPath = $Path
 }
 function Get-Service { param($Name, $ErrorAction); $script:root }
 function Get-CimInstance {
@@ -24,6 +26,7 @@ function Get-CimInstance {
 function New-Controller($Name, $State, $Children = @()) {
     $value = [pscustomobject]@{
         ServiceName = $Name; Status = $State; DependentServices = $Children; FailStart = $false; FailStop = $false
+        DelayedStop = $false; StopWaitFailures = 0
     }
     $value | Add-Member ScriptMethod Refresh {}
     $value | Add-Member ScriptMethod Dispose {}
@@ -35,10 +38,18 @@ function New-Controller($Name, $State, $Children = @()) {
     $value | Add-Member ScriptMethod Stop {
         $script:operations.Add("stop:$($this.ServiceName)")
         if ($this.FailStop) { throw "Fixture stop $($this.ServiceName)" }
-        $this.Status = 'Stopped'
+        if ($this.DelayedStop) { $this.Status = 'StopPending'; $this.StopWaitFailures = 1 }
+        else { $this.Status = 'Stopped' }
     }
     $value | Add-Member ScriptMethod WaitForStatus {
         param($Expected, $Timeout)
+        if ($this.Status -eq 'StopPending' -and $Expected.ToString() -eq 'Stopped') {
+            if ($this.StopWaitFailures -gt 0) {
+                $this.StopWaitFailures--
+                throw "Fixture stop timeout $($this.ServiceName)"
+            }
+            $this.Status = 'Stopped'
+        }
         if ($this.Status -ne $Expected.ToString()) { throw "Fixture wait $($this.ServiceName)" }
     }
     $value
@@ -58,6 +69,7 @@ function Run-Recovery([switch]$Restart) {
 }
 $script:root = New-Controller winmgmt Running
 Assert-Equal (Run-Recovery).action check
+Assert-Equal $script:lastReceiptPath (Join-Path $PWD.ProviderPath 'fixture')
 Assert-Equal $script:operations.Count 0
 $script:root.Status = 'Stopped'
 Assert-Equal (Run-Recovery).action start
@@ -102,6 +114,24 @@ Assert-Throws { Run-Recovery -Restart } '*More than 32 WMI dependents*'
 Assert-Equal $script:operations.Count 0
 $script:root.Status = 'StartPending'
 Assert-Throws { Run-Recovery } '*no competing service transition*'
+foreach ($delayedRoot in @($true, $false)) {
+    $child = New-Controller delayed-child Running
+    $script:root = New-Controller winmgmt Running @($child)
+    if ($delayedRoot) { $script:root.DelayedStop = $true }
+    else { $child.DelayedStop = $true }
+    $script:operations.Clear()
+    Assert-Throws { Run-Recovery -Restart } '*Restart failed*Fixture stop timeout*'
+    Assert-Equal $script:root.Status Running
+    Assert-Equal $child.Status Running
+    Assert-Equal $script:lastReceipt.status failed
+    Assert-Equal $script:lastReceipt.service_running $true
+    Assert-Equal ($script:lastReceipt.restored_dependents -contains 'delayed-child') $true
+    if ($delayedRoot) {
+        Assert-Equal ($script:operations -join ',') 'stop:delayed-child,stop:winmgmt,start:winmgmt,start:delayed-child'
+    } else {
+        Assert-Equal ($script:operations -join ',') 'stop:delayed-child,start:delayed-child'
+    }
+}
 $script:admin = $false
 Assert-Throws { Run-Recovery } '*administrative SSH*'
-'PASS: SCM start/no-op, opt-in restart, transitive stop/restore order, all restoration attempts, stopped-dependent preservation, failure receipts, probe/transition/elevation failures. No host services changed.'
+'PASS: SCM start/no-op, opt-in restart, transitive stop/restore order, delayed root/dependent stops, all restoration attempts, stopped-dependent preservation, relative receipt paths, failure receipts, probe/transition/elevation failures. No host services changed.'
