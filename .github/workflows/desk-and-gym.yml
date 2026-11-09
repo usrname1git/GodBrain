@@ -146,6 +146,11 @@ jobs:
             Write-Host $_.ScriptStackTrace
             throw
           }
+      - name: Native Desk launcher, media supervisor and mocked WMI recovery
+        run: |
+          .\scripts\Build-DeskShell.ps1
+          .\scripts\Build-MediaCut.ps1
+          .\scripts\Test-WmiRecovery.ps1
       - name: Stop only the disposable Mongo process
         if: always()
         run: |

@@ -11,6 +11,7 @@
 param(
     [switch]$Status,
     [switch]$ControlPanelHost,
+    [switch]$NewInstance,
     [ValidateSet('Status', 'Model', 'Monitor', 'AirPlay')]
     [string]$CaptureView,
     [string]$CapturePng,
@@ -973,11 +974,29 @@ if ($Status) {
     exit 0
 }
 
+. (Join-Path $PSScriptRoot 'GodBrain-DeskShell.ps1')
 if (-not $ControlPanelHost -and -not $CaptureView) {
-    Start-Process -FilePath $Pwsh -ArgumentList @(
-        "-NoProfile", "-Sta", "-File", $PSCommandPath, "-ControlPanelHost"
-    ) -WindowStyle Hidden | Out-Null
+    $options = @()
+    if ($NewInstance) { $options += '--new-instance' }
+    $null = Invoke-DeskShell launch $options
     return
+}
+
+if (-not $CaptureView -and -not $script:DeskUiSmoke) {
+    if (-not $NewInstance) {
+        $identity = Invoke-DeskShell info
+        $script:deskLaunchMutex = [Threading.Mutex]::new($false, $identity.mutex_name)
+        try { $script:deskLaunchLocked = $script:deskLaunchMutex.WaitOne(30000) }
+        catch [Threading.AbandonedMutexException] { $script:deskLaunchLocked = $true }
+        if (-not $script:deskLaunchLocked) { throw 'Another Desk launch did not finish within 30 seconds.' }
+        if ((Invoke-DeskShell activate).status -ne 'absent') {
+            $script:deskLaunchMutex.ReleaseMutex()
+            $script:deskLaunchMutex.Dispose()
+            return
+        }
+    }
+    $script:deskShowEvent = [Threading.EventWaitHandle]::new($false,
+        [Threading.EventResetMode]::AutoReset, "Local\GodBrain.Desk.Show.$PID")
 }
 
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne "STA") {
@@ -2037,7 +2056,10 @@ function Update-Status([switch]$Poll) {
 if (-not $CaptureView) { Update-Status }
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 100
-$timer.Add_Tick({ Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation; Update-ClipShareOperation })
+$timer.Add_Tick({
+    if ($script:deskShowEvent -and $script:deskShowEvent.WaitOne(0)) { Show-DeskFromTray }
+    Update-Status -Poll; Update-Ask; Update-Monitor; Update-DisplayOperation; Update-AirPlayOperation; Update-ClipShareOperation
+})
 if (-not $CaptureView) { $timer.Start() }
 
 Add-Head $pageShare "ClipShare" 16
@@ -3274,12 +3296,20 @@ $f.Add_FormClosing({
     }
 })
 
+$f.Add_HandleCreated({ Register-DeskWindow })
+Register-DeskWindow
 $f.Show()
+if ($script:deskLaunchLocked) {
+    $script:deskLaunchMutex.ReleaseMutex()
+    $script:deskLaunchLocked = $false
+    $script:deskLaunchMutex.Dispose()
+}
 try {
     Register-MonitorHotkey
     Start-DisplayOperation "list"
     [System.Windows.Forms.Application]::Run($f)
 } finally {
+    if ($script:deskShowEvent) { $script:deskShowEvent.Dispose() }
     try { $script:monitorHotkey.Dispose() }
     catch { Write-Error "Monitor hotkey cleanup failed: $($_.Exception.Message)" -ErrorAction Continue }
     $timer.Stop()

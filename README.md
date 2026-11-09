@@ -80,6 +80,15 @@ editor. Unavailable services produce errors, never sample-data fallbacks.
 Offline UI checks: `node --test godbrain_core\frontend\workspace.test.mjs`.
 See the **[public project gallery](https://autom8ed.me/projects/)** for sanitized captures.
 
+## Independent recovery and local media
+
+[WMI/CIM recovery over SSH](docs/phone-control.md#wmi-cim-recovery-without-a-model)
+checks/starts `winmgmt` without a model; `-Restart` is a separate explicit action
+with dependent-service restoration and a readiness probe.
+[Local media commands](docs/media-tools.md) provide `ytdl 'VIDEO_URL'` and
+`ffcut 'video.mp4' [-Plan]`. Silence removal creates a separate CPU-encoded
+derivative with shared audio/video cuts; it never replaces the source.
+
 ## How it works
 
 GodBrain routes tool calls through a native C++ kernel instead of patching a specific inference server's chat template.

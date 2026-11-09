@@ -42,6 +42,42 @@ These are ways to operate the existing Windows runtime, not new permissions.
 Administrative SSH is powerful: use keys, protect the phone and do not turn
 model output or a web quote into an unattended command.
 
+## WMI/CIM recovery without a model
+
+Run Script Over SSH executes PowerShell on this host without opening a terminal.
+Use the same SSH connection/key as the RustDesk Shortcut, with **Input empty**:
+
+```powershell
+& "$env:USERPROFILE\Documents\GitHub\GodBrain\scripts\Invoke-WmiRecovery.ps1"
+```
+
+It uses Windows SCM, not CIM, to check/start `winmgmt`. An already-running service
+is not restarted. Success additionally requires the bounded `Win32_Service`
+probe: **WMI ready: service Running; service-query probe passed; action=check**
+or `action=start`. No model, Copilot, repository reset or WMI-repository rebuild
+is involved. This helper requires PowerShell 7. The normal path passed a live running-service check; actual iPhone
+execution and a forced restart have not been exercised.
+
+If the service is running but its provider query still fails, a **separate,
+explicit Restart WMI Shortcut** may use:
+
+```powershell
+& "$env:USERPROFILE\Documents\GitHub\GodBrain\scripts\Invoke-WmiRecovery.ps1" -Restart
+```
+
+Restart briefly interrupts WMI and running dependent services. The script
+snapshots at most 32 transitive dependents, stops leaf-first, and attempts to
+restore every previously running dependent parent-first, including after a
+failure. Previously stopped dependents are not deliberately started. Failures
+remain errors, not readiness. The local receipt is `logs\last-wmi-recovery.json`.
+Administrative SSH rights are required; the script neither prompts for remote
+UAC nor grants permissions. Restart is operator-triggered, never a retry loop.
+
+After successful WMI recovery, run the existing RustDesk service Shortcut again.
+These are separate named actions, not an automatic repair cocktail. The
+historical intermittent CIM timeouts remain unexplained; this recovery door
+does not identify or prove their cause.
+
 ## One-time prerequisites
 
 Install/sign in to Tailscale on the PC and phone, and authorize the phone in
