@@ -1639,6 +1639,9 @@ static void handle_shared_context(const httplib::Request& req, httplib::Response
             result["error"] = "Shared context is not indexed. Run index once, and after infrastructure changes.";
         } else result["live_granted_roots"] = local_tools::default_roots();
         res.set_content(result.dump(), "application/json");
+    } catch (const std::invalid_argument& error) {
+        res.status = 400;
+        res.set_content(json({{"error", error.what()}}).dump(), "application/json");
     } catch (const std::exception& error) {
         res.status = 503;
         res.set_content(json({{"error", error.what()}}).dump(), "application/json");

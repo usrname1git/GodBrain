@@ -32,6 +32,10 @@ result. Graph and document reads use the same ready-generation snapshot and
 fail closed when the corpus is unready. Legacy records are reported only as a
 separate health count and are never mixed into Golden Record results.
 
+Search and desk-evaluation queries allow up to 1,024 UTF-8 bytes, with no
+additional 256-character limit. Search's 64-normalized-token guard and
+candidate/result/context budgets remain bounded; size errors name the limits.
+
 ## Source-of-truth and projection collections
 
 Alexandria source-of-truth collections retain their existing guarantees:

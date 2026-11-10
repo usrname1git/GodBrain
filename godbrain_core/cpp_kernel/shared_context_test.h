@@ -348,6 +348,17 @@ inline void run_shared_context_fixtures(const std::filesystem::path& root) {
             });
         rejects([&] { memory::shared_context("fixture", "", "technical", client); });
     }
+    const godbrain_rag::Client rejected_query([](const std::string&) {
+        return godbrain_rag::HttpResult{true, 400, "application/json",
+            json({{"error", godbrain_rag::kErrQueryTooLarge}}).dump()};
+    });
+    bool invalid_query = false;
+    try { memory::shared_context("fixture", "", "technical", rejected_query); }
+    catch (const std::invalid_argument& error) {
+        invalid_query = std::string(error.what()) ==
+            std::string("canonical RAG rejected query: ") + godbrain_rag::kErrQueryTooLarge;
+    }
+    shared_fixture_check(invalid_query, "Shared context mislabeled a query rejection as service failure");
     const auto cache_path = root / "logs" / "shared-context-index.json";
     std::ifstream input(cache_path, std::ios::binary);
     const std::string original((std::istreambuf_iterator<char>(input)), {});

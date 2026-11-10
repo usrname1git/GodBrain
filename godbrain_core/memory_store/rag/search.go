@@ -26,7 +26,6 @@ const (
 	DefaultContextBytes     = 8 * 1024
 	MaxContextBytes         = 32 * 1024
 	MaxQueryBytes           = 1024
-	MaxQueryRunes           = 256
 	MaxQueryTokens          = 64
 	MaxCandidateDocuments   = 200
 	MaxSnippetBytes         = 640
@@ -41,7 +40,7 @@ const (
 
 var (
 	ErrQueryRequired        = errors.New("query is required")
-	ErrQueryTooLarge        = errors.New("query exceeds the maximum size")
+	ErrQueryTooLarge        = errors.New("query exceeds 1024 UTF-8 bytes or 64 normalized tokens")
 	ErrInvalidTopK          = errors.New("top_k is outside the allowed range")
 	ErrInvalidContext       = errors.New("context_bytes is outside the allowed range")
 	ErrInvalidFilter        = errors.New("metadata filter is invalid")
@@ -159,7 +158,7 @@ func NormalizeQuery(query string) (string, []string, error) {
 	if strings.TrimSpace(query) == "" {
 		return "", nil, ErrQueryRequired
 	}
-	if len(query) > MaxQueryBytes || utf8.RuneCountInString(query) > MaxQueryRunes {
+	if len(query) > MaxQueryBytes {
 		return "", nil, ErrQueryTooLarge
 	}
 	query = norm.NFKC.String(query)

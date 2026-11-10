@@ -1252,8 +1252,9 @@ json shared_context(const std::string& query, const std::string& thread,
     std::string verified, error;
     if (scope == "technical" && !query.empty()) {
         json response;
-        const auto bounded_query = godbrain_rag::utf8_prefix(query, 1024);
-        if (client.search(bounded_query, 2, response, error)) {
+        const auto bounded_query = godbrain_rag::utf8_prefix(query, godbrain_rag::kMaxQueryBytes);
+        int error_status = 0;
+        if (client.search(bounded_query, 2, response, error, &error_status)) {
             if (result.at("current_os_pin").is_null()) {
                 json kept = json::array(), omitted = json::array();
                 for (const auto& hit : response.at("results")) {
@@ -1271,6 +1272,8 @@ json shared_context(const std::string& query, const std::string& thread,
             } else result["verified_manual"] = "withheld_live_os_pin_unavailable";
         } else if (error == "canonical RAG returned no usable context") {
             result["verified_manual"] = "no_matches";
+        } else if (error_status == 400) {
+            throw std::invalid_argument(error);
         } else {
             throw std::runtime_error(error);
         }

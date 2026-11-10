@@ -228,6 +228,7 @@ std::string wide_utf8(const std::wstring& w) {
 #endif
 
 bool normalize_query(const std::string& query, std::string* normalized, std::vector<std::string>* tokens, std::string* err) {
+    constexpr const char* too_large = "query exceeds 1024 UTF-8 bytes or 64 normalized tokens";
     std::string trimmed = query;
     while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front())) != 0) {
         trimmed.erase(trimmed.begin());
@@ -237,15 +238,11 @@ bool normalize_query(const std::string& query, std::string* normalized, std::vec
         return false;
     }
     if (query.size() > 1024) {
-        if (err) *err = "query exceeds the maximum size";
+        if (err) *err = too_large;
         return false;
     }
 #if defined(_WIN32)
     std::wstring w = utf8_wide(query);
-    if (static_cast<int>(w.size()) > 256) {
-        if (err) *err = "query exceeds the maximum size";
-        return false;
-    }
     int n = NormalizeString(NormalizationKC, w.c_str(), static_cast<int>(w.size()), nullptr, 0);
     if (n > 0) {
         std::wstring out(static_cast<size_t>(n), L'\0');
@@ -284,7 +281,7 @@ bool normalize_query(const std::string& query, std::string* normalized, std::vec
     }
     if (!cur.empty() && seen.insert({cur, true}).second) fields.push_back(cur);
     if (static_cast<int>(fields.size()) > 64) {
-        if (err) *err = "query exceeds the maximum size";
+        if (err) *err = too_large;
         return false;
     }
     std::string norm;
@@ -1752,6 +1749,20 @@ HttpResponse rag_handle_request(RagEngine* engine, const HttpRequest& req) {
 }
 
 int run_rag_text_self_test() {
+    std::string normalized, error;
+    std::vector<std::string> tokens;
+    std::string unicode_query;
+    for (int i = 0; i < 512; ++i) unicode_query += "\xc3\xa5";
+    for (const auto& query : {std::string(260, 'x'), std::string(1024, 'x'), unicode_query}) {
+        if (!normalize_query(query, &normalized, &tokens, &error) || normalized.empty()) return 1;
+    }
+    for (const auto& query : {std::string(1025, 'x'), unicode_query + "a"}) {
+        if (normalize_query(query, &normalized, &tokens, &error) ||
+            error != "query exceeds 1024 UTF-8 bytes or 64 normalized tokens") return 1;
+    }
+    std::string too_many_tokens;
+    for (int i = 0; i < 65; ++i) too_many_tokens += "term" + std::to_string(i) + " ";
+    if (normalize_query(too_many_tokens, &normalized, &tokens, &error)) return 1;
     std::string value = "a";
     value.push_back('\0');
     value.push_back('b');

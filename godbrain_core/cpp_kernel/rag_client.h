@@ -36,6 +36,8 @@ constexpr const char* kProjectionSchema = "rag-document-v2";
 constexpr const char* kRetrievalMode = "auto";
 constexpr int kTopK = 3;
 constexpr int kContextBytes = 4096;
+constexpr size_t kMaxQueryBytes = 1024;
+constexpr const char* kErrQueryTooLarge = "query exceeds 1024 UTF-8 bytes or 64 normalized tokens";
 constexpr int kDefaultGraphLimit = 250;
 constexpr int kMaxGraphLimit = 500;
 constexpr int kMaxGraphLinks = 1000;
@@ -966,21 +968,25 @@ public:
     bool search(
         const std::string& query,
         json& response,
-        std::string& error) const {
-        return search(query, kTopK, response, error);
+        std::string& error,
+        int* error_status = nullptr) const {
+        return search(query, kTopK, response, error, error_status);
     }
 
     bool search(
         const std::string& query,
         int top_k,
         json& response,
-        std::string& error) const {
+        std::string& error,
+        int* error_status = nullptr) const {
+        if (error_status) *error_status = 0;
         if (!validate_endpoint(kEndpoint)) {
             error = "canonical RAG endpoint validation failed";
             return false;
         }
-        if (query.empty() || query.size() > 1024) {
-            error = "RAG query is empty or oversized";
+        if (query.empty() || query.size() > kMaxQueryBytes) {
+            error = query.empty() ? "RAG query is empty" : "RAG query exceeds 1024 UTF-8 bytes";
+            if (error_status) *error_status = 400;
             return false;
         }
         if (top_k < 1) top_k = kTopK;
@@ -998,6 +1004,20 @@ public:
             return false;
         }
         if (http.status != 200) {
+            if (http.status == 400) {
+                json detail;
+                std::string decode_error;
+                if (decode_json_body(http, detail, decode_error) &&
+                    has_exact_keys(detail, {"error"}) && detail["error"].is_string()) {
+                    const auto reason = detail["error"].get<std::string>();
+                    if (reason == kErrQueryTooLarge || reason == "query exceeds the maximum size" ||
+                        reason == "query is required") {
+                        error = "canonical RAG rejected query: " + reason;
+                        if (error_status) *error_status = 400;
+                        return false;
+                    }
+                }
+            }
             error = "canonical RAG search returned a non-success status";
             return false;
         }

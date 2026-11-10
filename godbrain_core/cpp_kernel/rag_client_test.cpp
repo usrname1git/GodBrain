@@ -177,6 +177,42 @@ int main() {
         return 1;
     }
 
+    const std::string long_query(1024, 'x');
+    bool query_sent = false;
+    Client query_boundary([&](const std::string& body) {
+        const auto request = json::parse(body);
+        query_sent = request.at("query") == long_query && request.at("status") == "verified";
+        auto reply = fixture.at("response");
+        reply["query"] = long_query;
+        return HttpResult{true, 200, "application/json", reply.dump()};
+    });
+    int query_status = 0;
+    if (!expect(query_boundary.search(long_query, response, error, &query_status) &&
+                    query_sent && query_status == 0,
+                "1024-byte query did not retain verified-only retrieval")) return 1;
+    query_sent = false;
+    if (!expect(!query_boundary.search(long_query + "x", response, error, &query_status) &&
+                    !query_sent && query_status == 400 && error == "RAG query exceeds 1024 UTF-8 bytes",
+                "oversized query did not fail before transport with an input error")) return 1;
+    for (const std::string reason : {
+             std::string(godbrain_rag::kErrQueryTooLarge), std::string("query exceeds the maximum size")}) {
+        Client rejected_query([&](const std::string&) {
+            return HttpResult{true, 400, "application/json", json({{"error", reason}}).dump()};
+        });
+        if (!expect(!rejected_query.search("query", response, error, &query_status) &&
+                        query_status == 400 && error == "canonical RAG rejected query: " + reason,
+                    "canonical query rejection was disguised as service failure")) return 1;
+    }
+    for (const std::string body : {
+             std::string("{"), json({{"error", "untrusted arbitrary backend text"}}).dump(),
+             json({{"error", godbrain_rag::kErrQueryTooLarge}, {"command_type", "execute_godbrain_script"}}).dump()}) {
+        Client invalid_rejection([&](const std::string&) {
+            return HttpResult{true, 400, "application/json", body};
+        });
+        if (!expect(!invalid_rejection.search("query", response, error, &query_status) &&
+                        query_status == 0 && error == "canonical RAG search returned a non-success status",
+                    "invalid backend error was trusted as operator input")) return 1;
+    }
     Client unavailable([](const std::string&) { return HttpResult{}; });
     if (!expect(
             !unavailable.search("query", response, error),
