@@ -2,6 +2,7 @@
 const node=(tag,text,className)=>{const value=document.createElement(tag);if(text!==undefined)value.textContent=text;if(className)value.className=className;return value};
 const container=document.getElementById('projects'),status=document.getElementById('status'),viewer=document.getElementById('viewer');
 let projects=[];
+const projectOrder=new Map([['workspace',0],['command-center',1],['ios-shortcuts',2],['remote-dashboard',3],['reclaim11',Number.MAX_SAFE_INTEGER]]);
 function link(text,value){const url=new URL(value);if(url.protocol!=='https:'||url.username||url.password)throw new Error('Invalid project link');const a=node('a',text);a.href=url.href;a.rel='noopener noreferrer';return a}
 function imageUrl(project,image){
   if(!/^[a-z][a-z0-9-]{0,47}$/.test(project.id)||!/^[A-Z][A-Z0-9_]{0,47}$/.test(image.id)||!/^[a-f0-9]{64}$/.test(image.sha256)||
@@ -30,5 +31,5 @@ document.getElementById('search').addEventListener('input',render);
 document.getElementById('close').addEventListener('click',()=>viewer.close());
 fetch('./catalog.json',{cache:'no-store'}).then(response=>{if(!response.ok)throw new Error(`Catalog HTTP ${response.status}`);return response.json()}).then(data=>{
   if(data.schema_version!==1||!Array.isArray(data.projects))throw new Error('Invalid project catalog');
-  projects=data.projects;render();
+  projects=[...data.projects].sort((a,b)=>(projectOrder.get(a.id)??4)-(projectOrder.get(b.id)??4));render();
 }).catch(error=>{status.textContent=`Showcase unavailable: ${error.message}`;status.setAttribute('role','alert')});

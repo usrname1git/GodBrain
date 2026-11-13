@@ -4,8 +4,8 @@ param(
     [string]$BuilderWorkDir = '',
     [string]$CaptureDirectory = '',
     [string]$BatchDirectory = '',
-    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW')]
-    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW'),
+    [ValidateSet('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW','CLIPSHAREFLOW')]
+    [string[]]$Images = @('CMDSTATUS','CMDMODELS','RECLAIM11_DOOR','RECLAIM11_PRO','RECLAIM11_BEGINNER','PHONEDASHBOARD','WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','MONITORCONTROLS','AIRPLAYCONTROLS','IOSWORKFLOW','CLIPSHAREFLOW'),
     [string]$Ffmpeg = 'C:\Tools\ffmpeg\ffmpeg.exe',
     [switch]$SkipCapture
 )
@@ -52,7 +52,7 @@ try {
                 'PHONEDASHBOARD' { & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-phone.mjs') --output $output }
                 'MONITORCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView Monitor -CapturePng $output }
                 'AIRPLAYCONTROLS' { & 'C:\pwsh\pwsh.exe' -NoProfile -Sta -File (Join-Path $RepoRoot 'scripts\Show-DeskMenu.ps1') -CaptureView AirPlay -CapturePng $output }
-                { $_ -in @('WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','IOSWORKFLOW') } {
+                { $_ -in @('WORKSPACEMAP','WORKSPACEENV','WORKSPACEEVAL','IOSWORKFLOW','CLIPSHAREFLOW') } {
                     & node (Join-Path $RepoRoot 'godbrain_core\frontend\capture-workspace.mjs') --image $id --output $output
                 }
                 default {

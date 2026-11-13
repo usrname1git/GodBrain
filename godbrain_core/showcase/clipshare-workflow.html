@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClipShare: a simple link, a nontrivial boundary</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:56px;background:#0d1727;color:#eef4ff;font:20px system-ui}
+small{color:#91bddc;letter-spacing:.1em}h1{font-size:52px;line-height:1.15;margin:20px 0}p{color:#b5c5d8;line-height:1.55}
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin:36px 0}
+.step{border:1px solid #395370;background:#142339;border-radius:22px;padding:28px}.step h2{font-size:27px}
+.number{font-size:30px;font-weight:700;color:#73d0cc}.detail{font-size:18px;color:#9adbd7}
+.boundary{border-left:4px solid #73d0cc;padding:18px 26px;background:#162b3b;border-radius:0 18px 18px 0}
+footer{margin-top:28px;color:#99abc0;font-size:16px}
+@media(max-width:760px){body{padding:24px;font-size:18px}h1{font-size:36px}.flow{grid-template-columns:1fr}.step{padding:22px}}
+</style></head><body>
+<small>NATIVE WINDOWS / LOCAL FILES / ENGINEERING CASE STUDY</small>
+<h1>Just send a link.<br>Make the boundary do the hard work.</h1>
+<p>ClipShare turns a completed local file into media an ordinary browser can use, without opening the owner's private Library.</p>
+<div class="flow">
+<section class="step"><div class="number">01 / INTAKE</div><h2>Keep the original.</h2><p>Select in Explorer.<br>Copy into private staging.<br>Publish an entire Inbox file.</p><div class="detail">Real copy progress / atomic rename / no half-copied input</div></section>
+<section class="step"><div class="number">02 / PREPARE</div><h2>Change only what is needed.</h2><p>Remux compatible video.<br>Convert other supported media on CPU.<br>Verify the resulting derivative.</p><div class="detail">Fast-start MP4 / MP3 / normalized PNG / no GPU worker</div></section>
+<section class="step"><div class="number">03 / SHARE</div><h2>The selected file. Not the library.</h2><p>Copy its exact ready link.<br>Check live expiry and revocation.<br>Serve read-only media or a minimal player.</p><div class="detail">Hash-bound receipt / live share state / optional restricted HTTPS</div></section>
+</div>
+<div class="boundary"><strong>A receipt proves preparation. It does not grant perpetual access.</strong><p>Owner administration stays local. Revocation stops future access, not copies already downloaded. Public reachability needs its own external check.</p></div>
+<footer>Source-workflow illustration, not the native sender UI or a live sharing demonstration.<br>Source: usrname1git/ClipShare, documentation commit 801d1e6. No private files, credentials or bearer links.</footer>
+</body></html>

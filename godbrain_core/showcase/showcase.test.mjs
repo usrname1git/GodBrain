@@ -70,6 +70,17 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
       assert.equal(createHash('sha256').update(actual).digest('hex'), new URL(src, origin).searchParams.get('v'));
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    const clipshare = catalog.projects.find(project => project.id === 'clipshare');
+    if (clipshare) {
+      await page.getByLabel('Find a project').fill('ClipShare');
+      await page.getByText(summary([clipshare]), { exact: true }).waitFor();
+      const article = page.locator('#projects article');
+      assert.equal(await article.count(), 1);
+      assert.equal(await article.getByRole('link', { name: 'Project', exact: true }).getAttribute('href'), clipshare.url);
+      await article.locator('figure button').first().click();
+      await page.locator('#caption').getByText('source-workflow-illustration', { exact: false }).waitFor();
+      await page.keyboard.press('Escape');
+    }
     await page.getByLabel('Find a project').fill('Reclaim11');
     await page.getByText(summary(reclaimed), { exact: true }).waitFor();
     await page.locator('figure button').first().click();
