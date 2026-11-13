@@ -387,6 +387,35 @@ class ImageServerTests(unittest.TestCase):
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=15)
 
+    @unittest.skipIf(sys.prefix == sys.base_prefix, "Requires the isolated image interpreter")
+    def test_worker_keeps_isolated_imports_without_ambient_sites(self):
+        import site
+
+        worker = Path(self.temp.name) / "import-worker.py"
+        image = Path(self.temp.name) / "worker.png"
+        expected = str(Path(server.torch.__file__).resolve())
+        forbidden = [
+            str(Path(sys.base_prefix, "Lib", "site-packages").resolve()),
+            str(Path(site.getusersitepackages()).resolve()),
+        ]
+        worker.write_text(
+            "import json, pathlib, sys\n"
+            "import torch\n"
+            "from PIL import Image\n"
+            f"assert str(pathlib.Path(torch.__file__).resolve()) == {expected!r}\n"
+            f"forbidden = {forbidden!r}\n"
+            "assert not any(str(pathlib.Path(p).resolve()) in forbidden for p in sys.path if p)\n"
+            "payload = json.load(sys.stdin)\n"
+            f"Image.new('RGB', (256, 256)).save({str(image)!r})\n"
+            "result = {key: payload[key] for key in ('width', 'height', 'steps', 'seed')}\n"
+            f"result['path'] = {str(image)!r}\n"
+            "pathlib.Path(sys.argv[-1]).write_text(json.dumps({'result': result}))\n",
+            encoding="utf-8",
+        )
+        with patch.object(server, "__file__", str(worker)):
+            receipt = real_run_worker("a" * 32, "fixture", None, 256, 256, 1, 0)
+        self.assertEqual(receipt["path"], str(image))
+
     def test_internal_2k_png_can_exceed_public_input_byte_limit(self):
         size = 2048
         image = Image.frombytes("RGB", (size, size), random.Random(0).randbytes(size * size * 3))

@@ -1,14 +1,16 @@
-# Preserve the known shared CPU/OCR Torch ABI; do not change these as part of tool upgrades.
-torch==2.6.0+cu124
-torchvision==0.21.0+cu124
-torchaudio==2.6.0+cu124
+# Install the official cu134 wheels first; preserve this qualified CPU/OCR/audio set.
+torch==2.15.0+cu134
+torchvision==0.29.2+cu134
+torchaudio==2.11.1+cu134
+torchcodec==0.17.0
+sympy==1.14.0
 numpy==2.4.3
 huggingface-hub==1.33.0
 hf-xet==1.6.0
 httpx==0.28.1
 uvicorn==0.54.0
-pillow==12.3.0
-cryptography==48.0.1
+pillow==13.0.0
+cryptography==50.0.2
 PyJWT==2.15.1
 mcp==2.3.0
 fastapi==0.143.2

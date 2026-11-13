@@ -1,0 +1,119 @@
+diff --git a/tools/wheels.py b/tools/wheels.py
+index 15c2ce3..5cdacd4 100644
+--- a/tools/wheels.py
++++ b/tools/wheels.py
+@@ -153 +153 @@ def cuda_tag(driver_index_url: str = "") -> str:
+-# Supported builds published by turboderp-org/exllamav3 v1.6.1. Written down rather
++# Supported builds published by turboderp-org/exllamav3 v1.6.6. Written down rather
+@@ -165 +165 @@ ENGINE_PACKAGE = "exllamav3"
+-ENGINE_VERSION = "1.6.1"
++ENGINE_VERSION = "1.6.6"
+@@ -172 +172 @@ ENGINE_WHEELS: dict[str, dict[str, tuple[str, ...]]] = {
+-        "2.8.0":  ("cp310", "cp311", "cp312"),
++        "2.8.0":  ("cp310", "cp311", "cp312", "cp313"),
+@@ -178,0 +179,2 @@ ENGINE_WHEELS: dict[str, dict[str, tuple[str, ...]]] = {
++        "2.12.0": ("cp310", "cp311", "cp312", "cp313", "cp314"),
++        "2.13.0": ("cp310", "cp311", "cp312", "cp313", "cp314"),
+diff --git a/tools/test_serve_drafting.py b/tools/test_serve_drafting.py
+index f7223be..ce67320 100644
+--- a/tools/test_serve_drafting.py
++++ b/tools/test_serve_drafting.py
+@@ -19 +19 @@ class EngineReleaseTests(unittest.TestCase):
+-        self.assertEqual(wheels.ENGINE_VERSION, "1.6.1")
++        self.assertEqual(wheels.ENGINE_VERSION, "1.6.6")
+@@ -31,2 +31,2 @@ class EngineReleaseTests(unittest.TestCase):
+-            "https://github.com/turboderp-org/exllamav3/releases/download/v1.6.1/"
+-            "exllamav3-1.6.1+cu128.torch2.11.0-cp313-cp313-win_amd64.whl",
++            "https://github.com/turboderp-org/exllamav3/releases/download/v1.6.6/"
++            "exllamav3-1.6.6+cu128.torch2.11.0-cp313-cp313-win_amd64.whl",
+@@ -33,0 +34,7 @@ class EngineReleaseTests(unittest.TestCase):
++        self.assertEqual(wheels.torch_requirement(tags, "cu132"), "torch==2.13.0")
++        self.assertEqual(
++            wheels.engine_wheel_url(tags, "2.13.0", "cu132"),
++            "https://github.com/turboderp-org/exllamav3/releases/download/v1.6.6/"
++            "exllamav3-1.6.6+cu132.torch2.13.0-cp313-cp313-win_amd64.whl",
++        )
++        self.assertIsNone(wheels.engine_wheel_url(tags, "2.15.0", "cu132"))
+diff --git a/paper-godbrain/requirements.txt b/paper-godbrain/requirements.txt
+index 1154a92..e5da81f 100644
+--- a/paper-godbrain/requirements.txt
++++ b/paper-godbrain/requirements.txt
+@@ -1,4 +1,4 @@
+-# Windows x64 / Python 3.13 desk stack. Install torch from the cu128 index first.
+-torch==2.11.0+cu128
+-exllamav3 @ https://github.com/turboderp-org/exllamav3/releases/download/v1.6.1/exllamav3-1.6.1%2Bcu128.torch2.11.0-cp313-cp313-win_amd64.whl#sha256=44f302ad358236c50a867e8b06df29495a6029652dfe0a219c7b2c54c700e319
+-transformers==5.19.0
++# Windows x64 / Python 3.13 desk stack. Install torch from the cu132 index first.
++torch==2.13.0+cu132
++exllamav3 @ https://github.com/turboderp-org/exllamav3/releases/download/v1.6.6/exllamav3-1.6.6%2Bcu132.torch2.13.0-cp313-cp313-win_amd64.whl#sha256=4e64229095ee6e10e6398b62bd656f4b92d6d921f5802b0c705effc47391b96f
++transformers==5.22.2
+@@ -6,2 +6,8 @@ tokenizers==0.23.3
+-huggingface_hub==1.33.0
+-triton-windows==3.8.0.post29
++huggingface_hub==2.4.0
++hf-xet==1.8.0
++httpx2==2.16.0
++httpcore2==2.16.0
++truststore==0.10.5
++certifi==2026.10.23
++setuptools==84.2.1
++triton-windows==3.7.1.post27
+@@ -10 +16 @@ pydantic==2.14.0
+-aiohttp==3.14.3
++aiohttp==3.14.4
+@@ -12 +18 @@ safetensors==0.8.0
+-pillow==12.3.0
++pillow==13.0.0
+diff --git a/paper-godbrain/Install-Qwen.ps1 b/paper-godbrain/Install-Qwen.ps1
+index d3a716a..e597f68 100644
+--- a/paper-godbrain/Install-Qwen.ps1
++++ b/paper-godbrain/Install-Qwen.ps1
+@@ -1,2 +1 @@
+-# Venv + ExLlamaV3 *prebuilt* cu128 wheel + 3.5 bpw weights. Does not load the GPU.
+-# Do not call win_start.bootstrap: CUDA Toolkit 13.3 vs torch cu128 compiles to death.
++# Venv + ExLlamaV3 prebuilt cu132 wheel + 3.5 bpw weights. Does not load the GPU.
+@@ -22,2 +21,2 @@ if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+-& $venvPy -m pip install "torch==2.11.0+cu128" --index-url https://download.pytorch.org/whl/cu128
+-if ($LASTEXITCODE -ne 0) { throw "torch cu128 failed" }
++& $venvPy -m pip install "torch==2.13.0+cu132" --index-url https://download.pytorch.org/whl/cu132
++if ($LASTEXITCODE -ne 0) { throw "torch cu132 failed" }
+diff --git a/paper-godbrain/Start-Qwen.ps1 b/paper-godbrain/Start-Qwen.ps1
+index a0ff06c..8304099 100644
+--- a/paper-godbrain/Start-Qwen.ps1
++++ b/paper-godbrain/Start-Qwen.ps1
+@@ -67,2 +67,2 @@ if (-not (Test-Path (Join-Path $model "config.json"))) { throw "weights missing
+-# Torch is cu128. Toolkit 13.3 on this host made the compile path die; do not
+-# set CUDA_HOME (nvcc 13.3 vs torch 12.8). Triton JIT *does* need a working
++# Torch is cu132 with a matched prebuilt extension; do not set CUDA_HOME
++# or invoke an unrelated source rebuild. Triton JIT needs a working
+diff --git a/paper-godbrain/README.md b/paper-godbrain/README.md
+index 2fda7e8..6d9edfd 100644
+--- a/paper-godbrain/README.md
++++ b/paper-godbrain/README.md
+@@ -5 +5 @@ The local desk/gym text mouth on :8888. One 4080 slot.
+-- Engine: ExLlamaV3 1.6.1 EXL3, matched to PyTorch 2.11.0/cu128 (not llama.cpp GGUF)
++- Engine: ExLlamaV3 1.6.6 EXL3, matched to PyTorch 2.13.0/cu132 and Triton-Windows 3.7.1.post27 (not llama.cpp GGUF)
+@@ -15,3 +15,3 @@ The Windows x64/Python 3.13 desk dependency manifest is `requirements.txt`.
+-It pins the engine's matching prebuilt wheel and published SHA-256, keeps
+-PyTorch/CUDA unchanged, and keeps Hub on compatible 1.x rather than mixing
+-the CLI's major upgrade into inference. The kit's setup, wheel selection,
++It pins the engine's matching prebuilt wheel and published SHA-256, pairs
++PyTorch/CUDA with that native ABI, and uses the qualified Hub 2.4/Transformers
++5.22.2 stack. The kit's setup, wheel selection,
+@@ -20 +20,9 @@ Historical context/VRAM measurements below were made with engine 1.4.4;
+-they are not new performance claims for 1.6.1.
++they are not new performance claims for 1.6.6.
++
++The 1.6.6 update passed at the final `.venv` path: actual CUDA matmul and a
++Triton add kernel, 25 offline server tests, and live 10240/fp16/13.5-GiB
++text/API checks with None, MTP and ngram drafting. Each mode passed arithmetic,
++SSE completion/usage and typed tool output without executing the tool. Existing
++3.5-bpw weights were reused and retained. Launch defaults are unchanged; this
++does not certify every other model or maximum-context profile. The prior
++environment is retained outside the kit for rollback.
+@@ -119 +127,4 @@ the canonical names above describe the main desk model, not paper trading.
+-This host has CUDA Toolkit 13.3 and torch cu128. The kit's compile path dies on that mismatch. Install uses the GitHub `cu128.torch2.11.0-cp313` wheel instead.
++The desk installer uses the exact GitHub `cu132.torch2.13.0-cp313` wheel,
++not a source rebuild against an unrelated host toolkit. The generic kit
++bootstrap retains its cu128 driver-compatible default; the desk manifest
++explicitly selects the qualified cu132 stack.
