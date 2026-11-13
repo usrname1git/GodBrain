@@ -247,7 +247,7 @@ def run_worker(request_id, prompt, input_image, width, height, steps, seed):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = os.pathsep.join(path for path in sys.path if path)
         process = subprocess.Popen(
-            [sys._base_executable, "-u", str(Path(__file__).resolve()), "--worker",
+            [sys._base_executable, "-S", "-u", str(Path(__file__).resolve()), "--worker",
              str(progress_path), str(result_path)], stdin=subprocess.PIPE, env=environment)
         job = None
         try:
