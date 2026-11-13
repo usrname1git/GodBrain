@@ -75,7 +75,7 @@ func DecodeDeskEvalFile(reader io.Reader) (DeskEvalFile, error) {
 			return file, errors.New("desk evaluation query id is duplicated")
 		}
 		seen[query.ID] = struct{}{}
-		if query.Query == "" || utf8.RuneCountInString(query.Query) > MaxQueryRunes {
+		if query.Query == "" || len(query.Query) > MaxQueryBytes {
 			return file, errors.New("desk evaluation query text is invalid")
 		}
 		if len(query.Needles) == 0 || len(query.Needles) > 8 {

@@ -462,7 +462,7 @@ bool decode_desk_eval(const std::string& raw, DeskFile* out, std::string* err) {
             if (err) *err = "desk evaluation query id is duplicated";
             return false;
         }
-        if (dq.query.empty() || utf8_runes(dq.query) > 256) {
+        if (dq.query.empty() || dq.query.size() > 1024) {
             if (err) *err = "desk evaluation query text is invalid";
             return false;
         }
@@ -504,6 +504,15 @@ int run_eval_self_test() {
     std::string err;
     check(decode_desk_eval(good, &file, &err) && file.queries.size() == 1 && file.queries[0].id == "heal-never-kills",
           "desk-ok");
+    std::string unicode_query;
+    for (int i = 0; i < 512; ++i) unicode_query += "\xc3\xa5";
+    for (const auto& query : {std::string(1024, 'x'), unicode_query, unicode_query + "a"}) {
+        std::string input = good;
+        input.replace(input.find("Heal never kills"), std::string("Heal never kills").size(), query);
+        file = {};
+        err.clear();
+        check(decode_desk_eval(input, &file, &err) == (query.size() <= 1024), "desk-query-byte-limit");
+    }
     file = {};
     err.clear();
     const char* extra =

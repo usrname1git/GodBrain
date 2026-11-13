@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,41 @@ func TestNormalizeQueryBoundsAndSanitizesOperators(t *testing.T) {
 
 	if _, _, err = NormalizeQuery(strings.Repeat("x", MaxQueryBytes+1)); !errors.Is(err, ErrQueryTooLarge) {
 		t.Fatalf("expected ErrQueryTooLarge, got %v", err)
+	}
+}
+
+func TestNormalizeQueryUTF8ByteLimit(t *testing.T) {
+	for _, query := range []string{
+		strings.Repeat("x", 260),
+		strings.Repeat("x", MaxQueryBytes),
+		strings.Repeat("å", MaxQueryBytes/2),
+		strings.Repeat("\u2167", MaxQueryBytes/4),
+		strings.Repeat("\uff21", MaxQueryBytes/3),
+	} {
+		normalized, _, err := NormalizeQuery(query)
+		if err != nil || normalized == "" {
+			t.Fatalf("rejected %d-byte query: %v", len(query), err)
+		}
+		if len(normalized) > MaxQueryBytes {
+			t.Fatalf("accepted %d-byte normalization", len(normalized))
+		}
+	}
+	for _, query := range []string{
+		strings.Repeat("x", MaxQueryBytes+1),
+		strings.Repeat("å", MaxQueryBytes/2) + "a",
+		strings.Repeat("\u2167", MaxQueryBytes/4+1),
+		strings.Repeat("\u2167", 300),
+	} {
+		if _, _, err := NormalizeQuery(query); !errors.Is(err, ErrQueryTooLarge) {
+			t.Fatalf("accepted %d-byte query: %v", len(query), err)
+		}
+	}
+	var terms []string
+	for i := 0; i <= MaxQueryTokens; i++ {
+		terms = append(terms, "term"+strconv.Itoa(i))
+	}
+	if _, _, err := NormalizeQuery(strings.Join(terms, " ")); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("token limit was not enforced: %v", err)
 	}
 }
 

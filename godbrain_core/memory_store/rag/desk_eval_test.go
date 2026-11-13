@@ -2,6 +2,7 @@ package rag
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -33,5 +34,27 @@ func TestDeskEvalFileRejectsUnknownFields(t *testing.T) {
 	_, err = DecodeDeskEvalFile(bytes.NewReader(mutated))
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("want unknown-field error, got %v", err)
+	}
+}
+
+func TestDeskEvalQueryUTF8ByteLimit(t *testing.T) {
+	for _, query := range []string{
+		strings.Repeat("x", MaxQueryBytes),
+		strings.Repeat("å", MaxQueryBytes/2),
+		strings.Repeat("x", MaxQueryBytes+1),
+		strings.Repeat("å", MaxQueryBytes/2) + "a",
+	} {
+		data, err := json.Marshal(DeskEvalFile{
+			Version: DeskEvalVersion,
+			TopK:    1,
+			Queries: []DeskEvalQuery{{ID: "boundary", Query: query, Needles: []string{"fixture"}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = DecodeDeskEvalFile(bytes.NewReader(data))
+		if (err == nil) != (len(query) <= MaxQueryBytes) {
+			t.Fatalf("unexpected result for %d-byte query: %v", len(query), err)
+		}
 	}
 }
