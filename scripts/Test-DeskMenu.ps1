@@ -1134,6 +1134,7 @@ Write-Output "Desk model routing, GPU-slot, and non-blocking status checks passe
 
 if ($UiSmoke) {
     if ([Threading.Thread]::CurrentThread.ApartmentState -ne "STA") { throw "UI smoke requires pwsh -Sta." }
+    $script:DeskUiSmoke = $true
     $script:uiScriptsRoot = $PSScriptRoot
     $source = [System.Collections.Generic.List[string]]::new()
     foreach ($statement in $ast.EndBlock.Statements) {

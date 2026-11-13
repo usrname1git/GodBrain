@@ -199,7 +199,6 @@ struct Target {
     Capabilities caps;
     std::string display;
     std::wstring topology;
-    ULONGLONG discovered_at = 0;
     mutable bool read_failed = false;
 };
 
@@ -234,13 +233,12 @@ static std::wstring topology_signature() {
 
 template <typename Discover>
 static Target& session_target(std::unique_ptr<Target>& cached, const std::wstring& topology,
-                              ULONGLONG now, Discover discover) {
-    if (!cached || cached->read_failed || cached->topology != topology || now - cached->discovered_at >= 30000) {
+                              Discover discover) {
+    if (!cached || cached->read_failed || cached->topology != topology) {
         if (cached && cached->owner) cached->owner->close();
         cached.reset();
         auto target = discover();
         target.topology = topology;
-        target.discovered_at = now;
         cached = std::make_unique<Target>(std::move(target));
     }
     return *cached;
@@ -506,16 +504,14 @@ static json self_test() {
     std::unique_ptr<Target> cached;
     unsigned discoveries = 0;
     auto discover = [&]() { ++discoveries; return Target{}; };
-    session_target(cached, L"first", 100, discover);
-    session_target(cached, L"first", 200, discover);
+    session_target(cached, L"first", discover);
+    session_target(cached, L"first", discover);
     check(discoveries == 1);
-    session_target(cached, L"changed", 300, discover);
+    session_target(cached, L"changed", discover);
     check(discoveries == 2);
-    session_target(cached, L"changed", 30300, discover);
-    check(discoveries == 3);
     cached.reset();
-    session_target(cached, L"changed", 30400, discover);
-    check(discoveries == 4);
+    session_target(cached, L"changed", discover);
+    check(discoveries == 3);
     cached->caps = legacy;
     unsigned reads = 0;
     const auto failed = feature(*cached, 0x10, true, [&](HANDLE, BYTE, DWORD*) -> DWORD {
@@ -523,9 +519,9 @@ static json self_test() {
         throw std::runtime_error("Fixture advertised VCP read failed");
     });
     check(failed["supported"] == false && failed["error"] == "Fixture advertised VCP read failed");
-    if (!cached->read_failed) throw std::runtime_error("Advertised read failure left cached target reusable");
-    session_target(cached, L"changed", 30401, discover);
-    check(discoveries == 5 && !cached->read_failed);
+    check(cached->read_failed);
+    session_target(cached, L"changed", discover);
+    check(discoveries == 4 && !cached->read_failed);
     cached->caps = legacy;
     const auto unreadable = feature(*cached, 0xF4, false, [&](HANDLE, BYTE, DWORD*) -> DWORD {
         ++reads; return 0;
@@ -535,8 +531,12 @@ static json self_test() {
         ++reads; *maximum = 100; return 75;
     });
     check(readable["supported"] == true && readable["current"] == 75 && !cached->read_failed);
-    session_target(cached, L"changed", 30402, discover);
-    check(discoveries == 5 && reads == 2);
+    session_target(cached, L"changed", discover);
+    check(discoveries == 4);
+    const auto refreshed = feature(*cached, 0x12, true, [&](HANDLE, BYTE, DWORD* maximum) -> DWORD {
+        ++reads; *maximum = 100; return 60;
+    });
+    check(refreshed["current"] == 60 && reads == 3 && discoveries == 4);
     return {{"schema_version", 1}, {"ok", true}, {"self_test", "passed"}};
 }
 
@@ -582,15 +582,13 @@ static int serve() {
             } else validate_change(control, value);
             OperationLock lock;
             const auto topology = topology_signature();
-            auto& target = session_target(cached, topology, GetTickCount64(), [&]() {
+            auto& target = session_target(cached, topology, [&]() {
                 auto found = select_target();
                 if (topology_signature() != topology)
                     throw std::runtime_error("Display topology changed during discovery; refresh");
                 return found;
             });
-            const auto result = operate(target, control, value, may_have_changed);
-            if (target.read_failed) cached.reset();
-            std::cout << result.dump() << '\n' << std::flush;
+            std::cout << operate(target, control, value, may_have_changed).dump() << '\n' << std::flush;
         } catch (const std::exception& error) {
             cached.reset();
             std::cout << json{{"schema_version", 1}, {"ok", false}, {"error", error.what()},

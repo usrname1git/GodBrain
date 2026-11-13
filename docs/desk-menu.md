@@ -4,8 +4,10 @@
 Dashboard**. Launcher filenames, API paths and internal service names remain
 unchanged; this is not a GodBrain-wide rename.
 
-Run `.\scripts\Show-DeskMenu.ps1` from PowerShell. It returns the caller's
-shell and opens a separate hidden STA WinForms host. X hides the panel;
+Run `.\scripts\Show-DeskMenu.ps1` from PowerShell. Its native C++ launcher
+returns the caller's shell and reuses the existing panel, including when hidden
+to the tray. With no panel it opens a separate hidden STA WinForms host.
+`-NewInstance` explicitly opens another panel. X hides the panel;
 the power glyph quits. Status and Ask use serialized asynchronous workers
 instead of blocking the UI. Image status checks port 8871 and identifies
 Qwen-Image-2.1 independently of the text/vision service on port 8888.
@@ -18,18 +20,28 @@ on port 8000; Qwen on 8888 and Qwen-Image on 8871 are unaffected. Its
 For text answers, select a text Qwen profile on the Model page, then use
 **Status > Model > Start**. Qwen-Image generates images, not text answers.
 
-For a Windows desktop or Start-menu shortcut, target PowerShell 7 explicitly
-instead of relying on the `.ps1` file association:
+Build the native launcher with `.\scripts\Build-DeskShell.ps1`. For a Windows
+desktop, Start-menu or taskbar shortcut, use:
 
 ```text
-C:\pwsh\pwsh.exe -NoProfile -STA -WindowStyle Hidden -File "<repo>\scripts\Show-DeskMenu.ps1" -ControlPanelHost
+"<repo>\build\desk_shell\desk-shell.exe" launch "<repo>"
 ```
 
 Replace `<repo>` with the checkout path and set **Start in** to that directory.
-Adjust the PowerShell executable path for other installations. Run as the
-normal user, not administrator; no execution-policy bypass is needed.
-This launches the existing WinForms host directly without occupying another
-terminal. It is not a native executable or a Linux/macOS port.
+The launcher uses the portable `C:\pwsh\pwsh.exe`. Run normally as the current
+user; no execution-policy bypass is needed. Add `--new-instance` for another
+panel, or `--admin` for an independent administrative panel (normal Windows
+elevation applies). The UI remains WinForms, not a browser wrapper or a
+Linux/macOS port. The exact existing taskbar pin can be updated with the
+native `install "<repo>" "<existing-pin.lnk>"` command after backing it up.
+That also registers **GodBrain Desk - New instance** and **Run as
+Administrator** Jump List tasks. Shell-menu presentation depends on Explorer;
+registration alone does not prove the cached pin exposes them.
+On the qualified host, ordinary pin/tray reuse and the explicit New instance
+task passed real shell checks. The generic bottom **GodBrain Desk** entry still
+follows the shortcut's reuse behavior; use the named New instance task instead.
+Administrative startup passed from an already-elevated caller; the normal-user
+UAC consent interaction was not automated.
 
 For **Change Icon**, select `<repo>\godbrain_core\frontend\command-center.ico`.
 It uses the panel's tray artwork with transparent 16, 24, 32, 48, 64, 128 and
@@ -756,12 +768,14 @@ contrast and advertised color presets have hardware readback verification.
 No DDM installation, SDK or background monitor poller is required.
 Command Center keeps its existing native helper on a private stdin/stdout
 connection while the window is open. Repeated Apply operations reuse the
-expensive capability discovery for at most 30 seconds; active display/device
-identities are checked each time, and topology changes or errors discard the
-cached handles. Hardware writes and complete readback still run serially.
-A failed advertised-control read also discards the handles after returning the
-partial snapshot; genuinely unadvertised controls do not. The next request
-rediscovers the target without replaying a write.
+expensive static capability discovery while active display/device identities
+remain unchanged. There is no periodic 30-second expiry; identities are checked
+each time, and topology changes or errors discard the cached handles.
+Failed advertised-control reads also force rediscovery on the next request;
+genuinely unadvertised controls do not. Current settings are never cached:
+hardware writes and complete fresh readback still run serially.
+Initial discovery, or rediscovery after a topology change or failure, can still
+take several seconds.
 There is no artificial unlock delay, queued write or premature success; controls
 unlock when the verified result arrives. Quitting closes the owned helper.
 Discovery checks all active monitor identities, ignoring stale records left
