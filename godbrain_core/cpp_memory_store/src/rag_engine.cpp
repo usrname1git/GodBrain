@@ -34,6 +34,7 @@ constexpr const char* kNotice =
 constexpr const char* kProjVer = "hybrid-v1";
 constexpr const char* kProjSchema = "rag-document-v2";
 constexpr const char* kIndexer = "mongodb-text-v1";
+constexpr const char* kErrQueryNormalization = "query normalization failed";
 
 int64_t utc_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -243,15 +244,27 @@ bool normalize_query(const std::string& query, std::string* normalized, std::vec
     }
 #if defined(_WIN32)
     std::wstring w = utf8_wide(query);
+    constexpr size_t max_normalization_chars = 32 * 1024;
     int n = NormalizeString(NormalizationKC, w.c_str(), static_cast<int>(w.size()), nullptr, 0);
-    if (n > 0) {
-        std::wstring out(static_cast<size_t>(n), L'\0');
-        int wrote = NormalizeString(NormalizationKC, w.c_str(), static_cast<int>(w.size()), out.data(), n);
-        if (wrote > 0) {
-            out.resize(static_cast<size_t>(wrote));
-            w = std::move(out);
-        }
+    if (n <= 0 || static_cast<size_t>(n) > max_normalization_chars) {
+        if (err) *err = kErrQueryNormalization;
+        return false;
     }
+    std::wstring out(static_cast<size_t>(n), L'\0');
+    int wrote = NormalizeString(NormalizationKC, w.c_str(), static_cast<int>(w.size()), out.data(), n);
+    while (wrote <= 0) {
+        const size_t required = static_cast<size_t>(-static_cast<int64_t>(wrote));
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+            required <= out.size() || required > max_normalization_chars) {
+            if (err) *err = kErrQueryNormalization;
+            return false;
+        }
+        out.resize(required);
+        wrote = NormalizeString(NormalizationKC, w.c_str(), static_cast<int>(w.size()),
+                                out.data(), static_cast<int>(out.size()));
+    }
+    out.resize(static_cast<size_t>(wrote));
+    w = std::move(out);
     CharLowerBuffW(w.data(), static_cast<DWORD>(w.size()));
     std::wstring built;
     bool in_token = false;
@@ -288,6 +301,10 @@ bool normalize_query(const std::string& query, std::string* normalized, std::vec
     for (size_t i = 0; i < fields.size(); ++i) {
         if (i) norm.push_back(' ');
         norm += fields[i];
+    }
+    if (norm.size() > 1024) {
+        if (err) *err = too_large;
+        return false;
     }
     *normalized = norm;
     *tokens = std::move(fields);
@@ -1106,7 +1123,9 @@ HttpResponse handle_search(RagEngine* e, const HttpRequest& req) {
     std::string nerr;
     std::string normalized;
     std::vector<std::string> tokens;
-    if (!normalize_query(query, &normalized, &tokens, &nerr)) return api_error(400, nerr);
+    if (!normalize_query(query, &normalized, &tokens, &nerr)) {
+        return api_error(nerr == kErrQueryNormalization ? 503 : 400, nerr);
+    }
     if (top_k < 1 || top_k > 25) return api_error(400, "top_k is outside the allowed range");
     if (context_bytes < 256 || context_bytes > 32 * 1024) {
         return api_error(400, "context_bytes is outside the allowed range");
@@ -1763,6 +1782,31 @@ int run_rag_text_self_test() {
     std::string too_many_tokens;
     for (int i = 0; i < 65; ++i) too_many_tokens += "term" + std::to_string(i) + " ";
     if (normalize_query(too_many_tokens, &normalized, &tokens, &error)) return 1;
+#if defined(_WIN32)
+    std::string expanding_query;
+    for (int i = 0; i < 256; ++i) expanding_query += "\xe2\x85\xa7";
+    if (!normalize_query(expanding_query, &normalized, &tokens, &error) ||
+        normalized.size() != 1024 || tokens.size() != 1) return 1;
+    const std::string first_oversized = expanding_query + "\xe2\x85\xa7";
+    for (int i = 256; i < 300; ++i) expanding_query += "\xe2\x85\xa7";
+    for (const auto& query : {first_oversized, expanding_query}) {
+        if (normalize_query(query, &normalized, &tokens, &error) ||
+            error != "query exceeds 1024 UTF-8 bytes or 64 normalized tokens") return 1;
+        const HttpRequest request{"POST", "/v1/search", "", "application/json",
+                                  "{\"query\":\"" + godbrain::memory::json_escape(query) + "\"}"};
+        const auto response = rag_handle_request(nullptr, request);
+        Json error_body;
+        std::string parse_error, api_error_message;
+        if (response.status != 400 ||
+            !parse_json(response.body, &error_body, &parse_error) ||
+            !json_string(error_body, "error", &api_error_message) ||
+            api_error_message != error) return 1;
+    }
+    std::string compacting_query;
+    for (int i = 0; i < 341; ++i) compacting_query += "\xef\xbc\xa1";
+    if (!normalize_query(compacting_query, &normalized, &tokens, &error) ||
+        normalized != std::string(341, 'a')) return 1;
+#endif
     std::string value = "a";
     value.push_back('\0');
     value.push_back('b');

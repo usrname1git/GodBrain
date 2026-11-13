@@ -38,14 +38,22 @@ func TestNormalizeQueryUTF8ByteLimit(t *testing.T) {
 		strings.Repeat("x", 260),
 		strings.Repeat("x", MaxQueryBytes),
 		strings.Repeat("å", MaxQueryBytes/2),
+		strings.Repeat("\u2167", MaxQueryBytes/4),
+		strings.Repeat("\uff21", MaxQueryBytes/3),
 	} {
-		if normalized, _, err := NormalizeQuery(query); err != nil || normalized == "" {
+		normalized, _, err := NormalizeQuery(query)
+		if err != nil || normalized == "" {
 			t.Fatalf("rejected %d-byte query: %v", len(query), err)
+		}
+		if len(normalized) > MaxQueryBytes {
+			t.Fatalf("accepted %d-byte normalization", len(normalized))
 		}
 	}
 	for _, query := range []string{
 		strings.Repeat("x", MaxQueryBytes+1),
 		strings.Repeat("å", MaxQueryBytes/2) + "a",
+		strings.Repeat("\u2167", MaxQueryBytes/4+1),
+		strings.Repeat("\u2167", 300),
 	} {
 		if _, _, err := NormalizeQuery(query); !errors.Is(err, ErrQueryTooLarge) {
 			t.Fatalf("accepted %d-byte query: %v", len(query), err)

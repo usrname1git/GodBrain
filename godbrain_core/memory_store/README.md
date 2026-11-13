@@ -35,6 +35,8 @@ separate health count and are never mixed into Golden Record results.
 Search and desk-evaluation queries allow up to 1,024 UTF-8 bytes, with no
 additional 256-character limit. Search's 64-normalized-token guard and
 candidate/result/context budgets remain bounded; size errors name the limits.
+The 1,024-byte bound applies to both the raw query and its final normalized
+form, including NFKC expansion.
 
 ## Source-of-truth and projection collections
 

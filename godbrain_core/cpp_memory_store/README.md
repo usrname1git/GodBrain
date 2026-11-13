@@ -34,7 +34,11 @@ Cut 6: `rag-service.exe` on `127.0.0.1:8084` (or `GODBRAIN_RAG_PORT`). GET
 
 Search and desk-evaluation queries allow up to 1,024 UTF-8 bytes, without a
 separate 256-character cap. Search retains its 64-normalized-token bound and
-existing candidate/result/context budgets. Size rejections name these limits.
+existing candidate/result/context budgets. The 1,024-byte bound applies to both
+the raw query and its final normalized form, including NFKC expansion.
+Size rejections name these limits.
+Windows normalization retries underestimated buffer sizes within a bounded
+scratch allocation. A normalization failure returns `503`, not unnormalized text.
 The kernel preserves recognized canonical query rejections as input errors
 (`400` for shared context), not generic service-unavailable failures.
 

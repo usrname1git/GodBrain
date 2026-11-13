@@ -192,7 +192,11 @@ func NormalizeQuery(query string) (string, []string, error) {
 		seen[field] = struct{}{}
 		tokens = append(tokens, field)
 	}
-	return strings.Join(tokens, " "), tokens, nil
+	normalized := strings.Join(tokens, " ")
+	if len(normalized) > MaxQueryBytes {
+		return "", nil, ErrQueryTooLarge
+	}
+	return normalized, tokens, nil
 }
 
 func normalizeRequest(request SearchRequest) (SearchRequest, string, []string, error) {
