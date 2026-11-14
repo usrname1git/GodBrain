@@ -12,7 +12,7 @@ param(
     [switch]$Status,
     [switch]$ControlPanelHost,
     [switch]$NewInstance,
-    [ValidateSet('Status', 'Model', 'Monitor', 'AirPlay')]
+    [ValidateSet('Status', 'Model', 'Ask', 'Monitor', 'Layouts', 'AirPlay')]
     [string]$CaptureView,
     [string]$CapturePng,
     [switch]$StatusSnapshot,
@@ -1770,7 +1770,7 @@ function Show-Page([string]$name) {
     if (-not $CaptureView -and $name -eq "Monitor" -and -not $script:monitorSnapshot -and -not $script:monitorJob) {
         Start-MonitorOperation "read"
     }
-    if ($name -eq "Layouts" -and -not $script:displaySnapshot -and -not $script:displayJob) {
+    if (-not $CaptureView -and $name -eq "Layouts" -and -not $script:displaySnapshot -and -not $script:displayJob) {
         Start-DisplayOperation "list"
     }
 }
@@ -3170,10 +3170,8 @@ Set-DisplayEnabled
 Update-DisplayDetails
 Show-Page "Status"
 
-if ($CaptureView) {
-    try {
-        $path = [IO.Path]::GetFullPath($CapturePng)
-        if ([IO.Path]::GetExtension($path) -ne '.png') { throw "CapturePng must name a PNG file." }
+function Set-DeskCaptureContent([string]$View) {
+    if ($View -in @('Status', 'AirPlay')) {
         $snapshot = Get-DeskSnapshot
         foreach ($entry in $script:statusRows.GetEnumerator()) {
             $text = [string]$snapshot.Rows.($entry.Key)
@@ -3185,15 +3183,43 @@ if ($CaptureView) {
             $text = $text -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '[address omitted]'
             $entry.Value.Text = $text
         }
-        $script:modelLive.Text = 'Public UI capture; live diagnostic details omitted'
-        if ($script:modelSettingsError) {
-            $script:modelSettingsHint.Text = 'Saved model settings are invalid; private diagnostic details omitted.'
+    }
+    $script:modelLive.Text = 'Public UI capture; live diagnostic details omitted'
+    if ($script:modelSettingsError) {
+        $script:modelSettingsHint.Text = 'Saved model settings are invalid; private diagnostic details omitted.'
+    }
+    switch ($View) {
+        'Ask' {
+            $askPath.Clear()
+            $askAttachments.Items.Clear()
+            $askMode.SelectedIndex = 1
+            $prompt.Clear()
+            $reply.Clear()
+            $reviewFile.Checked = $false
         }
-        $f.ClientSize = [Drawing.Size]::new(660, 740)
-        Show-Page $(if ($CaptureView -eq 'AirPlay') { 'Status' } else { $CaptureView })
-        if ($CaptureView -eq 'Monitor') {
+        'Layouts' {
+            $script:displaySnapshot = $null
+            $script:displayDetailProfile = $null
+            $script:displayProfilesBox.Items.Clear()
+            $script:displayNameBox.Clear()
+            $script:displayHotkeyBox.SelectedIndex = 0
+            $script:displayHotkeyStatus = @()
+            $script:displayNotice = 'Source-rendered controls. Saved profiles and display details omitted; no layout query or change was performed.'
+            Update-DisplayDetails
+        }
+        'Monitor' {
             $script:monitorMessage.Text = 'Source-rendered controls. No monitor query or hardware apply was performed.'
         }
+    }
+}
+
+if ($CaptureView) {
+    try {
+        $path = [IO.Path]::GetFullPath($CapturePng)
+        if ([IO.Path]::GetExtension($path) -ne '.png') { throw "CapturePng must name a PNG file." }
+        Set-DeskCaptureContent $CaptureView
+        $f.ClientSize = [Drawing.Size]::new(660, 740)
+        Show-Page $(if ($CaptureView -eq 'AirPlay') { 'Status' } else { $CaptureView })
         $notice = [Windows.Forms.Label]::new()
         $notice.Text = 'Sanitized read-only capture - not a host readiness certificate'
         $notice.Dock = 'Bottom'
@@ -3202,6 +3228,7 @@ if ($CaptureView) {
         $notice.BackColor = $card
         $notice.ForeColor = $mute
         $f.Controls.Add($notice)
+        foreach ($page in $pages.Values) { $page.Height = $f.ClientSize.Height - $notice.Height }
         $notice.BringToFront()
         if (-not ('ShowcaseWindow' -as [type])) {
             Add-Type @'

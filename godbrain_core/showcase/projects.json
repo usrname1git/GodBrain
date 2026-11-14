@@ -4,15 +4,16 @@
     {
       "id": "command-center",
       "title": "Command Center",
-      "description": "Workstation and AI control in one native Windows interface: model settings, core services, remote access, AirPlay receiver lifecycle and Dell hardware display controls. All Command Center pages are collected here. Screenshots are sanitized UI captures, not live readiness or playback guarantees.",
+      "description": "Workstation and AI control in one native Windows interface: model settings, read-only research with attachments, core services, remote access, AirPlay receiver lifecycle, Dell monitor controls and saved display layouts. Sanitized captures show the actual pages, not live readiness, model answers or hardware-change guarantees.",
       "url": "https://github.com/usrname1git/GodBrain",
       "source_url": "https://github.com/usrname1git/GodBrain",
       "cover": "CMDSTATUS",
       "images": [
         {"id":"CMDSTATUS","description":"Workstation and AI control; private connection details omitted.","capture_kind":"live-sanitized-ui"},
         {"id":"CMDMODELS","description":"Model configuration and request-scoped reasoning controls; no generation started.","capture_kind":"live-sanitized-ui"},
-        {"id":"AIRPLAYCONTROLS","description":"AirPlay on Windows: implemented asynchronous Start/Stop/Open and exact-process ownership controls. ShairportQt supplies the receiver and AirPlay transport. Private sender details omitted; no receiver action or audible-delivery test performed.","capture_kind":"sanitized-source-ui"},
-        {"id":"MONITORCONTROLS","description":"Dell S2522HG brightness, contrast, color-preset and Dark Stabilizer controls. Production native Monitor page rendered without DDC queries or hardware changes; initial inputs are UI defaults, not measurements.","capture_kind":"sanitized-source-ui"}
+        {"id":"CMDASK","description":"Actual Ask page: optional scope, read-only file and CPU OCR attachments, Research text mode, Send and answer area. Inputs and answer are empty; no files read, clipboard accessed, request sent or model started.","capture_kind":"sanitized-source-ui"},
+        {"id":"MONITORCONTROLS","description":"Dell S2522HG brightness, contrast, color-preset and Dark Stabilizer controls. Production native Monitor page rendered without DDC queries or hardware changes; initial inputs are UI defaults, not measurements.","capture_kind":"sanitized-source-ui"},
+        {"id":"DISPLAYLAYOUTS","description":"Actual Display layouts page: saved-profile selection, capture, preview, apply, hotkey and recovery controls. Profile names and display details omitted; no layout discovery, hotkey registration, configuration write or hardware change performed.","capture_kind":"sanitized-source-ui"}
       ]
     },
     {

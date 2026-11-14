@@ -2,6 +2,68 @@
 param([string]$BatchDirectory = '')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
+& {
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'Show-DeskMenu.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw ($errors -join "`n") }
+    foreach ($name in @('Set-DeskCaptureContent', 'Show-Page', 'Update-DisplayDetails', 'Get-SelectedDisplayProfile')) {
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        if (-not $definition) { throw "Missing capture function: $name" }
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    function New-CaptureTextFixture {
+        $control = [pscustomobject]@{ Text = 'private fixture content' }
+        $control | Add-Member ScriptMethod Clear { $this.Text = '' }
+        return $control
+    }
+    function Get-DeskSnapshot { throw 'Source-only capture queried live host status.' }
+    $script:modelLive = New-CaptureTextFixture
+    $askPath = New-CaptureTextFixture; $prompt = New-CaptureTextFixture; $reply = New-CaptureTextFixture
+    $askAttachments = [pscustomobject]@{ Items = [Collections.ArrayList]@('private fixture attachment') }
+    $askMode = [pscustomobject]@{ SelectedIndex = 2 }
+    $reviewFile = [pscustomobject]@{ Checked = $true }
+    Set-DeskCaptureContent 'Ask'
+    if ($askPath.Text -or $prompt.Text -or $reply.Text -or $askAttachments.Items.Count -or
+        $askMode.SelectedIndex -ne 1 -or $reviewFile.Checked) {
+        throw 'Ask capture retained private inputs or did not select Research.'
+    }
+    $script:displaySnapshot = [pscustomobject]@{ profiles = @([pscustomobject]@{name='private profile'}); recovery_pending=$true }
+    $script:displayDetailProfile = [pscustomobject]@{ name = 'private display' }
+    $script:displayProfilesBox = [pscustomobject]@{ Items = [Collections.ArrayList]@('private profile'); SelectedIndex = 0 }
+    $script:displayNameBox = New-CaptureTextFixture
+    $script:displayHotkeyBox = [pscustomobject]@{ SelectedIndex = 1 }
+    $script:displayHotkeyStatus = @('private hotkey')
+    $script:displayDetails = New-CaptureTextFixture
+    Set-DeskCaptureContent 'Layouts'
+    if ($script:displaySnapshot -or $script:displayDetailProfile -or $script:displayProfilesBox.Items.Count -or
+        $script:displayNameBox.Text -or $script:displayHotkeyBox.SelectedIndex -ne 0 -or
+        $script:displayDetails.Text -match 'private|UNFINISHED' -or
+        $script:displayDetails.Text -notmatch 'no layout query or change was performed') {
+        throw 'Layout capture retained private profile state or invented a live layout.'
+    }
+    $script:pages = @{ Status=[pscustomobject]@{Visible=$true}; Ask=[pscustomobject]@{Visible=$false}
+        Monitor=[pscustomobject]@{Visible=$false}; Layouts=[pscustomobject]@{Visible=$false} }
+    $script:railMarks = @()
+    $script:monitorSnapshot = $null; $script:monitorJob = $null; $script:displayJob = $null
+    $script:captureMonitorReads = 0; $script:captureLayoutReads = 0
+    function Start-MonitorOperation { $script:captureMonitorReads++ }
+    function Start-DisplayOperation { $script:captureLayoutReads++ }
+    foreach ($view in @('Ask', 'Monitor', 'Layouts')) {
+        $script:CaptureView = $view
+        Show-Page $view
+    }
+    if ($script:captureMonitorReads -or $script:captureLayoutReads) { throw 'Capture started hardware discovery.' }
+    $script:CaptureView = $null
+    Show-Page 'Layouts'; Show-Page 'Monitor'
+    if ($script:captureMonitorReads -ne 1 -or $script:captureLayoutReads -ne 1) {
+        throw 'Capture guard changed normal display discovery.'
+    }
+    Write-Output 'PASS: Ask clears private inputs, layouts omit saved state, source-only captures skip host/hardware queries, normal page discovery preserved.'
+}
 $parent = Join-Path $repo 'godbrain_core\skill_lab\work\tests'
 [void][IO.Directory]::CreateDirectory($parent)
 $fixture = Join-Path $parent ('publish-' + [guid]::NewGuid().ToString('N'))

@@ -23,6 +23,12 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
   const site = path.join(batch, 'site');
   const catalog = await readProjectCatalogDirectory(site);
   const summary = projects => `${projects.length} project${projects.length === 1 ? '' : 's'} / ${projects.reduce((sum, project) => sum + project.images.length, 0)} images`;
+  const commandCenter = catalog.projects.find(project => project.id === 'command-center');
+  assert.ok(commandCenter, 'Reviewed batch must include Command Center');
+  assert.deepEqual(commandCenter.images.map(image => image.id), ['CMDSTATUS', 'CMDMODELS', 'CMDASK', 'MONITORCONTROLS', 'DISPLAYLAYOUTS']);
+  for (const id of ['CMDASK', 'DISPLAYLAYOUTS']) {
+    assert.equal(commandCenter.images.find(image => image.id === id).captureKind, 'sanitized-source-ui');
+  }
   const searchable = project => `${project.title} ${project.description} ${project.images.map(image => image.description).join(' ')}`.toLowerCase();
   const reclaimed = catalog.projects.filter(project => searchable(project).includes('reclaim11'));
   assert.ok(reclaimed.length, 'Reviewed batch must include Reclaim11');
@@ -70,6 +76,30 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
       assert.equal(createHash('sha256').update(actual).digest('hex'), new URL(src, origin).searchParams.get('v'));
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.getByLabel('Find a project').fill('Command Center');
+    await page.getByText(summary([commandCenter]), { exact: true }).waitFor();
+    const commandImages = page.locator('#projects article figure img');
+    assert.equal(await commandImages.count(), 5);
+    assert.equal(await commandImages.evaluateAll(images => images.some(image => image.src.includes('AIRPLAYCONTROLS'))), false);
+    const monitorBounds = await page.locator('figure:has(img[src*="/MONITORCONTROLS.webp"])').boundingBox();
+    const layoutBounds = await page.locator('figure:has(img[src*="/DISPLAYLAYOUTS.webp"])').boundingBox();
+    if (width === 1280) {
+      assert.ok(Math.abs(monitorBounds.y - layoutBounds.y) <= 1 && layoutBounds.x > monitorBounds.x, 'Layouts must be beside Monitor on desktop');
+    } else {
+      assert.ok(layoutBounds.y > monitorBounds.y && Math.abs(monitorBounds.x - layoutBounds.x) <= 1, 'Layouts must follow Monitor on mobile');
+    }
+    for (const id of ['CMDASK', 'DISPLAYLAYOUTS']) {
+      const image = page.locator(`figure img[src*="/${id}.webp"]`);
+      await image.evaluate(img => img.decode());
+      await image.locator('..').click();
+      await page.locator('#caption').getByText('sanitized-source-ui', { exact: false }).waitFor();
+      assert.ok((await page.locator('#full-image').getAttribute('src')).includes(`${id}.webp`));
+      await page.keyboard.press('Escape');
+    }
+    if (process.env.GODBRAIN_SHOWCASE_PROOF) {
+      await fs.mkdir(process.env.GODBRAIN_SHOWCASE_PROOF, { recursive: true });
+      await page.screenshot({ path: path.join(process.env.GODBRAIN_SHOWCASE_PROOF, `command-center-${width}.png`), fullPage: true });
+    }
     const clipshare = catalog.projects.find(project => project.id === 'clipshare');
     if (clipshare) {
       await page.getByLabel('Find a project').fill('ClipShare');
