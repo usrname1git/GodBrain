@@ -107,6 +107,15 @@ test('actual static batch loads all bound images, filters, zooms and preserves b
       const article = page.locator('#projects article');
       assert.equal(await article.count(), 1);
       assert.equal(await article.getByRole('link', { name: 'Project', exact: true }).getAttribute('href'), clipshare.url);
+      const publicRepository = new URL(commandCenter.sourceUrl).pathname.split('/').slice(1, 3);
+      for (const name of ['Project', 'Source']) {
+        const target = new URL(await article.getByRole('link', { name, exact: true }).getAttribute('href'));
+        const parts = target.pathname.split('/');
+        assert.equal(target.hostname, 'github.com');
+        assert.deepEqual(parts.slice(1, 3), publicRepository, 'ClipShare links must not require access to its private implementation');
+        assert.equal(parts[3], 'blob');
+        assert.ok((await fs.stat(path.join(directory, '..', '..', ...parts.slice(5)))).isFile(), 'Public link target must exist in the source snapshot');
+      }
       await article.locator('figure button').first().click();
       await page.locator('#caption').getByText('source-workflow-illustration', { exact: false }).waitFor();
       await page.keyboard.press('Escape');
