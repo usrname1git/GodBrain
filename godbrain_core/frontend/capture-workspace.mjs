@@ -11,7 +11,7 @@ const root = path.resolve(directory, '..', '..');
 const require = createRequire(import.meta.url);
 const {chromium} = require(path.join(directory, '..', 'skill_lab', 'node_modules', 'playwright'));
 const {values} = parseArgs({options: {image: {type: 'string'}, output: {type: 'string'}}});
-assert.ok(['WORKSPACEMAP', 'WORKSPACEENV', 'WORKSPACEEVAL', 'IOSWORKFLOW'].includes(values.image), 'Unknown named capture');
+assert.ok(['WORKSPACEMAP', 'WORKSPACEENV', 'WORKSPACEEVAL', 'IOSWORKFLOW', 'CLIPSHAREFLOW'].includes(values.image), 'Unknown named capture');
 assert.equal(path.extname(values.output || '').toLowerCase(), '.png', '--output must name a PNG');
 const origin = 'http://127.0.0.1:32168';
 const sourceHashes = {};
@@ -40,7 +40,14 @@ try {
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  if (values.image === 'IOSWORKFLOW') {
+  if (values.image === 'CLIPSHAREFLOW') {
+    const html = await source('godbrain_core\\showcase\\clipshare-workflow.html');
+    await page.route('**/*', route => {
+      assert.equal(route.request().url(), origin + '/');
+      return route.fulfill({contentType: 'text/html', body: html});
+    });
+    await page.goto(origin + '/');
+  } else if (values.image === 'IOSWORKFLOW') {
     const docs = (await source('docs\\phone-control.md')).toString('utf8');
     await source('scripts\\Start-RustDesk.ps1');
     assert.ok(docs.includes('Run Script Over SSH') && docs.includes('RustDesk remote-desktop service ready'), 'Workflow evidence changed');
@@ -132,7 +139,7 @@ try {
   await mkdir(path.dirname(path.resolve(values.output)), {recursive: true});
   await writeFile(values.output, bytes, {flag: 'wx'});
   const receipt = {id: values.image, sha256: sha256(bytes), at: new Date().toISOString(),
-    kind: values.image === 'IOSWORKFLOW' ? 'source-workflow-illustration' : 'live-sanitized-source-ui', sourceHashes};
+    kind: ['IOSWORKFLOW', 'CLIPSHAREFLOW'].includes(values.image) ? 'source-workflow-illustration' : 'live-sanitized-source-ui', sourceHashes};
   await writeFile(values.output + '.receipt.json', JSON.stringify(receipt, null, 2) + '\n', {flag: 'wx'});
   console.log(JSON.stringify({id: receipt.id, sha256: receipt.sha256, kind: receipt.kind, sourceBound: true}));
 } finally {await browser.close();}

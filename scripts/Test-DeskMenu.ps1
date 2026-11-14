@@ -1940,12 +1940,12 @@ public static class DisplayHotkeyFixtureMessage {
                 if (@($capture).Count -ne 1) { throw 'Capture branch not found.' }
                 $body = $capture.Clauses[0].Item2.Statements[0].Body.Statements.Extent.Text -join "`n"
                 & ([scriptblock]::Create($body)) | Out-Null
-                Assert-Equal $captureProbes.Count 1
+                Assert-Equal $captureProbes.Count 0
                 Assert-Equal $script:modelSettingsHint.Text 'Saved model settings are invalid; private diagnostic details omitted.'
                 $image = [Drawing.Image]::FromFile($CapturePng)
                 try { if ($image.Width -lt 600 -or $image.Height -lt 700) { throw 'Capture was not rendered.' } }
                 finally { $image.Dispose() }
-                Write-Output 'PASS: actual offscreen Model capture with invalid saved settings omits the private diagnostic; mocked status only.'
+                Write-Output 'PASS: actual offscreen Model capture with invalid saved settings omits the private diagnostic; no status probes.'
             } finally { Remove-Item -LiteralPath $captureFixture -Recurse -Force }
         }
         if ($AirPlayLive) {
