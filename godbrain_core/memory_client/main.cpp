@@ -256,10 +256,30 @@ void validate_response(const Command& command, const J& result) {
     }
 }
 
+bool contains_credential(const J& value, const std::string& token) {
+    std::vector<const J*> pending{&value};
+    while (!pending.empty()) {
+        const auto* node = pending.back();
+        pending.pop_back();
+        if (node->is_string() && node->get_ref<const std::string&>().find(token) != std::string::npos)
+            return true;
+        if (node->is_object()) {
+            for (const auto& item : node->items()) {
+                if (item.key().find(token) != std::string::npos) return true;
+                pending.push_back(&item.value());
+            }
+        } else if (node->is_array()) {
+            for (const auto& item : *node) pending.push_back(&item);
+        }
+    }
+    return false;
+}
+
 J perform(const Config& config, const Command& command) {
     validate_request(command);
     const auto body = command.payload.dump();
-    require(body.find(config.token) == std::string::npos, "Refusing to send the configured credential as source data");
+    require(body.find(config.token) == std::string::npos && !contains_credential(command.payload, config.token),
+            "Refusing to send the configured credential as source data");
     httplib::Client client(config.host, config.port);
     client.set_connection_timeout(5);
     client.set_read_timeout(90);
@@ -282,9 +302,15 @@ J perform(const Config& config, const Command& command) {
             "Invalid or credential-bearing API response");
     auto parsed = J::parse(result->body, nullptr, false);
     require(!parsed.is_discarded(), "Memory API returned invalid JSON");
-    require(parsed.dump().find(config.token) == std::string::npos,
+    require(!contains_credential(parsed, config.token),
             "Refusing a decoded credential-bearing API response");
     validate_response(command, parsed);
+    if (command.route == "context") {
+        J bounded = J::object();
+        for (const auto* key : {"schema_version", "state", "scope", "trust", "context", "request_tools"})
+            bounded[key] = parsed.at(key);
+        return bounded;
+    }
     return parsed;
 }
 

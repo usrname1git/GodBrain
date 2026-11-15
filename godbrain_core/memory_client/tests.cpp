@@ -135,6 +135,10 @@ void configuration_tests() {
         rejects([&] { load_config(directory.get()); }, "Public endpoint accepted");
         write_config("127.0.0.1", "fixture\r\ninjected: header");
         rejects([&] { load_config(directory.get()); }, "Credential header injection accepted");
+        for (const auto& token : {std::string("fixture\"secret"), std::string("fixture\\secret")}) {
+            write_config("127.0.0.1", token);
+            check(load_config(directory.get()).token == token, "Accepted credential encoding changed");
+        }
         write_config("127.0.0.1", "fixture-secret");
         const auto original = path + ".original";
         if (rename(path.c_str(), original.c_str()) != 0 || symlink("client.json.original", path.c_str()) != 0)
@@ -158,9 +162,16 @@ void transport_tests() {
     httplib::Server server;
     std::atomic<int> calls{0};
     std::atomic<int> mode{0};
+    const std::array<std::string, 3> tokens{
+        "fixture-transport-token", "fixture\"secret", "fixture\\secret"};
+    const auto full_post = arguments({"post", "research", "--thread", "fixture", "--request-id", "large-1",
+        "--title", "Complete fixture", "--file", "-", "--source", "offline fixture"}, std::string(8192, 'x'));
+    const auto full_record = record(full_post.payload);
     server.Post("/api/context", [&](const httplib::Request& req, httplib::Response& response) {
         ++calls;
-        if (req.get_header_value("Authorization") != "Bearer fixture-transport-token") {
+        const auto authorization = req.get_header_value("Authorization");
+        const auto token = authorization.rfind("Bearer ", 0) == 0 ? authorization.substr(7) : "";
+        if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
             response.status = 401;
             return;
         }
@@ -184,7 +195,24 @@ void transport_tests() {
                   {"context", "Untrusted fixture \xf0\x9f\x99\x82"}, {"request_tools", J::array()}};
         if (mode == 3) context["request_tools"] = J::array({"run_command"});
         if (mode == 4) context["scope"] = "personal";
+        if (mode == 6) context["context"] = token;
+        if (mode == 7) {
+            context["research"] = {{"records", J::array({full_record})}};
+            context["host_profile"] = {{"raw", "host-snapshot-canary"}};
+            context["capabilities"] = {{"raw", "capability-canary"}};
+        }
+        if (mode == 8) context["extra"] = J{{token, "fixture"}};
+        if (mode == 9) context["extra"] = J::array({J{{"nested", token}}});
         response.set_content(context.dump(), "application/json");
+    });
+    server.Post("/api/shelf", [&](const httplib::Request& req, httplib::Response& response) {
+        if (req.get_header_value("Authorization") != "Bearer fixture-transport-token") {
+            response.status = 401;
+            return;
+        }
+        response.set_content(J{{"schema_version", "working-shelf-v1"}, {"trust", "untrusted"},
+            {"promoted", false}, {"status", "ok"}, {"shelf", "research"},
+            {"records", J::array({full_record})}, {"count", 1}, {"more", false}}.dump(), "application/json");
     });
     server.Post("/credential-leak", [&](const httplib::Request&, httplib::Response&) { ++calls; });
     const int port = server.bind_to_any_port("127.0.0.1");
@@ -216,6 +244,29 @@ void transport_tests() {
         const int before_secret = calls;
         rejects([&] { perform(config, secret); }, "Credential was sent as source data");
         check(calls == before_secret, "Rejected credential made a network request");
+        for (size_t i = 1; i < tokens.size(); ++i) {
+            auto escaped = config;
+            escaped.token = tokens[i];
+            secret.payload["query"] = escaped.token;
+            const int before_escaped = calls;
+            rejects([&] { perform(escaped, secret); }, "JSON-escaped request credential accepted");
+            check(calls == before_escaped, "Escaped request credential made a network request");
+            mode = 6;
+            rejects([&] { perform(escaped, context); }, "JSON-escaped response credential accepted");
+            mode = 8;
+            rejects([&] { perform(escaped, context); }, "Credential in decoded object key accepted");
+            mode = 9;
+            rejects([&] { perform(escaped, context); }, "Credential in nested response value accepted");
+        }
+        mode = 7;
+        const auto bounded = perform(config, context);
+        check(bounded.size() == 6 && !bounded.contains("research") && !bounded.contains("host_profile") &&
+              !bounded.contains("capabilities"), "Context emitted unchecked envelope fields");
+        check(bounded.at("context") == "Untrusted fixture \xf0\x9f\x99\x82",
+              "Context projection changed bounded UTF-8 evidence");
+        const auto full_read = arguments({"read", "research", "--limit", "1"});
+        check(perform(config, full_read).at("records").at(0).at("text") == full_post.payload.at("text"),
+              "Explicit shelf read lost complete content beyond the context budget");
         stop();
     } catch (...) {
         stop();

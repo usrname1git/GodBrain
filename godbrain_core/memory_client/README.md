@@ -63,7 +63,9 @@ ID; reuse that ID only with the identical text, thread, title and references.
 Requests are not automatically retried. Errors exit nonzero; an ambiguous
 transport failure is never reported as a successful save.
 
-Context is at most 4 KiB and may explicitly excerpt/omit records. Read complete
+The `context` command emits only validated context text (at most 4 KiB) and
+its schema/trust metadata, not complete records or host/capability snapshots
+from the API envelope. Context may explicitly excerpt/omit records. Read complete
 Research before relying on an excerpt. Shelf reads return whole records,
 `more` and a bounded count (maximum 20), not a silent full-vault export.
 The client validates trust/scope, request echoes, record IDs, full-content
