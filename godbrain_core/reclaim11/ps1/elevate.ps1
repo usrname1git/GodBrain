@@ -9,6 +9,7 @@ param(
     [string]$PayloadFile = "",
     [string]$LogFile = "",
     [string]$DoneFile = "",
+    [string[]]$PayloadArguments = @(),
     [int]$TimeoutSec = 180
 )
 
@@ -56,6 +57,23 @@ function Get-Reclaim11Pwsh {
 
 function New-Reclaim11TiId {
     ([guid]::NewGuid().ToString("N").Substring(0, 12))
+}
+
+function ConvertTo-Reclaim11ProcessArgument {
+    param([AllowEmptyString()][string]$Value)
+    if ($Value.Contains([char]0)) { throw "Process arguments cannot contain NUL" }
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    '"' + $escaped + '"'
+}
+
+function ConvertTo-Reclaim11ArgumentLiterals {
+    param([string[]]$Arguments = @())
+    $quoted = foreach ($value in $Arguments) {
+        if ($null -eq $value -or $value.Contains([char]0)) { throw "Invalid payload argument" }
+        "'" + $value.Replace("'", "''") + "'"
+    }
+    "@(" + ($quoted -join ",") + ")"
 }
 
 function Wait-Reclaim11DoneFile {
@@ -133,21 +151,24 @@ function New-Reclaim11TiRunnerScript {
     param(
         [string]$PayloadFile,
         [string]$LogFile,
-        [string]$DoneFile
+        [string]$DoneFile,
+        [string[]]$PayloadArguments = @()
     )
     $pwsh = Get-Reclaim11Pwsh
     $id = New-Reclaim11TiId
     $runner = Join-Path $env:TEMP ("reclaim11-ti-run-" + $id + ".ps1")
-    $pay = $PayloadFile.Replace("'", "''")
+    $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PayloadFile) + $PayloadArguments
+    $command = (($arguments | ForEach-Object { ConvertTo-Reclaim11ProcessArgument $_ }) -join " ").Replace("'", "''")
     $log = $LogFile.Replace("'", "''")
     $done = $DoneFile.Replace("'", "''")
     $exe = $pwsh.Replace("'", "''")
-    @(
+    $body = @(
         "Set-StrictMode -Version Latest",
         "`$env:RECLAIM11_AS_TI = '1'",
-        "`$p = Start-Process -FilePath '$exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','$pay') -Wait -PassThru -NoNewWindow -RedirectStandardOutput '$log' -RedirectStandardError '$log.err'",
+        "`$p = Start-Process -FilePath '$exe' -ArgumentList '$command' -Wait -PassThru -NoNewWindow -RedirectStandardOutput '$log' -RedirectStandardError '$log.err'",
         "Set-Content -LiteralPath '$done' -Value ([string]`$p.ExitCode) -Encoding ASCII"
-    ) -join "`r`n" | Set-Content -LiteralPath $runner -Encoding UTF8
+    ) -join "`r`n"
+    [IO.File]::WriteAllText($runner, $body, [Text.UTF8Encoding]::new($true))
     $runner
 }
 
@@ -156,13 +177,14 @@ function Invoke-Reclaim11SpawnTi {
         [string]$PayloadFile,
         [string]$LogFile,
         [string]$DoneFile,
-        [int]$TimeoutSec = 180
+        [int]$TimeoutSec = 180,
+        [string[]]$PayloadArguments = @()
     )
     if (-not (Test-Path -LiteralPath $PayloadFile)) {
         throw "Invoke-Reclaim11SpawnTi: missing $PayloadFile"
     }
     $pwsh = Get-Reclaim11Pwsh
-    $runner = New-Reclaim11TiRunnerScript -PayloadFile $PayloadFile -LogFile $LogFile -DoneFile $DoneFile
+    $runner = New-Reclaim11TiRunnerScript -PayloadFile $PayloadFile -LogFile $LogFile -DoneFile $DoneFile -PayloadArguments $PayloadArguments
     $tn = "Reclaim11-Ti-" + (New-Reclaim11TiId)
     try {
         $args = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
@@ -178,8 +200,10 @@ function Invoke-Reclaim11AsTrustedInstaller {
     param(
         [Parameter(Mandatory)]
         [string]$File,
-        [int]$TimeoutSec = 180
+        [int]$TimeoutSec = 180,
+        [string[]]$PayloadArguments = @()
     )
+    $literalArguments = ConvertTo-Reclaim11ArgumentLiterals $PayloadArguments
     if (Test-Reclaim11WinPeSession) {
         return [pscustomobject]@{ continue = $true; reason = "winpe-system" }
     }
@@ -201,7 +225,7 @@ function Invoke-Reclaim11AsTrustedInstaller {
     $elevate = Join-Path $here "elevate.ps1"
 
     if (Test-Reclaim11IsSystem) {
-        Invoke-Reclaim11SpawnTi -PayloadFile $File -LogFile $log -DoneFile $done -TimeoutSec $TimeoutSec
+        Invoke-Reclaim11SpawnTi -PayloadFile $File -LogFile $log -DoneFile $done -TimeoutSec $TimeoutSec -PayloadArguments $PayloadArguments
     } else {
         $pwsh = Get-Reclaim11Pwsh
         $sysRunner = Join-Path $env:TEMP ("reclaim11-sys-" + $id + ".ps1")
@@ -209,11 +233,12 @@ function Invoke-Reclaim11AsTrustedInstaller {
         $pay = $File.Replace("'", "''")
         $lg = $log.Replace("'", "''")
         $dn = $done.Replace("'", "''")
-        @(
+        $body = @(
             "Set-StrictMode -Version Latest",
             ". '$el'",
-            "Invoke-Reclaim11SpawnTi -PayloadFile '$pay' -LogFile '$lg' -DoneFile '$dn' -TimeoutSec $TimeoutSec"
-        ) -join "`r`n" | Set-Content -LiteralPath $sysRunner -Encoding UTF8
+            "Invoke-Reclaim11SpawnTi -PayloadFile '$pay' -LogFile '$lg' -DoneFile '$dn' -TimeoutSec $TimeoutSec -PayloadArguments $literalArguments"
+        ) -join "`r`n"
+        [IO.File]::WriteAllText($sysRunner, $body, [Text.UTF8Encoding]::new($true))
         $tn = "Reclaim11-Sys-" + $id
         $sysArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$sysRunner`""
         try {
@@ -250,6 +275,6 @@ function Invoke-Reclaim11AsTrustedInstaller {
 
 if ($MyInvocation.InvocationName -ne ".") {
     if ($Stage -eq "SpawnTi") {
-        Invoke-Reclaim11SpawnTi -PayloadFile $PayloadFile -LogFile $LogFile -DoneFile $DoneFile -TimeoutSec $TimeoutSec
+        Invoke-Reclaim11SpawnTi -PayloadFile $PayloadFile -LogFile $LogFile -DoneFile $DoneFile -TimeoutSec $TimeoutSec -PayloadArguments $PayloadArguments
     }
 }

@@ -15,8 +15,8 @@
 #   - DENY SYSTEM only on Defender Program Files / ProgramData trees,
 #     never under System32.
 # Keep GPO DisableAntiSpyware=1. Never BFE / mpssvc / FltMgr / EventLog.
-# WU remainder (after 26H1): sc delete wuauserv / UsoSvc / WaaSMedicSvc,
-# IFEO UsoCoreWorker + MoUsoCoreWorker + WaaSMedicAgent (already listed).
+# Core WU stays by default; USO/Medic remain destructive targets. -RemoveWindowsUpdate opts into the
+# old WU service/file/IFEO/task/registry removal and Settings hiding.
 # Never stub usosvc.dll / wuaueng.dll / WaaSMedicSvc.dll (svchost).
 # Never bits / DoSvc / TrustedInstaller. Not killing-blows pack A.
 #
@@ -26,6 +26,7 @@
 [CmdletBinding()]
 param(
     [switch]$SelfTest,
+    [switch]$RemoveWindowsUpdate,
     [Alias("T", "Test")]
     [switch]$WhatIf
 )
@@ -34,10 +35,47 @@ $ErrorActionPreference = "Continue"
 $WipeVersion = "6.3"
 
 Write-Host ("=== Grim Reaper v{0} (boot-safe) ===" -f $WipeVersion) -ForegroundColor Red
+Write-Host ("Windows Update: {0}; USO/Medic: REMOVE" -f $(if ($RemoveWindowsUpdate) { "REMOVE (explicit opt-in)" } else { "KEEP core WU (manual-only policy)" })) -ForegroundColor Yellow
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($here)) { $here = $PWD.Path }
 
+$WindowsUpdate = @{
+    targets = @("wuauclt.exe")
+    files = @("C:\Windows\System32\wuauclt.exe")
+    services = @("wuauserv")
+    registry = @(
+        "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv",
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate",
+        "HKLM:\SOFTWARE\Microsoft\WindowsUpdate",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\WindowsUpdate"
+    )
+    processes = @("wuauclt")
+    tasks = @("\Microsoft\Windows\WindowsUpdate")
+}
+$UpdateWorkers = @{
+    targets = @(
+        "WaaSMedicAgent.exe", "usoclient.exe", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe",
+        "musnotification.exe", "musnotificationux.exe", "UpdateNotificationMgr.exe"
+    )
+    files = @(
+        "C:\Windows\System32\UsoCoreWorker.exe", "C:\Windows\System32\MoUsoCoreWorker.exe",
+        "C:\Windows\System32\usoclient.exe", "C:\Windows\System32\WaaSMedicAgent.exe"
+    )
+    services = @("UsoSvc", "WaaSMedicSvc")
+    registry = @(
+        "HKLM:\SYSTEM\CurrentControlSet\Services\UsoSvc",
+        "HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc"
+    )
+    processes = @(
+        "UsoCoreWorker", "MoUsoCoreWorker", "usoclient", "WaaSMedicAgent",
+        "MusNotification", "MusNotificationUx"
+    )
+    tasks = @(
+        "\Microsoft\Windows\WaaSMedic",
+        "\Microsoft\Windows\UpdateOrchestrator"
+    )
+}
 $Targets = @(
     "SecurityHealthHost.exe", "SecurityHealthService.exe", "SecurityHealthSystray.exe", "SecurityHealthSetup.exe",
     "smartscreen.exe",
@@ -52,9 +90,6 @@ $Targets = @(
     "SenseTracer.exe", "SenseTVM.exe",
     "SgrmBroker.exe", "SgrmLpac.exe",
     "WebThreatDefenseService.exe", "webthreatdefsvc.exe", "webthreatdefusersvc.exe",
-    "WaaSMedicAgent.exe", "usoclient.exe", "UsoCoreWorker.exe", "MoUsoCoreWorker.exe",
-    "wuauclt.exe", "musnotification.exe", "musnotificationux.exe",
-    "UpdateNotificationMgr.exe",
     "appidcertstorecheck.exe", "AppIdPolicyConverter.exe", "AppIdTel.exe"
 )
 
@@ -86,12 +121,7 @@ $ExtraFiles = @(
     "C:\Windows\SysWOW64\smartscreen.exe",
     "C:\Windows\System32\appidcertstorecheck.exe",
     "C:\Windows\System32\AppIdPolicyConverter.exe",
-    "C:\Windows\System32\AppIdTel.exe",
-    "C:\Windows\System32\UsoCoreWorker.exe",
-    "C:\Windows\System32\MoUsoCoreWorker.exe",
-    "C:\Windows\System32\usoclient.exe",
-    "C:\Windows\System32\WaaSMedicAgent.exe",
-    "C:\Windows\System32\wuauclt.exe"
+    "C:\Windows\System32\AppIdTel.exe"
 )
 
 # Never CodeIntegrity\CIPolicies. Never drivers\ (named .sys are deleted separately).
@@ -124,8 +154,7 @@ $ServicesToRemove = @(
     "SgrmBroker", "SgrmAgent",
     "wscsvc",
     "MsSecCore", "MsSecFlt", "MsSecWfp",
-    "AppIDSvc", "AppID",
-    "wuauserv", "UsoSvc", "WaaSMedicSvc"
+    "AppIDSvc", "AppID"
 )
 
 $NeverTouchService = @(
@@ -153,14 +182,32 @@ $RegKeysToDelete = @(
     "HKLM:\SOFTWARE\Classes\*\shellex\ContextMenuHandlers\EPP",
     "HKLM:\SOFTWARE\Classes\Directory\shellex\ContextMenuHandlers\EPP",
     "HKLM:\SOFTWARE\Classes\Drive\shellex\ContextMenuHandlers\EPP",
-    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\WebThreatDefense",
-    "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv",
-    "HKLM:\SYSTEM\CurrentControlSet\Services\UsoSvc",
-    "HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc",
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate",
-    "HKLM:\SOFTWARE\Microsoft\WindowsUpdate",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\WindowsUpdate"
+    "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\WebThreatDefense"
 )
+
+$script:WipeProcessNames = @(
+    "MsMpEng", "NisSrv", "MpDefenderCoreService", "MpDlpService", "MsSense",
+    "SecurityHealthSystray", "SecurityHealthHost", "SecurityHealthService",
+    "smartscreen", "SenseIR", "SenseCE"
+)
+$script:WipeTaskPaths = @("\Microsoft\Windows\Windows Defender", "\Microsoft\Windows\ExploitGuard")
+$Targets += $UpdateWorkers.targets
+$ExtraFiles += $UpdateWorkers.files
+$ServicesToRemove += $UpdateWorkers.services
+$RegKeysToDelete += $UpdateWorkers.registry
+$script:WipeProcessNames += $UpdateWorkers.processes
+$script:WipeTaskPaths += $UpdateWorkers.tasks
+if ($RemoveWindowsUpdate) {
+    $Targets += $WindowsUpdate.targets
+    $ExtraFiles += $WindowsUpdate.files
+    $ServicesToRemove += $WindowsUpdate.services
+    $RegKeysToDelete += $WindowsUpdate.registry
+    $script:WipeProcessNames += $WindowsUpdate.processes
+    $script:WipeTaskPaths += $WindowsUpdate.tasks
+} else {
+    $NeverTouchService += $WindowsUpdate.services
+    $NeverStubLeaf += $WindowsUpdate.targets
+}
 
 $RegValuesToDelete = @(
     @{ Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; Name = "SecurityHealth" },
@@ -296,6 +343,7 @@ function Merge-WipeHidePages {
 }
 
 function Set-WipeWuSettingsHide {
+    if (-not $RemoveWindowsUpdate) { throw "Refuse: Windows Update preservation forbids hiding its Settings UI" }
     $hives = New-Object System.Collections.Generic.List[string]
     [void]$hives.Add("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer")
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -329,6 +377,87 @@ function Set-WipeWuSettingsHide {
     foreach ($n in @("SystemSettings", "ApplicationFrameHost")) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Assert-WipeWuPrerequisites {
+    foreach ($name in $WindowsUpdate.services) {
+        $service = Get-Service -Name $name -ErrorAction Stop
+        if ($service.StartType -eq "Disabled") { throw "Windows Update preservation: $name is already disabled; no automatic repair" }
+    }
+    foreach ($exe in $WindowsUpdate.targets) {
+        $path = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe"
+        if (Test-Path -LiteralPath $path -ErrorAction Stop) {
+            $key = Get-Item -LiteralPath $path -ErrorAction Stop
+            try {
+                if ($key.GetValueNames() -contains "Debugger") {
+                    throw "Windows Update preservation: existing IFEO Debugger for $exe; no automatic repair"
+                }
+            } finally { $key.Close() }
+        }
+    }
+    $policy = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+    if (Test-Path -LiteralPath $policy -ErrorAction Stop) {
+        $values = Get-ItemProperty -LiteralPath $policy -ErrorAction Stop
+        if ($values.PSObject.Properties["SetDisableUXWUAccess"] -and $values.SetDisableUXWUAccess -ne 0) {
+            throw "Windows Update preservation: existing policy blocks manual WU access"
+        }
+        foreach ($name in @("ConfigureDeadlineForQualityUpdates", "ConfigureDeadlineForFeatureUpdates", "SetComplianceDeadline")) {
+            if ($values.PSObject.Properties[$name]) {
+                throw "Windows Update preservation: existing $name requires separate policy review"
+            }
+        }
+    }
+    $explorer = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (Test-Path -LiteralPath $explorer -ErrorAction Stop) {
+        $values = Get-ItemProperty -LiteralPath $explorer -ErrorAction Stop
+        if ($values.PSObject.Properties["SettingsPageVisibility"]) {
+            $visibility = [string]$values.SettingsPageVisibility
+            $ids = @(Get-WipeHidePageIds $visibility)
+            if (($visibility -like "hide:*" -and @($ids | Where-Object { $script:WuHidePages -contains $_ }).Count -gt 0) -or
+                ($visibility -like "showonly:*" -and $ids -notcontains "windowsupdate")) {
+                throw "Windows Update preservation: existing Settings visibility blocks WU; no automatic repair"
+            }
+        }
+    }
+}
+
+function Set-WipeWuManualPolicy {
+    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    $before = @{ present = $false; kind = $null; value = $null }
+    if (Test-Path -LiteralPath $path -ErrorAction Stop) {
+        $key = Get-Item -LiteralPath $path -ErrorAction Stop
+        try {
+            if ($key.GetValueNames() -contains "NoAutoUpdate") {
+                $before.present = $true
+                $before.kind = [string]$key.GetValueKind("NoAutoUpdate")
+                $before.value = $key.GetValue("NoAutoUpdate", $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            }
+        } finally { $key.Close() }
+    }
+    $stamp = [datetime]::UtcNow.ToString("yyyyMMddTHHmmssfffffffZ") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $backup = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\wu-policy-" + $stamp)
+    New-Item -ItemType Directory -Path $backup -ErrorAction Stop | Out-Null
+    $receipt = Join-Path $backup "windows-update-policy.json"
+    @{ id = "reclaim11-wu-policy-v1"; path = $path; name = "NoAutoUpdate"; before = $before; requested = 1 } |
+        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $receipt -Encoding UTF8 -ErrorAction Stop
+    $saved = Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($saved.id -cne "reclaim11-wu-policy-v1" -or $saved.path -cne $path -or
+        $saved.name -cne "NoAutoUpdate" -or $saved.requested -ne 1 -or
+        ($saved.before | ConvertTo-Json -Compress) -cne ([pscustomobject]$before | ConvertTo-Json -Compress)) {
+        throw "Windows Update policy backup readback failed; no policy write"
+    }
+    if (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) {
+        New-Item -Path $path -Force -ErrorAction Stop | Out-Null
+    }
+    New-ItemProperty -Path $path -Name NoAutoUpdate -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+    $key = Get-Item -LiteralPath $path -ErrorAction Stop
+    try {
+        if ($key.GetValueKind("NoAutoUpdate") -ne [Microsoft.Win32.RegistryValueKind]::DWord -or
+            $key.GetValue("NoAutoUpdate") -ne 1) {
+            throw "Windows Update manual-only policy readback failed; backup=$receipt"
+        }
+    } finally { $key.Close() }
+    Write-Host "  NoAutoUpdate=1 verified; original policy at $receipt (manual functionality not tested)" -ForegroundColor Yellow
 }
 
 function Register-WipePendingStub([string]$Path) {
@@ -412,13 +541,7 @@ function Set-WipeStubFile {
 }
 
 function Stop-WipeDefenderUserMode {
-    foreach ($n in @(
-            "MsMpEng", "NisSrv", "MpDefenderCoreService", "MpDlpService", "MsSense",
-            "SecurityHealthSystray", "SecurityHealthHost", "SecurityHealthService",
-            "smartscreen", "SenseIR", "SenseCE",
-            "UsoCoreWorker", "MoUsoCoreWorker", "usoclient", "WaaSMedicAgent",
-            "MusNotification", "MusNotificationUx", "wuauclt"
-        )) {
+    foreach ($n in $script:WipeProcessNames) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 }
@@ -468,13 +591,7 @@ function Remove-WipeDriver([string]$Path) {
 function Remove-WipePackAScheduledTasks {
     # Named folders only. Never a host-wide task glob. WU/Medic/USO are
     # Grim Reaper remainder (resurrection lock), not killing-blows pack A.
-    $allow = @(
-        "\Microsoft\Windows\Windows Defender",
-        "\Microsoft\Windows\ExploitGuard",
-        "\Microsoft\Windows\WindowsUpdate",
-        "\Microsoft\Windows\WaaSMedic",
-        "\Microsoft\Windows\UpdateOrchestrator"
-    )
+    $allow = $script:WipeTaskPaths
     $n = 0
     $tasks = @()
     try { $tasks = @(Get-ScheduledTask -ErrorAction Stop) } catch { return 0 }
@@ -527,7 +644,8 @@ function Test-WipeSelf {
         @{ p = "C:\Windows\System32\usosvc.dll"; skip = $true; why = "WU svchost dll" },
         @{ p = "C:\Windows\System32\wuaueng.dll"; skip = $true; why = "WU engine dll" },
         @{ p = "C:\Windows\System32\WaaSMedicSvc.dll"; skip = $true; why = "Medic svchost dll" },
-        @{ p = "C:\Windows\System32\UsoCoreWorker.exe"; skip = $false; why = "WU worker exe" },
+        @{ p = "C:\Windows\System32\UsoCoreWorker.exe"; skip = $false; why = "USO removal in both profiles" },
+        @{ p = "C:\Windows\System32\wuauclt.exe"; skip = (-not $RemoveWindowsUpdate); why = "core WU profile" },
         @{ p = "C:\Windows\System32\CodeIntegrity\CIPolicies\Active\{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}.cip"; skip = $true; why = "CI" },
         @{ p = "C:\Program Files\Windows Defender\MsMpEng.exe.reclaim11.bak"; skip = $true; why = "bak" },
         @{ p = "C:\Program Files\Windows Defender\MpClient.dll"; skip = $false; why = "usermode dll" },
@@ -571,14 +689,30 @@ function Test-WipeSelf {
         }
     }
     Write-Host "SELFTEST ok   never-touch BFE/mpssvc/FltMgr" -ForegroundColor Green
-    foreach ($s in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
-        if ($ServicesToRemove -notcontains $s) {
-            Write-Host "SELFTEST FAIL missing WU service $s" -ForegroundColor Red
-            $fail++
+    foreach ($updateProfile in @(
+        @{ data = $WindowsUpdate; selected = [bool]$RemoveWindowsUpdate; name = "core WU" },
+        @{ data = $UpdateWorkers; selected = $true; name = "USO/Medic" }
+    )) {
+        foreach ($group in @(
+            @{ actual = $Targets; expected = $updateProfile.data.targets },
+            @{ actual = $ExtraFiles; expected = $updateProfile.data.files },
+            @{ actual = $ServicesToRemove; expected = $updateProfile.data.services },
+            @{ actual = $RegKeysToDelete; expected = $updateProfile.data.registry },
+            @{ actual = $script:WipeProcessNames; expected = $updateProfile.data.processes },
+            @{ actual = $script:WipeTaskPaths; expected = $updateProfile.data.tasks }
+        )) {
+            foreach ($value in $group.expected) {
+                if ([bool]($group.actual -contains $value) -ne $updateProfile.selected) {
+                    Write-Host ("SELFTEST FAIL {0} target {1}" -f $updateProfile.name, $value) -ForegroundColor Red
+                    $fail++
+                }
+            }
         }
-        if ($NeverTouchService -contains $s) {
-            Write-Host "SELFTEST FAIL never-touch collides WU $s" -ForegroundColor Red
-            $fail++
+        foreach ($s in $updateProfile.data.services) {
+            if ([bool]($NeverTouchService -contains $s) -eq $updateProfile.selected) {
+                Write-Host "SELFTEST FAIL service protection $s" -ForegroundColor Red
+                $fail++
+            }
         }
     }
     foreach ($s in @("bits", "DoSvc", "TrustedInstaller")) {
@@ -587,14 +721,7 @@ function Test-WipeSelf {
             $fail++
         }
     }
-    Write-Host "SELFTEST ok   WU sc delete wuauserv/UsoSvc/WaaSMedicSvc; not bits/DoSvc/TI" -ForegroundColor Green
-    foreach ($exe in @("UsoCoreWorker.exe", "MoUsoCoreWorker.exe", "WaaSMedicAgent.exe")) {
-        if ($Targets -notcontains $exe) {
-            Write-Host "SELFTEST FAIL missing IFEO $exe" -ForegroundColor Red
-            $fail++
-        }
-    }
-    Write-Host "SELFTEST ok   IFEO UsoCoreWorker/MoUsoCoreWorker/WaaSMedicAgent" -ForegroundColor Green
+    Write-Host ("SELFTEST core WU remove={0}; USO/Medic remove=true; not bits/DoSvc/TI" -f [bool]$RemoveWindowsUpdate) -ForegroundColor Green
     $dllExtra = @($ExtraFiles | Where-Object { $_ -match "usosvc\.dll|wuaueng\.dll|WaaSMedicSvc\.dll" })
     if ($dllExtra.Count -gt 0) {
         Write-Host "SELFTEST FAIL ExtraFiles lists WU svchost dll" -ForegroundColor Red
@@ -689,6 +816,10 @@ function Test-Reclaim11ReaperWinPeReceipt {
 $hasReceipt = Test-Reclaim11ReaperWinPeReceipt
 $wd = Join-Path $env:SystemRoot "System32\drivers\WdFilter.sys"
 $wdPresent = Test-Path -LiteralPath $wd
+$wuRefusal = ""
+if (-not $RemoveWindowsUpdate) {
+    try { Assert-WipeWuPrerequisites } catch { $wuRefusal = $_.Exception.Message }
+}
 if (-not $WhatIf) {
     if (-not $hasReceipt) {
         throw "Refuse: no WinPE receipt. Boot the Reclaim11 WinPE ISO first."
@@ -696,6 +827,7 @@ if (-not $WhatIf) {
     if ($wdPresent) {
         throw "Refuse: WdFilter.sys still present. PE park did not land."
     }
+    if ($wuRefusal) { throw $wuRefusal }
 }
 
 if ($WhatIf) {
@@ -715,15 +847,20 @@ if ($WhatIf) {
     foreach ($k in $RegKeysToDelete) {
         if (Test-Path -LiteralPath $k) { Write-Host ("  would delkey {0}" -f $k) }
     }
-    foreach ($s in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
+    foreach ($s in $ServicesToRemove) {
         Write-Host ("  would sc delete {0}" -f $s)
     }
-    Write-Host "  would IFEO UsoCoreWorker.exe / MoUsoCoreWorker.exe / WaaSMedicAgent.exe"
-    Write-Host "  would deltask WindowsUpdate / WaaSMedic / UpdateOrchestrator (named folders)"
-    Write-Host ("  would hide WU in Settings ({0}; Game Mode stays)" -f (Merge-WipeHidePages -Current "" -Hide $script:WuHidePages))
-    Write-Host "  would SetDisableUXWUAccess=1 (Check for updates on System)"
+    foreach ($exe in $Targets) { Write-Host "  would IFEO $exe" }
+    foreach ($path in $script:WipeTaskPaths) { Write-Host "  would deltask $path (named folder)" }
+    if ($RemoveWindowsUpdate) {
+        Write-Host ("  would hide WU in Settings ({0}; Game Mode stays)" -f (Merge-WipeHidePages -Current "" -Hide $script:WuHidePages))
+        Write-Host "  would SetDisableUXWUAccess=1 (Check for updates on System)"
+    } else {
+        Write-Host "  would KEEP core WU services/files/tasks/IFEO/registry/Settings; REMOVE USO/Medic; backup and verify NoAutoUpdate=1"
+    }
     if (-not $hasReceipt) { Write-Host "WOULD REFUSE  no WinPE receipt" -ForegroundColor Red }
     elseif ($wdPresent) { Write-Host "WOULD REFUSE  WdFilter.sys still present" -ForegroundColor Red }
+    elseif ($wuRefusal) { Write-Host "WOULD REFUSE  $wuRefusal" -ForegroundColor Red }
     else { Write-Host "WOULD RUN (after WinPE; named .sys delete, never stub kernel)" -ForegroundColor Green }
     return
 }
@@ -735,7 +872,9 @@ if (Test-Path -LiteralPath $el) {
     # Child scope so elevate.ps1 StrictMode/Stop does not infect this wipe.
     $hop = & {
         . $el
-        Invoke-Reclaim11AsTrustedInstaller -File $pay -TimeoutSec 300
+        $payloadArguments = @()
+        if ($RemoveWindowsUpdate) { $payloadArguments += "-RemoveWindowsUpdate" }
+        Invoke-Reclaim11AsTrustedInstaller -File $pay -TimeoutSec 300 -PayloadArguments $payloadArguments
     }
     if (-not $hop.continue) {
         if ($hop.output) { Write-Host $hop.output }
@@ -757,6 +896,7 @@ Start-Transcript -Path $log -Force | Out-Null
 try {
     $script:SecureBootOn = Get-WipeSecureBootOn
     Write-Host ("Secure Boot enabled={0} (WdBoot delete refused when on)" -f $script:SecureBootOn) -ForegroundColor Cyan
+    if (-not $RemoveWindowsUpdate) { Set-WipeWuManualPolicy }
 
     Write-Host "Setting IFEO redirects..." -ForegroundColor Cyan
     foreach ($exe in $Targets) {
@@ -765,7 +905,7 @@ try {
         New-ItemProperty -Path $key -Name "Debugger" -Value $StubPath -PropertyType String -Force | Out-Null
     }
 
-    Write-Host "Removing Defender + WU/Medic/USO services..." -ForegroundColor Cyan
+    Write-Host ("Removing selected services (remove Windows Update={0})..." -f [bool]$RemoveWindowsUpdate) -ForegroundColor Cyan
     $svcNames = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
     foreach ($s in $ServicesToRemove) { [void]$svcNames.Add($s) }
     Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services" -ErrorAction SilentlyContinue | Where-Object {
@@ -788,8 +928,10 @@ try {
         Write-Host "  sc delete $svc" -ForegroundColor Yellow
     }
 
-    Write-Host "Hiding Windows Update in Settings (Game Mode stays)..." -ForegroundColor Cyan
-    Set-WipeWuSettingsHide
+    if ($RemoveWindowsUpdate) {
+        Write-Host "Hiding Windows Update in Settings (Game Mode stays)..." -ForegroundColor Cyan
+        Set-WipeWuSettingsHide
+    }
 
     Write-Host "Deleting named kernel drivers (not stubbing)..." -ForegroundColor Cyan
     foreach ($f in $DriverFiles) { Remove-WipeDriver $f }
@@ -823,11 +965,11 @@ try {
         }
     }
 
-    Write-Host "Removing Defender scheduled tasks (named folders only)..." -ForegroundColor Cyan
+    Write-Host "Removing selected Defender/USO/Medic/WU scheduled tasks (named folders only)..." -ForegroundColor Cyan
     $goneTasks = Remove-WipePackAScheduledTasks
     Write-Host ("  tasks deleted={0}" -f $goneTasks) -ForegroundColor Yellow
 
-    Write-Host "Cleaning Defender registry leftovers..." -ForegroundColor Cyan
+    Write-Host "Cleaning selected Defender/USO/Medic/WU registry leftovers..." -ForegroundColor Cyan
     foreach ($k in $RegKeysToDelete) { Remove-RegKey $k }
     foreach ($v in $RegValuesToDelete) { Remove-RegValue $v.Path $v.Name }
     Remove-MultiStringToken "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost" "WebThreatDefense" "webthreatdefsvc"

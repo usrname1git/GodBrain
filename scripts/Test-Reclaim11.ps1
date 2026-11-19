@@ -215,11 +215,11 @@ if ($cliSrc -match 'LASTEXITCODE') {
 if ($cliSrc -notmatch 'Get-Reclaim11WinPeReceipt') {
     throw "Test-Reclaim11: GrimReaperCli must re-read the WinPE receipt"
 }
-if ($launchSrc -notmatch 'Reclaim11-WinPE-v13\.iso') {
-    throw "Test-Reclaim11: PREP MEDIA must name the v13 ISO"
+if ($launchSrc -notmatch 'Reclaim11-WinPE-v14\.iso') {
+    throw "Test-Reclaim11: PREP MEDIA must name the v14 ISO"
 }
 if ($launchSrc -match 'Sort-Object LastWriteTime') {
-    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote an older ISO over v13"
+    throw "Test-Reclaim11: PREP MEDIA must not let mtime promote an older ISO over v14"
 }
 $prepAt = $launchSrc.IndexOf('function Get-Reclaim11PrepScript')
 $prepEnd = $launchSrc.IndexOf('$window.Add_MouseLeftButtonDown')
@@ -450,14 +450,14 @@ if ($readme -notmatch '\*\*MUST:\*\*' -or $readme -notmatch 'all optimizations a
 if ($readme -notmatch 'ui/DoorChooser\.jpg' -or $readme -notmatch 'ui/Power_User_UI\.jpg' -or $readme -notmatch 'ui/Beginner_UI\.jpg') {
     throw "Test-Reclaim11: README must show DoorChooser.jpg, Power_User_UI.jpg, and Beginner_UI.jpg"
 }
-if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v13\.iso') {
-    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v13.iso"
+if ($readme -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v14\.iso') {
+    throw "Test-Reclaim11: README must name C:\\Reclaim11\\Reclaim11-WinPE-v14.iso"
 }
 if ($readme -match 'attach \*\*v7\*\*') {
-    throw "Test-Reclaim11: README must attach v13, not leftover v7"
+    throw "Test-Reclaim11: README must attach v14, not leftover v7"
 }
-if ($readme -notmatch 'attach \*\*v13\*\*') {
-    throw "Test-Reclaim11: README must attach v13"
+if ($readme -notmatch 'attach \*\*v14\*\*') {
+    throw "Test-Reclaim11: README must attach v14"
 }
 if ($readme -match 'C:\\nvme') {
     throw "Test-Reclaim11: README must not name a host nvme path"
@@ -760,8 +760,8 @@ if ($isoSrc -notmatch "28000") { throw "Test-Reclaim11: ISO builder must warn ag
 if ($isoSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: ISO builder must not default to a host nvme path"
 }
-if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v13\.iso') {
-    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v13.iso"
+if ($isoSrc -notmatch 'C:\\Reclaim11\\Reclaim11-WinPE-v14\.iso') {
+    throw "Test-Reclaim11: ISO builder default OutIso must be C:\\Reclaim11\\Reclaim11-WinPE-v14.iso"
 }
 if ($launchSrc -match 'C:\\nvme') {
     throw "Test-Reclaim11: GUI PREP MEDIA must not hardcode a host nvme path"

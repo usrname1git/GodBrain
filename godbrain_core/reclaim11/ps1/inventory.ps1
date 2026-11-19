@@ -553,6 +553,42 @@ function Get-Reclaim11NvidiaRegistryTargets {
     }
 }
 
+function Get-Reclaim11IntelNicRegistryTargets {
+    param([string]$AdapterName = "")
+    $seen = @{}
+    foreach ($adapter in @(Get-Reclaim11NetAdapters)) {
+        if ($AdapterName -and [string]$adapter.Name -ine $AdapterName) { continue }
+        if (-not $adapter.PSObject.Properties["PnPDeviceID"]) { continue }
+        $id = [string]$adapter.PnPDeviceID
+        if ($id -notmatch '^PCI\\VEN_8086&DEV_(15F3|125C)&[a-z0-9_&-]+\\[a-z0-9_&-]+$') { continue }
+        if (-not $adapter.HardwareInterface -or $adapter.Virtual -or
+            [string]$adapter.Status -eq "Not Present" -or
+            [string]$adapter.PhysicalMediaType -notmatch '802\.3|Ethernet') { continue }
+        $guid = [guid]::Empty
+        if (-not [guid]::TryParse([string]$adapter.InterfaceGuid, [ref]$guid) -or $guid -eq [guid]::Empty) {
+            throw "Invalid Intel NIC interface GUID"
+        }
+        $driver = [string](Get-PnpDeviceProperty -InstanceId $id -KeyName "DEVPKEY_Device_Driver" -ErrorAction Stop).Data
+        if ($driver -notmatch '^\{4d36e972-e325-11ce-bfc1-08002be10318\}\\[0-9]{4}$') {
+            throw "Invalid Intel NIC class binding"
+        }
+        $bound = Get-Reclaim11RegistrySnapshot -Path "HKLM:\SYSTEM\CurrentControlSet\Enum\$id" -Name "Driver" -RequireKey
+        $path = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$driver"
+        $interface = Get-Reclaim11RegistrySnapshot -Path $path -Name "NetCfgInstanceId" -RequireKey
+        $match = Get-Reclaim11RegistrySnapshot -Path $path -Name "MatchingDeviceId" -RequireKey
+        if (-not $bound.exists -or $bound.kind -ne "String" -or $bound.value -ine $driver -or
+            -not $interface.exists -or $interface.kind -ne "String" -or $interface.value -ine $guid.ToString("B") -or
+            -not $match.exists -or $match.kind -ne "String" -or
+            [string]$match.value -notmatch '^PCI\\VEN_8086&DEV_(15F3|125C)(&|$)' -or
+            -not $id.StartsWith([string]$match.value, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Intel NIC device/class/interface binding changed"
+        }
+        if ($seen.ContainsKey($path)) { throw "Ambiguous Intel NIC registry target" }
+        $seen[$path] = $true
+        [pscustomobject]@{ adapter = [string]$adapter.Name; instance_id = $id; guid = $guid.ToString("B"); class_path = $path }
+    }
+}
+
 function Assert-Reclaim11RegistryBinding {
     param($Row)
     if (-not $Row.PSObject.Properties["binding"] -or $null -eq $Row.binding) { return }
@@ -579,6 +615,21 @@ function Assert-Reclaim11RegistryBinding {
                 throw "NVIDIA registry target changed since backup: $($Row.path)"
             }
         }
+        "intel_nic" {
+            $target = @(Get-Reclaim11IntelNicRegistryTargets | Where-Object { $_.instance_id -ieq $Row.binding.instance_id })
+            if ($target.Count -ne 1 -or $target[0].guid -ine $Row.binding.guid -or
+                $target[0].class_path -ine $Row.binding.class_path) {
+                throw "Intel NIC backup device/class/interface changed"
+            }
+            $root = $target[0].class_path
+            $allowed = $Row.path -ieq $root -and $Row.name -in @("*RSS", "*ReceiveBuffers", "*TransmitBuffers", "PnPCapabilities")
+            foreach ($keyword in @("*RSS", "*ReceiveBuffers", "*TransmitBuffers")) {
+                $paramPath = "$root\Ndi\Params\$keyword"
+                if ($Row.path -ieq $paramPath -and $Row.name -in @("ParamDesc", "Type", "Default", "Min", "Max", "Step")) { $allowed = $true }
+            }
+            if ($Row.path -ieq "$root\Ndi\Params\*RSS\enum" -and $Row.name -in @("0", "1")) { $allowed = $true }
+            if (-not $allowed) { throw "Intel NIC registry target is outside the profile: $($Row.path) $($Row.name)" }
+        }
         default { throw "Unknown registry device binding: $($Row.binding.kind)" }
     }
 }
@@ -601,7 +652,8 @@ function Restore-Reclaim11RegistryWrite {
     Assert-Reclaim11RegistryBinding -Row $Row
     if ($Row.PSObject.Properties["before_snapshot"]) {
         Set-Reclaim11RegistrySnapshot -Path $Row.path -Name $Row.name -Snapshot $Row.before_snapshot -RequireKey:(
-            $Row.PSObject.Properties["binding"] -and $null -ne $Row.binding
+            $Row.PSObject.Properties["binding"] -and $null -ne $Row.binding -and
+            ($Row.binding.kind -ne "intel_nic" -or $Row.path -ieq $Row.binding.class_path)
         )
     } else {
         $before = [pscustomobject]@{ exists = ($null -ne $Row.before); kind = "DWord"; value = $Row.before }

@@ -181,7 +181,11 @@
       <Button x:Name="BtnNoobFix" Content="RUN ALL FIXES" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobXbox" Content="HIDE XBOX + BLOAT" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobTel" Content="DISABLE TELEMETRY" MinHeight="44" Margin="0,0,0,8"/>
-      <Button x:Name="BtnNoobNic" Content="TUNE NIC + TCP" MinHeight="44" Margin="0,0,0,8"/>
+      <UniformGrid Columns="2" Margin="0,0,0,8">
+        <Button x:Name="BtnNoobNic" Content="TUNE NIC + TCP" MinHeight="44"/>
+        <Button x:Name="BtnNoobIntelNic" Content="INTEL RSS / BUFFERS" MinHeight="44" Margin="0"
+                ToolTip="Separate I225-V/I226-V profile: expose RSS and Rx/Tx256, restore PnPCapabilities24. Preview and backup first; no automatic restart."/>
+      </UniformGrid>
       <Button x:Name="BtnNoobLatency" Content="LATENCY BAKE  (BCD + mouse + NVIDIA + power)" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobRustDesk" Content="INSTALL RUSTDESK TO GET REMOTE SUPPORT" MinHeight="44" Margin="0,0,0,8"/>
       <Button x:Name="BtnNoobSafe" Content="SAFE CLEANSE  (needs WinPE receipt)" MinHeight="44" IsEnabled="False"/>
@@ -194,6 +198,8 @@
         <Button x:Name="BtnScan" Content="SCAN" MinWidth="88"/>
         <Button x:Name="BtnPrep" Content="PREP MEDIA" MinWidth="110"/>
         <Button x:Name="BtnRustDesk" Content="RUSTDESK" MinWidth="110"/>
+        <Button x:Name="BtnIntelNic" Content="INTEL RSS / BUFFERS" MinWidth="150"
+                ToolTip="Separate I225-V/I226-V profile; preview then confirm. Not part of RUN ALL FIXES. Restore through NIC backups."/>
       </StackPanel>
       <StackPanel>
         <TextBlock FontSize="22" FontWeight="SemiBold" Foreground="#3DDCFF" Text="Reclaim11"/>
@@ -301,7 +307,7 @@
               <ToggleButton x:Name="BtnReaper" Style="{StaticResource BiosToggle}" DockPanel.Dock="Right" VerticalAlignment="Center" IsEnabled="False"/>
               <StackPanel Margin="0,0,10,0">
                 <TextBlock Text="Send Grim Reaper" FontWeight="SemiBold"/>
-                <TextBlock Text="Remainder + WU lock + hide WU in Settings. Requires WinPE receipt."
+                <TextBlock Text="Remainder. USO/Medic removed; core WU follows Keep Windows Update option. Requires WinPE receipt."
                            Foreground="#7A93A8" FontSize="11" TextWrapping="Wrap"/>
               </StackPanel>
             </DockPanel>
@@ -313,6 +319,16 @@
       <Border Grid.Column="2" Background="#121820" BorderBrush="#1E2A38" BorderThickness="1" Padding="14">
         <StackPanel>
           <TextBlock Text="OPTIONS" Foreground="#3DDCFF" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <Border x:Name="RowKeepWindowsUpdate" Style="{StaticResource ActionRow}">
+            <DockPanel>
+              <ToggleButton x:Name="TogKeepWindowsUpdate" Style="{StaticResource OptionToggle}" DockPanel.Dock="Right" IsChecked="True"/>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Keep Windows Update" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                <TextBlock Text="Keep core WU and Settings; remove USO/Medic. Manual downloads need VM verification. Off = destroy WU too."
+                           Foreground="#7A93A8" FontSize="11" TextWrapping="Wrap"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
           <Border x:Name="RowHideCaptures" Style="{StaticResource ActionRow}">
             <DockPanel>
               <ToggleButton x:Name="TogHideCaptures" Style="{StaticResource OptionToggle}" DockPanel.Dock="Right" IsChecked="True"/>

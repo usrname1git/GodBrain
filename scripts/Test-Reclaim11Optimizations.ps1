@@ -3,7 +3,8 @@
 param(
     [string]$RepoRoot = "",
     [string]$ReceiptPath = "",
-    [switch]$CaptureUi
+    [switch]$CaptureUi,
+    [switch]$IntelOnly
 )
 
 Set-StrictMode -Version Latest
@@ -25,6 +26,9 @@ $script:Device = "PCI\VEN_10DE&DEV_1234&SUBSYS_11111111&REV_A1\4&11111111&0&0008
 $script:Driver = "{4d36e968-e325-11ce-bfc1-08002be10318}\0007"
 $script:ClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$script:Driver"
 $script:VideoPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Video\{22222222-2222-4222-8222-222222222222}\0000"
+$script:IntelDevice = "PCI\VEN_8086&DEV_125C&SUBSYS_11111111&REV_06\FIXTURE"
+$script:IntelDriver = "{4d36e972-e325-11ce-bfc1-08002be10318}\0017"
+$script:IntelPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$script:IntelDriver"
 
 class Reclaim11FixtureKey {
     [hashtable]$State
@@ -36,6 +40,12 @@ class Reclaim11FixtureKey {
         $this.Writable = $writable
     }
     [string[]] GetValueNames() { return [string[]]@($this.State.Registry[$this.Path].Keys) }
+    [string[]] GetSubKeyNames() {
+        $prefix = $this.Path + "\"
+        $names = @($this.State.Registry.Keys | Where-Object { $_.StartsWith($prefix) } |
+            ForEach-Object { $_.Substring($prefix.Length).Split("\")[0] } | Select-Object -Unique)
+        return [string[]]$names
+    }
     [Microsoft.Win32.RegistryValueKind] GetValueKind([string]$name) {
         return [Microsoft.Win32.RegistryValueKind]$this.State.Registry[$this.Path][$name].kind
     }
@@ -93,7 +103,8 @@ function Reset-Fixture {
         Registry = @{}; Devices = @(); Drivers = @{}; Events = [System.Collections.Generic.List[string]]::new()
         Backups = 0; Saved = @{}; RequireBackup = $true; FailBackup = $false
         FailWrite = ""; IgnoreWrite = ""; FailDelete = ""; DeniedPath = ""; FailDiscovery = $false
-        NoDisplayClass = $false; NoAdapterObjects = $false
+        NoDisplayClass = $false; NoAdapterObjects = $false; Advanced = @{}
+        FailAdvanced = $false; FailAdapter = $false; RemapIntelAfterBackup = $false
         Admin = $true; Pe = $false; Active = "381b4222-f694-41f0-9685-ff5bb260df2e"
         PowerMissing = $false; HpPresent = $true; RestoreItems = @()
         Bcd = @{ "{current}" = @{}; "{bootmgr}" = @{} }
@@ -119,8 +130,17 @@ function Reset-Fixture {
     Add-FixtureValue $games "SFIO Priority" "String" "High"
     Add-FixtureValue "HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters" "KeyboardDataQueueSize" "DWord" 100
 }
+function Add-FixtureIntel {
+    $script:F.Adapters[0] | Add-Member -NotePropertyName PnPDeviceID -NotePropertyValue $script:IntelDevice -Force
+    $script:F.Drivers[$script:IntelDevice] = $script:IntelDriver
+    Add-FixtureValue "HKLM:\SYSTEM\CurrentControlSet\Enum\$script:IntelDevice" "Driver" "String" $script:IntelDriver
+    Add-FixtureValue $script:IntelPath "NetCfgInstanceId" "String" $script:TcpGuid
+    Add-FixtureValue $script:IntelPath "MatchingDeviceId" "String" "PCI\VEN_8086&DEV_125C"
+    $script:F.Registry["$script:IntelPath\Ndi\Params"] = @{}
+}
 function Invoke-FixtureCase {
     param([string]$Name, [scriptblock]$Body)
+    if ($IntelOnly -and $Name -notmatch '^(Intel |Both Intel |Hidden advanced |Failed NoRestart )') { return }
     Reset-Fixture
     try { & $Body } catch { throw "$Name -- $($_.Exception.Message)" }
     $script:Cases.Add($Name)
@@ -154,13 +174,27 @@ function Get-NetAdapter {
 }
 function Get-NetAdapterAdvancedProperty {
     [CmdletBinding()]
-    param([string]$Name)
+    param([string]$Name, [switch]$AllProperties)
+    Assert-True ([bool]$AllProperties) "Hidden advanced properties were not requested"
+    if ($script:F.FailAdvanced) { throw "Synthetic advanced discovery refusal" }
+    if ($script:F.Advanced.ContainsKey($Name)) { $script:F.Advanced[$Name] }
 }
 function Set-NetAdapterAdvancedProperty {
     [CmdletBinding()]
     param($Name, $RegistryKeyword, $RegistryValue, [switch]$NoRestart)
     if ($script:F.Backups -eq 0) { throw "Adapter mutation preceded backup" }
+    Assert-True ([bool]$NoRestart) "Adapter restart was allowed"
     $script:F.Events.Add("adapter:$RegistryKeyword")
+    if ($script:F.FailAdapter) { throw "Synthetic NoRestart refusal" }
+}
+function Remove-Item {
+    [CmdletBinding()]
+    param([string]$LiteralPath)
+    Assert-True ($LiteralPath.StartsWith("HKLM:\") -and $script:F.Registry.ContainsKey($LiteralPath)) "Unexpected fixture removal"
+    $key = [Reclaim11FixtureKey]::new($script:F, $LiteralPath, $true)
+    Assert-True ($key.GetValueNames().Count -eq 0 -and $key.GetSubKeyNames().Count -eq 0) "Nonempty metadata removal"
+    $script:F.Registry.Remove($LiteralPath)
+    $script:F.Events.Add("remove-empty:$LiteralPath")
 }
 function Get-PnpDevice {
     [CmdletBinding()]
@@ -228,6 +262,7 @@ function Write-FixtureManifest {
     $script:F.Saved[$Path] = $Manifest | ConvertTo-Json -Depth 12
     $script:F.Backups++
     $script:F.Events.Add("backup")
+    if ($script:F.RemapIntelAfterBackup) { $script:F.Drivers[$script:IntelDevice] = "{4d36e972-e325-11ce-bfc1-08002be10318}\0018" }
 }
 function Write-Reclaim11NicManifest { param($Manifest, $Path) Write-FixtureManifest $Manifest $Path }
 function Write-Reclaim11LatencyManifest { param($Manifest, $Path) Write-FixtureManifest $Manifest $Path }
@@ -239,6 +274,151 @@ function Get-Reclaim11RestoreManifests { $script:F.RestoreItems }
 function Get-Reclaim11BackupRoot { $script:Temp }
 
 try {
+    Invoke-FixtureCase "Intel TEST exposes recovered controls with no mutations or guessed queues" {
+        Add-FixtureIntel
+        $plan = Invoke-Reclaim11IntelNicTune -AdapterName "Ethernet" -WhatIf
+        Assert-True ($plan.registry.Count -eq 21 -and $plan.created_keys.Count -eq 4 -and -not $plan.would_refuse) "Incomplete recovered Intel profile"
+        Assert-True (@($plan.registry | Where-Object name -EQ "*NumRssQueues").Count -eq 0) "Invented queue override"
+        Assert-True ($script:F.Backups -eq 0 -and $script:F.Events.Count -eq 0) "Intel TEST mutated"
+    }
+    Invoke-FixtureCase "Intel apply backs up first and restores exact absence including owned metadata keys" {
+        Add-FixtureIntel
+        $plan = Invoke-Reclaim11IntelNicTune -AdapterName "Ethernet"
+        Assert-True ($plan.failed.Count -eq 0 -and $plan.applied.Count -eq 21 -and $script:F.Events[0] -eq "backup") "Intel apply failed"
+        foreach ($name in @("*RSS", "*ReceiveBuffers", "*TransmitBuffers")) {
+            $want = if ($name -eq "*RSS") { "1" } else { "256" }
+            Assert-True ($script:F.Registry[$script:IntelPath][$name].kind -eq "String" -and $script:F.Registry[$script:IntelPath][$name].value -ceq $want) "Wrong Intel value/type: $name"
+        }
+        Assert-True ($script:F.Registry[$script:IntelPath].PnPCapabilities.kind -eq "DWord" -and $script:F.Registry[$script:IntelPath].PnPCapabilities.value -eq 24) "Power flag missing"
+        Save-FixtureRestore $plan
+        foreach ($attempt in 1..2) {
+            $restored = Restore-Reclaim11NicBackup -Manifest $script:Manifest
+            Assert-True ($restored.failed.Count -eq 0 -and -not $script:F.Registry[$script:IntelPath].ContainsKey("*RSS")) "Intel absence restore failed"
+            Assert-True (-not $script:F.Registry.ContainsKey("$script:IntelPath\Ndi\Params\*RSS")) "Owned metadata retained"
+        }
+        Assert-True ($script:F.Registry.ContainsKey("$script:IntelPath\Ndi\Params")) "Pre-existing parent removed"
+    }
+    Invoke-FixtureCase "Intel preserves driver metadata and restores original types and values" {
+        Add-FixtureIntel
+        Add-FixtureValue $script:IntelPath "*RSS" "DWord" 0
+        Add-FixtureValue $script:IntelPath "PnPCapabilities" "DWord" 16
+        Add-FixtureValue "$script:IntelPath\Ndi\Params\*ReceiveBuffers" "ParamDesc" "String" "Driver receive label"
+        $plan = Invoke-Reclaim11IntelNicTune
+        Assert-True ($plan.failed.Count -eq 0 -and $script:F.Registry["$script:IntelPath\Ndi\Params\*ReceiveBuffers"].ParamDesc.value -ceq "Driver receive label") "Driver metadata overwritten"
+        Save-FixtureRestore $plan
+        $restored = Restore-Reclaim11NicBackup -Manifest $script:Manifest
+        Assert-True ($restored.failed.Count -eq 0 -and $script:F.Registry[$script:IntelPath]["*RSS"].kind -eq "DWord" -and $script:F.Registry[$script:IntelPath]["*RSS"].value -eq 0) "Original RSS type lost"
+        Assert-True ($script:F.Registry[$script:IntelPath].PnPCapabilities.value -eq 16) "Original power flag lost"
+    }
+    Invoke-FixtureCase "Intel refuses conflicting driver ranges before any backup or write" {
+        Add-FixtureIntel
+        Add-FixtureValue "$script:IntelPath\Ndi\Params\*ReceiveBuffers" "Min" "String" "512"
+        $errorText = ""
+        try { Invoke-Reclaim11IntelNicTune | Out-Null } catch { $errorText = $_.Exception.Message }
+        Assert-True ($errorText -match "does not allow buffer256" -and $script:F.Events.Count -eq 0) "Incompatible buffer range accepted"
+    }
+    Invoke-FixtureCase "Intel backup refusal and remapping prevent writes" {
+        Add-FixtureIntel
+        $script:F.FailBackup = $true
+        $errorText = ""
+        try { Invoke-Reclaim11IntelNicTune | Out-Null } catch { $errorText = $_.Exception.Message }
+        Assert-True ($errorText -match "backup refusal" -and $script:F.Events.Count -eq 0) "Intel write after failed backup"
+        $script:F.FailBackup = $false
+        $script:F.RemapIntelAfterBackup = $true
+        $plan = Invoke-Reclaim11IntelNicTune
+        Assert-True ($plan.failed.Count -eq 1 -and $plan.applied.Count -eq 0 -and $script:F.Events.Count -eq 2) "Intel write after remapping"
+    }
+    Invoke-FixtureCase "Intel restore rejects changed identity and keeps unrelated metadata" {
+        Add-FixtureIntel
+        $plan = Invoke-Reclaim11IntelNicTune
+        Save-FixtureRestore $plan
+        $script:F.Adapters[0].InterfaceGuid = "{77777777-7777-4777-8777-777777777777}"
+        $restored = Restore-Reclaim11NicBackup -Manifest $script:Manifest
+        Assert-True ($restored.failed.Count -eq 21 -and $script:F.Registry[$script:IntelPath]["*RSS"].value -eq "1") "Changed Intel identity restored"
+        $script:F.Adapters[0].InterfaceGuid = $script:TcpGuid
+        Add-FixtureValue "$script:IntelPath\Ndi\Params\*RSS" "Unrelated" "String" "keep"
+        $restored = Restore-Reclaim11NicBackup -Manifest $script:Manifest
+        Assert-True ($restored.failed.Count -eq 1 -and $restored.failed[0] -match "unrelated" -and $script:F.Registry["$script:IntelPath\Ndi\Params\*RSS"].Unrelated.value -eq "keep") "Foreign metadata deleted or hidden"
+    }
+    Invoke-FixtureCase "Intel readback failure stops further writes and cannot claim applied RSS" {
+        Add-FixtureIntel
+        $script:F.IgnoreWrite = "*RSS"
+        $plan = Invoke-Reclaim11IntelNicTune
+        Assert-True ($plan.failed.Count -eq 1 -and $plan.failed[0] -match "readback mismatch" -and @($plan.applied | Where-Object { $_ -like '*:*RSS=*' }).Count -eq 0) "Intel failed readback reported as success"
+        Assert-True (-not $script:F.Registry[$script:IntelPath].ContainsKey("*ReceiveBuffers")) "Intel continued after failure"
+    }
+    Invoke-FixtureCase "Intel missing or foreign hardware is explicit and never injected" {
+        $dry = Invoke-Reclaim11IntelNicTune -WhatIf
+        Assert-True ($dry.would_refuse -match "no matching" -and $dry.registry.Count -eq 0) "Missing Intel hardware hidden"
+        Add-FixtureIntel
+        $script:F.Adapters[0].PnPDeviceID = "PCI\VEN_10EC&DEV_8125&SUBSYS_11111111\REALTEK"
+        $dry = Invoke-Reclaim11IntelNicTune -WhatIf
+        Assert-True ($dry.registry.Count -eq 0 -and $script:F.Events.Count -eq 0) "Intel profile injected into Realtek"
+    }
+    Invoke-FixtureCase "Hidden advanced discovery is explicit and Rx cannot become Tx or queue8" {
+        $script:F.Advanced.Ethernet = @(
+            [pscustomobject]@{ RegistryKeyword = "*RSS"; DisplayName = ""; RegistryValue = @("0") },
+            [pscustomobject]@{ RegistryKeyword = "ReceiveOnly"; DisplayName = "Receive Buffers"; RegistryValue = @("256") },
+            [pscustomobject]@{ RegistryKeyword = "*NumRssQueues"; DisplayName = ""; RegistryValue = @("4") }
+        )
+        $plan = Invoke-Reclaim11NicTune -WhatIf
+        Assert-True (@($plan.actions | Where-Object keyword -EQ "*RSS").Count -eq 1) "Hidden RSS not discovered"
+        Assert-True (@($plan.actions | Where-Object kind -EQ "buffer").Count -eq 1) "Rx was also matched as Tx"
+        Assert-True (@($plan.actions | Where-Object { $_.kind -eq "rssq" -and $_.wanted -eq "4" }).Count -eq 1) "Queue8 invented"
+        $script:F.FailAdvanced = $true
+        $errorText = ""
+        try { Invoke-Reclaim11NicTune -WhatIf | Out-Null } catch { $errorText = $_.Exception.Message }
+        Assert-True ($errorText -match "discovery refusal") "Advanced discovery failure hidden"
+    }
+    Invoke-FixtureCase "Failed NoRestart is not retried as a live adapter restart" {
+        $script:F.Advanced.Ethernet = @([pscustomobject]@{ RegistryKeyword = "*RSS"; DisplayName = ""; RegistryValue = @("0") })
+        $script:F.FailAdapter = $true
+        $plan = Invoke-Reclaim11NicTune
+        Assert-True ($plan.failed.Count -eq 1 -and @($script:F.Events | Where-Object { $_ -like "adapter:*" }).Count -eq 1) "Unsafe adapter retry"
+    }
+    Invoke-FixtureCase "Intel admin and WinPE gates remain mutation-free" {
+        Add-FixtureIntel
+        foreach ($gate in @("admin", "pe")) {
+            $script:F.Admin = $gate -ne "admin"; $script:F.Pe = $gate -eq "pe"
+            $errorText = ""
+            try { Invoke-Reclaim11IntelNicTune | Out-Null } catch { $errorText = $_.Exception.Message }
+            Assert-True ($errorText -match "^Refuse:" -and $script:F.Events.Count -eq 0) "Intel $gate guard failed"
+        }
+    }
+    Invoke-FixtureCase "Both Intel UI routes preview first, require consent and cannot apply in restore mode" {
+        Add-FixtureIntel
+        $source = Get-Content -LiteralPath (Join-Path $ps1 "Reclaim11.ps1") -Raw -Encoding UTF8
+        foreach ($button in @('btnIntelNic', 'btnNoobIntelNic')) {
+            Assert-True ($source.Contains('$' + $button + '.Add_Click({ Invoke-Reclaim11IntelNicUi })')) "Intel UI route is disconnected: $button"
+        }
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+        $helper = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-Reclaim11IntelNicUi"
+        }, $true)
+        # Replace only the modal error sink so a regression fails instead of blocking unattended fixtures.
+        . ([scriptblock]::Create($helper.Extent.Text.Replace(
+            '[System.Windows.MessageBox]::Show($message, "Reclaim11 Intel NIC") | Out-Null', 'throw $message')))
+        function Confirm-Reclaim11IntelNic { $script:IntelConsent }
+        function Add-Log { param([string]$Line) $script:UiMessages.Add($Line) }
+        function Add-NoobLog { param([string]$Line) $script:UiMessages.Add($Line) }
+        $here = $RepoRoot
+        $script:ProcessRunning = $false; $script:UiRestore = $false; $script:IntelConsent = $false
+        $script:UiMessages = [Collections.Generic.List[string]]::new()
+        foreach ($door in @("expert", "noob")) {
+            $script:UiDoor = $door
+            Invoke-Reclaim11IntelNicUi
+        }
+        Assert-True ($script:UiMessages.Count -eq 2 -and $script:F.Backups -eq 0 -and -not $script:ProcessRunning) "Preview/cancel mutated or left busy"
+        $script:IntelConsent = $true
+        Invoke-Reclaim11IntelNicUi
+        Assert-True ($script:F.Backups -eq 2 -and $script:F.Registry[$script:IntelPath]["*RSS"].value -eq "1") "Confirmed UI did not apply"
+        $before = $script:F.Events.Count
+        $script:UiRestore = $true
+        Invoke-Reclaim11IntelNicUi
+        Assert-True ($script:F.Events.Count -eq $before) "Intel apply ran in restore mode"
+    }
     Invoke-FixtureCase "TCP discovery excludes disconnected, virtual and wireless adapters" {
         $targets = @(Get-Reclaim11TcpInterfaceTargets -Adapters $script:F.Adapters)
         Assert-True ($targets.Count -eq 1 -and $targets[0].path -eq $script:TcpPath) "Wrong TCP targets"
@@ -539,7 +719,7 @@ try {
         }
         Assert-True ($readme.Contains("Current AC Power Setting Index")) "README must identify the current locale-dependent parser"
     }
-    Invoke-FixtureCase "PREP prefers v13 and preserves explicit legacy ISO discovery" {
+    Invoke-FixtureCase "PREP prefers v14 and preserves explicit legacy ISO discovery" {
         $tokens = $null
         $errors = $null
         $source = Get-Content -LiteralPath (Join-Path $ps1 "Reclaim11.ps1") -Raw -Encoding UTF8
@@ -556,15 +736,15 @@ try {
                 $isoFiles -contains (Split-Path -Leaf $LiteralPath)
             }
             . ([scriptblock]::Create($helper.Extent.Text))
-            $isoFiles = @("Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v13.iso")
+            $isoFiles = @("Reclaim11-WinPE-v13.iso", "Reclaim11-WinPE-v14.iso")
             $info = Get-Reclaim11PrepIsoPath
-            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v13.iso") "v13 was not preferred"
-            $isoFiles = @("Reclaim11-WinPE-v12.iso")
+            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v14.iso") "v14 was not preferred"
+            $isoFiles = @("Reclaim11-WinPE-v13.iso")
             $info = Get-Reclaim11PrepIsoPath
-            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v12.iso") "Legacy ISO discovery changed"
+            Assert-True ($info.have -and $info.iso -eq "C:\Reclaim11\Reclaim11-WinPE-v13.iso") "Legacy ISO discovery changed"
             $isoFiles = @()
             $info = Get-Reclaim11PrepIsoPath
-            Assert-True (-not $info.have -and $info.want -eq "C:\Reclaim11\Reclaim11-WinPE-v13.iso") "Missing ISO did not request a v13 build"
+            Assert-True (-not $info.have -and $info.want -eq "C:\Reclaim11\Reclaim11-WinPE-v14.iso") "Missing ISO did not request a v14 build"
         }
     }
     Invoke-FixtureCase "Restore order uses exact receipt times across same-second legacy/new stamps" {
@@ -617,7 +797,7 @@ try {
         $window.ShowActivated = $false; $window.ShowInTaskbar = $false
         $window.WindowStartupLocation = "Manual"; $window.Left = -20000; $window.Top = -20000
         try {
-            foreach ($name in @("BtnNoobNic", "BtnNoobLatency", "RowNic", "RowLatency")) {
+            foreach ($name in @("BtnNoobNic", "BtnNoobIntelNic", "BtnIntelNic", "BtnNoobLatency", "RowNic", "RowLatency")) {
                 $control = $window.FindName($name)
                 Assert-True ($null -ne $control) "Missing control $name"
                 for ($node = $control; $null -ne $node; $node = [Windows.LogicalTreeHelper]::GetParent($node)) {
@@ -650,7 +830,7 @@ try {
         $script:Cases.Add("Both UI routes render with visible text; no event handlers/optimizer run")
     }
     if ($ReceiptPath) {
-        [ordered]@{ ok = $true; cases = @($script:Cases); real_registry_writes = 0; real_adapter_writes = 0; real_bcd_writes = 0; real_power_writes = 0; vm_suite_run = $false } |
+        [ordered]@{ ok = $true; intel_only = [bool]$IntelOnly; cases = @($script:Cases); real_registry_writes = 0; real_adapter_writes = 0; real_bcd_writes = 0; real_power_writes = 0; vm_suite_run = $false } |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ReceiptPath -Encoding UTF8
     }
     Write-Output ("PASS: {0} offline Reclaim11 cases; all host mutations mocked." -f $script:Cases.Count)

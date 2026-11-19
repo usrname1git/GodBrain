@@ -166,7 +166,7 @@ try {
 function Get-Ui([string]$Name) { $window.FindName($Name) }
 
 function Invoke-Reclaim11GrimReaperCli {
-    param([switch]$WhatIf)
+    param([switch]$WhatIf, [switch]$RemoveWindowsUpdate)
     $script = Join-Path $ps1Dir "grim_reaper.ps1"
     if (-not (Test-Path -LiteralPath $script)) {
         throw "Reclaim11: missing grim_reaper.ps1"
@@ -183,6 +183,7 @@ function Invoke-Reclaim11GrimReaperCli {
     $pwsh = Get-Reclaim11Pwsh
     $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$script`""
     if ($WhatIf) { $arg += " -T" }
+    if ($RemoveWindowsUpdate) { $arg += " -RemoveWindowsUpdate" }
     $stamp = [guid]::NewGuid().ToString("N").Substring(0, 8)
     $outFile = Join-Path $env:TEMP ("reclaim11-reaper-" + $stamp + ".out")
     $errFile = Join-Path $env:TEMP ("reclaim11-reaper-" + $stamp + ".err")
@@ -217,6 +218,7 @@ $btnReaper = Get-Ui BtnReaper
 $btnRun  = Get-Ui BtnRun
 $btnTest = Get-Ui BtnTest
 $togHideCaptures = Get-Ui TogHideCaptures
+$togKeepWindowsUpdate = Get-Ui TogKeepWindowsUpdate
 $logBox  = Get-Ui LogBox
 $panelBusy = Get-Ui PanelBusy
 $busyBar = Get-Ui BusyBar
@@ -236,6 +238,8 @@ $btnNoobFix = Get-Ui BtnNoobFix
 $btnNoobXbox = Get-Ui BtnNoobXbox
 $btnNoobTel = Get-Ui BtnNoobTel
 $btnNoobNic = Get-Ui BtnNoobNic
+$btnNoobIntelNic = Get-Ui BtnNoobIntelNic
+$btnIntelNic = Get-Ui BtnIntelNic
 $btnNoobLatency = Get-Ui BtnNoobLatency
 $btnNoobRustDesk = Get-Ui BtnNoobRustDesk
 $btnNoobSafe = Get-Ui BtnNoobSafe
@@ -273,6 +277,14 @@ Add-Reclaim11RowToggle (Get-Ui RowLatency) $btnLatency
 Add-Reclaim11RowToggle (Get-Ui RowKill) $btnKill
 Add-Reclaim11RowToggle (Get-Ui RowReaper) $btnReaper
 Add-Reclaim11RowToggle (Get-Ui RowHideCaptures) $togHideCaptures
+Add-Reclaim11RowToggle (Get-Ui RowKeepWindowsUpdate) $togKeepWindowsUpdate
+
+function Get-Reclaim11RemoveWindowsUpdate {
+    if (-not $togKeepWindowsUpdate -or $null -eq $togKeepWindowsUpdate.IsChecked) {
+        throw "Reclaim11: Windows Update option is missing or indeterminate; refusing Grim Reaper"
+    }
+    -not [bool]$togKeepWindowsUpdate.IsChecked
+}
 
 function Apply-Reclaim11ExpertGates {
     if ($script:UiRestore) { return }
@@ -492,6 +504,7 @@ $btnRun.Add_Click({
         $doLatency = [bool]$btnLatency.IsChecked
         $doKill = [bool]$btnKill.IsChecked
         $doReaper = [bool]$btnReaper.IsChecked
+        $removeWu = if ($doReaper) { Get-Reclaim11RemoveWindowsUpdate } else { $false }
         if (-not ($doSafe -or $doXbox -or $doTelemetry -or $doNic -or $doLatency -or $doKill -or $doReaper)) {
             [System.Windows.MessageBox]::Show("Select Safe cleanse, Hide Xbox, telemetry, NIC, latency bake, Killing blows, and/or Send Grim Reaper.", "Reclaim11") | Out-Null
             return
@@ -508,7 +521,11 @@ $btnRun.Add_Click({
         }
         $warn = "Run the ticked actions on THIS Windows. restore.json is written first where it applies. Continue?"
         if ($doReaper) {
-            $warn = "Send Grim Reaper on THIS Windows. WU/Medic/USO die. Defender trees stub+DACL. After PE. Continue?"
+            if ($removeWu) {
+                $warn = "Send Grim Reaper on THIS Windows. Windows Update removal explicitly selected: WU/Medic/USO services, files and tasks die; WU Settings hidden. Defender trees stub+DACL. After PE. Continue?"
+            } else {
+                $warn = "Send Grim Reaper on THIS Windows. KEEP core Windows Update and Settings; REMOVE USO/Medic services, workers and tasks. Backup and set manual-only policy. Does not repair previously wiped WU or prove manual downloads work. Defender trees stub+DACL. After PE. Continue?"
+            }
         }
         $q = [System.Windows.MessageBox]::Show(
             $warn,
@@ -585,7 +602,7 @@ $btnRun.Add_Click({
         }
         if ($doReaper) {
             try {
-                $out = Invoke-Reclaim11GrimReaperCli
+                $out = Invoke-Reclaim11GrimReaperCli -RemoveWindowsUpdate:$removeWu
                 Add-Log $out.TrimEnd()
                 Add-Log "grim reaper done"
             } catch {
@@ -660,7 +677,7 @@ $btnTest.Add_Click({
             Add-Log (Format-Reclaim11TestReport -Plan $plan -Title "killing_blows")
         }
         if ($doReaper) {
-            Add-Log (Invoke-Reclaim11GrimReaperCli -WhatIf)
+            Add-Log (Invoke-Reclaim11GrimReaperCli -WhatIf -RemoveWindowsUpdate:(Get-Reclaim11RemoveWindowsUpdate))
         }
     } catch {
         Add-Log ("TEST FAIL  {0}" -f $_.Exception.Message)
@@ -795,6 +812,40 @@ $btnNoobXbox.Add_Click({
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Reclaim11 Hide Xbox") | Out-Null
     } finally { $script:ProcessRunning = $false }
 })
+
+function Confirm-Reclaim11IntelNic {
+    [System.Windows.MessageBox]::Show(
+        "Apply the recovered Intel I225-V/I226-V profile: RSS=1, Rx/Tx buffers=256, PnPCapabilities=24 and missing Advanced-tab definitions. Typed restore.json first. No queue/CPU-affinity override and NO automatic adapter restart. Reboot and check runtime RSS afterward. Continue?",
+        "Reclaim11 Intel RSS / BUFFERS", "YesNo", "Warning", "No") -eq "Yes"
+}
+
+function Invoke-Reclaim11IntelNicUi {
+    if ($script:ProcessRunning) { return }
+    if ($script:UiRestore) {
+        Add-Log "Intel profile restore: select NIC and use RESTORE SELECTED; no apply is available in restore mode."
+        return
+    }
+    $script:ProcessRunning = $true
+    try {
+        $preview = Invoke-Reclaim11IntelNicTune -Root $here -WhatIf
+        $message = Format-Reclaim11TestReport -Plan $preview -Title "Intel RSS / BUFFERS"
+        if ($script:UiDoor -eq "noob") { Add-NoobLog $message } else { Add-Log $message }
+        if ($preview.would_refuse) { throw "Refuse: $($preview.would_refuse)" }
+        if (-not (Confirm-Reclaim11IntelNic)) { return }
+        $plan = Invoke-Reclaim11IntelNicTune -Root $here
+        $message = (Format-Reclaim11ActionReport -Plan $plan -Title "Intel RSS / BUFFERS") +
+            "`n$($plan.note)`nrestore.json $($plan.manifest_path)"
+        if ($script:UiDoor -eq "noob") { Add-NoobLog $message } else { Add-Log $message }
+        if (@($plan.failed).Count) { throw ($plan.failed -join "`n") }
+    } catch {
+        $message = "INTEL NIC FAIL  $($_.Exception.Message)"
+        if ($script:UiDoor -eq "noob") { Add-NoobLog $message } else { Add-Log $message }
+        [System.Windows.MessageBox]::Show($message, "Reclaim11 Intel NIC") | Out-Null
+    } finally { $script:ProcessRunning = $false }
+}
+
+$btnIntelNic.Add_Click({ Invoke-Reclaim11IntelNicUi })
+$btnNoobIntelNic.Add_Click({ Invoke-Reclaim11IntelNicUi })
 
 $btnNoobNic.Add_Click({
     if ($script:ProcessRunning) { return }
@@ -994,8 +1045,8 @@ function Get-Reclaim11PrepScript([string]$Name) {
 
 function Get-Reclaim11PrepIsoPath {
     $isoDir = "C:\Reclaim11"
-    $want = Join-Path $isoDir "Reclaim11-WinPE-v13.iso"
-    foreach ($n in @("Reclaim11-WinPE-v13.iso", "Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v11.iso", "Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
+    $want = Join-Path $isoDir "Reclaim11-WinPE-v14.iso"
+    foreach ($n in @("Reclaim11-WinPE-v14.iso", "Reclaim11-WinPE-v13.iso", "Reclaim11-WinPE-v12.iso", "Reclaim11-WinPE-v11.iso", "Reclaim11-WinPE-v10.iso", "Reclaim11-WinPE-v9.iso", "Reclaim11-WinPE.iso", "Reclaim11-WinPE-v8.iso", "Reclaim11-WinPE-v7.iso")) {
         $p = Join-Path $isoDir $n
         if (Test-Path -LiteralPath $p) {
             return [pscustomobject]@{ want = $want; iso = $p; have = $true }
