@@ -4,11 +4,16 @@ param(
     [ValidateSet("door", "expert", "noob")]
     [string]$Door = "door",
     [string]$OutPng = "",
-    [switch]$PublicPreview
+    [switch]$PublicPreview,
+    [switch]$WidePreview
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($WidePreview -and (-not $PublicPreview -or $Door -ne "expert")) {
+    throw "-WidePreview requires -PublicPreview -Door expert."
+}
 
 $sta = [Threading.Thread]::CurrentThread.GetApartmentState()
 if ($sta -ne "STA") {
@@ -16,6 +21,7 @@ if ($sta -ne "STA") {
     $arg = @("-STA", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path, "-Door", $Door)
     if ($OutPng) { $arg += @("-OutPng", $OutPng) }
     if ($PublicPreview) { $arg += "-PublicPreview" }
+    if ($WidePreview) { $arg += "-WidePreview" }
     $p = Start-Process -FilePath $pwsh -ArgumentList $arg -Wait -PassThru -NoNewWindow
     exit $p.ExitCode
 }
@@ -98,6 +104,10 @@ switch ($Door) {
 
 $window.ShowActivated = $false
 if ($PublicPreview) {
+    if ($WidePreview) {
+        $window.Width = 1440
+        $window.Height = 900
+    }
     $window.WindowStartupLocation = 'Manual'
     $window.Left = -10000
     $window.Top = -10000

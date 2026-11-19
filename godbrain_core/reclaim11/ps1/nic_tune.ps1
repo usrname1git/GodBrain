@@ -7,6 +7,8 @@
 [CmdletBinding()]
 param(
     [string]$Restore = "",
+    [switch]$IntelHidden,
+    [string]$AdapterName = "",
     [Alias("T", "Test")]
     [switch]$WhatIf
 )
@@ -174,7 +176,8 @@ function Resolve-Reclaim11NicPlan {
         }
     }
     foreach ($kw in @("*ReceiveBuffers", "*TransmitBuffers")) {
-        $spec = @{ Keyword = $kw; Display = @("Receive Buffers", "Transmit Buffers") }
+        $display = if ($kw -eq "*ReceiveBuffers") { "Receive Buffers" } else { "Transmit Buffers" }
+        $spec = @{ Keyword = $kw; Display = @($display) }
         $p = Find-Reclaim11NicProp -Props $Props -Spec $spec
         if (-not $p) { continue }
         $cur = Get-Reclaim11NicRegValue -Prop $p
@@ -197,7 +200,7 @@ function Resolve-Reclaim11NicPlan {
                 if ([string]$v -match '^\d+$') { $qvals += [int]$v }
             }
         }
-        $qwant = 8
+        $qwant = $cur
         if ($qvals.Count -gt 0) {
             if ($qvals -contains 8) { $qwant = 8 }
             else { $qwant = [int](($qvals | Measure-Object -Maximum).Maximum) }
@@ -212,6 +215,110 @@ function Resolve-Reclaim11NicPlan {
         }
     }
     $actions
+}
+
+function Get-Reclaim11IntelNicProfile {
+    foreach ($spec in @(
+        @{ keyword = "*RSS"; display = "Receive Side Scaling"; wanted = "1" },
+        @{ keyword = "*ReceiveBuffers"; display = "Receive Buffers"; wanted = "256" },
+        @{ keyword = "*TransmitBuffers"; display = "Transmit Buffers"; wanted = "256" }
+    )) {
+        $metadata = [ordered]@{ ParamDesc = $spec.display; Type = "int"; Default = "512"; Min = "128"; Max = "4096"; Step = "64" }
+        if ($spec.keyword -eq "*RSS") { $metadata = [ordered]@{ ParamDesc = $spec.display; Type = "enum"; Default = "1" } }
+        [pscustomobject]@{ keyword = $spec.keyword; wanted = $spec.wanted; metadata = $metadata }
+    }
+}
+
+function Invoke-Reclaim11IntelNicTune {
+    param([string]$Root = "", [string]$AdapterName = "", [switch]$WhatIf)
+    $targets = @(Get-Reclaim11IntelNicRegistryTargets -AdapterName $AdapterName)
+    $rows = @()
+    $createdKeys = @()
+    foreach ($target in $targets) {
+        $parent = Get-Reclaim11RegistryKey -Path "$($target.class_path)\Ndi\Params" -RequireKey
+        $parent.Dispose()
+        $binding = [pscustomobject]@{ kind = "intel_nic"; instance_id = $target.instance_id; guid = $target.guid; class_path = $target.class_path }
+        $values = @()
+        foreach ($spec in @(Get-Reclaim11IntelNicProfile)) {
+            $path = "$($target.class_path)\Ndi\Params\$($spec.keyword)"
+            $type = Get-Reclaim11RegistrySnapshot -Path $path -Name "Type"
+            if ($type.exists -and ($type.kind -ne "String" -or $type.value -ine $spec.metadata.Type)) {
+                throw "Intel NIC driver definition conflicts with the recovered profile: $($spec.keyword)"
+            }
+            if ($spec.keyword -ne "*RSS") {
+                $bounds = @{}
+                foreach ($name in @("Min", "Max", "Step")) {
+                    $current = Get-Reclaim11RegistrySnapshot -Path $path -Name $name
+                    $text = if ($current.exists) { [string]$current.value } else { [string]$spec.metadata[$name] }
+                    $number = 0
+                    if (-not [int]::TryParse($text, [ref]$number) -or $number -lt 1) { throw "Invalid Intel buffer range: $name" }
+                    $bounds[$name] = $number
+                }
+                if (256 -lt $bounds.Min -or 256 -gt $bounds.Max -or (256 - $bounds.Min) % $bounds.Step -ne 0) {
+                    throw "Intel NIC driver definition does not allow buffer256; leaving it unchanged"
+                }
+            }
+            foreach ($entry in $spec.metadata.GetEnumerator()) {
+                $before = Get-Reclaim11RegistrySnapshot -Path $path -Name $entry.Key
+                # Driver-supplied definitions win; fill only absent metadata.
+                if (-not $before.exists) { $values += @{ path = $path; name = $entry.Key; wanted = $entry.Value; kind = "String"; before = $before } }
+            }
+            if ($spec.keyword -eq "*RSS") {
+                foreach ($entry in @(@{ name = "0"; value = "Disabled" }, @{ name = "1"; value = "Enabled" })) {
+                    $before = Get-Reclaim11RegistrySnapshot -Path "$path\enum" -Name $entry.name
+                    if (-not $before.exists) { $values += @{ path = "$path\enum"; name = $entry.name; wanted = $entry.value; kind = "String"; before = $before } }
+                }
+            }
+            $values += @{ path = $target.class_path; name = $spec.keyword; wanted = $spec.wanted; kind = "String"
+                before = Get-Reclaim11RegistrySnapshot -Path $target.class_path -Name $spec.keyword -RequireKey }
+        }
+        $values += @{ path = $target.class_path; name = "PnPCapabilities"; wanted = 24; kind = "DWord"
+            before = Get-Reclaim11RegistrySnapshot -Path $target.class_path -Name "PnPCapabilities" -RequireKey }
+        foreach ($value in $values) {
+            $rows += [pscustomobject]@{ path = $value.path; name = $value.name; wanted = $value.wanted; wanted_kind = $value.kind
+                before = $value.before.value; before_snapshot = $value.before; binding = $binding }
+            if (-not $value.before.key_exists -and @($createdKeys | Where-Object path -IEQ $value.path).Count -eq 0) {
+                $createdKeys += [pscustomobject]@{ path = $value.path; binding = $binding }
+            }
+        }
+    }
+    $admin = Test-Reclaim11Admin
+    $pe = Test-Reclaim11PeHost
+    $refuse = if ($pe) { "WinPE (MiniNT)" } elseif (-not $admin) { "needs elevation" }
+        elseif ($targets.Count -eq 0) { "no matching physical Intel I225-V/I226-V adapter" } else { "" }
+    $backupRoot = Join-Path $env:SystemDrive.TrimEnd("\") ("reclaim11\backup\" + (New-Reclaim11BackupStamp))
+    $manifestPath = Join-Path $backupRoot "restore.json"
+    $plan = [pscustomobject]@{
+        id = "reclaim11-nic-intel-v1"; at = [datetime]::UtcNow.ToString("o")
+        adapters = $targets; actions = @(); registry = @($rows); created_keys = @($createdKeys)
+        backup_root = $backupRoot; manifest_path = $manifestPath; skipped = @()
+        what_if = [bool]$WhatIf; mutate = -not [bool]$WhatIf; would_refuse = $refuse
+        checks = @((New-Reclaim11Check -Name "intel-nic" -Ok (-not $refuse) -Detail $refuse))
+        would = @($rows | ForEach-Object { "reg $($_.path) $($_.name)=$($_.wanted) ($($_.wanted_kind); readback)" })
+        note = "Recovered legacy profile: RSS1, Rx/Tx256, PnPCapabilities24 plus missing Advanced metadata. No queues/CPU affinity or automatic restart. Registry storage is not proof of driver consumption; reboot then check runtime RSS."
+        applied = @(); failed = @(); restart_required = $true
+    }
+    if ($WhatIf) { return $plan }
+    if ($refuse) { throw "Refuse: $refuse" }
+    Write-Reclaim11NicManifest -Manifest $plan -Path $manifestPath
+    foreach ($row in $rows) {
+        try {
+            Assert-Reclaim11RegistryBinding -Row $row
+            $current = Get-Reclaim11RegistrySnapshot -Path $row.path -Name $row.name
+            if (-not (Test-Reclaim11RegistrySnapshotEqual $current $row.before_snapshot)) {
+                throw "Intel NIC value changed since backup: $($row.name)"
+            }
+            Set-Reclaim11RegistrySnapshot -Path $row.path -Name $row.name -RequireKey:($row.path -ieq $row.binding.class_path) -Snapshot (
+                [pscustomobject]@{ exists = $true; kind = $row.wanted_kind; value = $row.wanted }
+            )
+            $plan.applied += "reg:$($row.path):$($row.name)=$($row.wanted)"
+        } catch {
+            $plan.failed += "reg:$($row.path):$($row.name) $($_.Exception.Message)"
+            break
+        }
+    }
+    Write-Reclaim11NicManifest -Manifest $plan -Path $manifestPath
+    $plan
 }
 
 function Write-Reclaim11NicManifest {
@@ -249,8 +356,13 @@ function Invoke-Reclaim11NicTune {
         }
     }
     foreach ($a in $targets) {
-        $props = @(Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue)
+        $props = @(Get-NetAdapterAdvancedProperty -Name $a.Name -AllProperties -ErrorAction Stop)
         $actions += @(Resolve-Reclaim11NicPlan -AdapterName $a.Name -Props $props)
+        foreach ($keyword in @("*RSS", "*ReceiveBuffers", "*TransmitBuffers")) {
+            if (-not @($props | Where-Object RegistryKeyword -IEQ $keyword).Count) {
+                $skipped += "$($a.Name): $keyword absent; Intel I225-V/I226-V users can use the separate Intel RSS/BUFFERS action"
+            }
+        }
     }
     $registry = @()
     $tcpTargets = @(Get-Reclaim11TcpInterfaceTargets -Adapters $targets)
@@ -320,12 +432,7 @@ function Invoke-Reclaim11NicTune {
             Set-NetAdapterAdvancedProperty -Name $x.adapter -RegistryKeyword $x.keyword -RegistryValue $x.wanted -NoRestart -ErrorAction Stop
             $applied += ("{0}:{1}={2}" -f $x.adapter, $x.keyword, $x.wanted)
         } catch {
-            try {
-                Set-NetAdapterAdvancedProperty -Name $x.adapter -RegistryKeyword $x.keyword -RegistryValue $x.wanted -ErrorAction Stop
-                $applied += ("{0}:{1}={2}" -f $x.adapter, $x.keyword, $x.wanted)
-            } catch {
-                $failed += ("{0}:{1} {2}" -f $x.adapter, $x.keyword, $_.Exception.Message)
-            }
+            $failed += ("{0}:{1} {2}" -f $x.adapter, $x.keyword, $_.Exception.Message)
         }
     }
     foreach ($x in $registry) {
@@ -368,12 +475,7 @@ function Restore-Reclaim11NicBackup {
             Set-NetAdapterAdvancedProperty -Name $ad -RegistryKeyword $kw -RegistryValue $before -NoRestart -ErrorAction Stop
             $restored += ("{0}:{1}" -f $ad, $kw)
         } catch {
-            try {
-                Set-NetAdapterAdvancedProperty -Name $ad -RegistryKeyword $kw -RegistryValue $before -ErrorAction Stop
-                $restored += ("{0}:{1}" -f $ad, $kw)
-            } catch {
-                $failed += ("{0}:{1} {2}" -f $ad, $kw, $_.Exception.Message)
-            }
+            $failed += ("{0}:{1} {2}" -f $ad, $kw, $_.Exception.Message)
         }
     }
     if ($m.PSObject.Properties["registry"]) {
@@ -383,6 +485,20 @@ function Restore-Reclaim11NicBackup {
                 $restored += ("reg:{0}:{1}" -f $row.path, $row.name)
             } catch {
                 $failed += ("reg:{0}:{1} {2}" -f $row.path, $row.name, $_.Exception.Message)
+            }
+        }
+        if ($m.PSObject.Properties["created_keys"] -and $failed.Count -eq 0) {
+            foreach ($entry in @($m.created_keys | Sort-Object { $_.path.Length } -Descending)) {
+                try {
+                    $probeName = if ($entry.path -like '*\enum') { "0" } else { "Type" }
+                    Assert-Reclaim11RegistryBinding -Row ([pscustomobject]@{ path = $entry.path; name = $probeName; binding = $entry.binding })
+                    $key = Get-Reclaim11RegistryKey -Path $entry.path
+                    if ($null -eq $key) { continue }
+                    try { $empty = $key.GetValueNames().Count -eq 0 -and $key.GetSubKeyNames().Count -eq 0 } finally { $key.Dispose() }
+                    if (-not $empty) { throw "Created metadata key now contains unrelated data; retained" }
+                    Remove-Item -LiteralPath $entry.path -ErrorAction Stop
+                    $restored += "empty-key:$($entry.path)"
+                } catch { $failed += "empty-key:$($entry.path) $($_.Exception.Message)" }
             }
         }
     }
@@ -395,7 +511,12 @@ if ($MyInvocation.InvocationName -ne ".") {
         $result | ConvertTo-Json -Depth 6
         if (@($result.failed).Count -gt 0) { exit 1 }
     } else {
-        $plan = Invoke-Reclaim11NicTune -WhatIf:$WhatIf
+        $plan = if ($IntelHidden) {
+            Invoke-Reclaim11IntelNicTune -AdapterName $AdapterName -WhatIf:$WhatIf
+        } else {
+            if ($AdapterName) { throw "-AdapterName is scoped to -IntelHidden" }
+            Invoke-Reclaim11NicTune -WhatIf:$WhatIf
+        }
         if ($WhatIf) {
             Write-Host (Format-Reclaim11TestReport -Plan $plan -Title "nic_tune")
         }

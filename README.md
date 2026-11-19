@@ -111,7 +111,7 @@ This tree is a desk runtime plus a released kit plus research. Maturity is
 | [C++ Memory Store](godbrain_core/cpp_memory_store/README.md) | daily-driver | `:8084` Golden Records; Start/Heal prefer `build/cpp_memory_store/Release` |
 | [Memory Store / rag-service](godbrain_core/memory_store/README.md) (Go) | rollback | Same stdin/HTTP exe names; do not delete |
 | Heal / Watch / `Start-GodBrain.ps1` | daily-driver | one loop; WMI children get Mongo DB name + embedding identity, not `GODBRAIN_RAG_PORT` |
-| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v13) | Standalone Windows optimization/repair kit; explicit operator actions |
+| [Reclaim11](godbrain_core/reclaim11/README.md) | released kit (v14) | Standalone Windows optimization/repair kit; explicit operator actions |
 | Command Center (`scripts/Show-DeskMenu.ps1`) | daily-driver | Tray window: port status, EXL3 27B text vs 8B vision, ask `:8888`, lyrics record / Whisper again / lock in |
 | Lyrics loop (`scripts/lyrics_loop.py`) | daily-driver | CPU Whisper. Audio and `state.json` stay in `C:\nvme\stt\lyrics`. Door: `scripts\Invoke-LyricsLoop.ps1` |
 | [Frontend University](godbrain_core/skill_lab/README.md) | mastery ladder + React God + visual God (seeded canvas, anti-generic) | React (Next for sites, Vite for apps); Qwen on `:8888` is the learner; C++ Carmack is a later GO |
