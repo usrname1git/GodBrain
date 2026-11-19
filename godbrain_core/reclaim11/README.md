@@ -1,6 +1,10 @@
 # Reclaim11
 
-**Current standalone kit: Reclaim11 v14.**
+**Current standalone kit: [Reclaim11 v14](https://github.com/usrname1git/GodBrain/releases/tag/reclaim11-v14).**
+
+![Reclaim11 v14 Power User preview showing Intel RSS / BUFFERS and Keep Windows Update enabled](ui/Power_User_UI_Maximized.jpg)
+
+*Sanitized UI preview. No host scan or repair actions were run.*
 
 **Recommended:** run it on a VM like VMware first, or at least run TEST
 mode and see the result.
